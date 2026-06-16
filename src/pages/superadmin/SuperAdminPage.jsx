@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { fmtDate, fmtCurrency } from '../../lib/utils'
@@ -193,8 +193,9 @@ function NewCompanyModal({ onClose }) {
 }
 
 // ─── Company detail panel ─────────────────────────────────────────────────────
-function CompanyDetail({ company, onClose }) {
+function CompanyDetail({ company: initialCompany, onClose }) {
   const qc = useQueryClient()
+  const [company, setCompany] = useState(initialCompany)
 
   const { data: modules = [] } = useQuery({
     queryKey: ['company_modules', company.id],
@@ -219,26 +220,30 @@ function CompanyDetail({ company, onClose }) {
   })
 
   const toggleModule = async (mod, currentState) => {
+    const newState = !currentState
+    // Upsert so it works even if the row doesn't exist yet
     const { error } = await supabase
       .from('company_modules')
-      .update({ is_enabled: !currentState, enabled_at: !currentState ? new Date().toISOString() : null })
-      .eq('company_id', company.id)
-      .eq('module_key', mod)
+      .upsert(
+        { company_id: company.id, module_key: mod, is_enabled: newState, enabled_at: newState ? new Date().toISOString() : null },
+        { onConflict: 'company_id,module_key' }
+      )
 
     if (error) { toast.error('Failed to update module'); return }
-    toast.success(`${MODULE_LABELS[mod]} ${!currentState ? 'enabled' : 'disabled'}`)
+    toast.success(`${MODULE_LABELS[mod]} ${newState ? 'enabled' : 'disabled'}`)
     qc.invalidateQueries(['company_modules', company.id])
   }
 
   const toggleActive = async () => {
+    const newActive = !company.is_active
     const { error } = await supabase
       .from('companies')
-      .update({ is_active: !company.is_active })
+      .update({ is_active: newActive })
       .eq('id', company.id)
     if (error) { toast.error('Failed to update status'); return }
-    toast.success(company.is_active ? 'Company suspended' : 'Company activated')
+    toast.success(newActive ? 'Company activated' : 'Company suspended')
+    setCompany(c => ({ ...c, is_active: newActive }))
     qc.invalidateQueries(['companies'])
-    onClose()
   }
 
   return (
