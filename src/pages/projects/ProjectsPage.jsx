@@ -814,6 +814,8 @@ export default function ProjectsPage() {
   const qc = useQueryClient()
   const isAdmin = ['admin','superadmin','manager'].includes(role)
 
+  const companyId = userProfile?.company_id
+
   const [search, setSearch]       = useState('')
   const [statusFilter, setStatus] = useState('all')
   const [showAdd, setShowAdd]     = useState(false)
@@ -834,8 +836,6 @@ export default function ProjectsPage() {
     },
     enabled: !!companyId,
   })
-
-  const companyId = userProfile?.company_id
 
   const { data: clients = [] } = useQuery({
     queryKey: ['clients_dropdown', companyId],
