@@ -821,25 +821,34 @@ export default function ProjectsPage() {
   const [viewing, setViewing]     = useState(null)
 
   const { data: projects = [], isLoading } = useQuery({
-    queryKey: ['projects'],
+    queryKey: ['projects', companyId],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('projects')
         .select('*, clients(business_name)')
+        .eq('company_id', companyId)
         .eq('is_active', true)
         .order('created_at', { ascending: false })
       if (error) throw error
       return data || []
     },
+    enabled: !!companyId,
   })
 
+  const companyId = userProfile?.company_id
+
   const { data: clients = [] } = useQuery({
-    queryKey: ['clients_dropdown'],
+    queryKey: ['clients_dropdown', companyId],
     queryFn: async () => {
-      const { data, error } = await supabase.from('clients').select('id, business_name').neq('is_active', false).order('business_name')
+      const { data, error } = await supabase
+        .from('clients')
+        .select('id, business_name')
+        .eq('company_id', companyId)
+        .order('business_name')
       if (error) throw error
       return data || []
     },
+    enabled: !!companyId,
   })
 
   const filtered = useMemo(() => {
