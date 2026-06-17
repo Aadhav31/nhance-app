@@ -48,12 +48,17 @@ function validateGSTIN(g) {
 }
 
 async function fetchGSTINDetails(gstin) {
-  // Calls our Vercel serverless proxy (/api/gstin) to avoid CORS
+  // Calls Vercel serverless proxy (/api/gstin) to avoid CORS
+  const ctrl = new AbortController()
+  setTimeout(() => ctrl.abort(), 12000)
   try {
-    const res = await fetch(
-      `/api/gstin?gstin=${gstin}`,
-      { signal: AbortSignal.timeout(10000), headers: { Accept: 'application/json' } }
-    )
+    const res = await fetch(`/api/gstin?gstin=${gstin}`, {
+      signal: ctrl.signal, headers: { Accept: 'application/json' }
+    })
+    if (res.status === 404) {
+      // API reached but GSTIN not found in records
+      return { notFound: true }
+    }
     if (!res.ok) return null
     const data = await res.json()
     if (!data?.businessName) return null
@@ -67,7 +72,7 @@ async function fetchGSTINDetails(gstin) {
       registrationDate:  data.registrationDate || '',
     }
   } catch {
-    return null // graceful fallback — user enters manually
+    return null // network/timeout — user enters manually
   }
 }
 
@@ -134,7 +139,7 @@ function GSTINVerifier({ value, onChange, onVerified }) {
     setApiResult(null)
     try {
       const data = await fetchGSTINDetails(validation.gstin)
-      if (data) {
+      if (data && !data.notFound) {
         setResult(data)
         setApiResult(true)
         onVerified({
@@ -151,17 +156,14 @@ function GSTINVerifier({ value, onChange, onVerified }) {
           pincode: data.pincode,
         })
         toast.success('GSTIN verified — details auto-filled from GST portal')
+      } else if (data?.notFound) {
+        setApiResult('notfound')
+        onVerified({ gstin: validation.gstin, gstinVerified: false, pan: validation.pan, state: validation.state })
+        toast.error('GSTIN not found in GST records — check the number is correct and active')
       } else {
         setApiResult(false)
-        // Still provide extracted info (state, PAN)
-        onVerified({
-          gstin: validation.gstin,
-          gstinStatus: 'Unverified',
-          gstinVerified: false,
-          pan: validation.pan,
-          state: validation.state,
-        })
-        toast('GSTIN format valid. Could not reach GST portal — please fill details manually.', { icon: '⚠️' })
+        onVerified({ gstin: validation.gstin, gstinStatus: 'Unverified', gstinVerified: false, pan: validation.pan, state: validation.state })
+        toast('Format valid — GST portal unreachable. Fill details manually.', { icon: '⚠️' })
       }
     } finally { setVerifying(false) }
   }
@@ -213,6 +215,11 @@ function GSTINVerifier({ value, onChange, onVerified }) {
           <p className="text-slate-300">{result.businessName} {result.tradeName && result.tradeName !== result.businessName ? `(${result.tradeName})` : ''}</p>
           {result.registeredAddress && <p className="text-slate-400">{result.registeredAddress}</p>}
         </div>
+      )}
+      {apiResult === 'notfound' && (
+        <p className="text-xs text-red-400 flex items-center gap-1">
+          <AlertTriangle className="w-3 h-3" /> GSTIN not found in GST records — please verify the number is correct and currently active
+        </p>
       )}
       {apiResult === false && (
         <p className="text-xs text-yellow-400 flex items-center gap-1">
