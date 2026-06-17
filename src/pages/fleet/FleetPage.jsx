@@ -8,7 +8,7 @@ import {
 import {
   Truck, Plus, ChevronRight, Fuel, AlertTriangle, Clock,
   X, Loader2, CheckCircle, Activity, PlayCircle, StopCircle,
-  Gauge, User, Mic, MicOff, MapPin, Camera
+  Gauge, User, Mic, MicOff, MapPin, Camera, Building2, Users, Save, Trash2
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format } from 'date-fns'
@@ -17,8 +17,8 @@ import { format } from 'date-fns'
 function today() { return new Date().toISOString().split('T')[0] }
 function nowTime() { return new Date().toTimeString().slice(0, 5) }
 
-// ── Add timestamp overlay to image using Canvas ───────────────────────────────
-async function addTimestampToImage(file) {
+// ── Add timestamp + location overlay to image using Canvas ───────────────────
+async function addTimestampToImage(file, locationText = null) {
   return new Promise((resolve) => {
     const img = new Image()
     const url = URL.createObjectURL(file)
@@ -33,18 +33,32 @@ async function addTimestampToImage(file) {
       const stamp = now.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) +
         '  ' + now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 
-      const fontSize = Math.max(16, Math.round(img.width / 28))
-      ctx.font = `bold ${fontSize}px monospace`
-      const pad = 12
-      const barH = fontSize + pad * 2
+      const dateFontSize  = Math.max(16, Math.round(img.width / 26))
+      const locFontSize   = Math.max(13, Math.round(img.width / 36))
+      const pad = 14
+      const barH = locationText
+        ? dateFontSize + locFontSize + pad * 3
+        : dateFontSize + pad * 2
 
       // Semi-transparent dark bar at bottom
-      ctx.fillStyle = 'rgba(0,0,0,0.65)'
+      ctx.fillStyle = 'rgba(0,0,0,0.70)'
       ctx.fillRect(0, img.height - barH, img.width, barH)
 
-      // Golden timestamp text
+      // Golden date+time
+      ctx.font = `bold ${dateFontSize}px monospace`
       ctx.fillStyle = '#FFD700'
-      ctx.fillText(stamp, pad, img.height - pad - 2)
+      ctx.fillText(stamp, pad, img.height - barH + pad + dateFontSize)
+
+      // White location (truncated to fit)
+      if (locationText) {
+        ctx.font = `${locFontSize}px monospace`
+        ctx.fillStyle = '#FFFFFF'
+        let loc = '📍 ' + locationText
+        while (ctx.measureText(loc).width > img.width - pad * 2 && loc.length > 15) {
+          loc = loc.slice(0, -4) + '…'
+        }
+        ctx.fillText(loc, pad, img.height - pad)
+      }
 
       canvas.toBlob((blob) => { URL.revokeObjectURL(url); resolve(blob) }, 'image/jpeg', 0.88)
     }
@@ -64,7 +78,7 @@ async function uploadPhoto(blob, companyId, label) {
 }
 
 // ── Camera Button ─────────────────────────────────────────────────────────────
-function CameraButton({ companyId, label, photoUrl, onCapture }) {
+function CameraButton({ companyId, label, photoUrl, onCapture, location }) {
   const inputRef = useRef(null)
   const [uploading, setUploading] = useState(false)
 
@@ -73,7 +87,8 @@ function CameraButton({ companyId, label, photoUrl, onCapture }) {
     if (!file) return
     setUploading(true)
     try {
-      const blob = await addTimestampToImage(file)
+      const locationText = location?.address || null
+      const blob = await addTimestampToImage(file, locationText)
       const url = await uploadPhoto(blob, companyId, label)
       onCapture(url)
       toast.success('Photo saved with timestamp')
@@ -364,6 +379,17 @@ function StartShiftModal({ equipment, companyId, onClose }) {
     start_meter: String(equipment.current_meter_reading || ''),
     start_km: '', notes: '',
   })
+
+  // Fetch assigned operators for this equipment
+  const { data: assignments = [], isLoading: assignmentsLoading } = useQuery({
+    queryKey: ['equipment_assignments', equipment.id],
+    queryFn: async () => {
+      const { data } = await supabase.from('equipment_assignments')
+        .select('*').eq('equipment_id', equipment.id).eq('is_active', true)
+        .order('operator_name')
+      return data || []
+    },
+  })
   const [previousClosing, setPreviousClosing] = useState(null)
   const [meterChanged, setMeterChanged] = useState(false)
   const [overrideReason, setOverrideReason] = useState('')
@@ -448,73 +474,126 @@ function StartShiftModal({ equipment, companyId, onClose }) {
     } finally { setSaving(false) }
   }
 
+  // ── Blocking checks ──────────────────────────────────────────────────────────
+  const notLinked   = !equipment.current_project_id
+  const noOperators = !assignmentsLoading && assignments.length === 0
+  const isBlocked   = notLinked || noOperators
+
   return (
     <Modal title={`Start Shift — ${equipment.name}`} onClose={onClose} footer={
       <>
         <button onClick={onClose} className="flex-1 btn-secondary">Cancel</button>
-        <button onClick={handleSave} disabled={saving} className="flex-1 btn-primary">
+        <button onClick={handleSave} disabled={saving || isBlocked} className="flex-1 btn-primary">
           {saving ? <><Loader2 className="w-4 h-4 animate-spin" /> Starting…</> : '▶ Start Shift'}
         </button>
       </>
     }>
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Date">
-          <input type="date" className={inp()} value={form.shift_date} onChange={e => set('shift_date', e.target.value)} />
-        </Field>
-        <Field label="Shift Type">
-          <select className={inp()} value={form.shift_type} onChange={e => set('shift_type', e.target.value)}>
-            <option value="day">Day Shift</option>
-            <option value="night">Night Shift</option>
-            <option value="double">Double Shift</option>
-          </select>
-        </Field>
-      </div>
-      <Field label="Operator / Driver Name" required>
-        <input className={inp()} value={form.operator_name} onChange={e => set('operator_name', e.target.value)} placeholder="Full name" />
-      </Field>
-      <Field label="Site Incharge Name">
-        <input className={inp()} value={form.site_incharge_name} onChange={e => set('site_incharge_name', e.target.value)} placeholder="Supervisor / Incharge name" />
-      </Field>
-      <Field label="Shift Start Time">
-        <input type="time" className={inp()} value={form.start_time} onChange={e => set('start_time', e.target.value)} />
-      </Field>
 
-      {(mt === 'hours' || mt === 'both') && (
-        <div>
-          <Field label="Start Hour Meter (hrs)" required>
-            <input type="number" className={inp(meterChanged ? 'border-orange-500' : '')}
-              value={form.start_meter} onChange={e => handleMeterChange(e.target.value)}
-              placeholder="e.g. 4250.5" step="0.1" />
-          </Field>
-          {previousClosing && (
-            <p className="text-xs text-slate-500 mt-1">
-              Pre-filled from last shift closing ({previousClosing.operator_name} · {previousClosing.shift_date})
-            </p>
-          )}
-          <CameraButton companyId={companyId} label="meter_start" photoUrl={meterPhotoUrl} onCapture={setMeterPhotoUrl} />
-          {meterChanged && (
-            <div className="mt-2 bg-orange-900/20 border border-orange-700/30 rounded-lg p-3">
-              <p className="text-xs text-orange-400 font-medium mb-2">
-                ⚠ Meter changed from {previousClosing?.end_meter} — provide reason
-              </p>
-              <VoiceTextarea value={overrideReason} onChange={setOverrideReason}
-                placeholder="Why is the opening meter different from last closing?" rows={2} />
-            </div>
-          )}
+      {/* Block: not linked to a project */}
+      {notLinked && (
+        <div className="bg-orange-900/20 border border-orange-700/40 rounded-xl p-4 flex gap-3 items-start">
+          <AlertTriangle className="w-5 h-5 text-orange-400 shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-semibold text-orange-300">Equipment not deployed to any project</p>
+            <p className="text-xs text-orange-400/80 mt-1">Admin must assign this equipment to a Client &amp; Project before shifts can be started.</p>
+          </div>
         </div>
       )}
 
-      {(mt === 'kilometers' || mt === 'both') && (
-        <Field label="Start Odometer (km)" required={mt === 'kilometers'}>
-          <input type="number" className={inp()} value={form.start_km} onChange={e => set('start_km', e.target.value)} placeholder="e.g. 125400" />
-        </Field>
+      {/* Block: no operators assigned */}
+      {!notLinked && noOperators && (
+        <div className="bg-orange-900/20 border border-orange-700/40 rounded-xl p-4 flex gap-3 items-start">
+          <Users className="w-5 h-5 text-orange-400 shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-semibold text-orange-300">No operators assigned to this equipment</p>
+            <p className="text-xs text-orange-400/80 mt-1">Admin must assign at least one operator before shifts can be started.</p>
+          </div>
+        </div>
       )}
 
-      <GPSField location={location} loading={gpsLoading} />
+      {!isBlocked && (
+        <>
+          {/* Show current deployment */}
+          <div className="bg-dark-700 rounded-lg px-3 py-2 text-xs text-slate-400 flex items-center gap-2">
+            <Building2 className="w-3.5 h-3.5 text-primary-400 shrink-0" />
+            <span className="truncate">
+              {equipment.current_site_name
+                ? `${equipment.current_site_name}`
+                : 'Deployed project'}
+            </span>
+          </div>
 
-      <Field label="Notes">
-        <VoiceTextarea value={form.notes} onChange={v => set('notes', v)} placeholder="Site location, work details…" />
-      </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Date">
+              <input type="date" className={inp()} value={form.shift_date} onChange={e => set('shift_date', e.target.value)} />
+            </Field>
+            <Field label="Shift Type">
+              <select className={inp()} value={form.shift_type} onChange={e => set('shift_type', e.target.value)}>
+                <option value="day">Day Shift</option>
+                <option value="night">Night Shift</option>
+                <option value="double">Double Shift</option>
+              </select>
+            </Field>
+          </div>
+          <Field label="Operator / Driver Name" required>
+            {assignmentsLoading ? (
+              <div className="flex items-center gap-2 text-xs text-slate-500 py-2">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading operators…
+              </div>
+            ) : (
+              <select className={inp()} value={form.operator_name} onChange={e => set('operator_name', e.target.value)}>
+                <option value="">Select assigned operator…</option>
+                {assignments.map(a => (
+                  <option key={a.id} value={a.operator_name}>{a.operator_name}</option>
+                ))}
+              </select>
+            )}
+          </Field>
+          <Field label="Site Incharge Name">
+            <input className={inp()} value={form.site_incharge_name} onChange={e => set('site_incharge_name', e.target.value)} placeholder="Supervisor / Incharge name" />
+          </Field>
+          <Field label="Shift Start Time">
+            <input type="time" className={inp()} value={form.start_time} onChange={e => set('start_time', e.target.value)} />
+          </Field>
+
+          {(mt === 'hours' || mt === 'both') && (
+            <div>
+              <Field label="Start Hour Meter (hrs)" required>
+                <input type="number" className={inp(meterChanged ? 'border-orange-500' : '')}
+                  value={form.start_meter} onChange={e => handleMeterChange(e.target.value)}
+                  placeholder="e.g. 4250.5" step="0.1" />
+              </Field>
+              {previousClosing && (
+                <p className="text-xs text-slate-500 mt-1">
+                  Pre-filled from last shift closing ({previousClosing.operator_name} · {previousClosing.shift_date})
+                </p>
+              )}
+              <CameraButton companyId={companyId} label="meter_start" photoUrl={meterPhotoUrl} onCapture={setMeterPhotoUrl} location={location} />
+              {meterChanged && (
+                <div className="mt-2 bg-orange-900/20 border border-orange-700/30 rounded-lg p-3">
+                  <p className="text-xs text-orange-400 font-medium mb-2">
+                    ⚠ Meter changed from {previousClosing?.end_meter} — provide reason
+                  </p>
+                  <VoiceTextarea value={overrideReason} onChange={setOverrideReason}
+                    placeholder="Why is the opening meter different from last closing?" rows={2} />
+                </div>
+              )}
+            </div>
+          )}
+
+          {(mt === 'kilometers' || mt === 'both') && (
+            <Field label="Start Odometer (km)" required={mt === 'kilometers'}>
+              <input type="number" className={inp()} value={form.start_km} onChange={e => set('start_km', e.target.value)} placeholder="e.g. 125400" />
+            </Field>
+          )}
+
+          <GPSField location={location} loading={gpsLoading} />
+
+          <Field label="Notes">
+            <VoiceTextarea value={form.notes} onChange={v => set('notes', v)} placeholder="Site location, work details…" />
+          </Field>
+        </>
+      )}
     </Modal>
   )
 }
@@ -522,6 +601,7 @@ function StartShiftModal({ equipment, companyId, onClose }) {
 // ── End Shift Modal ───────────────────────────────────────────────────────────
 function EndShiftModal({ equipment, shift, companyId, onClose }) {
   const qc = useQueryClient()
+  const { location, loading: gpsLoading } = useGPS()
   const [form, setForm] = useState({
     end_time: nowTime(), end_meter: '', end_km: '',
     working_hours: '', idle_hours: '0', breakdown_hours: '0', notes: '',
@@ -532,8 +612,38 @@ function EndShiftModal({ equipment, shift, companyId, onClose }) {
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
   const mt = equipment.meter_type
 
+  // Calculate actual clock hours between start and end time
+  const getClockHours = (endTime = form.end_time) => {
+    if (!shift.start_time || !endTime) return null
+    const [sh, sm] = shift.start_time.split(':').map(Number)
+    const [eh, em] = endTime.split(':').map(Number)
+    let mins = (eh * 60 + em) - (sh * 60 + sm)
+    if (mins < 0) mins += 24 * 60 // overnight
+    return +(mins / 60).toFixed(2)
+  }
+
+  // Auto-calculate working hours when end meter changes
+  const handleEndMeterChange = (v) => {
+    set('end_meter', v)
+    if (v && shift.start_meter) {
+      const meterDiff = Math.max(0, Number(v) - Number(shift.start_meter))
+      const clockHrs = getClockHours()
+      // Cap to clock hours — meter diff can't exceed actual time worked
+      set('working_hours', clockHrs ? String(Math.min(meterDiff, clockHrs).toFixed(1)) : String(meterDiff.toFixed(1)))
+    }
+  }
+
   const handleSave = async () => {
     if (mt !== 'kilometers' && !form.end_meter) { toast.error('End meter reading required'); return }
+
+    // Validate meter vs clock time
+    const clockHrs = getClockHours()
+    const meterDiff = Number(form.end_meter || 0) - Number(shift.start_meter || 0)
+    if (clockHrs && meterDiff > clockHrs + 0.5) {
+      toast.error(`Hour meter difference (${meterDiff.toFixed(1)} hrs) exceeds shift clock time (${clockHrs.toFixed(1)} hrs) — check reading`)
+      return
+    }
+
     setSaving(true)
     try {
       const endMeter = Number(form.end_meter || 0)
@@ -591,9 +701,17 @@ function EndShiftModal({ equipment, shift, companyId, onClose }) {
       {(mt === 'hours' || mt === 'both') && (
         <div>
           <Field label="Closing Hour Meter (hrs)" required>
-            <input type="number" className={inp()} value={form.end_meter} onChange={e => set('end_meter', e.target.value)} placeholder={`≥ ${shift.start_meter}`} step="0.1" />
+            <input type="number" className={inp()} value={form.end_meter}
+              onChange={e => handleEndMeterChange(e.target.value)}
+              placeholder={`≥ ${shift.start_meter}`} step="0.1" />
           </Field>
-          <CameraButton companyId={companyId} label="meter_end" photoUrl={meterPhotoUrl} onCapture={setMeterPhotoUrl} />
+          {form.end_meter && shift.start_meter && (
+            <p className="text-xs text-slate-500 mt-1">
+              Meter diff: {Math.max(0, Number(form.end_meter) - Number(shift.start_meter)).toFixed(1)} hrs
+              {getClockHours() ? ` · Shift clock: ${getClockHours().toFixed(1)} hrs` : ''}
+            </p>
+          )}
+          <CameraButton companyId={companyId} label="meter_end" photoUrl={meterPhotoUrl} onCapture={setMeterPhotoUrl} location={location} />
         </div>
       )}
       {(mt === 'kilometers' || mt === 'both') && (
@@ -603,7 +721,9 @@ function EndShiftModal({ equipment, shift, companyId, onClose }) {
       )}
       <div className="grid grid-cols-3 gap-2">
         <Field label="Working Hrs">
-          <input type="number" className={inp()} value={form.working_hours} onChange={e => set('working_hours', e.target.value)} placeholder="Auto" step="0.1" />
+          <input type="number" className={inp()} value={form.working_hours}
+            onChange={e => set('working_hours', e.target.value)}
+            placeholder="Auto-filled" step="0.1" />
         </Field>
         <Field label="Idle Hrs">
           <input type="number" className={inp()} value={form.idle_hours} onChange={e => set('idle_hours', e.target.value)} placeholder="0" step="0.1" />
@@ -618,7 +738,7 @@ function EndShiftModal({ equipment, shift, companyId, onClose }) {
       <div>
         <p className="text-xs font-medium text-slate-400 mb-1">Log Sheet Photo</p>
         <p className="text-xs text-slate-500 mb-2">Photograph the paper log / daily report before closing</p>
-        <CameraButton companyId={companyId} label="logsheet" photoUrl={logsheetPhotoUrl} onCapture={setLogsheetPhotoUrl} />
+        <CameraButton companyId={companyId} label="logsheet" photoUrl={logsheetPhotoUrl} onCapture={setLogsheetPhotoUrl} location={location} />
       </div>
     </Modal>
   )
@@ -698,7 +818,7 @@ function FuelModal({ equipment, shift, companyId, onClose }) {
       <div>
         <p className="text-xs font-medium text-slate-400 mb-1">Fuel Delivery Photo</p>
         <p className="text-xs text-slate-500 mb-1">Capture meter / delivery slip / invoice as proof</p>
-        <CameraButton companyId={companyId} label="fuel" photoUrl={fuelPhotoUrl} onCapture={setFuelPhotoUrl} />
+        <CameraButton companyId={companyId} label="fuel" photoUrl={fuelPhotoUrl} onCapture={setFuelPhotoUrl} location={location} />
       </div>
       {(mt === 'hours' || mt === 'both') && (
         <Field label="Hour Meter at Filling (hrs)">
@@ -842,13 +962,6 @@ function IncidentModal({ equipment, shift, companyId, onClose }) {
           <Field label="What needs to be done to fix it">
             <VoiceTextarea value={form.rectification_needed} onChange={v => set('rectification_needed', v)}
               placeholder="What repair / replacement is needed?" rows={2} />
-          </Field>
-          <Field label="Spare Parts Status">
-            <select className={inp()} value={form.parts_status} onChange={e => set('parts_status', e.target.value)}>
-              <option value="available">Parts available in inventory</option>
-              <option value="partially_available">Partially available — some to order</option>
-              <option value="to_order">Need to order parts</option>
-            </select>
           </Field>
           <Field label="Additional Notes">
             <VoiceTextarea value={form.description} onChange={v => set('description', v)} placeholder="Any other details…" rows={2} />
@@ -1005,8 +1118,104 @@ function IncidentModal({ equipment, shift, companyId, onClose }) {
 }
 
 // ── Equipment Detail ──────────────────────────────────────────────────────────
-function EquipmentDetail({ equipment, companyId, onClose }) {
-  const [modal, setModal] = useState(null)
+function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
+  const [modal, setModal]         = useState(null)
+  const [equipment, setEquipment] = useState(equipmentProp) // local copy so we can update after deploy
+  const qc                        = useQueryClient()
+  const { role }                  = useAuth()
+  const isAdmin                   = ['admin', 'superadmin', 'manager'].includes(role)
+
+  // ── Admin state ─────────────────────────────────────────────────────────────
+  const [deployClientId,  setDeployClientId]  = useState(equipment.current_client_id  || '')
+  const [deployProjectId, setDeployProjectId] = useState(equipment.current_project_id || '')
+  const [deploySiteName,  setDeploySiteName]  = useState(equipment.current_site_name  || '')
+  const [deploySaving,    setDeploySaving]    = useState(false)
+
+  const [newOperator,     setNewOperator]     = useState('')
+  const [operatorSaving,  setOperatorSaving]  = useState(false)
+
+  // ── Queries ──────────────────────────────────────────────────────────────────
+  const { data: assignments = [], refetch: refetchAssignments } = useQuery({
+    queryKey: ['equipment_assignments', equipment.id],
+    queryFn: async () => {
+      const { data } = await supabase.from('equipment_assignments')
+        .select('*').eq('equipment_id', equipment.id).eq('is_active', true).order('operator_name')
+      return data || []
+    },
+  })
+
+  const { data: clients = [] } = useQuery({
+    queryKey: ['clients', companyId],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('clients').select('id, name')
+        .eq('company_id', companyId).order('name')
+      if (error) return [] // table may not exist yet
+      return data || []
+    },
+    enabled: isAdmin,
+  })
+
+  const { data: projects = [] } = useQuery({
+    queryKey: ['projects_for_client', deployClientId],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('projects').select('id, name')
+        .eq('company_id', companyId).eq('client_id', deployClientId).order('name')
+      if (error) return [] // table may not exist yet
+      return data || []
+    },
+    enabled: isAdmin && !!deployClientId,
+  })
+
+  // ── Admin actions ────────────────────────────────────────────────────────────
+  const handleDeploy = async () => {
+    if (!deployProjectId) { toast.error('Select a project to deploy'); return }
+    setDeploySaving(true)
+    try {
+      const { error } = await supabase.from('equipment').update({
+        current_client_id:  deployClientId  || null,
+        current_project_id: deployProjectId || null,
+        current_site_name:  deploySiteName  || null,
+      }).eq('id', equipment.id)
+      if (error) throw error
+      setEquipment(e => ({ ...e, current_client_id: deployClientId, current_project_id: deployProjectId, current_site_name: deploySiteName }))
+      qc.invalidateQueries(['equipment', companyId])
+      toast.success('Equipment deployed to project')
+    } catch (err) {
+      toast.error(err.message || 'Failed to deploy')
+    } finally { setDeploySaving(false) }
+  }
+
+  const handleAddOperator = async () => {
+    const name = newOperator.trim()
+    if (!name) { toast.error('Enter operator name'); return }
+    setOperatorSaving(true)
+    try {
+      const { error } = await supabase.from('equipment_assignments').insert({
+        company_id: companyId, equipment_id: equipment.id, operator_name: name, is_active: true,
+      })
+      if (error) {
+        if (error.code === '23505') { toast.error('Operator already assigned'); return }
+        throw error
+      }
+      setNewOperator('')
+      refetchAssignments()
+      qc.invalidateQueries(['equipment_assignments', equipment.id])
+      toast.success(`${name} assigned`)
+    } catch (err) {
+      toast.error(err.message || 'Failed to assign operator')
+    } finally { setOperatorSaving(false) }
+  }
+
+  const handleRemoveOperator = async (assignmentId, name) => {
+    try {
+      await supabase.from('equipment_assignments').update({ is_active: false }).eq('id', assignmentId)
+      refetchAssignments()
+      qc.invalidateQueries(['equipment_assignments', equipment.id])
+      toast.success(`${name} removed`)
+    } catch (err) {
+      toast.error('Failed to remove')
+    }
+  }
 
   const { data: activeShift } = useQuery({
     queryKey: ['active_shift', equipment.id],
@@ -1110,6 +1319,80 @@ function EquipmentDetail({ equipment, companyId, onClose }) {
             <AlertTriangle className="w-4 h-4 text-orange-400" /> Report Incident
           </button>
         </div>
+
+        {/* ── Admin: Deployment + Operators ─────────────────────────────── */}
+        {isAdmin && (
+          <div className="border border-dark-600 rounded-xl overflow-hidden">
+            {/* Header */}
+            <div className="bg-dark-700 px-3 py-2 flex items-center gap-2">
+              <Building2 className="w-4 h-4 text-primary-400" />
+              <span className="text-xs font-semibold text-slate-300 uppercase tracking-wider">Operations Setup</span>
+            </div>
+
+            {/* Deploy to Project */}
+            <div className="p-3 space-y-2 border-b border-dark-600">
+              <p className="text-xs font-medium text-slate-400 flex items-center gap-1.5">
+                <Building2 className="w-3.5 h-3.5" /> Deploy to Client / Project
+              </p>
+              {equipment.current_site_name && (
+                <div className="bg-emerald-900/20 border border-emerald-700/30 rounded-lg px-2.5 py-1.5 text-xs text-emerald-300">
+                  ✓ Currently: {equipment.current_site_name}
+                </div>
+              )}
+              <select className={inp('text-xs')} value={deployClientId} onChange={e => { setDeployClientId(e.target.value); setDeployProjectId('') }}>
+                <option value="">Select client…</option>
+                {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+              {deployClientId && (
+                <select className={inp('text-xs')} value={deployProjectId} onChange={e => setDeployProjectId(e.target.value)}>
+                  <option value="">Select project…</option>
+                  {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              )}
+              <input className={inp('text-xs')} value={deploySiteName}
+                onChange={e => setDeploySiteName(e.target.value)}
+                placeholder="Site name (optional, e.g. Phase 2 — North Block)" />
+              <button onClick={handleDeploy} disabled={deploySaving || !deployProjectId}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary-600 hover:bg-primary-500 text-white text-xs font-medium disabled:opacity-40 transition-colors">
+                {deploySaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                {deploySaving ? 'Saving…' : 'Save Deployment'}
+              </button>
+            </div>
+
+            {/* Manage Operators */}
+            <div className="p-3 space-y-2">
+              <p className="text-xs font-medium text-slate-400 flex items-center gap-1.5">
+                <Users className="w-3.5 h-3.5" /> Assigned Operators
+              </p>
+              {assignments.length === 0 ? (
+                <p className="text-xs text-slate-500 italic">No operators assigned yet</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {assignments.map(a => (
+                    <div key={a.id} className="flex items-center justify-between bg-dark-700 rounded-lg px-2.5 py-1.5">
+                      <span className="text-xs text-slate-200">{a.operator_name}</span>
+                      <button onClick={() => handleRemoveOperator(a.id, a.operator_name)}
+                        className="p-1 text-slate-500 hover:text-red-400 transition-colors" title="Remove">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="flex gap-2">
+                <input className={inp('text-xs flex-1')} value={newOperator}
+                  onChange={e => setNewOperator(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleAddOperator()}
+                  placeholder="Operator name…" />
+                <button onClick={handleAddOperator} disabled={operatorSaving || !newOperator.trim()}
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-dark-600 border border-dark-500 hover:border-primary-500 text-xs text-slate-300 disabled:opacity-40 transition-colors shrink-0">
+                  {operatorSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                  Add
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {openIncidents.length > 0 && (
           <div className="bg-red-900/20 border border-red-700/30 rounded-lg p-3">
