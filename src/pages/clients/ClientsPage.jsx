@@ -48,25 +48,23 @@ function validateGSTIN(g) {
 }
 
 async function fetchGSTINDetails(gstin) {
-  // Try knowyourgst.com free demo endpoint
-  // Falls back gracefully — business name still filled manually
+  // Calls our Vercel serverless proxy (/api/gstin) to avoid CORS
   try {
     const res = await fetch(
-      `https://api.knowyourgst.com/getgstin/?gstin=${gstin}&key=demo`,
-      { signal: AbortSignal.timeout(8000), headers: { Accept: 'application/json' } }
+      `/api/gstin?gstin=${gstin}`,
+      { signal: AbortSignal.timeout(10000), headers: { Accept: 'application/json' } }
     )
-    if (!res.ok) throw new Error('API error')
-    const json = await res.json()
-    const info = json?.taxpayerInfo
-    if (!info) throw new Error('No data')
+    if (!res.ok) return null
+    const data = await res.json()
+    if (!data?.businessName) return null
     return {
-      businessName:  info.lgnm    || '',
-      tradeName:     info.tradeNam || '',
-      gstinStatus:   info.sts     || 'Active',
-      registeredAddress: info.pradr?.adr || '',
-      city:          info.pradr?.dst || info.pradr?.city || '',
-      pincode:       info.pradr?.pncd || '',
-      registrationDate: info.rgdt || '',
+      businessName:      data.businessName,
+      tradeName:         data.tradeName || '',
+      gstinStatus:       data.gstinStatus || 'Active',
+      registeredAddress: data.address || '',
+      city:              data.city || '',
+      pincode:           data.pincode || '',
+      registrationDate:  data.registrationDate || '',
     }
   } catch {
     return null // graceful fallback — user enters manually
