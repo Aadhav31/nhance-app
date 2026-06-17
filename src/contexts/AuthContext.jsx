@@ -136,6 +136,7 @@ export function AuthProvider({ children }) {
     userProfile,
     userRole,
     company,
+    companyId: company?.id ?? null,
     modules,
     loading,
     role,
