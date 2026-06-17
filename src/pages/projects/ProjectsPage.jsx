@@ -836,7 +836,8 @@ export default function ProjectsPage() {
   const { data: clients = [] } = useQuery({
     queryKey: ['clients_dropdown'],
     queryFn: async () => {
-      const { data } = await supabase.from('clients').select('id, business_name').eq('is_active', true).order('business_name')
+      const { data, error } = await supabase.from('clients').select('id, business_name').neq('is_active', false).order('business_name')
+      if (error) throw error
       return data || []
     },
   })
