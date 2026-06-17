@@ -1,33 +1,121 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import {
-  EQUIPMENT_CATEGORIES, getMeterType, STATUS_COLORS, INCIDENT_TYPES, INCIDENT_SEVERITY
+  EQUIPMENT_CATEGORIES, getMeterType, STATUS_COLORS, INCIDENT_SEVERITY
 } from '../../lib/equipmentTypes'
 import {
   Truck, Plus, ChevronRight, Fuel, AlertTriangle, Clock,
-  X, Loader2, CheckCircle, Activity,
-  PlayCircle, StopCircle, Gauge, User
+  X, Loader2, CheckCircle, Activity, PlayCircle, StopCircle,
+  Gauge, User, Mic, MicOff, MapPin, AlertCircle, Wrench,
+  Shield, Package
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format } from 'date-fns'
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
+// ── Helpers ───────────────────────────────────────────────────────────────────
 function today() { return new Date().toISOString().split('T')[0] }
 function nowTime() { return new Date().toTimeString().slice(0, 5) }
 
-function MeterDisplay({ equipment }) {
-  const mt = equipment.meter_type
-  const val = Number(equipment.current_meter_reading || 0).toFixed(1)
-  if (mt === 'hours')      return <span>{val} hrs</span>
-  if (mt === 'kilometers') return <span>{val} km</span>
-  return <span>{val} hrs</span>
+// ── GPS Hook ──────────────────────────────────────────────────────────────────
+function useGPS() {
+  const [location, setLocation] = useState(null)
+  const [loading, setLoading] = useState(false)
+
+  const capture = () => {
+    if (!navigator.geolocation) { toast.error('GPS not supported on this device'); return }
+    setLoading(true)
+    navigator.geolocation.getCurrentPosition(
+      async ({ coords: { latitude, longitude } }) => {
+        try {
+          const res = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json`,
+            { headers: { 'Accept-Language': 'en' } }
+          )
+          const data = await res.json()
+          setLocation({ lat: latitude, lng: longitude, address: data.display_name })
+        } catch {
+          setLocation({ lat: latitude, lng: longitude, address: `${latitude.toFixed(5)}, ${longitude.toFixed(5)}` })
+        }
+        setLoading(false)
+      },
+      () => { toast.error('Could not get location — check GPS permission'); setLoading(false) },
+      { enableHighAccuracy: true, timeout: 12000 }
+    )
+  }
+
+  useEffect(() => { capture() }, []) // auto-capture on mount
+
+  return { location, loading, capture }
+}
+
+// ── Speech-to-Text Hook ───────────────────────────────────────────────────────
+function useSpeechToText(onResult) {
+  const [listening, setListening] = useState(false)
+  const recRef = useRef(null)
+
+  const toggle = () => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!SR) { toast.error('Voice input not supported in this browser'); return }
+    if (listening) { recRef.current?.stop(); setListening(false); return }
+    const rec = new SR()
+    rec.lang = 'en-IN'
+    rec.continuous = false
+    rec.interimResults = false
+    rec.onresult = (e) => onResult(e.results[0][0].transcript)
+    rec.onerror = () => setListening(false)
+    rec.onend = () => setListening(false)
+    rec.start()
+    recRef.current = rec
+    setListening(true)
+  }
+
+  return { listening, toggle }
+}
+
+// ── Voice Textarea ────────────────────────────────────────────────────────────
+function VoiceTextarea({ value, onChange, placeholder, rows = 2 }) {
+  const { listening, toggle } = useSpeechToText((text) => onChange(value ? value + ' ' + text : text))
+  return (
+    <div className="relative">
+      <textarea
+        className="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2.5 pr-10 text-sm text-slate-100 focus:outline-none focus:border-primary-500 resize-none"
+        value={value} onChange={e => onChange(e.target.value)}
+        placeholder={placeholder} rows={rows}
+      />
+      <button type="button" onClick={toggle}
+        title={listening ? 'Stop recording' : 'Speak to type'}
+        className={`absolute right-2 top-2 p-1.5 rounded-lg transition-all
+          ${listening ? 'bg-red-500 text-white animate-pulse' : 'text-slate-500 hover:text-slate-200 hover:bg-dark-600'}`}>
+        {listening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+      </button>
+    </div>
+  )
+}
+
+// ── GPS Field ─────────────────────────────────────────────────────────────────
+function GPSField({ location, loading, onCapture }) {
+  return (
+    <div>
+      <label className="block text-xs font-medium text-slate-400 mb-1">Location (GPS)</label>
+      {location ? (
+        <div className="bg-dark-700 border border-emerald-700/30 rounded-lg px-3 py-2 text-xs flex items-start gap-2">
+          <MapPin className="w-3.5 h-3.5 text-emerald-400 mt-0.5 shrink-0" />
+          <span className="text-slate-300 leading-relaxed">{location.address}</span>
+        </div>
+      ) : (
+        <button type="button" onClick={onCapture} disabled={loading}
+          className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg border border-dashed border-dark-500 text-slate-400 hover:border-primary-500 hover:text-primary-400 text-sm transition-colors disabled:opacity-50">
+          {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <MapPin className="w-4 h-4" />}
+          {loading ? 'Getting location…' : 'Tap to capture GPS location'}
+        </button>
+      )}
+    </div>
+  )
 }
 
 // ── Shared UI ─────────────────────────────────────────────────────────────────
-
 function Modal({ title, onClose, children, footer }) {
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/60">
@@ -58,7 +146,6 @@ const inp = (extra = '') =>
   `w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-primary-500 ${extra}`
 
 // ── Add Equipment Modal ───────────────────────────────────────────────────────
-
 function AddEquipmentModal({ companyId, onClose }) {
   const qc = useQueryClient()
   const [form, setForm] = useState({
@@ -104,9 +191,7 @@ function AddEquipmentModal({ companyId, onClose }) {
       onClose()
     } catch (err) {
       toast.error(err.message || 'Failed to add equipment')
-    } finally {
-      setSaving(false)
-    }
+    } finally { setSaving(false) }
   }
 
   return (
@@ -130,11 +215,9 @@ function AddEquipmentModal({ companyId, onClose }) {
           </select>
         </Field>
       </div>
-
       <Field label="Equipment Name" required>
         <input className={inp()} value={form.name} onChange={e => set('name', e.target.value)} placeholder="e.g. Tata Hitachi EX200 — Site A" />
       </Field>
-
       <Field label="Category" required>
         <select className={inp()} value={form.category} onChange={e => handleCategoryChange(e.target.value)}>
           <option value="">Select category…</option>
@@ -143,7 +226,6 @@ function AddEquipmentModal({ companyId, onClose }) {
           ))}
         </select>
       </Field>
-
       <div className="grid grid-cols-2 gap-3">
         <Field label="Make / Brand">
           <input className={inp()} value={form.make} onChange={e => set('make', e.target.value)} placeholder="Tata, JCB, Volvo…" />
@@ -152,16 +234,14 @@ function AddEquipmentModal({ companyId, onClose }) {
           <input className={inp()} value={form.model} onChange={e => set('model', e.target.value)} placeholder="EX200, 3DX…" />
         </Field>
       </div>
-
       <div className="grid grid-cols-2 gap-3">
         <Field label="Year">
-          <input type="number" className={inp()} value={form.year_of_manufacture} onChange={e => set('year_of_manufacture', e.target.value)} placeholder="2022" min="1990" max="2030" />
+          <input type="number" className={inp()} value={form.year_of_manufacture} onChange={e => set('year_of_manufacture', e.target.value)} placeholder="2022" />
         </Field>
         <Field label="Reg. / Serial No.">
           <input className={inp()} value={form.registration_number} onChange={e => set('registration_number', e.target.value)} placeholder="TN 01 AB 1234" />
         </Field>
       </div>
-
       <div className="grid grid-cols-2 gap-3">
         <Field label="Meter Type">
           <select className={inp()} value={form.meter_type} onChange={e => set('meter_type', e.target.value)}>
@@ -174,7 +254,6 @@ function AddEquipmentModal({ companyId, onClose }) {
           <input type="number" className={inp()} value={form.current_meter_reading} onChange={e => set('current_meter_reading', e.target.value)} placeholder="0" />
         </Field>
       </div>
-
       <div className="grid grid-cols-2 gap-3">
         <Field label="Fuel Type">
           <select className={inp()} value={form.fuel_type} onChange={e => set('fuel_type', e.target.value)}>
@@ -188,34 +267,64 @@ function AddEquipmentModal({ companyId, onClose }) {
           <input className={inp()} value={form.capacity} onChange={e => set('capacity', e.target.value)} placeholder="e.g. 20T, 1.2m³" />
         </Field>
       </div>
-
       <Field label="Notes">
-        <textarea className={inp()} rows={2} value={form.notes} onChange={e => set('notes', e.target.value)} placeholder="Any additional details…" />
+        <VoiceTextarea value={form.notes} onChange={v => set('notes', v)} placeholder="Any additional details…" />
       </Field>
     </Modal>
   )
 }
 
 // ── Start Shift Modal ─────────────────────────────────────────────────────────
-
 function StartShiftModal({ equipment, companyId, onClose }) {
   const qc = useQueryClient()
+  const { location, loading: gpsLoading, capture } = useGPS()
   const [form, setForm] = useState({
     shift_date: today(), shift_type: 'day',
     operator_name: '', site_incharge_name: '',
-    start_time: nowTime(), start_meter: String(equipment.current_meter_reading || ''),
+    start_time: nowTime(),
+    start_meter: String(equipment.current_meter_reading || ''),
     start_km: '', notes: '',
   })
+  const [previousClosing, setPreviousClosing] = useState(null)
+  const [meterChanged, setMeterChanged] = useState(false)
+  const [overrideReason, setOverrideReason] = useState('')
   const [saving, setSaving] = useState(false)
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
   const mt = equipment.meter_type
 
+  // Fetch last closed shift to pre-fill meter
+  useEffect(() => {
+    supabase.from('shifts').select('end_meter, end_km, operator_name, shift_date')
+      .eq('equipment_id', equipment.id).eq('status', 'closed')
+      .order('shift_date', { ascending: false }).order('end_time', { ascending: false })
+      .limit(1).maybeSingle()
+      .then(({ data }) => {
+        if (data?.end_meter) {
+          setPreviousClosing(data)
+          setForm(p => ({ ...p, start_meter: String(data.end_meter) }))
+        }
+        if (data?.end_km) {
+          setForm(p => ({ ...p, start_km: String(data.end_km) }))
+        }
+      })
+  }, [equipment.id])
+
+  const handleMeterChange = (v) => {
+    set('start_meter', v)
+    if (previousClosing && v !== String(previousClosing.end_meter)) {
+      setMeterChanged(true)
+    } else {
+      setMeterChanged(false)
+    }
+  }
+
   const handleSave = async () => {
     if (!form.operator_name.trim()) { toast.error('Operator name is required'); return }
     if (mt !== 'kilometers' && !form.start_meter) { toast.error('Start meter reading required'); return }
+    if (meterChanged && !overrideReason.trim()) { toast.error('Please provide reason for meter correction'); return }
     setSaving(true)
     try {
-      const { error } = await supabase.from('shifts').insert({
+      const { data: shift, error } = await supabase.from('shifts').insert({
         company_id: companyId,
         equipment_id: equipment.id,
         shift_date: form.shift_date,
@@ -225,10 +334,28 @@ function StartShiftModal({ equipment, companyId, onClose }) {
         start_time: form.start_time,
         start_meter: form.start_meter ? Number(form.start_meter) : null,
         start_km: form.start_km ? Number(form.start_km) : null,
+        meter_previous_closing: previousClosing?.end_meter || null,
+        meter_discrepancy: meterChanged,
+        meter_discrepancy_reason: meterChanged ? overrideReason : null,
+        location_lat: location?.lat || null,
+        location_lng: location?.lng || null,
+        location_address: location?.address || null,
         status: 'open',
         notes: form.notes || null,
-      })
+      }).select().single()
       if (error) throw error
+
+      // Notify admin if meter was corrected
+      if (meterChanged) {
+        await supabase.from('notifications').insert({
+          company_id: companyId,
+          type: 'meter_discrepancy',
+          title: `Meter correction on ${equipment.name}`,
+          body: `${form.operator_name} changed opening meter from ${previousClosing?.end_meter} to ${form.start_meter} hrs. Reason: ${overrideReason}`,
+          metadata: { equipment_id: equipment.id, shift_id: shift?.id, equipment_name: equipment.name }
+        })
+      }
+
       await supabase.from('equipment').update({ status: 'active' }).eq('id', equipment.id)
       toast.success('Shift started')
       qc.invalidateQueries(['equipment', companyId])
@@ -270,25 +397,47 @@ function StartShiftModal({ equipment, companyId, onClose }) {
       <Field label="Shift Start Time">
         <input type="time" className={inp()} value={form.start_time} onChange={e => set('start_time', e.target.value)} />
       </Field>
+
       {(mt === 'hours' || mt === 'both') && (
-        <Field label="Start Hour Meter (hrs)" required>
-          <input type="number" className={inp()} value={form.start_meter} onChange={e => set('start_meter', e.target.value)} placeholder="e.g. 4250.5" step="0.1" />
-        </Field>
+        <div>
+          <Field label="Start Hour Meter (hrs)" required>
+            <input type="number" className={inp(meterChanged ? 'border-orange-500' : '')}
+              value={form.start_meter} onChange={e => handleMeterChange(e.target.value)}
+              placeholder="e.g. 4250.5" step="0.1" />
+          </Field>
+          {previousClosing && (
+            <p className="text-xs text-slate-500 mt-1">
+              Pre-filled from last shift closing ({previousClosing.operator_name} · {previousClosing.shift_date})
+            </p>
+          )}
+          {meterChanged && (
+            <div className="mt-2 bg-orange-900/20 border border-orange-700/30 rounded-lg p-3">
+              <p className="text-xs text-orange-400 font-medium mb-2">
+                ⚠ Meter changed from {previousClosing?.end_meter} — provide reason
+              </p>
+              <VoiceTextarea value={overrideReason} onChange={setOverrideReason}
+                placeholder="Why is the opening meter different from last closing?" rows={2} />
+            </div>
+          )}
+        </div>
       )}
+
       {(mt === 'kilometers' || mt === 'both') && (
         <Field label="Start Odometer (km)" required={mt === 'kilometers'}>
           <input type="number" className={inp()} value={form.start_km} onChange={e => set('start_km', e.target.value)} placeholder="e.g. 125400" />
         </Field>
       )}
+
+      <GPSField location={location} loading={gpsLoading} onCapture={capture} />
+
       <Field label="Notes">
-        <textarea className={inp()} rows={2} value={form.notes} onChange={e => set('notes', e.target.value)} placeholder="Site location, work details…" />
+        <VoiceTextarea value={form.notes} onChange={v => set('notes', v)} placeholder="Site location, work details…" />
       </Field>
     </Modal>
   )
 }
 
 // ── End Shift Modal ───────────────────────────────────────────────────────────
-
 function EndShiftModal({ equipment, shift, companyId, onClose }) {
   const qc = useQueryClient()
   const [form, setForm] = useState({
@@ -360,7 +509,7 @@ function EndShiftModal({ equipment, shift, companyId, onClose }) {
       )}
       {(mt === 'kilometers' || mt === 'both') && (
         <Field label="Closing Odometer (km)" required={mt === 'kilometers'}>
-          <input type="number" className={inp()} value={form.end_km} onChange={e => set('end_km', e.target.value)} placeholder={`≥ ${shift.start_km || 0}`} />
+          <input type="number" className={inp()} value={form.end_km} onChange={e => set('end_km', e.target.value)} />
         </Field>
       )}
       <div className="grid grid-cols-3 gap-2">
@@ -375,20 +524,20 @@ function EndShiftModal({ equipment, shift, companyId, onClose }) {
         </Field>
       </div>
       <Field label="Notes">
-        <textarea className={inp()} rows={2} value={form.notes} onChange={e => set('notes', e.target.value)} placeholder="Work done, issues, remarks…" />
+        <VoiceTextarea value={form.notes} onChange={v => set('notes', v)} placeholder="Work done, issues, remarks…" />
       </Field>
     </Modal>
   )
 }
 
 // ── Fuel Modal ────────────────────────────────────────────────────────────────
-
 function FuelModal({ equipment, shift, companyId, onClose }) {
   const qc = useQueryClient()
+  const { location, loading: gpsLoading, capture } = useGPS()
   const [form, setForm] = useState({
     quantity_liters: '', rate_per_liter: '',
     meter_at_filling: String(equipment.current_meter_reading || ''), km_at_filling: '',
-    delivered_by_name: '', vendor_name: '', invoice_number: '', filling_location: '', notes: '',
+    delivered_by_name: '', vendor_name: '', invoice_number: '', notes: '',
   })
   const [saving, setSaving] = useState(false)
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
@@ -412,7 +561,10 @@ function FuelModal({ equipment, shift, companyId, onClose }) {
         delivered_by_name: form.delivered_by_name || null,
         vendor_name: form.vendor_name || null,
         invoice_number: form.invoice_number || null,
-        filling_location: form.filling_location || null,
+        filling_location: location?.address || null,
+        location_lat: location?.lat || null,
+        location_lng: location?.lng || null,
+        location_address: location?.address || null,
         notes: form.notes || null,
       })
       if (error) throw error
@@ -468,25 +620,42 @@ function FuelModal({ equipment, shift, companyId, onClose }) {
           <input className={inp()} value={form.invoice_number} onChange={e => set('invoice_number', e.target.value)} placeholder="INV-001" />
         </Field>
       </div>
-      <Field label="Filling Location">
-        <input className={inp()} value={form.filling_location} onChange={e => set('filling_location', e.target.value)} placeholder="Site / location name" />
-      </Field>
+      <GPSField location={location} loading={gpsLoading} onCapture={capture} />
       <Field label="Notes">
-        <textarea className={inp()} rows={2} value={form.notes} onChange={e => set('notes', e.target.value)} />
+        <VoiceTextarea value={form.notes} onChange={v => set('notes', v)} placeholder="Any remarks…" />
       </Field>
     </Modal>
   )
 }
 
-// ── Incident Modal ────────────────────────────────────────────────────────────
+// ── Incident Modal — Dynamic per type ─────────────────────────────────────────
+const INCIDENT_OPTIONS = [
+  { value: 'breakdown',               label: 'Breakdown',               icon: '🔴', desc: 'Equipment stopped — cannot operate' },
+  { value: 'unscheduled_maintenance', label: 'Unscheduled Maintenance',  icon: '🔧', desc: 'Unexpected repair needed' },
+  { value: 'regular_maintenance',     label: 'Regular Maintenance',     icon: '⚙️', desc: 'Scheduled service / oil change etc.' },
+  { value: 'damage',                  label: 'Damage / Broken',         icon: '💥', desc: 'Physical damage to equipment' },
+  { value: 'theft',                   label: 'Theft',                   icon: '🚨', desc: 'Equipment or parts stolen' },
+  { value: 'safety_issue',            label: 'Safety Issue',            icon: '⚠️', desc: 'Hazard that needs attention' },
+  { value: 'accident',                label: 'Accident',                icon: '🚧', desc: 'Collision or mishap occurred' },
+  { value: 'near_miss',               label: 'Near Miss',               icon: '😰', desc: 'Almost had an accident' },
+  { value: 'other',                   label: 'Others',                  icon: '📋', desc: 'Any other issue' },
+]
 
 function IncidentModal({ equipment, shift, companyId, onClose }) {
   const qc = useQueryClient()
-  const [form, setForm] = useState({ incident_type: 'breakdown', severity: 'medium', description: '', action_taken: '' })
+  const { location, loading: gpsLoading, capture } = useGPS()
+  const [incidentType, setIncidentType] = useState('')
+  const [form, setForm] = useState({
+    description: '', action_taken: '', breakdown_cause: '',
+    rectification_needed: '', parts_status: 'to_order',
+    maintenance_subtype: 'unscheduled', damage_cause: '',
+    what_needs_to_be_done: '', severity: 'medium',
+  })
   const [saving, setSaving] = useState(false)
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
 
   const handleSave = async () => {
+    if (!incidentType) { toast.error('Select incident type'); return }
     if (!form.description.trim()) { toast.error('Description is required'); return }
     setSaving(true)
     try {
@@ -494,18 +663,42 @@ function IncidentModal({ equipment, shift, companyId, onClose }) {
         company_id: companyId,
         shift_id: shift?.id || null,
         equipment_id: equipment.id,
-        incident_type: form.incident_type,
-        severity: form.severity,
+        incident_type: incidentType,
+        severity: ['safety_issue', 'accident', 'near_miss'].includes(incidentType) ? form.severity : null,
         description: form.description,
         action_taken: form.action_taken || null,
+        breakdown_cause: form.breakdown_cause || null,
+        rectification_needed: form.rectification_needed || null,
+        parts_status: incidentType === 'breakdown' ? form.parts_status : null,
+        maintenance_subtype: incidentType === 'unscheduled_maintenance' || incidentType === 'regular_maintenance' ? form.maintenance_subtype : null,
+        damage_cause: form.damage_cause || null,
+        what_needs_to_be_done: form.what_needs_to_be_done || null,
+        notify_assigned: ['damage', 'safety_issue', 'theft', 'accident'].includes(incidentType),
+        location_lat: location?.lat || null,
+        location_lng: location?.lng || null,
+        location_address: location?.address || null,
         resolved: false,
       })
       if (error) throw error
-      if (form.incident_type === 'breakdown') {
+
+      // Set equipment status for certain types
+      if (incidentType === 'breakdown') {
         await supabase.from('equipment').update({ status: 'breakdown' }).eq('id', equipment.id)
-      } else if (form.incident_type === 'regular_maintenance') {
+      } else if (incidentType === 'regular_maintenance' || incidentType === 'unscheduled_maintenance') {
         await supabase.from('equipment').update({ status: 'maintenance' }).eq('id', equipment.id)
       }
+
+      // Create notification for types that need it
+      if (['damage', 'safety_issue', 'theft', 'accident', 'breakdown'].includes(incidentType)) {
+        await supabase.from('notifications').insert({
+          company_id: companyId,
+          type: `incident_${incidentType}`,
+          title: `${INCIDENT_OPTIONS.find(i => i.value === incidentType)?.label} — ${equipment.name}`,
+          body: form.description,
+          metadata: { equipment_id: equipment.id, equipment_name: equipment.name, incident_type: incidentType }
+        })
+      }
+
       toast.success('Incident reported')
       qc.invalidateQueries(['incidents', equipment.id])
       qc.invalidateQueries(['all_incidents', companyId])
@@ -516,64 +709,210 @@ function IncidentModal({ equipment, shift, companyId, onClose }) {
     } finally { setSaving(false) }
   }
 
-  const sevColors = { low: 'emerald', medium: 'yellow', high: 'orange', critical: 'red' }
-
   return (
     <Modal title={`Report Incident — ${equipment.name}`} onClose={onClose} footer={
       <>
         <button onClick={onClose} className="flex-1 btn-secondary">Cancel</button>
-        <button onClick={handleSave} disabled={saving} className="flex-1 btn-danger">
+        <button onClick={handleSave} disabled={saving || !incidentType} className="flex-1 btn-danger">
           {saving ? <><Loader2 className="w-4 h-4 animate-spin" /> Reporting…</> : 'Report Incident'}
         </button>
       </>
     }>
+      {/* Incident Type Dropdown */}
       <Field label="Incident Type" required>
-        <div className="grid grid-cols-2 gap-2">
-          {INCIDENT_TYPES.map(t => (
-            <button key={t.value} type="button" onClick={() => set('incident_type', t.value)}
-              className={`px-3 py-2 rounded-lg border text-sm font-medium text-left transition-all
-                ${form.incident_type === t.value
-                  ? 'border-primary-500 bg-primary-500/10 text-primary-300'
-                  : 'border-dark-600 bg-dark-700 text-slate-400 hover:border-dark-500'}`}>
-              {t.label}
-            </button>
+        <select className={inp()} value={incidentType} onChange={e => setIncidentType(e.target.value)}>
+          <option value="">Select what happened…</option>
+          {INCIDENT_OPTIONS.map(o => (
+            <option key={o.value} value={o.value}>{o.icon} {o.label}</option>
           ))}
-        </div>
+        </select>
+        {incidentType && (
+          <p className="text-xs text-slate-500 mt-1">{INCIDENT_OPTIONS.find(o => o.value === incidentType)?.desc}</p>
+        )}
       </Field>
-      <Field label="Severity">
-        <div className="grid grid-cols-4 gap-2">
-          {INCIDENT_SEVERITY.map(s => (
-            <button key={s.value} type="button" onClick={() => set('severity', s.value)}
-              className={`px-2 py-1.5 rounded-lg border text-xs font-medium transition-all
-                ${form.severity === s.value
-                  ? 'border-primary-500 bg-primary-500/10 text-primary-300'
-                  : 'border-dark-600 bg-dark-700 text-slate-400'}`}>
-              {s.label}
-            </button>
-          ))}
-        </div>
-      </Field>
-      <Field label="Description" required>
-        <textarea className={inp()} rows={3} value={form.description} onChange={e => set('description', e.target.value)} placeholder="What happened? Describe clearly…" />
-      </Field>
-      <Field label="Action Taken">
-        <textarea className={inp()} rows={2} value={form.action_taken} onChange={e => set('action_taken', e.target.value)} placeholder="What was done immediately?" />
-      </Field>
+
+      {/* ── Breakdown Form ── */}
+      {incidentType === 'breakdown' && (
+        <>
+          <Field label="What happened / Cause of breakdown" required>
+            <VoiceTextarea value={form.breakdown_cause} onChange={v => set('breakdown_cause', v)}
+              placeholder="Describe what failed — e.g. hydraulic hose burst, engine overheating, pump failure…" rows={3} />
+          </Field>
+          <Field label="What needs to be done to fix it">
+            <VoiceTextarea value={form.rectification_needed} onChange={v => set('rectification_needed', v)}
+              placeholder="What repair / replacement is needed?" rows={2} />
+          </Field>
+          <Field label="Spare Parts Status">
+            <select className={inp()} value={form.parts_status} onChange={e => set('parts_status', e.target.value)}>
+              <option value="available">Parts available in inventory</option>
+              <option value="partially_available">Partially available — some to order</option>
+              <option value="to_order">Need to order parts</option>
+            </select>
+          </Field>
+          <Field label="Additional Notes">
+            <VoiceTextarea value={form.description} onChange={v => set('description', v)} placeholder="Any other details…" rows={2} />
+          </Field>
+          <GPSField location={location} loading={gpsLoading} onCapture={capture} />
+        </>
+      )}
+
+      {/* ── Unscheduled Maintenance Form ── */}
+      {incidentType === 'unscheduled_maintenance' && (
+        <>
+          <Field label="What issue did you notice?" required>
+            <VoiceTextarea value={form.description} onChange={v => set('description', v)}
+              placeholder="e.g. oil leak from engine, seal damaged, coolant loss…" rows={3} />
+          </Field>
+          <Field label="What needs to be done?">
+            <VoiceTextarea value={form.what_needs_to_be_done} onChange={v => set('what_needs_to_be_done', v)}
+              placeholder="What action or repair is needed?" rows={2} />
+          </Field>
+        </>
+      )}
+
+      {/* ── Regular Maintenance Form ── */}
+      {incidentType === 'regular_maintenance' && (
+        <>
+          <Field label="Maintenance Description" required>
+            <VoiceTextarea value={form.description} onChange={v => set('description', v)}
+              placeholder="e.g. 250hr service, oil change, filter replacement…" rows={3} />
+          </Field>
+          <Field label="Action Taken">
+            <VoiceTextarea value={form.action_taken} onChange={v => set('action_taken', v)}
+              placeholder="What was done?" rows={2} />
+          </Field>
+        </>
+      )}
+
+      {/* ── Damage Form ── */}
+      {incidentType === 'damage' && (
+        <>
+          <Field label="How did the damage happen?" required>
+            <VoiceTextarea value={form.damage_cause} onChange={v => set('damage_cause', v)}
+              placeholder="e.g. lorry hit the equipment, crane rope snapped, dropped during loading…" rows={3} />
+          </Field>
+          <Field label="Describe the damage">
+            <VoiceTextarea value={form.description} onChange={v => set('description', v)}
+              placeholder="Which part is damaged? How severe?" rows={2} />
+          </Field>
+          <Field label="What needs to be done?">
+            <VoiceTextarea value={form.what_needs_to_be_done} onChange={v => set('what_needs_to_be_done', v)}
+              placeholder="Repair needed, parts to replace?" rows={2} />
+          </Field>
+          <GPSField location={location} loading={gpsLoading} onCapture={capture} />
+          <div className="bg-orange-900/20 border border-orange-700/30 rounded-lg p-2.5 text-xs text-orange-300">
+            ⚠ Admin and all assigned personnel will be notified automatically
+          </div>
+        </>
+      )}
+
+      {/* ── Theft Form ── */}
+      {incidentType === 'theft' && (
+        <>
+          <Field label="What was stolen?" required>
+            <VoiceTextarea value={form.description} onChange={v => set('description', v)}
+              placeholder="Describe what was stolen — equipment, parts, tools, fuel…" rows={3} />
+          </Field>
+          <Field label="When was it noticed?">
+            <VoiceTextarea value={form.action_taken} onChange={v => set('action_taken', v)}
+              placeholder="When and how was the theft noticed?" rows={2} />
+          </Field>
+          <GPSField location={location} loading={gpsLoading} onCapture={capture} />
+          <div className="bg-red-900/20 border border-red-700/30 rounded-lg p-2.5 text-xs text-red-300">
+            🚨 Admin will be notified immediately
+          </div>
+        </>
+      )}
+
+      {/* ── Safety Issue Form ── */}
+      {incidentType === 'safety_issue' && (
+        <>
+          <Field label="Severity">
+            <div className="grid grid-cols-4 gap-2">
+              {INCIDENT_SEVERITY.map(s => (
+                <button key={s.value} type="button" onClick={() => set('severity', s.value)}
+                  className={`px-2 py-1.5 rounded-lg border text-xs font-medium transition-all
+                    ${form.severity === s.value ? 'border-primary-500 bg-primary-500/10 text-primary-300' : 'border-dark-600 bg-dark-700 text-slate-400'}`}>
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          </Field>
+          <Field label="What is the safety issue?" required>
+            <VoiceTextarea value={form.description} onChange={v => set('description', v)}
+              placeholder="Describe the hazard clearly — what is the risk?" rows={3} />
+          </Field>
+          <Field label="What needs to be done?">
+            <VoiceTextarea value={form.what_needs_to_be_done} onChange={v => set('what_needs_to_be_done', v)}
+              placeholder="What immediate action is needed to make it safe?" rows={2} />
+          </Field>
+          <div className="bg-yellow-900/20 border border-yellow-700/30 rounded-lg p-2.5 text-xs text-yellow-300">
+            ⚠ All personnel assigned to this equipment will be notified
+          </div>
+        </>
+      )}
+
+      {/* ── Accident Form ── */}
+      {incidentType === 'accident' && (
+        <>
+          <Field label="Severity">
+            <div className="grid grid-cols-4 gap-2">
+              {INCIDENT_SEVERITY.map(s => (
+                <button key={s.value} type="button" onClick={() => set('severity', s.value)}
+                  className={`px-2 py-1.5 rounded-lg border text-xs font-medium transition-all
+                    ${form.severity === s.value ? 'border-primary-500 bg-primary-500/10 text-primary-300' : 'border-dark-600 bg-dark-700 text-slate-400'}`}>
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          </Field>
+          <Field label="What happened?" required>
+            <VoiceTextarea value={form.description} onChange={v => set('description', v)}
+              placeholder="Describe the accident — what happened, who was involved?" rows={3} />
+          </Field>
+          <Field label="Immediate action taken">
+            <VoiceTextarea value={form.action_taken} onChange={v => set('action_taken', v)}
+              placeholder="What was done immediately after the accident?" rows={2} />
+          </Field>
+          <GPSField location={location} loading={gpsLoading} onCapture={capture} />
+        </>
+      )}
+
+      {/* ── Near Miss Form ── */}
+      {incidentType === 'near_miss' && (
+        <>
+          <Field label="What almost happened?" required>
+            <VoiceTextarea value={form.description} onChange={v => set('description', v)}
+              placeholder="Describe the near miss — what could have gone wrong?" rows={3} />
+          </Field>
+          <Field label="Action taken to prevent recurrence">
+            <VoiceTextarea value={form.action_taken} onChange={v => set('action_taken', v)}
+              placeholder="What was done to prevent this from happening again?" rows={2} />
+          </Field>
+        </>
+      )}
+
+      {/* ── Others Form ── */}
+      {incidentType === 'other' && (
+        <Field label="Description" required>
+          <VoiceTextarea value={form.description} onChange={v => set('description', v)}
+            placeholder="Describe the issue…" rows={4} />
+        </Field>
+      )}
     </Modal>
   )
 }
 
 // ── Equipment Detail ──────────────────────────────────────────────────────────
-
 function EquipmentDetail({ equipment, companyId, onClose }) {
   const [modal, setModal] = useState(null)
 
   const { data: activeShift } = useQuery({
     queryKey: ['active_shift', equipment.id],
     queryFn: async () => {
-      const { data } = await supabase
-        .from('shifts').select('*').eq('equipment_id', equipment.id)
-        .eq('status', 'open').order('created_at', { ascending: false }).limit(1).maybeSingle()
+      const { data } = await supabase.from('shifts').select('*')
+        .eq('equipment_id', equipment.id).eq('status', 'open')
+        .order('created_at', { ascending: false }).limit(1).maybeSingle()
       return data
     },
   })
@@ -581,9 +920,8 @@ function EquipmentDetail({ equipment, companyId, onClose }) {
   const { data: recentShifts = [] } = useQuery({
     queryKey: ['shifts', equipment.id],
     queryFn: async () => {
-      const { data } = await supabase
-        .from('shifts').select('*').eq('equipment_id', equipment.id)
-        .order('shift_date', { ascending: false }).limit(5)
+      const { data } = await supabase.from('shifts').select('*')
+        .eq('equipment_id', equipment.id).order('shift_date', { ascending: false }).limit(5)
       return data || []
     },
   })
@@ -591,9 +929,8 @@ function EquipmentDetail({ equipment, companyId, onClose }) {
   const { data: recentFuel = [] } = useQuery({
     queryKey: ['fuel', equipment.id],
     queryFn: async () => {
-      const { data } = await supabase
-        .from('shift_fuel_entries').select('*').eq('equipment_id', equipment.id)
-        .order('created_at', { ascending: false }).limit(5)
+      const { data } = await supabase.from('shift_fuel_entries').select('*')
+        .eq('equipment_id', equipment.id).order('created_at', { ascending: false }).limit(5)
       return data || []
     },
   })
@@ -601,9 +938,9 @@ function EquipmentDetail({ equipment, companyId, onClose }) {
   const { data: openIncidents = [] } = useQuery({
     queryKey: ['incidents', equipment.id],
     queryFn: async () => {
-      const { data } = await supabase
-        .from('shift_incidents').select('*').eq('equipment_id', equipment.id)
-        .eq('resolved', false).order('created_at', { ascending: false })
+      const { data } = await supabase.from('shift_incidents').select('*')
+        .eq('equipment_id', equipment.id).eq('resolved', false)
+        .order('created_at', { ascending: false })
       return data || []
     },
   })
@@ -643,6 +980,11 @@ function EquipmentDetail({ equipment, companyId, onClose }) {
             </div>
             <p className="text-sm text-slate-200">{activeShift.operator_name} · Started {activeShift.start_time}</p>
             {activeShift.site_incharge_name && <p className="text-xs text-slate-400">Incharge: {activeShift.site_incharge_name}</p>}
+            {activeShift.location_address && (
+              <p className="text-xs text-slate-500 mt-1 flex items-start gap-1">
+                <MapPin className="w-3 h-3 text-slate-500 mt-0.5 shrink-0" />{activeShift.location_address}
+              </p>
+            )}
           </div>
         )}
 
@@ -672,7 +1014,7 @@ function EquipmentDetail({ equipment, companyId, onClose }) {
           <div className="bg-red-900/20 border border-red-700/30 rounded-lg p-3">
             <p className="text-xs font-semibold text-red-400 mb-1">⚠ {openIncidents.length} Open Incident{openIncidents.length > 1 ? 's' : ''}</p>
             {openIncidents.map(i => (
-              <p key={i.id} className="text-xs text-slate-300">· {INCIDENT_TYPES.find(t => t.value === i.incident_type)?.label} — {i.description?.slice(0, 60)}</p>
+              <p key={i.id} className="text-xs text-slate-300">· {INCIDENT_OPTIONS.find(t => t.value === i.incident_type)?.label || i.incident_type} — {i.description?.slice(0, 60)}</p>
             ))}
           </div>
         )}
@@ -682,12 +1024,14 @@ function EquipmentDetail({ equipment, companyId, onClose }) {
             <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Recent Shifts</p>
             <div className="space-y-2">
               {recentShifts.map(s => (
-                <div key={s.id} className="bg-dark-700 rounded-lg px-3 py-2 text-xs flex items-center justify-between">
-                  <div>
+                <div key={s.id} className="bg-dark-700 rounded-lg px-3 py-2 text-xs">
+                  <div className="flex items-center justify-between">
                     <p className="text-slate-200 font-medium">{s.operator_name} · {s.shift_date}</p>
-                    <p className="text-slate-400">{s.start_time}{s.end_time ? ` → ${s.end_time}` : ' (open)'} · {s.working_hours || 0} hrs</p>
+                    <span className={`px-2 py-0.5 rounded-full ${s.status === 'open' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-dark-600 text-slate-400'}`}>{s.status}</span>
                   </div>
-                  <span className={`px-2 py-0.5 rounded-full ${s.status === 'open' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-dark-600 text-slate-400'}`}>{s.status}</span>
+                  <p className="text-slate-400">{s.start_time}{s.end_time ? ` → ${s.end_time}` : ' (open)'} · {s.working_hours || 0} hrs</p>
+                  {s.meter_discrepancy && <p className="text-orange-400 mt-0.5">⚠ Meter corrected · {s.meter_discrepancy_reason}</p>}
+                  {s.location_address && <p className="text-slate-500 mt-0.5 flex items-center gap-1"><MapPin className="w-2.5 h-2.5" />{s.location_address.slice(0, 50)}…</p>}
                 </div>
               ))}
             </div>
@@ -703,6 +1047,7 @@ function EquipmentDetail({ equipment, companyId, onClose }) {
                   <div>
                     <p className="text-slate-200 font-medium">{f.quantity_liters}L {f.vendor_name ? `· ${f.vendor_name}` : ''}</p>
                     <p className="text-slate-400">{f.delivered_by_name ? `By ${f.delivered_by_name}` : ''}{f.invoice_number ? ` · #${f.invoice_number}` : ''}</p>
+                    {f.location_address && <p className="text-slate-500 flex items-center gap-1 mt-0.5"><MapPin className="w-2.5 h-2.5" />{f.location_address.slice(0, 40)}…</p>}
                   </div>
                   {f.total_amount && <span className="text-yellow-400 font-medium">₹{Number(f.total_amount).toLocaleString('en-IN')}</span>}
                 </div>
@@ -713,15 +1058,14 @@ function EquipmentDetail({ equipment, companyId, onClose }) {
       </Modal>
 
       {modal === 'start'    && <StartShiftModal  equipment={equipment} companyId={companyId} onClose={() => { setModal(null); onClose() }} />}
-      {modal === 'end'      && <EndShiftModal    equipment={equipment} shift={activeShift} companyId={companyId} onClose={() => { setModal(null); onClose() }} />}
-      {modal === 'fuel'     && <FuelModal        equipment={equipment} shift={activeShift} companyId={companyId} onClose={() => setModal(null)} />}
-      {modal === 'incident' && <IncidentModal    equipment={equipment} shift={activeShift} companyId={companyId} onClose={() => setModal(null)} />}
+      {modal === 'end'      && <EndShiftModal    equipment={equipment} shift={activeShift}   companyId={companyId} onClose={() => { setModal(null); onClose() }} />}
+      {modal === 'fuel'     && <FuelModal        equipment={equipment} shift={activeShift}   companyId={companyId} onClose={() => setModal(null)} />}
+      {modal === 'incident' && <IncidentModal    equipment={equipment} shift={activeShift}   companyId={companyId} onClose={() => setModal(null)} />}
     </>
   )
 }
 
 // ── Equipment Card ────────────────────────────────────────────────────────────
-
 function EquipmentCard({ equipment, onClick }) {
   const st = STATUS_COLORS[equipment.status] || STATUS_COLORS.active
   return (
@@ -736,7 +1080,8 @@ function EquipmentCard({ equipment, onClick }) {
       </div>
       <div className="flex items-center gap-4 mt-2">
         <div className="flex items-center gap-1.5 text-xs text-slate-400">
-          <Gauge className="w-3.5 h-3.5" /><MeterDisplay equipment={equipment} />
+          <Gauge className="w-3.5 h-3.5" />
+          <span>{Number(equipment.current_meter_reading || 0).toFixed(1)} {equipment.meter_type === 'kilometers' ? 'km' : 'hrs'}</span>
         </div>
         {equipment.registration_number && <span className="text-xs text-slate-500 font-mono">{equipment.registration_number}</span>}
       </div>
@@ -752,7 +1097,6 @@ function EquipmentCard({ equipment, onClick }) {
 }
 
 // ── Fleet Tab ─────────────────────────────────────────────────────────────────
-
 function FleetTab({ companyId }) {
   const [showAdd, setShowAdd]   = useState(false)
   const [selected, setSelected] = useState(null)
@@ -794,12 +1138,10 @@ function FleetTab({ companyId }) {
           })}
         </div>
       )}
-
       <div className="px-4 pb-2 shrink-0">
         <input className="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500 placeholder-slate-500"
           placeholder="Search equipment, reg. no, category…" value={search} onChange={e => setSearch(e.target.value)} />
       </div>
-
       <div className="flex-1 overflow-y-auto px-4 pb-24">
         {isLoading ? (
           <div className="flex items-center justify-center py-16"><Loader2 className="w-6 h-6 text-primary-400 animate-spin" /></div>
@@ -817,13 +1159,11 @@ function FleetTab({ companyId }) {
           </div>
         )}
       </div>
-
       {equipment.length > 0 && (
         <div className="absolute bottom-0 left-0 right-0 px-4 pb-4 bg-gradient-to-t from-dark-900 pt-8">
           <button onClick={() => setShowAdd(true)} className="w-full btn-primary py-3"><Plus className="w-5 h-5" /> Add Equipment</button>
         </div>
       )}
-
       {showAdd  && <AddEquipmentModal companyId={companyId} onClose={() => setShowAdd(false)} />}
       {selected && <EquipmentDetail equipment={selected} companyId={companyId} onClose={() => setSelected(null)} />}
     </div>
@@ -831,7 +1171,6 @@ function FleetTab({ companyId }) {
 }
 
 // ── Shifts Tab ────────────────────────────────────────────────────────────────
-
 function ShiftsTab({ companyId }) {
   const [filterDate, setFilterDate] = useState(today())
 
@@ -854,7 +1193,7 @@ function ShiftsTab({ companyId }) {
       <div className="px-4 py-2 shrink-0 flex items-center gap-3">
         <input type="date" className="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
           value={filterDate} onChange={e => setFilterDate(e.target.value)} />
-        {shifts.length > 0 && <span className="text-xs text-slate-400">{shifts.length} shifts · {totalHours.toFixed(1)} hrs</span>}
+        {shifts.length > 0 && <span className="text-xs text-slate-400">{shifts.length} shifts · {totalHours.toFixed(1)} hrs total</span>}
       </div>
       <div className="flex-1 overflow-y-auto px-4 pb-4">
         {isLoading ? (
@@ -878,10 +1217,17 @@ function ShiftsTab({ companyId }) {
                 <div className="mt-2 grid grid-cols-2 gap-x-4 text-xs text-slate-400">
                   <span><User className="w-3 h-3 inline mr-1" />{s.operator_name || '—'}</span>
                   <span><Clock className="w-3 h-3 inline mr-1" />{s.start_time}{s.end_time ? ` → ${s.end_time}` : ' (ongoing)'}</span>
-                  {s.site_incharge_name && <span className="col-span-2 mt-0.5">Incharge: {s.site_incharge_name}</span>}
                   <span>Opening: {s.start_meter || s.start_km} {s.equipment?.meter_type === 'kilometers' ? 'km' : 'hrs'}</span>
                   <span>Worked: <strong className="text-slate-200">{s.working_hours || 0} hrs</strong></span>
                 </div>
+                {s.meter_discrepancy && (
+                  <p className="text-xs text-orange-400 mt-1">⚠ Meter corrected · {s.meter_discrepancy_reason}</p>
+                )}
+                {s.location_address && (
+                  <p className="text-xs text-slate-500 mt-1 flex items-center gap-1">
+                    <MapPin className="w-3 h-3" />{s.location_address.slice(0, 60)}
+                  </p>
+                )}
               </div>
             ))}
           </div>
@@ -892,7 +1238,6 @@ function ShiftsTab({ companyId }) {
 }
 
 // ── Fuel Tab ──────────────────────────────────────────────────────────────────
-
 function FuelTab({ companyId }) {
   const { data: entries = [], isLoading } = useQuery({
     queryKey: ['all_fuel', companyId],
@@ -953,8 +1298,12 @@ function FuelTab({ companyId }) {
                   {e.delivered_by_name && <span>By: {e.delivered_by_name}</span>}
                   {e.vendor_name      && <span>Vendor: {e.vendor_name}</span>}
                   {e.invoice_number   && <span>Invoice: #{e.invoice_number}</span>}
-                  {e.filling_location && <span>Location: {e.filling_location}</span>}
                 </div>
+                {e.location_address && (
+                  <p className="text-xs text-slate-500 mt-1 flex items-center gap-1">
+                    <MapPin className="w-3 h-3" />{e.location_address.slice(0, 60)}
+                  </p>
+                )}
               </div>
             ))}
           </div>
@@ -965,7 +1314,6 @@ function FuelTab({ companyId }) {
 }
 
 // ── Incidents Tab ─────────────────────────────────────────────────────────────
-
 function IncidentsTab({ companyId }) {
   const qc = useQueryClient()
   const { data: incidents = [], isLoading } = useQuery({
@@ -1007,13 +1355,13 @@ function IncidentsTab({ companyId }) {
         ) : (
           <div className="space-y-2">
             {incidents.map(i => {
-              const incType = INCIDENT_TYPES.find(t => t.value === i.incident_type)
+              const incOption = INCIDENT_OPTIONS.find(t => t.value === i.incident_type)
               return (
                 <div key={i.id} className={`bg-dark-800 border rounded-xl p-3 ${i.resolved ? 'border-dark-700 opacity-60' : 'border-orange-700/30'}`}>
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex-1 min-w-0">
                       <p className="font-semibold text-slate-100 text-sm">{i.equipment?.name}</p>
-                      <p className="text-xs text-slate-400">{incType?.label} · {i.severity}</p>
+                      <p className="text-xs text-slate-400">{incOption?.icon} {incOption?.label || i.incident_type}{i.severity ? ` · ${i.severity}` : ''}</p>
                     </div>
                     {!i.resolved && (
                       <button onClick={() => resolveIncident(i.id)}
@@ -1023,7 +1371,16 @@ function IncidentsTab({ companyId }) {
                     )}
                   </div>
                   <p className="text-xs text-slate-300 mt-1">{i.description}</p>
-                  {i.action_taken && <p className="text-xs text-slate-500 mt-1">Action: {i.action_taken}</p>}
+                  {i.breakdown_cause && <p className="text-xs text-slate-400 mt-0.5">Cause: {i.breakdown_cause}</p>}
+                  {i.rectification_needed && <p className="text-xs text-slate-400 mt-0.5">Fix needed: {i.rectification_needed}</p>}
+                  {i.parts_status && <p className="text-xs text-slate-400 mt-0.5">Parts: {i.parts_status.replace(/_/g, ' ')}</p>}
+                  {i.damage_cause && <p className="text-xs text-slate-400 mt-0.5">How: {i.damage_cause}</p>}
+                  {i.what_needs_to_be_done && <p className="text-xs text-slate-400 mt-0.5">Action: {i.what_needs_to_be_done}</p>}
+                  {i.location_address && (
+                    <p className="text-xs text-slate-500 mt-1 flex items-center gap-1">
+                      <MapPin className="w-2.5 h-2.5" />{i.location_address.slice(0, 60)}
+                    </p>
+                  )}
                   <p className="text-xs text-slate-500 mt-1">{format(new Date(i.created_at), 'dd MMM yyyy, HH:mm')}</p>
                 </div>
               )
@@ -1036,7 +1393,6 @@ function IncidentsTab({ companyId }) {
 }
 
 // ── Main FleetPage ────────────────────────────────────────────────────────────
-
 export default function FleetPage() {
   const { companyId } = useAuth()
   const [activeTab, setActiveTab] = useState('fleet')
@@ -1054,7 +1410,6 @@ export default function FleetPage() {
         <h1 className="text-lg font-bold text-slate-100">Fleet Management</h1>
         <p className="text-xs text-slate-400">Track equipment, shifts, fuel & incidents</p>
       </div>
-
       <div className="flex border-b border-dark-700 shrink-0 px-2">
         {tabs.map(t => {
           const Icon = t.icon
@@ -1067,7 +1422,6 @@ export default function FleetPage() {
           )
         })}
       </div>
-
       <div className="flex-1 overflow-hidden">
         {activeTab === 'fleet'     && <FleetTab     companyId={companyId} />}
         {activeTab === 'shifts'    && <ShiftsTab    companyId={companyId} />}
