@@ -8,8 +8,7 @@ import {
 import {
   Truck, Plus, ChevronRight, Fuel, AlertTriangle, Clock,
   X, Loader2, CheckCircle, Activity, PlayCircle, StopCircle,
-  Gauge, User, Mic, MicOff, MapPin, AlertCircle, Wrench,
-  Shield, Package
+  Gauge, User, Mic, MicOff, MapPin, Camera
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format } from 'date-fns'
@@ -17,6 +16,92 @@ import { format } from 'date-fns'
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function today() { return new Date().toISOString().split('T')[0] }
 function nowTime() { return new Date().toTimeString().slice(0, 5) }
+
+// ── Add timestamp overlay to image using Canvas ───────────────────────────────
+async function addTimestampToImage(file) {
+  return new Promise((resolve) => {
+    const img = new Image()
+    const url = URL.createObjectURL(file)
+    img.onload = () => {
+      const canvas = document.createElement('canvas')
+      canvas.width = img.width
+      canvas.height = img.height
+      const ctx = canvas.getContext('2d')
+      ctx.drawImage(img, 0, 0)
+
+      const now = new Date()
+      const stamp = now.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) +
+        '  ' + now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+
+      const fontSize = Math.max(16, Math.round(img.width / 28))
+      ctx.font = `bold ${fontSize}px monospace`
+      const pad = 12
+      const barH = fontSize + pad * 2
+
+      // Semi-transparent dark bar at bottom
+      ctx.fillStyle = 'rgba(0,0,0,0.65)'
+      ctx.fillRect(0, img.height - barH, img.width, barH)
+
+      // Golden timestamp text
+      ctx.fillStyle = '#FFD700'
+      ctx.fillText(stamp, pad, img.height - pad - 2)
+
+      canvas.toBlob((blob) => { URL.revokeObjectURL(url); resolve(blob) }, 'image/jpeg', 0.88)
+    }
+    img.src = url
+  })
+}
+
+// ── Upload photo to Supabase Storage ─────────────────────────────────────────
+async function uploadPhoto(blob, companyId, label) {
+  const path = `${companyId}/${label}_${Date.now()}.jpg`
+  const { error } = await supabase.storage.from('nhance-photos').upload(path, blob, {
+    contentType: 'image/jpeg', upsert: false,
+  })
+  if (error) throw error
+  const { data: { publicUrl } } = supabase.storage.from('nhance-photos').getPublicUrl(path)
+  return publicUrl
+}
+
+// ── Camera Button ─────────────────────────────────────────────────────────────
+function CameraButton({ companyId, label, photoUrl, onCapture }) {
+  const inputRef = useRef(null)
+  const [uploading, setUploading] = useState(false)
+
+  const handleFile = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setUploading(true)
+    try {
+      const blob = await addTimestampToImage(file)
+      const url = await uploadPhoto(blob, companyId, label)
+      onCapture(url)
+      toast.success('Photo saved with timestamp')
+    } catch (err) {
+      toast.error('Failed to save photo — check Storage bucket')
+    } finally { setUploading(false); e.target.value = '' }
+  }
+
+  return (
+    <div className="flex items-center gap-2 mt-1.5">
+      <input ref={inputRef} type="file" accept="image/*" capture="environment"
+        className="hidden" onChange={handleFile} />
+      <button type="button" onClick={() => inputRef.current?.click()} disabled={uploading}
+        className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border text-xs font-medium transition-all
+          ${photoUrl
+            ? 'border-emerald-600 bg-emerald-900/20 text-emerald-400'
+            : 'border-dark-500 bg-dark-700 text-slate-400 hover:border-primary-500 hover:text-primary-400'}`}>
+        {uploading
+          ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Uploading…</>
+          : <><Camera className="w-3.5 h-3.5" /> {photoUrl ? '✓ Photo taken' : 'Take Photo'}</>}
+      </button>
+      {photoUrl && (
+        <a href={photoUrl} target="_blank" rel="noopener noreferrer"
+          className="text-xs text-primary-400 underline">View</a>
+      )}
+    </div>
+  )
+}
 
 // ── GPS Hook ──────────────────────────────────────────────────────────────────
 function useGPS() {
@@ -94,23 +179,17 @@ function VoiceTextarea({ value, onChange, placeholder, rows = 2 }) {
   )
 }
 
-// ── GPS Field ─────────────────────────────────────────────────────────────────
-function GPSField({ location, loading, onCapture }) {
+// ── GPS Field — shows status only, auto-captured on mount ────────────────────
+function GPSField({ location, loading }) {
   return (
-    <div>
-      <label className="block text-xs font-medium text-slate-400 mb-1">Location (GPS)</label>
-      {location ? (
-        <div className="bg-dark-700 border border-emerald-700/30 rounded-lg px-3 py-2 text-xs flex items-start gap-2">
-          <MapPin className="w-3.5 h-3.5 text-emerald-400 mt-0.5 shrink-0" />
-          <span className="text-slate-300 leading-relaxed">{location.address}</span>
-        </div>
-      ) : (
-        <button type="button" onClick={onCapture} disabled={loading}
-          className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg border border-dashed border-dark-500 text-slate-400 hover:border-primary-500 hover:text-primary-400 text-sm transition-colors disabled:opacity-50">
-          {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <MapPin className="w-4 h-4" />}
-          {loading ? 'Getting location…' : 'Tap to capture GPS location'}
-        </button>
-      )}
+    <div className="flex items-center gap-2 text-xs">
+      <MapPin className={`w-3.5 h-3.5 shrink-0 ${location ? 'text-emerald-400' : 'text-slate-500'}`} />
+      {loading
+        ? <span className="text-slate-500 flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Getting location…</span>
+        : location
+          ? <span className="text-slate-400 truncate">{location.address}</span>
+          : <span className="text-slate-500">Location unavailable — check GPS permission</span>
+      }
     </div>
   )
 }
@@ -288,6 +367,7 @@ function StartShiftModal({ equipment, companyId, onClose }) {
   const [previousClosing, setPreviousClosing] = useState(null)
   const [meterChanged, setMeterChanged] = useState(false)
   const [overrideReason, setOverrideReason] = useState('')
+  const [meterPhotoUrl, setMeterPhotoUrl] = useState(null)
   const [saving, setSaving] = useState(false)
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
   const mt = equipment.meter_type
@@ -337,6 +417,7 @@ function StartShiftModal({ equipment, companyId, onClose }) {
         meter_previous_closing: previousClosing?.end_meter || null,
         meter_discrepancy: meterChanged,
         meter_discrepancy_reason: meterChanged ? overrideReason : null,
+        meter_photo_url: meterPhotoUrl || null,
         location_lat: location?.lat || null,
         location_lng: location?.lng || null,
         location_address: location?.address || null,
@@ -410,6 +491,7 @@ function StartShiftModal({ equipment, companyId, onClose }) {
               Pre-filled from last shift closing ({previousClosing.operator_name} · {previousClosing.shift_date})
             </p>
           )}
+          <CameraButton companyId={companyId} label="meter_start" photoUrl={meterPhotoUrl} onCapture={setMeterPhotoUrl} />
           {meterChanged && (
             <div className="mt-2 bg-orange-900/20 border border-orange-700/30 rounded-lg p-3">
               <p className="text-xs text-orange-400 font-medium mb-2">
@@ -428,7 +510,7 @@ function StartShiftModal({ equipment, companyId, onClose }) {
         </Field>
       )}
 
-      <GPSField location={location} loading={gpsLoading} onCapture={capture} />
+      <GPSField location={location} loading={gpsLoading} />
 
       <Field label="Notes">
         <VoiceTextarea value={form.notes} onChange={v => set('notes', v)} placeholder="Site location, work details…" />
@@ -444,6 +526,8 @@ function EndShiftModal({ equipment, shift, companyId, onClose }) {
     end_time: nowTime(), end_meter: '', end_km: '',
     working_hours: '', idle_hours: '0', breakdown_hours: '0', notes: '',
   })
+  const [meterPhotoUrl, setMeterPhotoUrl] = useState(null)
+  const [logsheetPhotoUrl, setLogsheetPhotoUrl] = useState(null)
   const [saving, setSaving] = useState(false)
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
   const mt = equipment.meter_type
@@ -467,6 +551,8 @@ function EndShiftModal({ equipment, shift, companyId, onClose }) {
         breakdown_hours: Number(form.breakdown_hours || 0),
         status: 'closed',
         notes: form.notes || shift.notes,
+        meter_photo_url: meterPhotoUrl || null,
+        logsheet_photo_url: logsheetPhotoUrl || null,
       }).eq('id', shift.id)
       if (error) throw error
 
@@ -503,9 +589,12 @@ function EndShiftModal({ equipment, shift, companyId, onClose }) {
         <input type="time" className={inp()} value={form.end_time} onChange={e => set('end_time', e.target.value)} />
       </Field>
       {(mt === 'hours' || mt === 'both') && (
-        <Field label="Closing Hour Meter (hrs)" required>
-          <input type="number" className={inp()} value={form.end_meter} onChange={e => set('end_meter', e.target.value)} placeholder={`≥ ${shift.start_meter}`} step="0.1" />
-        </Field>
+        <div>
+          <Field label="Closing Hour Meter (hrs)" required>
+            <input type="number" className={inp()} value={form.end_meter} onChange={e => set('end_meter', e.target.value)} placeholder={`≥ ${shift.start_meter}`} step="0.1" />
+          </Field>
+          <CameraButton companyId={companyId} label="meter_end" photoUrl={meterPhotoUrl} onCapture={setMeterPhotoUrl} />
+        </div>
       )}
       {(mt === 'kilometers' || mt === 'both') && (
         <Field label="Closing Odometer (km)" required={mt === 'kilometers'}>
@@ -526,6 +615,11 @@ function EndShiftModal({ equipment, shift, companyId, onClose }) {
       <Field label="Notes">
         <VoiceTextarea value={form.notes} onChange={v => set('notes', v)} placeholder="Work done, issues, remarks…" />
       </Field>
+      <div>
+        <p className="text-xs font-medium text-slate-400 mb-1">Log Sheet Photo</p>
+        <p className="text-xs text-slate-500 mb-2">Photograph the paper log / daily report before closing</p>
+        <CameraButton companyId={companyId} label="logsheet" photoUrl={logsheetPhotoUrl} onCapture={setLogsheetPhotoUrl} />
+      </div>
     </Modal>
   )
 }
@@ -539,6 +633,7 @@ function FuelModal({ equipment, shift, companyId, onClose }) {
     meter_at_filling: String(equipment.current_meter_reading || ''), km_at_filling: '',
     delivered_by_name: '', vendor_name: '', invoice_number: '', notes: '',
   })
+  const [fuelPhotoUrl, setFuelPhotoUrl] = useState(null)
   const [saving, setSaving] = useState(false)
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
   const mt = equipment.meter_type
@@ -565,6 +660,7 @@ function FuelModal({ equipment, shift, companyId, onClose }) {
         location_lat: location?.lat || null,
         location_lng: location?.lng || null,
         location_address: location?.address || null,
+        fuel_photo_url: fuelPhotoUrl || null,
         notes: form.notes || null,
       })
       if (error) throw error
@@ -599,6 +695,11 @@ function FuelModal({ equipment, shift, companyId, onClose }) {
           Total: <span className="font-bold text-primary-300">₹{(Number(form.quantity_liters) * Number(form.rate_per_liter)).toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
         </div>
       )}
+      <div>
+        <p className="text-xs font-medium text-slate-400 mb-1">Fuel Delivery Photo</p>
+        <p className="text-xs text-slate-500 mb-1">Capture meter / delivery slip / invoice as proof</p>
+        <CameraButton companyId={companyId} label="fuel" photoUrl={fuelPhotoUrl} onCapture={setFuelPhotoUrl} />
+      </div>
       {(mt === 'hours' || mt === 'both') && (
         <Field label="Hour Meter at Filling (hrs)">
           <input type="number" className={inp()} value={form.meter_at_filling} onChange={e => set('meter_at_filling', e.target.value)} step="0.1" />
@@ -620,7 +721,7 @@ function FuelModal({ equipment, shift, companyId, onClose }) {
           <input className={inp()} value={form.invoice_number} onChange={e => set('invoice_number', e.target.value)} placeholder="INV-001" />
         </Field>
       </div>
-      <GPSField location={location} loading={gpsLoading} onCapture={capture} />
+      <GPSField location={location} loading={gpsLoading} />
       <Field label="Notes">
         <VoiceTextarea value={form.notes} onChange={v => set('notes', v)} placeholder="Any remarks…" />
       </Field>
@@ -752,7 +853,7 @@ function IncidentModal({ equipment, shift, companyId, onClose }) {
           <Field label="Additional Notes">
             <VoiceTextarea value={form.description} onChange={v => set('description', v)} placeholder="Any other details…" rows={2} />
           </Field>
-          <GPSField location={location} loading={gpsLoading} onCapture={capture} />
+          <GPSField location={location} loading={gpsLoading} />
         </>
       )}
 
@@ -799,7 +900,7 @@ function IncidentModal({ equipment, shift, companyId, onClose }) {
             <VoiceTextarea value={form.what_needs_to_be_done} onChange={v => set('what_needs_to_be_done', v)}
               placeholder="Repair needed, parts to replace?" rows={2} />
           </Field>
-          <GPSField location={location} loading={gpsLoading} onCapture={capture} />
+          <GPSField location={location} loading={gpsLoading} />
           <div className="bg-orange-900/20 border border-orange-700/30 rounded-lg p-2.5 text-xs text-orange-300">
             ⚠ Admin and all assigned personnel will be notified automatically
           </div>
@@ -817,7 +918,7 @@ function IncidentModal({ equipment, shift, companyId, onClose }) {
             <VoiceTextarea value={form.action_taken} onChange={v => set('action_taken', v)}
               placeholder="When and how was the theft noticed?" rows={2} />
           </Field>
-          <GPSField location={location} loading={gpsLoading} onCapture={capture} />
+          <GPSField location={location} loading={gpsLoading} />
           <div className="bg-red-900/20 border border-red-700/30 rounded-lg p-2.5 text-xs text-red-300">
             🚨 Admin will be notified immediately
           </div>
@@ -874,7 +975,7 @@ function IncidentModal({ equipment, shift, companyId, onClose }) {
             <VoiceTextarea value={form.action_taken} onChange={v => set('action_taken', v)}
               placeholder="What was done immediately after the accident?" rows={2} />
           </Field>
-          <GPSField location={location} loading={gpsLoading} onCapture={capture} />
+          <GPSField location={location} loading={gpsLoading} />
         </>
       )}
 
