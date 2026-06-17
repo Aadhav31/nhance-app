@@ -49,19 +49,22 @@ function validateGSTIN(g) {
 
 async function fetchGSTINDetails(gstin) {
   // Calls Vercel serverless proxy (/api/gstin) to avoid CORS
+  // Returns:
+  //   { businessName, ... }  → verified successfully
+  //   { notFound: true }     → GST portal confirmed GSTIN doesn't exist (HTTP 404)
+  //   { unavailable: true }  → portal unreachable / auth error (HTTP 503) — GSTIN may still be valid
+  //   null                   → network timeout or unexpected error
   const ctrl = new AbortController()
-  setTimeout(() => ctrl.abort(), 12000)
+  setTimeout(() => ctrl.abort(), 14000)
   try {
     const res = await fetch(`/api/gstin?gstin=${gstin}`, {
       signal: ctrl.signal, headers: { Accept: 'application/json' }
     })
-    if (res.status === 404) {
-      // API reached but GSTIN not found in records
-      return { notFound: true }
-    }
-    if (!res.ok) return null
+    if (res.status === 404) return { notFound: true }
+    if (res.status === 503) return { unavailable: true }
+    if (!res.ok) return { unavailable: true }
     const data = await res.json()
-    if (!data?.businessName) return null
+    if (!data?.businessName) return { unavailable: true }
     return {
       businessName:      data.businessName,
       tradeName:         data.tradeName || '',
@@ -69,10 +72,9 @@ async function fetchGSTINDetails(gstin) {
       registeredAddress: data.address || '',
       city:              data.city || '',
       pincode:           data.pincode || '',
-      registrationDate:  data.registrationDate || '',
     }
   } catch {
-    return null // network/timeout — user enters manually
+    return { unavailable: true }
   }
 }
 
@@ -120,10 +122,11 @@ function SectionHeader({ icon: Icon, label }) {
 }
 
 // ── GSTIN Verifier Component ──────────────────────────────────────────────────
+// apiResult: null=not tried, 'success'=verified, 'notfound'=GST confirmed absent, 'unavailable'=portal down
 function GSTINVerifier({ value, onChange, onVerified }) {
   const [verifying, setVerifying] = useState(false)
   const [result, setResult] = useState(null)
-  const [apiResult, setApiResult] = useState(null) // null=not tried, true=success, false=failed
+  const [apiResult, setApiResult] = useState(null)
 
   const validation = validateGSTIN(value)
 
@@ -139,31 +142,34 @@ function GSTINVerifier({ value, onChange, onVerified }) {
     setApiResult(null)
     try {
       const data = await fetchGSTINDetails(validation.gstin)
-      if (data && !data.notFound) {
+      if (data?.businessName) {
+        // Full success — auto-fill
         setResult(data)
-        setApiResult(true)
+        setApiResult('success')
         onVerified({
-          gstin: validation.gstin,
-          gstinStatus: data.gstinStatus,
-          gstinVerified: true,
-          gstinVerifiedAt: new Date().toISOString(),
-          businessName: data.businessName,
-          tradeName: data.tradeName,
-          pan: validation.pan,
-          state: validation.state,
+          gstin:             validation.gstin,
+          gstinStatus:       data.gstinStatus,
+          gstinVerified:     true,
+          gstinVerifiedAt:   new Date().toISOString(),
+          businessName:      data.businessName,
+          tradeName:         data.tradeName,
+          pan:               validation.pan,
+          state:             validation.state,
           registeredAddress: data.registeredAddress,
-          city: data.city,
-          pincode: data.pincode,
+          city:              data.city,
+          pincode:           data.pincode,
         })
         toast.success('GSTIN verified — details auto-filled from GST portal')
       } else if (data?.notFound) {
+        // GST portal confirmed this GSTIN doesn't exist
         setApiResult('notfound')
         onVerified({ gstin: validation.gstin, gstinVerified: false, pan: validation.pan, state: validation.state })
-        toast.error('GSTIN not found in GST records — check the number is correct and active')
+        toast.error('GSTIN not registered in GST portal')
       } else {
-        setApiResult(false)
+        // Portal unavailable (auth/network) — GSTIN format is valid, let user proceed manually
+        setApiResult('unavailable')
         onVerified({ gstin: validation.gstin, gstinStatus: 'Unverified', gstinVerified: false, pan: validation.pan, state: validation.state })
-        toast('Format valid — GST portal unreachable. Fill details manually.', { icon: '⚠️' })
+        toast('GST portal unavailable — enter business details manually', { icon: '⚠️' })
       }
     } finally { setVerifying(false) }
   }
@@ -190,41 +196,71 @@ function GSTINVerifier({ value, onChange, onVerified }) {
           type="button" onClick={handleVerify}
           disabled={!validation.valid || verifying}
           className="flex items-center gap-1.5 px-4 py-2.5 rounded-lg bg-primary-600 hover:bg-primary-500 text-white text-xs font-medium disabled:opacity-40 transition-colors shrink-0">
-          {verifying ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Verifying…</> : <><Shield className="w-3.5 h-3.5" /> Verify</>}
+          {verifying
+            ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Verifying…</>
+            : <><Shield className="w-3.5 h-3.5" /> Verify</>}
         </button>
       </div>
 
-      {/* Validation feedback */}
+      {/* Inline format validation */}
       {value && !validation.valid && validation.error && (
-        <p className="text-xs text-red-400 flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> {validation.error}</p>
+        <p className="text-xs text-red-400 flex items-center gap-1">
+          <AlertTriangle className="w-3 h-3" /> {validation.error}
+        </p>
       )}
+
+      {/* Show extracted info from format once valid, until verified */}
       {validation.valid && apiResult === null && (
-        <div className="flex flex-wrap gap-3 text-xs">
-          <span className="text-emerald-400 flex items-center gap-1"><CheckCircle className="w-3 h-3" /> Valid GSTIN format</span>
+        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+          <span className="text-emerald-400 flex items-center gap-1">
+            <CheckCircle className="w-3 h-3" /> Valid format
+          </span>
           <span className="text-slate-400">State: <strong className="text-slate-200">{validation.state}</strong></span>
-          <span className="text-slate-400">PAN extracted: <strong className="text-slate-200 font-mono">{validation.pan}</strong></span>
+          <span className="text-slate-400">PAN: <strong className="text-slate-200 font-mono">{validation.pan}</strong></span>
           <span className="text-slate-400">Entity: <strong className="text-slate-200">{validation.entityType}</strong></span>
         </div>
       )}
-      {apiResult === true && result && (
+
+      {/* Success — auto-filled */}
+      {apiResult === 'success' && result && (
         <div className="bg-emerald-900/20 border border-emerald-700/40 rounded-lg p-3 text-xs space-y-1">
           <p className="text-emerald-400 font-semibold flex items-center gap-1.5">
             <BadgeCheck className="w-3.5 h-3.5" /> Verified from GST Portal
-            <span className="text-emerald-500 font-normal">· Status: {result.gstinStatus}</span>
+            <span className="text-emerald-500 font-normal">· {result.gstinStatus}</span>
           </p>
-          <p className="text-slate-300">{result.businessName} {result.tradeName && result.tradeName !== result.businessName ? `(${result.tradeName})` : ''}</p>
+          <p className="text-slate-300">
+            {result.businessName}
+            {result.tradeName && result.tradeName !== result.businessName ? ` (${result.tradeName})` : ''}
+          </p>
           {result.registeredAddress && <p className="text-slate-400">{result.registeredAddress}</p>}
         </div>
       )}
+
+      {/* Confirmed not found */}
       {apiResult === 'notfound' && (
-        <p className="text-xs text-red-400 flex items-center gap-1">
-          <AlertTriangle className="w-3 h-3" /> GSTIN not found in GST records — please verify the number is correct and currently active
-        </p>
+        <div className="bg-red-900/20 border border-red-700/40 rounded-lg p-3 text-xs">
+          <p className="text-red-400 flex items-center gap-1.5 font-medium">
+            <AlertTriangle className="w-3.5 h-3.5" /> GSTIN not found in GST portal
+          </p>
+          <p className="text-slate-400 mt-1">Double-check the number. If recently registered, the portal may take a few days to update.</p>
+        </div>
       )}
-      {apiResult === false && (
-        <p className="text-xs text-yellow-400 flex items-center gap-1">
-          <AlertTriangle className="w-3 h-3" /> Could not reach GST portal — please enter business name and address manually
-        </p>
+
+      {/* Portal unavailable — not an error, GSTIN format is valid */}
+      {apiResult === 'unavailable' && (
+        <div className="bg-yellow-900/20 border border-yellow-700/40 rounded-lg p-3 text-xs">
+          <p className="text-yellow-400 flex items-center gap-1.5 font-medium">
+            <AlertTriangle className="w-3.5 h-3.5" /> GST portal auto-fill unavailable
+          </p>
+          <p className="text-slate-400 mt-1">
+            GSTIN format is valid — state, PAN and entity type extracted above. Enter business name and address manually below.
+          </p>
+          <div className="flex flex-wrap gap-x-4 mt-1.5 text-xs text-slate-400">
+            <span>State: <strong className="text-slate-200">{validation.state}</strong></span>
+            <span>PAN: <strong className="text-slate-200 font-mono">{validation.pan}</strong></span>
+            <span>Entity: <strong className="text-slate-200">{validation.entityType}</strong></span>
+          </div>
+        </div>
       )}
     </div>
   )

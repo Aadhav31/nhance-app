@@ -1,16 +1,49 @@
 // Vercel Serverless Function — GSTIN lookup proxy
 // Endpoint: GET /api/gstin?gstin=33AABCU9603R1ZX
 // Debug:    GET /api/gstin?gstin=33AABCU9603R1ZX&debug=1
+//
+// Status codes:
+//   200  — found, returns { businessName, tradeName, gstinStatus, address, city, pincode, source }
+//   404  — GSTIN confirmed not found in GST records
+//   503  — could not reach / auth error on all sources (GSTIN may still be valid)
+//   400  — invalid gstin format
 
-function timeout(ms) {
+function withTimeout(ms) {
   const ctrl = new AbortController()
-  setTimeout(() => ctrl.abort(), ms)
+  const id = setTimeout(() => ctrl.abort(), ms)
+  ctrl._id = id
   return ctrl
+}
+
+// Try to parse common GST API response shapes → return { businessName, ... } or null
+function parseGSTResponse(json) {
+  // Shape 1: { data: { lgnm, tradeNam, sts, pradr: { adr, dst, pncd } } }
+  // Shape 2: { taxpayerInfo: { lgnm, ... } }
+  // Shape 3: { lgnm, ... } (flat)
+  const d =
+    json?.taxpayerInfo ||
+    json?.data?.taxpayerInfo ||
+    json?.data ||
+    json
+
+  const name = d?.lgnm || d?.legalName || d?.tradeName || d?.tradeNam
+  if (!name) return null
+
+  const addr = d?.pradr || d?.principalPlaceOfBusiness || {}
+  return {
+    businessName: d?.lgnm || d?.legalName || name,
+    tradeName:    d?.tradeNam || d?.tradeName || '',
+    gstinStatus:  d?.sts || d?.status || 'Active',
+    address:      addr?.adr || addr?.address || '',
+    city:         addr?.dst || addr?.city || '',
+    pincode:      addr?.pncd || addr?.pincode || '',
+  }
 }
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*')
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS')
+  res.setHeader('Content-Type', 'application/json')
   if (req.method === 'OPTIONS') { res.status(200).end(); return }
 
   const { gstin, debug } = req.query
@@ -18,106 +51,144 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Invalid GSTIN' })
   }
   const g = gstin.toUpperCase().trim()
-  const debugLog = []
 
-  // ── Source 1: Official GST Portal (public taxpayer search) ────────────────
+  const log = []          // debug log
+  let confirmedNotFound = false   // any source explicitly said GSTIN not found
+
+  // ── Source 1: Official GST portal (public taxpayer search)
+  // The portal's own public search page calls this with "Bearer undefined" — works for public info
   try {
-    const ctrl = timeout(8000)
+    const ctrl = withTimeout(9000)
     const r = await fetch(
       `https://api.gst.gov.in/commonapis/v0.1/search?action=TP&gstin=${g}`,
       {
         headers: {
-          'Accept': 'application/json',
-          'User-Agent': 'Mozilla/5.0 (compatible)',
+          'Accept':        'application/json, text/plain, */*',
+          'Authorization': 'Bearer undefined',
+          'Referer':       'https://www.gst.gov.in/',
+          'Origin':        'https://www.gst.gov.in',
+          'User-Agent':    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36',
         },
         signal: ctrl.signal,
       }
     )
+    clearTimeout(ctrl._id)
     const text = await r.text()
-    debugLog.push({ source: 'gst.gov.in', status: r.status, body: text.slice(0, 500) })
+    log.push({ source: 'gst.gov.in', status: r.status, body: text.slice(0, 600) })
+
     if (r.ok) {
       try {
         const json = JSON.parse(text)
-        const d = json?.data || json?.taxpayerInfo || json
-        const name = d?.legalName || d?.lgnm || d?.tradeNam
-        if (name) {
-          const addr = d?.principalPlaceOfBusiness?.address || d?.pradr || {}
-          if (!debug) return res.status(200).json({
-            businessName: name,
-            tradeName:    d?.tradeName || d?.tradeNam || '',
-            gstinStatus:  d?.status   || d?.sts       || 'Active',
-            address:      addr?.address || addr?.adr   || '',
-            city:         addr?.city  || addr?.dst     || '',
-            pincode:      addr?.pincode|| addr?.pncd   || '',
-            source: 'gst.gov.in',
-          })
+        // Check for explicit "not found" error codes
+        const errMsg = json?.message || json?.error?.message || json?.errorMessage || ''
+        if (/not\s*found|invalid.*gstin|gstin.*invalid|no.*record/i.test(errMsg)) {
+          confirmedNotFound = true
+        } else {
+          const parsed = parseGSTResponse(json)
+          if (parsed) {
+            if (debug) { res.status(200).json({ gstin: g, data: parsed, log }); return }
+            return res.status(200).json({ ...parsed, source: 'gst.gov.in' })
+          }
         }
-      } catch(e) { debugLog.push({ parse_error: e.message }) }
+      } catch(e) { log.push({ parse_error: e.message }) }
+    } else if (r.status === 404) {
+      confirmedNotFound = true
+      log.push({ note: 'gst.gov.in returned 404 — GSTIN not found' })
     }
-  } catch(e) { debugLog.push({ source: 'gst.gov.in', error: e.message }) }
-
-  // ── Source 2: KnowYourGST ─────────────────────────────────────────────────
-  try {
-    const ctrl = timeout(8000)
-    const r = await fetch(
-      `https://api.knowyourgst.com/getgstin/?gstin=${g}&key=demo`,
-      { headers: { Accept: 'application/json' }, signal: ctrl.signal }
-    )
-    const text = await r.text()
-    debugLog.push({ source: 'knowyourgst', status: r.status, body: text.slice(0, 500) })
-    if (r.ok) {
-      try {
-        const json = JSON.parse(text)
-        const info = json?.taxpayerInfo
-        if (info?.lgnm) {
-          if (!debug) return res.status(200).json({
-            businessName: info.lgnm,
-            tradeName:    info.tradeNam || '',
-            gstinStatus:  info.sts      || 'Active',
-            address:      info.pradr?.adr || '',
-            city:         info.pradr?.dst || info.pradr?.city || '',
-            pincode:      info.pradr?.pncd || '',
-            source: 'knowyourgst',
-          })
-        }
-      } catch(e) { debugLog.push({ parse_error: e.message }) }
-    }
-  } catch(e) { debugLog.push({ source: 'knowyourgst', error: e.message }) }
-
-  // ── Source 3: MasterGST public search ─────────────────────────────────────
-  try {
-    const ctrl = timeout(8000)
-    const r = await fetch(
-      `https://api.mastersindia.co/commonapi/V2/search_by_gstin?gstin=${g}`,
-      { headers: { Accept: 'application/json' }, signal: ctrl.signal }
-    )
-    const text = await r.text()
-    debugLog.push({ source: 'mastersindia', status: r.status, body: text.slice(0, 500) })
-    if (r.ok) {
-      try {
-        const json = JSON.parse(text)
-        const d = json?.data || json
-        if (d?.lgnm || d?.legalName) {
-          if (!debug) return res.status(200).json({
-            businessName: d.lgnm || d.legalName,
-            tradeName:    d.tradeNam || '',
-            gstinStatus:  d.sts || 'Active',
-            address:      d.pradr?.adr || '',
-            city:         d.pradr?.dst || '',
-            pincode:      d.pradr?.pncd || '',
-            source: 'mastersindia',
-          })
-        }
-      } catch(e) { debugLog.push({ parse_error: e.message }) }
-    }
-  } catch(e) { debugLog.push({ source: 'mastersindia', error: e.message }) }
-
-  // Return debug log if requested, otherwise 404
-  if (debug) {
-    return res.status(200).json({ gstin: g, debug: debugLog })
+    // 401/403 = auth needed; 5xx = server error — NOT "not found"
+  } catch(e) {
+    log.push({ source: 'gst.gov.in', error: e.message })
   }
 
-  return res.status(404).json({
-    error: 'GSTIN not found. Verify the number is correct and GST registration is active.',
+  // ── Source 2: GST portal v2 endpoint
+  try {
+    const ctrl = withTimeout(9000)
+    const r = await fetch(
+      `https://services.gst.gov.in/services/api/search/taxpayerDetails?gstin=${g}`,
+      {
+        headers: {
+          'Accept':     'application/json',
+          'Referer':    'https://services.gst.gov.in/',
+          'User-Agent': 'Mozilla/5.0 (compatible; NhanceApp/1.0)',
+        },
+        signal: ctrl.signal,
+      }
+    )
+    clearTimeout(ctrl._id)
+    const text = await r.text()
+    log.push({ source: 'services.gst.gov.in', status: r.status, body: text.slice(0, 600) })
+
+    if (r.ok) {
+      try {
+        const json = JSON.parse(text)
+        const errMsg = json?.message || json?.errorMessage || ''
+        if (/not\s*found|invalid/i.test(errMsg)) {
+          confirmedNotFound = true
+        } else {
+          const parsed = parseGSTResponse(json)
+          if (parsed) {
+            if (debug) { res.status(200).json({ gstin: g, data: parsed, log }); return }
+            return res.status(200).json({ ...parsed, source: 'services.gst.gov.in' })
+          }
+        }
+      } catch(e) { log.push({ parse_error: e.message }) }
+    } else if (r.status === 404) {
+      confirmedNotFound = true
+    }
+  } catch(e) {
+    log.push({ source: 'services.gst.gov.in', error: e.message })
+  }
+
+  // ── Source 3: KnowYourGST (free demo tier)
+  try {
+    const ctrl = withTimeout(8000)
+    const r = await fetch(
+      `https://api.knowyourgst.com/getgstin/?gstin=${g}&key=demo`,
+      {
+        headers: { Accept: 'application/json' },
+        signal: ctrl.signal,
+      }
+    )
+    clearTimeout(ctrl._id)
+    const text = await r.text()
+    log.push({ source: 'knowyourgst', status: r.status, body: text.slice(0, 600) })
+
+    if (r.ok) {
+      try {
+        const json = JSON.parse(text)
+        const parsed = parseGSTResponse(json)
+        if (parsed) {
+          if (debug) { res.status(200).json({ gstin: g, data: parsed, log }); return }
+          return res.status(200).json({ ...parsed, source: 'knowyourgst' })
+        }
+        if (json?.taxpayerInfo === null || /not\s*found/i.test(json?.message || '')) {
+          confirmedNotFound = true
+        }
+      } catch(e) { log.push({ parse_error: e.message }) }
+    }
+  } catch(e) {
+    log.push({ source: 'knowyourgst', error: e.message })
+  }
+
+  // Return debug data if requested
+  if (debug) {
+    return res.status(200).json({
+      gstin: g,
+      confirmedNotFound,
+      log,
+      verdict: confirmedNotFound ? 'not_found' : 'unreachable',
+    })
+  }
+
+  // If at least one source confirmed "not found", trust it
+  if (confirmedNotFound) {
+    return res.status(404).json({
+      error: 'GSTIN not registered in GST portal. Verify the number is correct and currently active.',
+    })
+  }
+
+  // All sources failed for auth/network reasons — return 503 (not 404!)
+  return res.status(503).json({
+    error: 'GST portal verification temporarily unavailable. Please enter business details manually.',
   })
 }
