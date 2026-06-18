@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
@@ -7,12 +7,14 @@ import {
   Building2, Plus, Search, Phone, Mail, ChevronRight,
   X, Loader2, CheckCircle, AlertTriangle, Edit2, User,
   BadgeCheck, FileText, MapPin, Shield, Users,
-  IndianRupee, Archive, Trash2, Copy, Globe,
+  IndianRupee, Archive, Trash2, Copy, Globe, AlertCircle,
+  UserCheck, Briefcase,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 // ── GSTIN helpers ─────────────────────────────────────────────────────────────
 const GSTIN_REGEX = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/
+const PAN_REGEX   = /^[A-Z]{5}[0-9]{4}[A-Z]$/
 
 const GSTIN_STATES = {
   '01':'Jammu & Kashmir','02':'Himachal Pradesh','03':'Punjab','04':'Chandigarh',
@@ -28,9 +30,11 @@ const GSTIN_STATES = {
 }
 
 const PAN_ENTITY = {
-  P:'Individual / Proprietor', C:'Private / Public Ltd Company', H:'Hindu Undivided Family (HUF)',
-  F:'Partnership Firm', A:'Association of Persons (AOP)', T:'Trust / NGO',
-  B:'Body of Individuals (BOI)', L:'Local Authority', J:'Artificial Juridical Person', G:'Government',
+  P:'Individual / Proprietor', C:'Private / Public Ltd Company',
+  H:'Hindu Undivided Family (HUF)', F:'Partnership Firm',
+  A:'Association of Persons (AOP)', T:'Trust / NGO',
+  B:'Body of Individuals (BOI)', L:'Local Authority',
+  J:'Artificial Juridical Person', G:'Government',
 }
 
 function validateGSTIN(g) {
@@ -39,8 +43,7 @@ function validateGSTIN(g) {
   if (upper.length !== 15) return { valid: false, error: `Must be 15 characters (you entered ${upper.length})` }
   if (!GSTIN_REGEX.test(upper)) return { valid: false, error: 'Invalid GSTIN format' }
   return {
-    valid: true,
-    gstin: upper,
+    valid: true, gstin: upper,
     stateCode: upper.slice(0, 2),
     state: GSTIN_STATES[upper.slice(0, 2)] || `State ${upper.slice(0, 2)}`,
     pan: upper.slice(2, 12),
@@ -61,41 +64,17 @@ async function fetchGSTINDetails(gstin) {
     const data = await res.json()
     if (!data?.businessName) return { unavailable: true }
     return {
-      businessName:      data.businessName,
-      tradeName:         data.tradeName || '',
-      gstinStatus:       data.gstinStatus || 'Active',
+      businessName: data.businessName, tradeName: data.tradeName || '',
+      gstinStatus: data.gstinStatus || 'Active',
       registeredAddress: data.address || '',
-      city:              data.city || '',
-      pincode:           data.pincode || '',
+      city: data.city || '', pincode: data.pincode || '',
     }
-  } catch {
-    return { unavailable: true }
-  }
+  } catch { return { unavailable: true } }
 }
 
 // ── Lookup constants ──────────────────────────────────────────────────────────
-const BUSINESS_TYPES = [
-  'Sole Proprietorship', 'Partnership Firm', 'Private Limited Company',
-  'Public Limited Company', 'Limited Liability Partnership (LLP)',
-  'One Person Company (OPC)', 'Hindu Undivided Family (HUF)',
-  'Trust / Society / NGO', 'Government / PSU', 'Other',
-]
-
-const PAYMENT_TERMS_OPTIONS = [
-  'Advance (100%)', '50% Advance + 50% on Completion',
-  'Net 7 Days', 'Net 15 Days', 'Net 30 Days', 'Net 45 Days', 'Net 60 Days',
-  'Net 90 Days', 'Monthly', 'As per Purchase Order',
-]
-
-const INDIAN_STATES = [
-  'Andaman & Nicobar', 'Andhra Pradesh', 'Arunachal Pradesh', 'Assam', 'Bihar',
-  'Chandigarh', 'Chhattisgarh', 'Dadra & Nagar Haveli & D&D', 'Daman & Diu',
-  'Delhi', 'Goa', 'Gujarat', 'Haryana', 'Himachal Pradesh', 'Jammu & Kashmir',
-  'Jharkhand', 'Karnataka', 'Kerala', 'Ladakh', 'Lakshadweep', 'Madhya Pradesh',
-  'Maharashtra', 'Manipur', 'Meghalaya', 'Mizoram', 'Nagaland', 'Odisha',
-  'Puducherry', 'Punjab', 'Rajasthan', 'Sikkim', 'Tamil Nadu', 'Telangana',
-  'Tripura', 'Uttar Pradesh', 'Uttarakhand', 'West Bengal',
-]
+const SALUTATIONS_BUSINESS    = ['M/s.']
+const SALUTATIONS_INDIVIDUAL  = ['Mr.', 'Mrs.', 'Ms.', 'Dr.', 'Prof.', 'Er.']
 
 const GST_TREATMENT_OPTIONS = [
   'Registered Business - Regular',
@@ -107,6 +86,39 @@ const GST_TREATMENT_OPTIONS = [
   'Deemed Export',
   'Tax Deductor (TDS)',
   'Tax Collector (TCS)',
+]
+
+// These treatments require a GSTIN for verification
+const GSTIN_TREATMENTS = new Set([
+  'Registered Business - Regular',
+  'Registered Business - Composition',
+  'Special Economic Zone (SEZ)',
+  'Deemed Export',
+  'Tax Deductor (TDS)',
+  'Tax Collector (TCS)',
+])
+
+const BUSINESS_TYPES = [
+  'Sole Proprietorship', 'Partnership Firm', 'Private Limited Company',
+  'Public Limited Company', 'Limited Liability Partnership (LLP)',
+  'One Person Company (OPC)', 'Hindu Undivided Family (HUF)',
+  'Trust / Society / NGO', 'Government / PSU', 'Other',
+]
+
+const PAYMENT_TERMS_OPTIONS = [
+  'Advance (100%)', '50% Advance + 50% on Completion',
+  'Net 7 Days', 'Net 15 Days', 'Net 30 Days', 'Net 45 Days',
+  'Net 60 Days', 'Net 90 Days', 'Monthly', 'As per Purchase Order',
+]
+
+const INDIAN_STATES = [
+  'Andaman & Nicobar','Andhra Pradesh','Arunachal Pradesh','Assam','Bihar',
+  'Chandigarh','Chhattisgarh','Dadra & Nagar Haveli & D&D','Daman & Diu',
+  'Delhi','Goa','Gujarat','Haryana','Himachal Pradesh','Jammu & Kashmir',
+  'Jharkhand','Karnataka','Kerala','Ladakh','Lakshadweep','Madhya Pradesh',
+  'Maharashtra','Manipur','Meghalaya','Mizoram','Nagaland','Odisha',
+  'Puducherry','Punjab','Rajasthan','Sikkim','Tamil Nadu','Telangana',
+  'Tripura','Uttar Pradesh','Uttarakhand','West Bengal',
 ]
 
 const CURRENCIES = [
@@ -152,7 +164,9 @@ function Modal({ title, subtitle, onClose, children, footer, wide }) {
             <h2 className="font-semibold text-slate-100 text-base">{title}</h2>
             {subtitle && <p className="text-xs text-slate-500 mt-0.5">{subtitle}</p>}
           </div>
-          <button onClick={onClose} className="p-1 text-slate-400 hover:text-slate-100 mt-0.5"><X className="w-5 h-5" /></button>
+          <button onClick={onClose} className="p-1 text-slate-400 hover:text-slate-100 mt-0.5">
+            <X className="w-5 h-5" />
+          </button>
         </div>
         <div className="flex-1 overflow-y-auto p-5 space-y-5">{children}</div>
         {footer && <div className="flex gap-3 p-4 border-t border-dark-700">{footer}</div>}
@@ -185,8 +199,7 @@ function SectionHeader({ icon: Icon, label }) {
   )
 }
 
-// ── Phone Input with country code dropdown ────────────────────────────────────
-function PhoneInput({ codeValue, onCodeChange, phoneValue, onPhoneChange, placeholder, required }) {
+function PhoneInput({ codeValue, onCodeChange, phoneValue, onPhoneChange, placeholder }) {
   return (
     <div className="flex">
       <select
@@ -195,9 +208,7 @@ function PhoneInput({ codeValue, onCodeChange, phoneValue, onPhoneChange, placeh
         className="bg-dark-700 border border-r-0 border-dark-600 rounded-l-lg text-xs text-slate-300 px-2 focus:outline-none focus:border-primary-500 shrink-0"
         style={{ minWidth: '72px' }}
       >
-        {COUNTRY_CODES.map(c => (
-          <option key={c.code} value={c.code}>{c.code}</option>
-        ))}
+        {COUNTRY_CODES.map(c => <option key={c.code} value={c.code}>{c.code}</option>)}
       </select>
       <input
         className={`${inp()} rounded-l-none border-l-0 flex-1`}
@@ -205,47 +216,58 @@ function PhoneInput({ codeValue, onCodeChange, phoneValue, onPhoneChange, placeh
         onChange={e => onPhoneChange(e.target.value.replace(/\D/g, '').slice(0, 15))}
         placeholder={placeholder || 'Phone number'}
         maxLength={15}
-        required={required}
       />
     </div>
   )
 }
 
-// ── GSTIN Verifier Component ──────────────────────────────────────────────────
+// ── Duplicate warning banner ───────────────────────────────────────────────────
+function DupWarning({ info }) {
+  if (!info) return null
+  return (
+    <div className="flex items-start gap-2.5 bg-red-900/25 border border-red-700/50 rounded-lg p-3 text-xs">
+      <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+      <div>
+        <p className="text-red-300 font-semibold">
+          {info.field} already registered — client profile exists
+        </p>
+        <p className="text-slate-400 mt-0.5">
+          <span className="font-medium text-slate-200">{info.name}</span>
+          {info.num ? ` · ${info.num}` : ''}
+          {info.archived ? ' (archived)' : ' (active)'}
+        </p>
+        <p className="text-slate-500 mt-1">Remove the existing profile or use a different {info.field} to proceed.</p>
+      </div>
+    </div>
+  )
+}
+
+// ── GSTIN Verifier ────────────────────────────────────────────────────────────
 function GSTINVerifier({ value, onChange, onVerified }) {
   const [verifying, setVerifying] = useState(false)
   const [result, setResult] = useState(null)
   const [apiResult, setApiResult] = useState(null)
-
   const validation = validateGSTIN(value)
 
   const handleChange = (v) => {
     onChange(v.toUpperCase())
-    setResult(null)
-    setApiResult(null)
+    setResult(null); setApiResult(null)
   }
 
   const handleVerify = async () => {
     if (!validation.valid) return
-    setVerifying(true)
-    setApiResult(null)
+    setVerifying(true); setApiResult(null)
     try {
       const data = await fetchGSTINDetails(validation.gstin)
       if (data?.businessName) {
-        setResult(data)
-        setApiResult('success')
+        setResult(data); setApiResult('success')
         onVerified({
-          gstin:             validation.gstin,
-          gstinStatus:       data.gstinStatus,
-          gstinVerified:     true,
-          gstinVerifiedAt:   new Date().toISOString(),
-          businessName:      data.businessName,
-          tradeName:         data.tradeName,
-          pan:               validation.pan,
-          state:             validation.state,
+          gstin: validation.gstin, gstinStatus: data.gstinStatus,
+          gstinVerified: true, gstinVerifiedAt: new Date().toISOString(),
+          businessName: data.businessName, tradeName: data.tradeName,
+          pan: validation.pan, state: validation.state,
           registeredAddress: data.registeredAddress,
-          city:              data.city,
-          pincode:           data.pincode,
+          city: data.city, pincode: data.pincode,
         })
         toast.success('GSTIN verified — details auto-filled from GST portal')
       } else if (data?.notFound) {
@@ -269,22 +291,15 @@ function GSTINVerifier({ value, onChange, onVerified }) {
               value && !validation.valid ? 'border-red-500 focus:border-red-500' :
               validation.valid ? 'border-emerald-600 focus:border-emerald-500' : ''
             }`)}
-            value={value}
-            onChange={e => handleChange(e.target.value)}
-            placeholder="e.g. 33AABCU9603R1ZX"
-            maxLength={15}
+            value={value} onChange={e => handleChange(e.target.value)}
+            placeholder="e.g. 33AABCU9603R1ZX" maxLength={15}
           />
-          {validation.valid && (
-            <CheckCircle className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-emerald-400" />
-          )}
+          {validation.valid && <CheckCircle className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-emerald-400" />}
         </div>
-        <button
-          type="button" onClick={handleVerify}
+        <button type="button" onClick={handleVerify}
           disabled={!validation.valid || verifying}
           className="flex items-center gap-1.5 px-4 py-2.5 rounded-lg bg-primary-600 hover:bg-primary-500 text-white text-xs font-medium disabled:opacity-40 transition-colors shrink-0">
-          {verifying
-            ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Verifying…</>
-            : <><Shield className="w-3.5 h-3.5" /> Verify</>}
+          {verifying ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Verifying…</> : <><Shield className="w-3.5 h-3.5" /> Verify</>}
         </button>
       </div>
 
@@ -308,8 +323,7 @@ function GSTINVerifier({ value, onChange, onVerified }) {
       {apiResult === 'success' && result && (
         <div className="bg-emerald-900/20 border border-emerald-700/40 rounded-lg p-3 text-xs space-y-1">
           <p className="text-emerald-400 font-semibold flex items-center gap-1.5">
-            <BadgeCheck className="w-3.5 h-3.5" /> Verified from GST Portal
-            <span className="text-emerald-500 font-normal">· {result.gstinStatus}</span>
+            <BadgeCheck className="w-3.5 h-3.5" /> Verified from GST Portal · {result.gstinStatus}
           </p>
           <p className="text-slate-300">
             {result.businessName}
@@ -324,7 +338,7 @@ function GSTINVerifier({ value, onChange, onVerified }) {
           <p className="text-red-400 flex items-center gap-1.5 font-medium">
             <AlertTriangle className="w-3.5 h-3.5" /> GSTIN not found in GST portal
           </p>
-          <p className="text-slate-400 mt-1">Double-check the number. If recently registered, the portal may take a few days to update.</p>
+          <p className="text-slate-400 mt-1">Double-check the number. Recently registered GSTINs may take a few days to appear.</p>
         </div>
       )}
 
@@ -334,12 +348,11 @@ function GSTINVerifier({ value, onChange, onVerified }) {
             <AlertTriangle className="w-3.5 h-3.5" /> GST portal auto-fill unavailable
           </p>
           <p className="text-slate-400 mt-1">
-            GSTIN format is valid — state, PAN and entity type extracted above. Enter business name and address manually below.
+            GSTIN format is valid — state, PAN and entity type extracted. Enter business name and address manually.
           </p>
           <div className="flex flex-wrap gap-x-4 mt-1.5 text-xs text-slate-400">
             <span>State: <strong className="text-slate-200">{validation.state}</strong></span>
             <span>PAN: <strong className="text-slate-200 font-mono">{validation.pan}</strong></span>
-            <span>Entity: <strong className="text-slate-200">{validation.entityType}</strong></span>
           </div>
         </div>
       )}
@@ -347,16 +360,15 @@ function GSTINVerifier({ value, onChange, onVerified }) {
   )
 }
 
-// ── Delete Confirmation Modal ─────────────────────────────────────────────────
+// ── Delete Confirm Modal ──────────────────────────────────────────────────────
 function DeleteConfirmModal({ client, companyId, onClose, onDeleted }) {
   const qc = useQueryClient()
   const [deleting, setDeleting] = useState(false)
   const [confirm, setConfirm] = useState('')
 
   const handleDelete = async () => {
-    if (confirm !== client.business_name) {
-      toast.error('Business name does not match')
-      return
+    if (confirm !== client.business_name && confirm !== (client.display_name || '')) {
+      toast.error('Name does not match'); return
     }
     setDeleting(true)
     try {
@@ -370,6 +382,8 @@ function DeleteConfirmModal({ client, companyId, onClose, onDeleted }) {
     } finally { setDeleting(false) }
   }
 
+  const nameToType = client.display_name || client.business_name || ''
+
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/70">
       <div className="w-full max-w-sm bg-dark-800 rounded-xl border border-red-800/60 p-5 space-y-4">
@@ -382,28 +396,17 @@ function DeleteConfirmModal({ client, companyId, onClose, onDeleted }) {
             <p className="text-xs text-slate-500">This action cannot be undone</p>
           </div>
         </div>
-        <p className="text-xs text-slate-400">
-          Type <strong className="text-slate-200">{client.business_name}</strong> to confirm.
-        </p>
+        <p className="text-xs text-slate-400">Type <strong className="text-slate-200">{nameToType}</strong> to confirm.</p>
         <input
           className="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-red-500"
-          value={confirm}
-          onChange={e => setConfirm(e.target.value)}
-          placeholder={client.business_name}
+          value={confirm} onChange={e => setConfirm(e.target.value)} placeholder={nameToType}
         />
         <div className="flex gap-3">
-          <button
-            onClick={onClose}
-            className="flex-1 py-2.5 rounded-xl bg-dark-700 border border-dark-600 text-slate-300 text-sm hover:bg-dark-600 transition-colors">
-            Cancel
-          </button>
-          <button
-            onClick={handleDelete}
-            disabled={deleting || confirm !== client.business_name}
-            className="flex-1 py-2.5 rounded-xl bg-red-700 hover:bg-red-600 text-white text-sm font-medium disabled:opacity-40 flex items-center justify-center gap-2 transition-colors">
-            {deleting
-              ? <><Loader2 className="w-4 h-4 animate-spin" /> Deleting…</>
-              : <><Trash2 className="w-4 h-4" /> Delete</>}
+          <button onClick={onClose} className="flex-1 py-2.5 rounded-xl bg-dark-700 border border-dark-600 text-slate-300 text-sm hover:bg-dark-600">Cancel</button>
+          <button onClick={handleDelete}
+            disabled={deleting || (confirm !== nameToType)}
+            className="flex-1 py-2.5 rounded-xl bg-red-700 hover:bg-red-600 text-white text-sm font-medium disabled:opacity-40 flex items-center justify-center gap-2">
+            {deleting ? <><Loader2 className="w-4 h-4 animate-spin" /> Deleting…</> : <><Trash2 className="w-4 h-4" /> Delete</>}
           </button>
         </div>
       </div>
@@ -411,22 +414,32 @@ function DeleteConfirmModal({ client, companyId, onClose, onDeleted }) {
   )
 }
 
-// ── Form default ──────────────────────────────────────────────────────────────
+// ── Empty form ────────────────────────────────────────────────────────────────
 function emptyForm() {
   return {
+    // Type & identity
+    client_type: 'business',
+    salutation: 'M/s.',
+    first_name: '', last_name: '', display_name: '',
+    // Client number (auto-generated)
     client_number: '',
-    business_name: '', trade_name: '', business_type: '',
+    // GST info
     gst_treatment: '', tax_preference: 'tax_payer', currency: 'INR',
+    // GSTIN
     gstin: '', gstin_status: '', gstin_verified: false, gstin_verified_at: null,
+    // Business details
+    business_name: '', trade_name: '', business_type: '',
+    // Other IDs
     pan: '', udyam_number: '', cin: '', tan: '',
     // Billing address
     registered_address: '', city: '', state: '', pincode: '',
     // Shipping address
     shipping_address: '', shipping_city: '', shipping_state: '', shipping_pincode: '',
     shipping_same_as_billing: true,
-    // Contacts
+    // Primary contact
     contact_country_code: '+91',
     contact_name: '', contact_designation: '', contact_phone: '', contact_email: '',
+    // Secondary contact
     contact2_country_code: '+91',
     contact2_name: '', contact2_designation: '', contact2_phone: '', contact2_email: '',
     // Terms
@@ -441,10 +454,12 @@ function AddEditClientModal({ companyId, client, onClose }) {
   const { isAdvanced } = useDisplayMode()
 
   const [form, setForm] = useState(isEdit ? {
+    client_type: client.client_type || 'business',
+    salutation: client.salutation || (client.client_type === 'individual' ? 'Mr.' : 'M/s.'),
+    first_name: client.first_name || '',
+    last_name: client.last_name || '',
+    display_name: client.display_name || '',
     client_number: client.client_number || '',
-    business_name: client.business_name || '',
-    trade_name: client.trade_name || '',
-    business_type: client.business_type || '',
     gst_treatment: client.gst_treatment || '',
     tax_preference: client.tax_preference || 'tax_payer',
     currency: client.currency || 'INR',
@@ -452,6 +467,9 @@ function AddEditClientModal({ companyId, client, onClose }) {
     gstin_status: client.gstin_status || '',
     gstin_verified: client.gstin_verified || false,
     gstin_verified_at: client.gstin_verified_at || null,
+    business_name: client.business_name || '',
+    trade_name: client.trade_name || '',
+    business_type: client.business_type || '',
     pan: client.pan || '',
     udyam_number: client.udyam_number || '',
     cin: client.cin || '',
@@ -481,9 +499,32 @@ function AddEditClientModal({ companyId, client, onClose }) {
   } : emptyForm())
 
   const [saving, setSaving] = useState(false)
+  const [dupWarning, setDupWarning] = useState(null)
+  const [checkingDup, setCheckingDup] = useState(false)
+
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
 
-  // Auto-generate client number for new clients
+  // Derived flags
+  const needsGSTIN = GSTIN_TREATMENTS.has(form.gst_treatment)
+  const needsPAN   = form.gst_treatment === 'Unregistered Business'
+  const noTaxID    = form.gst_treatment === 'Consumer' || form.gst_treatment === 'Overseas'
+
+  // Salutations based on type
+  const salutations = form.client_type === 'individual' ? SALUTATIONS_INDIVIDUAL : SALUTATIONS_BUSINESS
+
+  // Switch client type — reset relevant fields
+  const switchType = (type) => {
+    setForm(p => ({
+      ...p,
+      client_type: type,
+      salutation: type === 'individual' ? 'Mr.' : 'M/s.',
+      gstin: '', gstin_status: '', gstin_verified: false, gstin_verified_at: null,
+      gst_treatment: '',
+    }))
+    setDupWarning(null)
+  }
+
+  // Auto-generate client number
   useQuery({
     queryKey: ['client_count_for_number', companyId],
     queryFn: async () => {
@@ -498,7 +539,72 @@ function AddEditClientModal({ companyId, client, onClose }) {
     enabled: !isEdit && !!companyId,
   })
 
-  // After GSTIN verification, auto-fill form and set country code to +91 (Indian GSTIN)
+  // Auto-build display_name for individuals
+  useEffect(() => {
+    if (form.client_type === 'individual') {
+      const auto = [form.salutation, form.first_name, form.last_name].filter(Boolean).join(' ')
+      if (auto) setForm(p => ({ ...p, display_name: auto }))
+    }
+  }, [form.salutation, form.first_name, form.last_name, form.client_type])
+
+  // ── Inline duplicate check ──────────────────────────────────────────────────
+  const checkDuplicate = useCallback(async (gstin, pan) => {
+    if (!gstin && !pan) { setDupWarning(null); return }
+    setCheckingDup(true)
+    try {
+      let q = supabase
+        .from('clients')
+        .select('id, business_name, display_name, client_number, is_active')
+        .eq('company_id', companyId)
+
+      if (gstin && pan) q = q.or(`gstin.eq.${gstin},pan.eq.${pan}`)
+      else if (gstin)   q = q.eq('gstin', gstin)
+      else              q = q.eq('pan', pan)
+
+      const { data: matches } = await q
+      const others = (matches || []).filter(c => c.id !== client?.id)
+      if (others.length > 0) {
+        const dup = others[0]
+        setDupWarning({
+          name: dup.display_name || dup.business_name || 'Unknown',
+          num: dup.client_number,
+          archived: dup.is_active === false,
+          field: gstin ? 'GSTIN' : 'PAN',
+        })
+      } else {
+        setDupWarning(null)
+      }
+    } finally { setCheckingDup(false) }
+  }, [companyId, client?.id])
+
+  // Watch GSTIN — fire inline check when format becomes valid
+  useEffect(() => {
+    if (!needsGSTIN) return
+    const v = validateGSTIN(form.gstin)
+    if (v.valid) { checkDuplicate(v.gstin, null) }
+    else if (!form.gstin) setDupWarning(null)
+  }, [form.gstin, needsGSTIN])
+
+  // Watch PAN — fire inline check when 10 chars and valid format
+  useEffect(() => {
+    if (!needsPAN) return
+    const pan = (form.pan || '').toUpperCase().trim()
+    if (pan.length === 10 && PAN_REGEX.test(pan)) { checkDuplicate(null, pan) }
+    else if (!form.pan) setDupWarning(null)
+  }, [form.pan, needsPAN])
+
+  // When GST treatment changes, clear identification fields
+  const handleTreatmentChange = (treatment) => {
+    set('gst_treatment', treatment)
+    setDupWarning(null)
+    if (!GSTIN_TREATMENTS.has(treatment)) {
+      setForm(p => ({ ...p, gst_treatment: treatment, gstin: '', gstin_status: '', gstin_verified: false, gstin_verified_at: null }))
+    }
+    if (treatment !== 'Unregistered Business') {
+      setForm(p => ({ ...p, gst_treatment: treatment, pan: '' }))
+    }
+  }
+
   const handleGSTINVerified = (data) => {
     setForm(p => ({
       ...p,
@@ -508,54 +614,53 @@ function AddEditClientModal({ companyId, client, onClose }) {
       gstin_verified_at: data.gstinVerifiedAt || null,
       pan: data.pan || p.pan,
       state: data.state || p.state,
-      contact_country_code: '+91',  // GSTIN implies Indian entity
-      ...(data.businessName       ? { business_name:       data.businessName }       : {}),
-      ...(data.tradeName          ? { trade_name:          data.tradeName }           : {}),
-      ...(data.registeredAddress  ? { registered_address:  data.registeredAddress }  : {}),
-      ...(data.city               ? { city:                data.city }               : {}),
-      ...(data.pincode            ? { pincode:             data.pincode }             : {}),
+      contact_country_code: '+91',
+      ...(data.businessName      ? { business_name:      data.businessName }      : {}),
+      ...(data.tradeName         ? { trade_name:         data.tradeName }          : {}),
+      ...(data.registeredAddress ? { registered_address: data.registeredAddress } : {}),
+      ...(data.city              ? { city:               data.city }              : {}),
+      ...(data.pincode           ? { pincode:            data.pincode }           : {}),
     }))
   }
 
-  // Copy billing → shipping
-  const copiBillingToShipping = () => {
+  const copyBillingToShipping = () => {
     setForm(p => ({
       ...p,
-      shipping_address:  p.registered_address,
-      shipping_city:     p.city,
-      shipping_state:    p.state,
-      shipping_pincode:  p.pincode,
+      shipping_address: p.registered_address,
+      shipping_city: p.city,
+      shipping_state: p.state,
+      shipping_pincode: p.pincode,
       shipping_same_as_billing: true,
     }))
   }
 
   const handleSave = async () => {
-    if (!form.business_name.trim()) { toast.error('Business name is required'); return }
-    if (!form.contact_phone.trim()) { toast.error('Primary contact phone is required'); return }
+    if (!form.first_name.trim() && !form.display_name.trim()) {
+      toast.error('Enter at least a first name or display name'); return
+    }
+    if (!form.contact_phone.trim()) {
+      toast.error('Primary contact phone is required'); return
+    }
 
-    // Phone validation — strict for +91, lenient for others
+    // Phone validation
     const phone = form.contact_phone.replace(/\s/g, '')
     if (form.contact_country_code === '+91' && phone && !/^[6-9]\d{9}$/.test(phone)) {
       toast.error('Enter a valid 10-digit Indian mobile number'); return
-    } else if (form.contact_country_code !== '+91' && phone && phone.length < 5) {
-      toast.error('Enter a valid phone number'); return
     }
-
     if (form.contact_email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.contact_email)) {
       toast.error('Enter a valid email address'); return
     }
 
     setSaving(true)
     try {
-      // ── Duplicate check on GSTIN or PAN ───────────────────────────────────
+      // ── Final duplicate check (catches edge cases not caught inline) ────────
       const gstin = form.gstin?.trim()
       const pan   = form.pan?.trim()
       if (gstin || pan) {
         let q = supabase
           .from('clients')
-          .select('id, business_name, client_number')
+          .select('id, business_name, display_name, client_number')
           .eq('company_id', companyId)
-          .neq('is_active', false)
 
         if (gstin && pan) q = q.or(`gstin.eq.${gstin},pan.eq.${pan}`)
         else if (gstin)   q = q.eq('gstin', gstin)
@@ -565,18 +670,32 @@ function AddEditClientModal({ companyId, client, onClose }) {
         const others = (matches || []).filter(c => c.id !== client?.id)
         if (others.length > 0) {
           const dup = others[0]
-          toast.error(`Client already exists: ${dup.business_name}${dup.client_number ? ` (${dup.client_number})` : ''}`, { duration: 5000 })
+          toast.error(
+            `Client already exists: ${dup.display_name || dup.business_name}${dup.client_number ? ` (${dup.client_number})` : ''}`,
+            { duration: 6000 }
+          )
           setSaving(false)
           return
         }
       }
 
+      // Build display_name
+      const displayName = form.display_name ||
+        (form.client_type === 'individual'
+          ? [form.salutation, form.first_name, form.last_name].filter(Boolean).join(' ')
+          : form.business_name || [form.first_name, form.last_name].filter(Boolean).join(' '))
+
+      // contact_name for backward compat
+      const contactName = [form.first_name, form.last_name].filter(Boolean).join(' ') || form.contact_name || null
+
       const payload = {
         company_id:      companyId,
+        client_type:     form.client_type,
+        salutation:      form.salutation || null,
+        first_name:      form.first_name || null,
+        last_name:       form.last_name || null,
+        display_name:    displayName || null,
         client_number:   form.client_number || null,
-        business_name:   form.business_name.trim(),
-        trade_name:      form.trade_name || null,
-        business_type:   form.business_type || null,
         gst_treatment:   form.gst_treatment || null,
         tax_preference:  form.tax_preference || 'tax_payer',
         currency:        form.currency || 'INR',
@@ -584,6 +703,9 @@ function AddEditClientModal({ companyId, client, onClose }) {
         gstin_status:    form.gstin_status || null,
         gstin_verified:  form.gstin_verified,
         gstin_verified_at: form.gstin_verified_at || null,
+        business_name:   form.business_name || displayName || null,
+        trade_name:      form.trade_name || null,
+        business_type:   form.business_type || null,
         pan:             pan || null,
         udyam_number:    form.udyam_number || null,
         cin:             form.cin || null,
@@ -598,7 +720,7 @@ function AddEditClientModal({ companyId, client, onClose }) {
         shipping_pincode:  form.shipping_same_as_billing ? null : (form.shipping_pincode || null),
         shipping_same_as_billing: form.shipping_same_as_billing,
         contact_country_code:  form.contact_country_code || '+91',
-        contact_name:          form.contact_name || null,
+        contact_name:          contactName,
         contact_designation:   form.contact_designation || null,
         contact_phone:         form.contact_phone || null,
         contact_email:         form.contact_email || null,
@@ -630,233 +752,106 @@ function AddEditClientModal({ companyId, client, onClose }) {
 
   return (
     <Modal
-      title={isEdit ? `Edit — ${client.business_name}` : 'Add New Client'}
-      subtitle={isEdit ? undefined : 'Enter GSTIN first to auto-fill business details'}
-      onClose={onClose}
-      wide
+      title={isEdit ? `Edit — ${client.display_name || client.business_name}` : 'Add New Client'}
+      subtitle={isEdit ? undefined : 'Fill in the details step by step'}
+      onClose={onClose} wide
       footer={
         <>
-          <button onClick={onClose} className="flex-1 py-2.5 rounded-xl bg-dark-700 border border-dark-600 text-slate-300 text-sm hover:bg-dark-600 transition-colors">Cancel</button>
-          <button onClick={handleSave} disabled={saving} className="flex-1 py-2.5 rounded-xl bg-primary-600 hover:bg-primary-500 text-white text-sm font-medium disabled:opacity-50 transition-colors flex items-center justify-center gap-2">
+          <button onClick={onClose} className="flex-1 py-2.5 rounded-xl bg-dark-700 border border-dark-600 text-slate-300 text-sm hover:bg-dark-600">Cancel</button>
+          <button onClick={handleSave} disabled={saving || !!dupWarning}
+            className="flex-1 py-2.5 rounded-xl bg-primary-600 hover:bg-primary-500 text-white text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-2">
             {saving ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving…</> : isEdit ? 'Save Changes' : 'Add Client'}
           </button>
         </>
       }
     >
-      {/* ── Section 1: GST Verification ───────────────────────────────────── */}
+
+      {/* ── Step 1: Client Type ────────────────────────────────────────────── */}
       <div className="space-y-3">
-        <SectionHeader icon={Shield} label="GST Verification" />
-        <Field label="GSTIN (15-digit GST Number)"
-          hint="Enter GSTIN and click Verify to auto-fill business name, address and PAN from the GST portal">
-          <GSTINVerifier
-            value={form.gstin}
-            onChange={v => set('gstin', v)}
-            onVerified={handleGSTINVerified}
-          />
-        </Field>
+        <SectionHeader icon={UserCheck} label="Client Type" />
+        <div className="grid grid-cols-2 gap-3">
+          <button type="button"
+            onClick={() => switchType('business')}
+            className={`flex items-center gap-3 p-3.5 rounded-xl border-2 transition-all ${
+              form.client_type === 'business'
+                ? 'border-primary-500 bg-primary-900/20'
+                : 'border-dark-600 hover:border-dark-500'
+            }`}
+          >
+            <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${
+              form.client_type === 'business' ? 'border-primary-400' : 'border-dark-400'
+            }`}>
+              {form.client_type === 'business' && <div className="w-2 h-2 rounded-full bg-primary-400" />}
+            </div>
+            <div className="text-left">
+              <p className={`text-sm font-semibold ${form.client_type === 'business' ? 'text-primary-300' : 'text-slate-300'}`}>Business</p>
+              <p className="text-xs text-slate-500">Company / Firm / LLP</p>
+            </div>
+          </button>
+          <button type="button"
+            onClick={() => switchType('individual')}
+            className={`flex items-center gap-3 p-3.5 rounded-xl border-2 transition-all ${
+              form.client_type === 'individual'
+                ? 'border-primary-500 bg-primary-900/20'
+                : 'border-dark-600 hover:border-dark-500'
+            }`}
+          >
+            <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${
+              form.client_type === 'individual' ? 'border-primary-400' : 'border-dark-400'
+            }`}>
+              {form.client_type === 'individual' && <div className="w-2 h-2 rounded-full bg-primary-400" />}
+            </div>
+            <div className="text-left">
+              <p className={`text-sm font-semibold ${form.client_type === 'individual' ? 'text-primary-300' : 'text-slate-300'}`}>Individual</p>
+              <p className="text-xs text-slate-500">Person / Proprietor</p>
+            </div>
+          </button>
+        </div>
       </div>
 
-      {/* ── Section 2: Business Details ───────────────────────────────────── */}
+      {/* ── Step 2: Primary Contact Details ───────────────────────────────── */}
       <div className="space-y-3">
-        <SectionHeader icon={Building2} label="Business Details" />
+        <SectionHeader icon={User} label="Primary Contact Details" />
 
-        {/* Client number — read-only badge */}
+        {/* Client ID badge */}
         <div className="flex items-center gap-2 text-xs">
           <span className="text-slate-500">Client ID:</span>
           <span className="font-mono font-semibold text-primary-400 bg-primary-900/20 px-2 py-0.5 rounded border border-primary-800/30">
             {form.client_number || 'Auto-generating…'}
           </span>
-          <span className="text-slate-600">(auto-assigned, series)</span>
         </div>
 
-        <Field label="Legal / Registered Business Name" required>
-          <input className={inp()} value={form.business_name}
-            onChange={e => set('business_name', e.target.value)}
-            placeholder="As per GSTIN / Certificate of Incorporation" />
-        </Field>
-
-        {isAdvanced && (
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Trade Name / Brand Name">
-              <input className={inp()} value={form.trade_name}
-                onChange={e => set('trade_name', e.target.value)}
-                placeholder="If different from legal name" />
-            </Field>
-            <Field label="Business Type">
-              <select className={inp()} value={form.business_type} onChange={e => set('business_type', e.target.value)}>
-                <option value="">Select…</option>
-                {BUSINESS_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+        {/* Salutation + Name */}
+        <div className="flex gap-2">
+          <div style={{ width: '100px' }} className="shrink-0">
+            <Field label="Salutation">
+              <select className={inp()} value={form.salutation} onChange={e => set('salutation', e.target.value)}>
+                {salutations.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
             </Field>
           </div>
-        )}
-
-        {/* GST Treatment */}
-        <Field label="GST Treatment">
-          <select className={inp()} value={form.gst_treatment} onChange={e => set('gst_treatment', e.target.value)}>
-            <option value="">Select GST Treatment…</option>
-            {GST_TREATMENT_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
-          </select>
-        </Field>
-
-        {/* Tax Preference + Currency side by side */}
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Tax Preference">
-            <div className="flex rounded-lg overflow-hidden border border-dark-600 h-[42px]">
-              <button type="button"
-                onClick={() => set('tax_preference', 'tax_payer')}
-                className={`flex-1 text-xs font-medium transition-all ${form.tax_preference === 'tax_payer' ? 'bg-primary-600 text-white' : 'bg-dark-700 text-slate-400 hover:text-slate-200'}`}>
-                Tax Payer
-              </button>
-              <button type="button"
-                onClick={() => set('tax_preference', 'non_tax_payer')}
-                className={`flex-1 text-xs font-medium transition-all border-l border-dark-600 ${form.tax_preference === 'non_tax_payer' ? 'bg-primary-600 text-white' : 'bg-dark-700 text-slate-400 hover:text-slate-200'}`}>
-                Non-Tax Payer
-              </button>
-            </div>
-          </Field>
-          <Field label="Currency">
-            <select className={inp()} value={form.currency} onChange={e => set('currency', e.target.value)}>
-              {CURRENCIES.map(c => <option key={c.code} value={c.code}>{c.label}</option>)}
-            </select>
-          </Field>
-        </div>
-      </div>
-
-      {/* ── Section 3: Government Registration (Advanced) ─────────────────── */}
-      {isAdvanced && (
-        <div className="space-y-3">
-          <SectionHeader icon={FileText} label="Government Registration Details" />
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="PAN" hint="Auto-filled from GSTIN">
-              <input className={inp('font-mono')} value={form.pan}
-                onChange={e => set('pan', e.target.value.toUpperCase())}
-                placeholder="AABCU9603R" maxLength={10} />
-            </Field>
-            <Field label="Udyam / MSME Registration No.">
-              <input className={inp('font-mono')} value={form.udyam_number}
-                onChange={e => set('udyam_number', e.target.value.toUpperCase())}
-                placeholder="UDYAM-XX-00-0000000" />
+          <div className="flex-1">
+            <Field label="First Name" required>
+              <input className={inp()} value={form.first_name}
+                onChange={e => set('first_name', e.target.value)}
+                placeholder={form.client_type === 'business' ? 'Contact person first name' : 'First name'} />
             </Field>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="CIN (Company Identification No.)">
-              <input className={inp('font-mono')} value={form.cin}
-                onChange={e => set('cin', e.target.value.toUpperCase())}
-                placeholder="U12345KA2018PTC123456" />
-            </Field>
-            <Field label="TAN (Tax Deduction Account No.)">
-              <input className={inp('font-mono')} value={form.tan}
-                onChange={e => set('tan', e.target.value.toUpperCase())}
-                placeholder="MUMB12345F" maxLength={10} />
+          <div className="flex-1">
+            <Field label="Last Name">
+              <input className={inp()} value={form.last_name}
+                onChange={e => set('last_name', e.target.value)}
+                placeholder="Last name" />
             </Field>
           </div>
         </div>
-      )}
 
-      {/* ── Section 4: Address ────────────────────────────────────────────── */}
-      <div className="space-y-3">
-        <SectionHeader icon={MapPin} label={isAdvanced ? 'Address' : 'Location'} />
-
-        {/* Basic — just city + state */}
-        {!isAdvanced && (
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="City">
-              <input className={inp()} value={form.city}
-                onChange={e => set('city', e.target.value)} placeholder="City" />
-            </Field>
-            <Field label="State">
-              <select className={inp()} value={form.state} onChange={e => set('state', e.target.value)}>
-                <option value="">Select…</option>
-                {INDIAN_STATES.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
-            </Field>
-          </div>
-        )}
-
-        {/* Advanced — two-column Billing | Shipping */}
-        {isAdvanced && (
-          <div className="grid grid-cols-2 gap-5">
-            {/* Billing Address */}
-            <div className="space-y-2.5">
-              <p className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-primary-400 inline-block" />
-                Billing Address
-              </p>
-              <Field label="Address" hint="Auto-filled from GST portal">
-                <textarea className={inp()} rows={2} value={form.registered_address}
-                  onChange={e => set('registered_address', e.target.value)}
-                  placeholder="Door No., Street, Area, Landmark" />
-              </Field>
-              <Field label="City">
-                <input className={inp()} value={form.city}
-                  onChange={e => set('city', e.target.value)} placeholder="City" />
-              </Field>
-              <div className="grid grid-cols-2 gap-2">
-                <Field label="State">
-                  <select className={inp()} value={form.state} onChange={e => set('state', e.target.value)}>
-                    <option value="">Select…</option>
-                    {INDIAN_STATES.map(s => <option key={s} value={s}>{s}</option>)}
-                  </select>
-                </Field>
-                <Field label="Pincode">
-                  <input className={inp()} value={form.pincode}
-                    onChange={e => set('pincode', e.target.value)}
-                    placeholder="600001" maxLength={6} />
-                </Field>
-              </div>
-            </div>
-
-            {/* Shipping Address */}
-            <div className="space-y-2.5">
-              <div className="flex items-center justify-between">
-                <p className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-slate-500 inline-block" />
-                  Shipping Address
-                </p>
-                <button
-                  type="button"
-                  onClick={copiBillingToShipping}
-                  className="flex items-center gap-1 text-xs text-primary-400 hover:text-primary-300 transition-colors">
-                  <Copy className="w-3 h-3" /> Same as Billing
-                </button>
-              </div>
-              <Field label="Address">
-                <textarea className={inp()} rows={2} value={form.shipping_address}
-                  onChange={e => { set('shipping_address', e.target.value); set('shipping_same_as_billing', false) }}
-                  placeholder="Door No., Street, Area, Landmark" />
-              </Field>
-              <Field label="City">
-                <input className={inp()} value={form.shipping_city}
-                  onChange={e => { set('shipping_city', e.target.value); set('shipping_same_as_billing', false) }}
-                  placeholder="City" />
-              </Field>
-              <div className="grid grid-cols-2 gap-2">
-                <Field label="State">
-                  <select className={inp()} value={form.shipping_state}
-                    onChange={e => { set('shipping_state', e.target.value); set('shipping_same_as_billing', false) }}>
-                    <option value="">Select…</option>
-                    {INDIAN_STATES.map(s => <option key={s} value={s}>{s}</option>)}
-                  </select>
-                </Field>
-                <Field label="Pincode">
-                  <input className={inp()} value={form.shipping_pincode}
-                    onChange={e => { set('shipping_pincode', e.target.value); set('shipping_same_as_billing', false) }}
-                    placeholder="600001" maxLength={6} />
-                </Field>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* ── Section 5: Primary Contact ────────────────────────────────────── */}
-      <div className="space-y-3">
-        <SectionHeader icon={User} label="Primary Contact Person" />
+        {/* Display Name + Mobile */}
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Full Name">
-            <input className={inp()} value={form.contact_name}
-              onChange={e => set('contact_name', e.target.value)} placeholder="Name" />
+          <Field label="Display Name" hint={form.client_type === 'individual' ? 'Auto-built from name above' : 'Name shown on invoices'}>
+            <input className={inp()} value={form.display_name}
+              onChange={e => set('display_name', e.target.value)}
+              placeholder="How this client appears in documents" />
           </Field>
           <Field label="Mobile Number" required>
             <PhoneInput
@@ -868,6 +863,7 @@ function AddEditClientModal({ companyId, client, onClose }) {
             />
           </Field>
         </div>
+
         {isAdvanced && (
           <div className="grid grid-cols-2 gap-3">
             <Field label="Designation">
@@ -884,8 +880,270 @@ function AddEditClientModal({ companyId, client, onClose }) {
         )}
       </div>
 
-      {/* ── Section 6: Secondary Contact (Advanced) ──────────────────────── */}
-      {isAdvanced && (
+      {/* ── Step 3: GST Treatment + Tax Preference + Currency ─────────────── */}
+      <div className="space-y-3">
+        <SectionHeader icon={IndianRupee} label="Tax & Currency" />
+        <Field label="GST Treatment" required hint="This determines what identification is needed next">
+          <select className={inp()} value={form.gst_treatment} onChange={e => handleTreatmentChange(e.target.value)}>
+            <option value="">Select GST Treatment…</option>
+            {GST_TREATMENT_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
+        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Tax Preference">
+            <div className="flex rounded-lg overflow-hidden border border-dark-600 h-[42px]">
+              <button type="button" onClick={() => set('tax_preference', 'tax_payer')}
+                className={`flex-1 text-xs font-medium transition-all ${form.tax_preference === 'tax_payer' ? 'bg-primary-600 text-white' : 'bg-dark-700 text-slate-400 hover:text-slate-200'}`}>
+                Tax Payer
+              </button>
+              <button type="button" onClick={() => set('tax_preference', 'non_tax_payer')}
+                className={`flex-1 text-xs font-medium transition-all border-l border-dark-600 ${form.tax_preference === 'non_tax_payer' ? 'bg-primary-600 text-white' : 'bg-dark-700 text-slate-400 hover:text-slate-200'}`}>
+                Non-Tax Payer
+              </button>
+            </div>
+          </Field>
+          <Field label="Currency">
+            <select className={inp()} value={form.currency} onChange={e => set('currency', e.target.value)}>
+              {CURRENCIES.map(c => <option key={c.code} value={c.code}>{c.label}</option>)}
+            </select>
+          </Field>
+        </div>
+      </div>
+
+      {/* ── Step 4: Identification (conditional on GST Treatment) ──────────── */}
+      {form.gst_treatment && !noTaxID && (
+        <div className="space-y-3">
+          <SectionHeader
+            icon={needsGSTIN ? Shield : FileText}
+            label={needsGSTIN ? 'GST Identification' : 'PAN Identification'}
+          />
+
+          {/* Duplicate warning banner */}
+          {dupWarning && <DupWarning info={dupWarning} />}
+          {checkingDup && (
+            <div className="flex items-center gap-2 text-xs text-slate-400">
+              <Loader2 className="w-3 h-3 animate-spin" /> Checking for duplicates…
+            </div>
+          )}
+
+          {needsGSTIN && (
+            <Field label="GSTIN (15-digit)" hint="Click Verify to auto-fill business name, address & PAN">
+              <GSTINVerifier
+                value={form.gstin}
+                onChange={v => set('gstin', v)}
+                onVerified={handleGSTINVerified}
+              />
+            </Field>
+          )}
+
+          {needsPAN && (
+            <div className="space-y-3">
+              <Field label="PAN Number" hint="10-character Permanent Account Number">
+                <div className="relative">
+                  <input
+                    className={inp(`font-mono pr-8 ${
+                      form.pan && form.pan.length === 10 && !PAN_REGEX.test(form.pan.toUpperCase())
+                        ? 'border-red-500' : form.pan && form.pan.length === 10 && PAN_REGEX.test(form.pan.toUpperCase())
+                        ? 'border-emerald-600' : ''
+                    }`)}
+                    value={form.pan}
+                    onChange={e => set('pan', e.target.value.toUpperCase().slice(0, 10))}
+                    placeholder="AABCU9603R"
+                    maxLength={10}
+                  />
+                  {form.pan && form.pan.length === 10 && PAN_REGEX.test(form.pan) && (
+                    <CheckCircle className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-emerald-400" />
+                  )}
+                </div>
+                {form.pan && form.pan.length === 10 && !PAN_REGEX.test(form.pan) && (
+                  <p className="text-xs text-red-400 mt-1 flex items-center gap-1">
+                    <AlertTriangle className="w-3 h-3" /> Invalid PAN format
+                  </p>
+                )}
+                {form.pan && form.pan.length === 10 && PAN_REGEX.test(form.pan) && (
+                  <p className="text-xs text-emerald-400 mt-1 flex items-center gap-1">
+                    <CheckCircle className="w-3 h-3" /> Valid PAN · Entity: {PAN_ENTITY[form.pan.charAt(4)] || 'Entity'}
+                  </p>
+                )}
+              </Field>
+              <p className="text-xs text-slate-500 bg-dark-700 rounded-lg p-2.5">
+                ℹ️ Unregistered businesses don't have GSTIN — all details must be entered manually below.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Consumer / Overseas — no ID banner */}
+      {noTaxID && (
+        <div className="flex items-center gap-2.5 bg-dark-700 border border-dark-600 rounded-lg p-3 text-xs text-slate-400">
+          <AlertCircle className="w-4 h-4 text-slate-500 shrink-0" />
+          No tax identification required for <strong className="text-slate-300">{form.gst_treatment}</strong> clients. Enter details manually.
+        </div>
+      )}
+
+      {/* ── Step 5: Business / Legal Name ─────────────────────────────────── */}
+      {(form.gst_treatment || isEdit) && (
+        <div className="space-y-3">
+          <SectionHeader icon={Building2} label={form.client_type === 'individual' ? 'Business / Trade Details' : 'Business Details'} />
+
+          {form.client_type === 'business' && (
+            <Field label="Legal / Registered Business Name" required hint="As per GSTIN or Certificate of Incorporation">
+              <input className={inp()} value={form.business_name}
+                onChange={e => set('business_name', e.target.value)}
+                placeholder="Legal business name" />
+            </Field>
+          )}
+
+          {isAdvanced && (
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Trade Name / Brand Name">
+                <input className={inp()} value={form.trade_name}
+                  onChange={e => set('trade_name', e.target.value)}
+                  placeholder="If different from legal name" />
+              </Field>
+              <Field label="Business Type">
+                <select className={inp()} value={form.business_type} onChange={e => set('business_type', e.target.value)}>
+                  <option value="">Select…</option>
+                  {BUSINESS_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </Field>
+            </div>
+          )}
+
+          {/* Additional govt IDs — shown if no GSTIN route (pan already above) */}
+          {isAdvanced && !needsGSTIN && (
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Udyam / MSME No.">
+                <input className={inp('font-mono')} value={form.udyam_number}
+                  onChange={e => set('udyam_number', e.target.value.toUpperCase())}
+                  placeholder="UDYAM-XX-00-0000000" />
+              </Field>
+              <Field label="CIN (if applicable)">
+                <input className={inp('font-mono')} value={form.cin}
+                  onChange={e => set('cin', e.target.value.toUpperCase())}
+                  placeholder="U12345KA2018PTC123456" />
+              </Field>
+            </div>
+          )}
+
+          {/* GSTIN route — show PAN (auto-filled) + others in Advanced */}
+          {isAdvanced && needsGSTIN && (
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="PAN" hint="Auto-filled from GSTIN">
+                <input className={inp('font-mono')} value={form.pan}
+                  onChange={e => set('pan', e.target.value.toUpperCase())}
+                  placeholder="AABCU9603R" maxLength={10} />
+              </Field>
+              <Field label="Udyam / MSME No.">
+                <input className={inp('font-mono')} value={form.udyam_number}
+                  onChange={e => set('udyam_number', e.target.value.toUpperCase())}
+                  placeholder="UDYAM-XX-00-0000000" />
+              </Field>
+              <Field label="CIN">
+                <input className={inp('font-mono')} value={form.cin}
+                  onChange={e => set('cin', e.target.value.toUpperCase())}
+                  placeholder="U12345KA2018PTC123456" />
+              </Field>
+              <Field label="TAN">
+                <input className={inp('font-mono')} value={form.tan}
+                  onChange={e => set('tan', e.target.value.toUpperCase())}
+                  placeholder="MUMB12345F" maxLength={10} />
+              </Field>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Step 6: Address ────────────────────────────────────────────────── */}
+      {(form.gst_treatment || isEdit) && (
+        <div className="space-y-3">
+          <SectionHeader icon={MapPin} label={isAdvanced ? 'Address' : 'Location'} />
+
+          {!isAdvanced && (
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="City">
+                <input className={inp()} value={form.city} onChange={e => set('city', e.target.value)} placeholder="City" />
+              </Field>
+              <Field label="State">
+                <select className={inp()} value={form.state} onChange={e => set('state', e.target.value)}>
+                  <option value="">Select…</option>
+                  {INDIAN_STATES.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </Field>
+            </div>
+          )}
+
+          {isAdvanced && (
+            <div className="grid grid-cols-2 gap-5">
+              {/* Billing */}
+              <div className="space-y-2.5">
+                <p className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-primary-400 inline-block" /> Billing Address
+                </p>
+                <Field label="Address" hint="Auto-filled from GST portal on verification">
+                  <textarea className={inp()} rows={2} value={form.registered_address}
+                    onChange={e => set('registered_address', e.target.value)}
+                    placeholder="Door No., Street, Area, Landmark" />
+                </Field>
+                <Field label="City">
+                  <input className={inp()} value={form.city} onChange={e => set('city', e.target.value)} placeholder="City" />
+                </Field>
+                <div className="grid grid-cols-2 gap-2">
+                  <Field label="State">
+                    <select className={inp()} value={form.state} onChange={e => set('state', e.target.value)}>
+                      <option value="">Select…</option>
+                      {INDIAN_STATES.map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </Field>
+                  <Field label="Pincode">
+                    <input className={inp()} value={form.pincode} onChange={e => set('pincode', e.target.value)} placeholder="600001" maxLength={6} />
+                  </Field>
+                </div>
+              </div>
+              {/* Shipping */}
+              <div className="space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-slate-500 inline-block" /> Shipping Address
+                  </p>
+                  <button type="button" onClick={copyBillingToShipping}
+                    className="flex items-center gap-1 text-xs text-primary-400 hover:text-primary-300">
+                    <Copy className="w-3 h-3" /> Same as Billing
+                  </button>
+                </div>
+                <Field label="Address">
+                  <textarea className={inp()} rows={2} value={form.shipping_address}
+                    onChange={e => { set('shipping_address', e.target.value); set('shipping_same_as_billing', false) }}
+                    placeholder="Door No., Street, Area, Landmark" />
+                </Field>
+                <Field label="City">
+                  <input className={inp()} value={form.shipping_city}
+                    onChange={e => { set('shipping_city', e.target.value); set('shipping_same_as_billing', false) }}
+                    placeholder="City" />
+                </Field>
+                <div className="grid grid-cols-2 gap-2">
+                  <Field label="State">
+                    <select className={inp()} value={form.shipping_state}
+                      onChange={e => { set('shipping_state', e.target.value); set('shipping_same_as_billing', false) }}>
+                      <option value="">Select…</option>
+                      {INDIAN_STATES.map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </Field>
+                  <Field label="Pincode">
+                    <input className={inp()} value={form.shipping_pincode}
+                      onChange={e => { set('shipping_pincode', e.target.value); set('shipping_same_as_billing', false) }}
+                      placeholder="600001" maxLength={6} />
+                  </Field>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Step 7: Secondary Contact (Advanced) ──────────────────────────── */}
+      {isAdvanced && (form.gst_treatment || isEdit) && (
         <div className="space-y-3">
           <SectionHeader icon={Users} label="Secondary Contact Person (Optional)" />
           <div className="grid grid-cols-2 gap-3">
@@ -895,8 +1153,7 @@ function AddEditClientModal({ companyId, client, onClose }) {
             </Field>
             <Field label="Designation">
               <input className={inp()} value={form.contact2_designation}
-                onChange={e => set('contact2_designation', e.target.value)}
-                placeholder="Site Engineer, GM…" />
+                onChange={e => set('contact2_designation', e.target.value)} placeholder="Site Engineer, GM…" />
             </Field>
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -911,17 +1168,16 @@ function AddEditClientModal({ companyId, client, onClose }) {
             </Field>
             <Field label="Email ID">
               <input type="email" className={inp()} value={form.contact2_email}
-                onChange={e => set('contact2_email', e.target.value)}
-                placeholder="name@company.com" />
+                onChange={e => set('contact2_email', e.target.value)} placeholder="name@company.com" />
             </Field>
           </div>
         </div>
       )}
 
-      {/* ── Section 7: Business Terms (Advanced) ─────────────────────────── */}
-      {isAdvanced && (
+      {/* ── Step 8: Business Terms (Advanced) ─────────────────────────────── */}
+      {isAdvanced && (form.gst_treatment || isEdit) && (
         <div className="space-y-3">
-          <SectionHeader icon={IndianRupee} label="Business Terms" />
+          <SectionHeader icon={Briefcase} label="Business Terms" />
           <div className="grid grid-cols-2 gap-3">
             <Field label="Payment Terms">
               <select className={inp()} value={form.payment_terms} onChange={e => set('payment_terms', e.target.value)}>
@@ -935,19 +1191,19 @@ function AddEditClientModal({ companyId, client, onClose }) {
                   {form.currency === 'INR' ? '₹' : form.currency}
                 </span>
                 <input type="number" className={`${inp()} rounded-l-none border-l-0`}
-                  value={form.credit_limit}
-                  onChange={e => set('credit_limit', e.target.value)}
-                  placeholder="e.g. 500000" />
+                  value={form.credit_limit} onChange={e => set('credit_limit', e.target.value)}
+                  placeholder="500000" />
               </div>
             </Field>
           </div>
           <Field label="Notes / Remarks">
             <textarea className={inp()} rows={2} value={form.notes}
               onChange={e => set('notes', e.target.value)}
-              placeholder="Any special terms, project notes, or remarks…" />
+              placeholder="Special terms, project notes, remarks…" />
           </Field>
         </div>
       )}
+
     </Modal>
   )
 }
@@ -987,38 +1243,34 @@ function ClientDetail({ client, companyId, onClose, onEdit }) {
     } catch { toast.error('Failed to archive') } finally { setArchiving(false) }
   }
 
-  // Render the contact phone with its country code
-  const fmtPhone = (code, phone) => {
-    if (!phone) return null
-    const c = (code && code !== '+91') ? code : '+91'
-    return `${c} ${phone}`
-  }
+  const fmtPhone = (code, phone) => phone ? `${code || '+91'} ${phone}` : null
+  const hasShipping = !client.shipping_same_as_billing && (client.shipping_city || client.shipping_address)
 
-  const hasShipping = !client.shipping_same_as_billing && (
-    client.shipping_address || client.shipping_city || client.shipping_state
-  )
+  const title = client.display_name || client.business_name ||
+    [client.salutation, client.first_name, client.last_name].filter(Boolean).join(' ') ||
+    client.contact_name || 'Client'
 
   return (
     <>
-      <Modal title={client.business_name} subtitle={client.trade_name || client.business_type || undefined} onClose={onClose} wide
+      <Modal title={title} subtitle={client.gst_treatment || client.business_type || undefined} onClose={onClose} wide
         footer={
           <>
             <button onClick={() => setShowDelete(true)}
-              className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-dark-700 border border-dark-600 text-red-400 text-sm hover:border-red-600 hover:bg-red-900/20 transition-colors">
+              className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-dark-700 border border-dark-600 text-red-400 text-sm hover:border-red-600 hover:bg-red-900/20">
               <Trash2 className="w-3.5 h-3.5" /> Delete
             </button>
             <button onClick={handleArchive} disabled={archiving}
-              className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-dark-700 border border-dark-600 text-slate-400 text-sm hover:border-slate-500 hover:text-slate-200 transition-colors">
+              className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-dark-700 border border-dark-600 text-slate-400 text-sm hover:text-slate-200">
               <Archive className="w-3.5 h-3.5" /> Archive
             </button>
             <button onClick={onEdit}
-              className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-primary-600 hover:bg-primary-500 text-white text-sm font-medium transition-colors">
+              className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-primary-600 hover:bg-primary-500 text-white text-sm font-medium">
               <Edit2 className="w-3.5 h-3.5" /> Edit Client
             </button>
           </>
         }
       >
-        {/* Status badges */}
+        {/* Badges */}
         <div className="flex flex-wrap gap-2">
           {client.client_number && (
             <span className="text-xs font-mono font-semibold px-2.5 py-1 rounded-full bg-dark-700 text-primary-400 border border-primary-800/40">
@@ -1026,10 +1278,16 @@ function ClientDetail({ client, companyId, onClose, onEdit }) {
             </span>
           )}
           <span className={`text-xs font-semibold px-2.5 py-1 rounded-full border ${
-            client.is_active
+            client.is_active !== false
               ? 'bg-emerald-500/10 text-emerald-400 border-emerald-600/30'
               : 'bg-dark-600 text-slate-400 border-dark-500'
-          }`}>{client.is_active ? 'Active' : 'Archived'}</span>
+          }`}>{client.is_active !== false ? 'Active' : 'Archived'}</span>
+          {client.client_type && (
+            <span className="text-xs px-2.5 py-1 rounded-full bg-dark-700 text-slate-400 border border-dark-600 flex items-center gap-1">
+              {client.client_type === 'individual' ? <User className="w-3 h-3" /> : <Building2 className="w-3 h-3" />}
+              {client.client_type === 'individual' ? 'Individual' : 'Business'}
+            </span>
+          )}
           {client.gstin_verified && (
             <span className="text-xs font-semibold px-2.5 py-1 rounded-full border bg-blue-500/10 text-blue-400 border-blue-600/30 flex items-center gap-1">
               <BadgeCheck className="w-3 h-3" /> GST Verified
@@ -1041,9 +1299,7 @@ function ClientDetail({ client, companyId, onClose, onEdit }) {
             </span>
           )}
           {client.tax_preference === 'non_tax_payer' && (
-            <span className="text-xs px-2.5 py-1 rounded-full bg-yellow-900/20 text-yellow-400 border border-yellow-700/30">
-              Non-Tax Payer
-            </span>
+            <span className="text-xs px-2.5 py-1 rounded-full bg-yellow-900/20 text-yellow-400 border border-yellow-700/30">Non-Tax Payer</span>
           )}
           {client.currency && client.currency !== 'INR' && (
             <span className="text-xs px-2.5 py-1 rounded-full bg-dark-700 text-slate-400 border border-dark-600 flex items-center gap-1">
@@ -1068,7 +1324,7 @@ function ClientDetail({ client, companyId, onClose, onEdit }) {
           </div>
         </div>
 
-        {/* Government IDs — Advanced only */}
+        {/* Registration IDs — Advanced */}
         {isAdvanced && (client.gstin || client.pan || client.udyam_number || client.cin || client.tan) && (
           <div>
             <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Registration Details</p>
@@ -1094,54 +1350,44 @@ function ClientDetail({ client, companyId, onClose, onEdit }) {
         )}
 
         {/* Address */}
-        {(client.registered_address || client.city || client.state) && (
+        {(client.city || client.registered_address) && (
           <div>
             <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
               {isAdvanced ? 'Address' : 'Location'}
             </p>
             {isAdvanced ? (
               <div className="grid grid-cols-2 gap-3">
-                {/* Billing */}
-                <div className="bg-dark-700 rounded-xl px-3 py-2.5 space-y-0.5">
+                <div className="bg-dark-700 rounded-xl px-3 py-2.5">
                   <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Billing</p>
                   <div className="flex items-start gap-2">
                     <MapPin className="w-3.5 h-3.5 text-slate-500 mt-0.5 shrink-0" />
                     <div>
                       {client.registered_address && <p className="text-xs text-slate-200">{client.registered_address}</p>}
-                      <p className="text-xs text-slate-300">
-                        {[client.city, client.state, client.pincode].filter(Boolean).join(', ')}
-                      </p>
+                      <p className="text-xs text-slate-300">{[client.city, client.state, client.pincode].filter(Boolean).join(', ')}</p>
                     </div>
                   </div>
                 </div>
-                {/* Shipping */}
-                <div className="bg-dark-700 rounded-xl px-3 py-2.5 space-y-0.5">
+                <div className="bg-dark-700 rounded-xl px-3 py-2.5">
                   <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
-                    Shipping {client.shipping_same_as_billing !== false && !hasShipping && <span className="text-slate-600 font-normal">(same as billing)</span>}
+                    Shipping {!hasShipping && <span className="font-normal text-slate-600">(same as billing)</span>}
                   </p>
                   {hasShipping ? (
                     <div className="flex items-start gap-2">
                       <MapPin className="w-3.5 h-3.5 text-slate-500 mt-0.5 shrink-0" />
                       <div>
                         {client.shipping_address && <p className="text-xs text-slate-200">{client.shipping_address}</p>}
-                        <p className="text-xs text-slate-300">
-                          {[client.shipping_city, client.shipping_state, client.shipping_pincode].filter(Boolean).join(', ')}
-                        </p>
+                        <p className="text-xs text-slate-300">{[client.shipping_city, client.shipping_state, client.shipping_pincode].filter(Boolean).join(', ')}</p>
                       </div>
                     </div>
                   ) : (
-                    <p className="text-xs text-slate-500 italic">
-                      {[client.city, client.state, client.pincode].filter(Boolean).join(', ')}
-                    </p>
+                    <p className="text-xs text-slate-500 italic">{[client.city, client.state, client.pincode].filter(Boolean).join(', ')}</p>
                   )}
                 </div>
               </div>
             ) : (
               <div className="bg-dark-700 rounded-xl px-3 py-2.5 flex items-start gap-2">
                 <MapPin className="w-4 h-4 text-slate-500 mt-0.5 shrink-0" />
-                <p className="text-sm text-slate-300">
-                  {[client.city, client.state].filter(Boolean).join(', ')}
-                </p>
+                <p className="text-sm text-slate-300">{[client.city, client.state].filter(Boolean).join(', ')}</p>
               </div>
             )}
           </div>
@@ -1151,10 +1397,11 @@ function ClientDetail({ client, companyId, onClose, onEdit }) {
         <div>
           <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Contact Persons</p>
           <div className="space-y-2">
-            {/* Primary */}
             <div className="bg-dark-700 rounded-xl p-3">
               <div className="flex items-center justify-between mb-2">
-                <p className="text-xs font-semibold text-slate-300">{client.contact_name || 'Primary Contact'}</p>
+                <p className="text-xs font-semibold text-slate-300">
+                  {[client.salutation, client.first_name, client.last_name].filter(Boolean).join(' ') || client.contact_name || 'Primary Contact'}
+                </p>
                 {isAdvanced && client.contact_designation && (
                   <span className="text-xs text-slate-500">{client.contact_designation}</span>
                 )}
@@ -1173,7 +1420,7 @@ function ClientDetail({ client, companyId, onClose, onEdit }) {
                 )}
               </div>
             </div>
-            {/* Secondary — Advanced only */}
+
             {isAdvanced && (client.contact2_name || client.contact2_phone) && (
               <div className="bg-dark-700 rounded-xl p-3">
                 <div className="flex items-center justify-between mb-2">
@@ -1227,20 +1474,20 @@ function ClientDetail({ client, companyId, onClose, onEdit }) {
         )}
       </Modal>
 
-      {/* Delete confirmation */}
       {showDelete && (
-        <DeleteConfirmModal
-          client={client}
-          companyId={companyId}
-          onClose={() => setShowDelete(false)}
-          onDeleted={onClose}
-        />
+        <DeleteConfirmModal client={client} companyId={companyId} onClose={() => setShowDelete(false)} onDeleted={onClose} />
       )}
     </>
   )
 }
 
 // ── Client Card ───────────────────────────────────────────────────────────────
+function clientTitle(c) {
+  return c.display_name || c.business_name ||
+    [c.salutation, c.first_name, c.last_name].filter(Boolean).join(' ') ||
+    c.contact_name || 'Unknown Client'
+}
+
 function ClientCard({ client, onClick }) {
   return (
     <button onClick={onClick}
@@ -1248,17 +1495,22 @@ function ClientCard({ client, onClick }) {
       <div className="flex items-start justify-between gap-2 mb-3">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-0.5">
-            <p className="font-semibold text-slate-100 text-sm truncate">{client.business_name}</p>
+            <p className="font-semibold text-slate-100 text-sm truncate">{clientTitle(client)}</p>
             {client.gstin_verified && <BadgeCheck className="w-3.5 h-3.5 text-blue-400 shrink-0" />}
           </div>
           {client.client_number && (
             <p className="text-[11px] font-mono text-primary-500">{client.client_number}</p>
           )}
-          {client.trade_name && client.trade_name !== client.business_name && (
-            <p className="text-xs text-slate-500 truncate mt-0.5">{client.trade_name}</p>
+          {client.gst_treatment && (
+            <p className="text-xs text-slate-600 mt-0.5 truncate">{client.gst_treatment}</p>
           )}
         </div>
-        <ChevronRight className="w-4 h-4 text-slate-600 shrink-0 mt-1" />
+        <div className="flex items-center gap-1.5 shrink-0 mt-1">
+          {client.client_type === 'individual'
+            ? <User className="w-3.5 h-3.5 text-slate-600" />
+            : <Building2 className="w-3.5 h-3.5 text-slate-600" />}
+          <ChevronRight className="w-4 h-4 text-slate-600" />
+        </div>
       </div>
 
       {(client.city || client.state) && (
@@ -1277,9 +1529,6 @@ function ClientCard({ client, onClick }) {
                 ? `${client.contact_country_code} ${client.contact_phone}`
                 : client.contact_phone}
             </span>
-          )}
-          {client.gst_treatment && (
-            <span className="text-xs text-slate-600">{client.gst_treatment.split(' ').slice(0, 2).join(' ')}</span>
           )}
         </div>
         {client.currency && client.currency !== 'INR' && (
@@ -1303,8 +1552,7 @@ export default function ClientsPage() {
     queryKey: ['clients', companyId],
     queryFn: async () => {
       const { data, error } = await supabase.from('clients')
-        .select('*').eq('company_id', companyId)
-        .order('business_name')
+        .select('*').eq('company_id', companyId).order('created_at', { ascending: false })
       if (error) throw error
       return data || []
     },
@@ -1313,15 +1561,14 @@ export default function ClientsPage() {
 
   const filtered = clients.filter(c => {
     const q = search.toLowerCase()
-    const matchSearch = !q ||
-      c.business_name?.toLowerCase().includes(q) ||
-      c.trade_name?.toLowerCase().includes(q) ||
+    const name = clientTitle(c).toLowerCase()
+    const matchSearch = !q || name.includes(q) ||
       c.gstin?.toLowerCase().includes(q) ||
       c.client_number?.toLowerCase().includes(q) ||
       c.contact_phone?.includes(q) ||
-      c.contact_name?.toLowerCase().includes(q) ||
-      c.city?.toLowerCase().includes(q)
-    const matchStatus = showArchived ? !c.is_active : c.is_active !== false
+      c.city?.toLowerCase().includes(q) ||
+      c.pan?.toLowerCase().includes(q)
+    const matchStatus = showArchived ? c.is_active === false : c.is_active !== false
     return matchSearch && matchStatus
   })
 
@@ -1331,7 +1578,6 @@ export default function ClientsPage() {
 
   return (
     <div className="relative flex flex-col h-full bg-dark-900">
-      {/* Header */}
       <div className="px-4 pt-4 pb-3 shrink-0">
         <div className="flex items-center justify-between mb-3">
           <div>
@@ -1347,16 +1593,14 @@ export default function ClientsPage() {
           </button>
         </div>
 
-        {/* Search */}
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
           <input
             className="w-full bg-dark-700 border border-dark-600 rounded-xl pl-9 pr-4 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-primary-500 placeholder-slate-500"
-            placeholder="Search by name, GSTIN, CLT-ID, phone, city…"
+            placeholder="Search by name, GSTIN, CLI-ID, phone, city…"
             value={search} onChange={e => setSearch(e.target.value)} />
         </div>
 
-        {/* Tabs */}
         {archivedCount > 0 && (
           <div className="flex gap-1 mt-2">
             <button onClick={() => setShowArchived(false)}
@@ -1371,7 +1615,6 @@ export default function ClientsPage() {
         )}
       </div>
 
-      {/* List */}
       <div className="flex-1 overflow-y-auto px-4 pb-6">
         {isLoading ? (
           <div className="flex items-center justify-center py-16">
@@ -1392,7 +1635,7 @@ export default function ClientsPage() {
             </div>
             {clients.length === 0 && (
               <button onClick={() => setShowAdd(true)}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary-600 hover:bg-primary-500 text-white text-sm font-medium transition-colors">
+                className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary-600 hover:bg-primary-500 text-white text-sm font-medium">
                 <Plus className="w-4 h-4" /> Add First Client
               </button>
             )}
@@ -1406,22 +1649,14 @@ export default function ClientsPage() {
         )}
       </div>
 
-      {/* Modals */}
-      {showAdd && (
-        <AddEditClientModal companyId={companyId} onClose={() => setShowAdd(false)} />
-      )}
+      {showAdd && <AddEditClientModal companyId={companyId} onClose={() => setShowAdd(false)} />}
       {selected && !editing && (
-        <ClientDetail
-          client={selected} companyId={companyId}
+        <ClientDetail client={selected} companyId={companyId}
           onClose={() => setSelected(null)}
-          onEdit={() => { setEditing(selected); setSelected(null) }}
-        />
+          onEdit={() => { setEditing(selected); setSelected(null) }} />
       )}
       {editing && (
-        <AddEditClientModal
-          companyId={companyId} client={editing}
-          onClose={() => setEditing(null)}
-        />
+        <AddEditClientModal companyId={companyId} client={editing} onClose={() => setEditing(null)} />
       )}
     </div>
   )
