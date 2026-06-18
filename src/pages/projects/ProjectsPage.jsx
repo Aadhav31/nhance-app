@@ -1067,7 +1067,7 @@ function ContactCard({ name, phone, email, role }) {
   )
 }
 
-function ProjectDetail({ project, onClose, onEdit }) {
+function ProjectDetail({ project, onClose, onEdit, onDelete }) {
   const { isAdvanced } = useDisplayMode()
 
   const { data: equipment = [] } = useQuery({
@@ -1122,6 +1122,12 @@ function ProjectDetail({ project, onClose, onEdit }) {
   return (
     <Modal title={project.project_name} subtitle={project.project_code} onClose={onClose} wide
       footer={<>
+        {onDelete && (
+          <button onClick={onDelete}
+            className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-red-400 border border-red-500/30 hover:bg-red-500/10 transition-colors shrink-0">
+            <Trash2 className="w-3.5 h-3.5"/> Delete
+          </button>
+        )}
         <button onClick={onClose} className="btn-ghost flex-1">Close</button>
         <button onClick={onEdit} className="btn-primary flex-1 flex items-center justify-center gap-2">
           <Edit2 className="w-3.5 h-3.5"/> Edit Project
@@ -1514,6 +1520,18 @@ export default function ProjectsPage() {
     toast.success('Project archived')
   }
 
+  const handleDelete = async (p) => {
+    if (!confirm(`Permanently delete "${p.project_name}"?\n\nThis cannot be undone. All rate items will also be deleted.`)) return
+    // Delete rate items first (foreign key constraint)
+    await supabase.from('project_rate_items').delete().eq('project_id', p.id)
+    const { error } = await supabase.from('projects').delete().eq('id', p.id)
+    if (error) { toast.error(error.message); return }
+    qc.invalidateQueries(['projects'])
+    qc.invalidateQueries(['next_project_code'])
+    setViewing(null)
+    toast.success('Project deleted')
+  }
+
   return (
     <div className="h-full flex flex-col bg-dark-900">
       {/* Header */}
@@ -1595,6 +1613,7 @@ export default function ProjectsPage() {
           project={viewing}
           onClose={() => setViewing(null)}
           onEdit={() => { setEditing(viewing); setViewing(null) }}
+          onDelete={isAdmin ? () => handleDelete(viewing) : undefined}
         />
       )}
     </div>
