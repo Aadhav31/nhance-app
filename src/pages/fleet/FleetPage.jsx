@@ -9,10 +9,22 @@ import {
   Truck, Plus, Fuel, AlertTriangle, X, Loader2, CheckCircle,
   Gauge, User, Mic, MicOff, MapPin, Camera, Building2, Users,
   Save, Trash2, Edit2, FileText, Wrench, Shield, Phone, Mail,
-  ChevronRight, AlertCircle, Clock, Activity
+  ChevronRight, AlertCircle, Clock, Activity, LayoutGrid, List,
+  Upload, Download, Eye, FolderOpen, Bell
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format, differenceInDays } from 'date-fns'
+
+// ── Document types ────────────────────────────────────────────────────────────
+const DOC_TYPES = [
+  { value: 'purchase_invoice', label: 'Purchase Invoice',          hasExpiry: false, icon: '🧾' },
+  { value: 'rc_book',          label: 'RC Book',                   hasExpiry: true,  icon: '📋' },
+  { value: 'insurance',        label: 'Insurance Policy',          hasExpiry: true,  icon: '🛡️' },
+  { value: 'fitness',          label: 'Fitness Certificate',       hasExpiry: true,  icon: '✅' },
+  { value: 'puc',              label: 'PUC Certificate',           hasExpiry: true,  icon: '💨' },
+  { value: 'permit',           label: 'Route / Operating Permit',  hasExpiry: true,  icon: '📄' },
+  { value: 'other',            label: 'Other Document',            hasExpiry: false, icon: '📎' },
+]
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function today() { return new Date().toISOString().split('T')[0] }
@@ -470,6 +482,214 @@ function EquipmentFormModal({ companyId, initialValues, onClose, onSaved }) {
         </Field>
       </div>
     </Modal>
+  )
+}
+
+// ── Document Upload Modal ─────────────────────────────────────────────────────
+async function uploadDocFile(file, companyId, equipmentId, docType) {
+  const ext  = file.name.split('.').pop()
+  const path = `${companyId}/equipment-docs/${equipmentId}/${docType}_${Date.now()}.${ext}`
+  const { error } = await supabase.storage.from('nhance-photos').upload(path, file, { upsert: false })
+  if (error) throw error
+  const { data: { publicUrl } } = supabase.storage.from('nhance-photos').getPublicUrl(path)
+  return publicUrl
+}
+
+function DocumentUploadModal({ equipment, companyId, onClose }) {
+  const qc = useQueryClient()
+  const fileRef = useRef(null)
+  const [form, setForm] = useState({
+    doc_type: '', doc_name: '', issued_date: '', expiry_date: '', notes: '',
+  })
+  const [file, setFile]       = useState(null)
+  const [saving, setSaving]   = useState(false)
+  const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
+
+  const docMeta = DOC_TYPES.find(d => d.value === form.doc_type)
+
+  const handleSave = async () => {
+    if (!form.doc_type)                { toast.error('Select document type'); return }
+    if (!file)                         { toast.error('Select a file to upload'); return }
+    if (form.doc_type === 'other' && !form.doc_name.trim()) { toast.error('Enter a name for this document'); return }
+    setSaving(true)
+    try {
+      const fileUrl = await uploadDocFile(file, companyId, equipment.id, form.doc_type)
+      const { error } = await supabase.from('equipment_documents').insert({
+        company_id:   companyId,
+        equipment_id: equipment.id,
+        doc_type:     form.doc_type,
+        doc_name:     form.doc_name || docMeta?.label || form.doc_type,
+        file_url:     fileUrl,
+        file_name:    file.name,
+        file_size_kb: Math.round(file.size / 1024),
+        issued_date:  form.issued_date  || null,
+        expiry_date:  form.expiry_date  || null,
+        notes:        form.notes        || null,
+      })
+      if (error) throw error
+      toast.success('Document uploaded')
+      qc.invalidateQueries(['equipment_docs', equipment.id])
+      onClose()
+    } catch (err) { toast.error(err.message || 'Upload failed')
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <Modal title="Upload Document" onClose={onClose} footer={
+      <>
+        <button onClick={onClose} className="flex-1 btn-secondary">Cancel</button>
+        <button onClick={handleSave} disabled={saving || !file} className="flex-1 btn-primary">
+          {saving ? <><Loader2 className="w-4 h-4 animate-spin" />Uploading…</> : <><Upload className="w-4 h-4" />Upload</>}
+        </button>
+      </>
+    }>
+      <Field label="Document Type" required>
+        <select className={inp()} value={form.doc_type} onChange={e => set('doc_type', e.target.value)}>
+          <option value="">Select type…</option>
+          {DOC_TYPES.map(d => <option key={d.value} value={d.value}>{d.icon} {d.label}</option>)}
+        </select>
+      </Field>
+      {form.doc_type === 'other' && (
+        <Field label="Document Name" required>
+          <input className={inp()} value={form.doc_name} onChange={e => set('doc_name', e.target.value)} placeholder="e.g. Load test certificate, Warranty card…" />
+        </Field>
+      )}
+
+      {/* File picker */}
+      <div>
+        <p className="text-xs font-medium text-slate-400 mb-1.5">File <span className="text-red-400">*</span></p>
+        <input ref={fileRef} type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx"
+          className="hidden" onChange={e => setFile(e.target.files?.[0] || null)} />
+        <button type="button" onClick={() => fileRef.current?.click()}
+          className={`w-full flex items-center justify-center gap-2 py-3 rounded-xl border-2 border-dashed text-sm transition-colors
+            ${file ? 'border-emerald-600 bg-emerald-900/20 text-emerald-400' : 'border-dark-500 bg-dark-700 text-slate-400 hover:border-primary-500 hover:text-primary-300'}`}>
+          {file
+            ? <><CheckCircle className="w-4 h-4" />{file.name} ({Math.round(file.size / 1024)} KB)</>
+            : <><FolderOpen className="w-4 h-4" />Choose PDF / Image / Word doc</>}
+        </button>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Issued Date">
+          <input type="date" className={inp()} value={form.issued_date} onChange={e => set('issued_date', e.target.value)} />
+        </Field>
+        {docMeta?.hasExpiry !== false && (
+          <Field label="Expiry Date">
+            <input type="date" className={inp()} value={form.expiry_date} onChange={e => set('expiry_date', e.target.value)} />
+          </Field>
+        )}
+      </div>
+      <Field label="Notes">
+        <input className={inp()} value={form.notes} onChange={e => set('notes', e.target.value)} placeholder="Policy number, renewal ref, etc." />
+      </Field>
+    </Modal>
+  )
+}
+
+// ── Documents Section (shown inside EquipmentDetail) ──────────────────────────
+function DocumentsSection({ equipment, companyId, isAdmin }) {
+  const qc = useQueryClient()
+  const [showUpload, setShowUpload] = useState(false)
+
+  const { data: docs = [], isLoading } = useQuery({
+    queryKey: ['equipment_docs', equipment.id],
+    queryFn: async () => {
+      const { data } = await supabase.from('equipment_documents')
+        .select('*').eq('equipment_id', equipment.id).order('doc_type').order('uploaded_at', { ascending: false })
+      return data || []
+    },
+  })
+
+  const handleDelete = async (docId, fileUrl) => {
+    if (!confirm('Delete this document? This cannot be undone.')) return
+    const { error } = await supabase.from('equipment_documents').delete().eq('id', docId)
+    if (error) { toast.error('Failed to delete'); return }
+    toast.success('Document deleted')
+    qc.invalidateQueries(['equipment_docs', equipment.id])
+  }
+
+  const docsByType = DOC_TYPES.map(dt => ({
+    ...dt,
+    items: docs.filter(d => d.doc_type === dt.value),
+  })).filter(dt => dt.items.length > 0)
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2">
+          <FileText className="w-3.5 h-3.5 text-primary-400" />
+          <span className="text-xs font-semibold text-slate-300 uppercase tracking-wider">Documents</span>
+          <div className="flex-1 h-px bg-dark-600 w-8" />
+        </div>
+        {isAdmin && (
+          <button onClick={() => setShowUpload(true)}
+            className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-dark-700 border border-dark-600 hover:border-primary-500 text-xs text-slate-300 transition-colors">
+            <Upload className="w-3 h-3" /> Add
+          </button>
+        )}
+      </div>
+
+      {isLoading ? (
+        <div className="flex items-center gap-2 text-xs text-slate-500 py-2"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading…</div>
+      ) : docs.length === 0 ? (
+        <div className="flex flex-col items-center py-4 gap-2 bg-dark-700/50 rounded-xl border border-dashed border-dark-600">
+          <FolderOpen className="w-8 h-8 text-slate-600" />
+          <p className="text-xs text-slate-500">No documents uploaded yet</p>
+          {isAdmin && <button onClick={() => setShowUpload(true)} className="text-xs text-primary-400 underline">Upload first document</button>}
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {docsByType.map(dt => (
+            <div key={dt.value}>
+              <p className="text-xs text-slate-500 mb-1.5">{dt.icon} {dt.label}</p>
+              <div className="space-y-1.5">
+                {dt.items.map(doc => {
+                  const days   = doc.expiry_date ? differenceInDays(new Date(doc.expiry_date), new Date()) : null
+                  const expColor = days === null ? '' : days < 0 ? 'text-red-400' : days < 30 ? 'text-orange-400' : 'text-emerald-400'
+                  return (
+                    <div key={doc.id} className="flex items-center gap-2 bg-dark-700 rounded-lg px-3 py-2">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs text-slate-200 truncate">{doc.doc_name || dt.label}</p>
+                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                          {doc.file_name && <span className="text-xs text-slate-500 truncate max-w-[120px]">{doc.file_name}</span>}
+                          {doc.expiry_date && (
+                            <span className={`text-xs font-medium ${expColor}`}>
+                              {days < 0 ? '⚠ Expired' : `Exp: ${format(new Date(doc.expiry_date), 'dd MMM yyyy')}`}
+                              {days !== null && days >= 0 && ` (${days}d)`}
+                            </span>
+                          )}
+                          {doc.notes && <span className="text-xs text-slate-500 italic truncate max-w-[100px]">{doc.notes}</span>}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <a href={doc.file_url} target="_blank" rel="noopener noreferrer"
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-primary-400 hover:bg-dark-600 transition-colors" title="View / Download">
+                          <Eye className="w-3.5 h-3.5" />
+                        </a>
+                        {isAdmin && (
+                          <button onClick={() => handleDelete(doc.id, doc.file_url)}
+                            className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-dark-600 transition-colors" title="Delete">
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          ))}
+          {isAdmin && (
+            <button onClick={() => setShowUpload(true)}
+              className="w-full flex items-center justify-center gap-1.5 py-2 rounded-lg border border-dashed border-dark-600 text-xs text-slate-500 hover:border-primary-500 hover:text-primary-400 transition-colors">
+              <Upload className="w-3 h-3" /> Upload another document
+            </button>
+          )}
+        </div>
+      )}
+
+      {showUpload && <DocumentUploadModal equipment={equipment} companyId={companyId} onClose={() => setShowUpload(false)} />}
+    </div>
   )
 }
 
@@ -942,20 +1162,28 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
     <>
       <Modal title={equipment.name} onClose={onClose} wide>
         {/* ── Header ── */}
-        <div className="flex items-center justify-between gap-3 flex-wrap">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className={`text-xs font-semibold px-2.5 py-1 rounded-full border ${st.bg} ${st.text} ${st.border}`}>{st.label}</span>
-            <span className="text-xs text-slate-400">{equipment.category}</span>
-            {equipment.registration_number && <span className="text-xs text-slate-500 font-mono">{equipment.registration_number}</span>}
-            <span className={`text-xs px-2 py-0.5 rounded-full border ${
-              equipment.ownership_type === 'hired' ? 'bg-yellow-500/10 text-yellow-400 border-yellow-500/30'
-              : equipment.ownership_type === 'client_supplied' ? 'bg-purple-500/10 text-purple-400 border-purple-500/30'
-              : 'bg-slate-500/10 text-slate-400 border-slate-500/30'
-            }`}>{ownerTypeLabel}</span>
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex-1 min-w-0">
+            {/* Sub-line: number · make · model · year */}
+            {(equipment.equipment_number || equipment.make || equipment.model || equipment.year_of_manufacture) && (
+              <p className="text-xs text-slate-500 mb-2">
+                {[equipment.equipment_number, equipment.make, equipment.model, equipment.year_of_manufacture].filter(Boolean).join(' · ')}
+              </p>
+            )}
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className={`text-xs font-semibold px-2.5 py-1 rounded-full border ${st.bg} ${st.text} ${st.border}`}>{st.label}</span>
+              <span className="text-xs text-slate-400">{equipment.category}</span>
+              {equipment.registration_number && <span className="text-xs text-slate-500 font-mono bg-dark-700 px-2 py-0.5 rounded">{equipment.registration_number}</span>}
+              <span className={`text-xs px-2 py-0.5 rounded-full border ${
+                equipment.ownership_type === 'hired' ? 'bg-yellow-500/10 text-yellow-400 border-yellow-500/30'
+                : equipment.ownership_type === 'client_supplied' ? 'bg-purple-500/10 text-purple-400 border-purple-500/30'
+                : 'bg-slate-500/10 text-slate-400 border-slate-500/30'
+              }`}>{ownerTypeLabel}</span>
+            </div>
           </div>
           {isAdmin && (
             <button onClick={() => setShowEdit(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-dark-500 bg-dark-700 hover:border-primary-500 text-xs text-slate-300 transition-colors">
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-dark-500 bg-dark-700 hover:border-primary-500 text-xs text-slate-300 transition-colors shrink-0">
               <Edit2 className="w-3.5 h-3.5" /> Edit
             </button>
           )}
@@ -1150,6 +1378,9 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
           </div>
         )}
 
+        {/* ── Documents ── */}
+        <DocumentsSection equipment={equipment} companyId={companyId} isAdmin={isAdmin} />
+
         {/* ── Recent Fuel ── */}
         {recentFuel.length > 0 && (
           <div>
@@ -1271,18 +1502,27 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
 
 // ── Equipment Card ────────────────────────────────────────────────────────────
 function EquipmentCard({ equipment, onClick }) {
-  const st          = STATUS_COLORS[equipment.status] || STATUS_COLORS.active
-  const alert       = hasExpiryAlert(equipment)
-  const ownerBadge  = equipment.ownership_type === 'hired' ? { label: 'Hired', color: 'text-yellow-400 bg-yellow-500/10 border-yellow-500/30' }
-    : equipment.ownership_type === 'client_supplied'       ? { label: 'Client', color: 'text-purple-400 bg-purple-500/10 border-purple-500/30' }
+  const st         = STATUS_COLORS[equipment.status] || STATUS_COLORS.active
+  const alert      = hasExpiryAlert(equipment)
+  const ownerBadge = equipment.ownership_type === 'hired'
+    ? { label: 'Hired',  color: 'text-yellow-400 bg-yellow-500/10 border-yellow-500/30' }
+    : equipment.ownership_type === 'client_supplied'
+    ? { label: 'Client', color: 'text-purple-400 bg-purple-500/10 border-purple-500/30' }
     : null
 
   return (
     <button onClick={onClick}
       className="w-full text-left bg-dark-800 border border-dark-700 hover:border-dark-500 rounded-xl p-4 transition-all active:scale-[0.98]">
-      <div className="flex items-start justify-between gap-2 mb-2">
+
+      {/* Row 1: name + status */}
+      <div className="flex items-start justify-between gap-2">
         <div className="flex-1 min-w-0">
-          <p className="font-semibold text-slate-100 text-sm leading-tight truncate">{equipment.name}</p>
+          <div className="flex items-center gap-2">
+            <p className="font-semibold text-slate-100 text-sm leading-tight truncate">{equipment.name}</p>
+            {equipment.equipment_number && (
+              <span className="text-xs text-slate-600 font-mono shrink-0">{equipment.equipment_number}</span>
+            )}
+          </div>
           <p className="text-xs text-slate-500 mt-0.5">{equipment.category}</p>
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
@@ -1290,21 +1530,34 @@ function EquipmentCard({ equipment, onClick }) {
           <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${st.bg} ${st.text} ${st.border}`}>{st.label}</span>
         </div>
       </div>
-      <div className="flex items-center gap-3 flex-wrap mt-1">
-        <div className="flex items-center gap-1.5 text-xs text-slate-400">
+
+      {/* Row 2: make/model/year + meter */}
+      <div className="flex items-center gap-3 mt-2 flex-wrap">
+        {(equipment.make || equipment.model) && (
+          <span className="text-xs text-slate-400">
+            {[equipment.make, equipment.model, equipment.year_of_manufacture].filter(Boolean).join(' · ')}
+          </span>
+        )}
+        <div className="flex items-center gap-1 text-xs text-slate-400 ml-auto">
           <Gauge className="w-3.5 h-3.5" />
-          <span>{Number(equipment.current_meter_reading || 0).toFixed(1)} {equipment.meter_type === 'kilometers' ? 'km' : 'hrs'}</span>
+          <span className="font-medium text-slate-300">
+            {Number(equipment.current_meter_reading || 0).toFixed(1)} {equipment.meter_type === 'kilometers' ? 'km' : 'hrs'}
+          </span>
         </div>
-        {equipment.registration_number && <span className="text-xs text-slate-500 font-mono">{equipment.registration_number}</span>}
-        {ownerBadge && <span className={`text-xs px-1.5 py-0.5 rounded border ${ownerBadge.color}`}>{ownerBadge.label}</span>}
       </div>
-      <div className="flex items-center justify-between mt-2">
-        <div className="flex gap-1.5">
-          {equipment.make  && <span className="text-xs bg-dark-700 text-slate-400 px-2 py-0.5 rounded">{equipment.make}</span>}
-          {equipment.model && <span className="text-xs bg-dark-700 text-slate-400 px-2 py-0.5 rounded">{equipment.model}</span>}
+
+      {/* Row 3: reg number + ownership + site */}
+      <div className="flex items-center justify-between mt-2 gap-2">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {equipment.registration_number && (
+            <span className="text-xs text-slate-500 font-mono bg-dark-700 px-2 py-0.5 rounded">{equipment.registration_number}</span>
+          )}
+          {ownerBadge && (
+            <span className={`text-xs px-1.5 py-0.5 rounded border ${ownerBadge.color}`}>{ownerBadge.label}</span>
+          )}
           {equipment.current_site_name && (
-            <span className="text-xs bg-emerald-900/20 text-emerald-400 border border-emerald-700/30 px-2 py-0.5 rounded truncate max-w-[120px]">
-              {equipment.current_site_name}
+            <span className="text-xs bg-emerald-900/20 text-emerald-400 border border-emerald-700/30 px-2 py-0.5 rounded truncate max-w-[130px]">
+              📍 {equipment.current_site_name}
             </span>
           )}
         </div>
@@ -1316,11 +1569,13 @@ function EquipmentCard({ equipment, onClick }) {
 
 // ── Fleet Tab ─────────────────────────────────────────────────────────────────
 function FleetTab({ companyId }) {
-  const [showAdd,   setShowAdd]   = useState(false)
-  const [selected,  setSelected]  = useState(null)
-  const [search,    setSearch]    = useState('')
-  const [filterStatus, setFilterStatus] = useState('all')
+  const [showAdd,         setShowAdd]         = useState(false)
+  const [selected,        setSelected]        = useState(null)
+  const [search,          setSearch]          = useState('')
+  const [filterStatus,    setFilterStatus]    = useState('all')
   const [filterOwnership, setFilterOwnership] = useState('all')
+  const [viewMode,        setViewMode]        = useState('grid')    // 'grid' | 'site'
+  const [alertDismissed,  setAlertDismissed]  = useState(false)
 
   const { data: equipment = [], isLoading } = useQuery({
     queryKey: ['equipment', companyId],
@@ -1331,20 +1586,98 @@ function FleetTab({ companyId }) {
     },
   })
 
+  // Also fetch equipment_documents expiry alerts
+  const { data: docAlerts = [] } = useQuery({
+    queryKey: ['doc_expiry_alerts', companyId],
+    queryFn: async () => {
+      const thirtyDaysFromNow = new Date(); thirtyDaysFromNow.setDate(thirtyDaysFromNow.getDate() + 30)
+      const { data } = await supabase.from('equipment_documents')
+        .select('equipment_id, doc_name, doc_type, expiry_date, equipment(name)')
+        .eq('company_id', companyId)
+        .not('expiry_date', 'is', null)
+        .lte('expiry_date', thirtyDaysFromNow.toISOString().split('T')[0])
+        .order('expiry_date')
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+
   const filtered = equipment.filter(e =>
     (!search || e.name.toLowerCase().includes(search.toLowerCase()) ||
       (e.registration_number || '').toLowerCase().includes(search.toLowerCase()) ||
       (e.category || '').toLowerCase().includes(search.toLowerCase())) &&
-    (filterStatus === 'all'     || e.status         === filterStatus) &&
-    (filterOwnership === 'all'  || (e.ownership_type || 'own') === filterOwnership)
+    (filterStatus === 'all'    || e.status === filterStatus) &&
+    (filterOwnership === 'all' || (e.ownership_type || 'own') === filterOwnership)
   )
+
+  // Group by site for site view
+  const bySite = (() => {
+    const groups = {}
+    filtered.forEach(e => {
+      const key = e.current_site_name || '__undeployed__'
+      if (!groups[key]) groups[key] = []
+      groups[key].push(e)
+    })
+    // Sort: deployed sites first, then undeployed
+    const entries = Object.entries(groups).sort(([a], [b]) => {
+      if (a === '__undeployed__') return 1
+      if (b === '__undeployed__') return -1
+      return a.localeCompare(b)
+    })
+    return entries
+  })()
 
   const counts = { active: 0, idle: 0, breakdown: 0, maintenance: 0 }
   equipment.forEach(e => { if (counts[e.status] !== undefined) counts[e.status]++ })
-  const alertCount = equipment.filter(hasExpiryAlert).length
+  const equipmentAlertCount = equipment.filter(hasExpiryAlert).length
+  const totalAlerts = equipmentAlertCount + docAlerts.length
 
   return (
     <div className="flex flex-col h-full">
+
+      {/* ── Expiry Alert Banner ── */}
+      {!alertDismissed && (totalAlerts > 0) && (
+        <div className="mx-4 mt-2 mb-1 bg-orange-900/30 border border-orange-700/40 rounded-xl px-3 py-2.5 shrink-0">
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex items-start gap-2">
+              <Bell className="w-4 h-4 text-orange-400 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-xs font-semibold text-orange-300">
+                  {totalAlerts} document expiry alert{totalAlerts > 1 ? 's' : ''} — action required
+                </p>
+                <div className="mt-1 space-y-0.5">
+                  {/* Equipment-level expiry alerts */}
+                  {equipment.filter(hasExpiryAlert).slice(0, 3).map(e => {
+                    const fields = ['insurance_expiry','rc_expiry','fitness_expiry','puc_expiry','permit_expiry']
+                    const expField = fields.find(f => e[f] && differenceInDays(new Date(e[f]), new Date()) < 30)
+                    const days = expField ? differenceInDays(new Date(e[expField]), new Date()) : null
+                    return (
+                      <p key={e.id} className="text-xs text-orange-400">
+                        · {e.name}: {expField?.replace('_expiry','').replace('_',' ')} {days < 0 ? 'expired' : `expires in ${days}d`}
+                      </p>
+                    )
+                  })}
+                  {/* Doc-level expiry alerts */}
+                  {docAlerts.slice(0, 3).map((d, i) => {
+                    const days = differenceInDays(new Date(d.expiry_date), new Date())
+                    return (
+                      <p key={i} className="text-xs text-orange-400">
+                        · {d.equipment?.name}: {d.doc_name || d.doc_type} {days < 0 ? 'expired' : `expires in ${days}d`}
+                      </p>
+                    )
+                  })}
+                  {totalAlerts > 6 && <p className="text-xs text-orange-500">+ {totalAlerts - 6} more…</p>}
+                </div>
+              </div>
+            </div>
+            <button onClick={() => setAlertDismissed(true)} className="p-1 text-orange-500 hover:text-orange-300">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Status filter chips ── */}
       {equipment.length > 0 && (
         <div className="flex gap-2 px-4 py-2 overflow-x-auto shrink-0">
           {Object.entries(counts).map(([status, count]) => {
@@ -1357,14 +1690,10 @@ function FleetTab({ companyId }) {
               </button>
             )
           })}
-          {alertCount > 0 && (
-            <button onClick={() => {}}
-              className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-orange-500/30 bg-orange-500/10 text-orange-400 text-xs font-medium">
-              <AlertCircle className="w-3 h-3" /> {alertCount} Expiry Alert{alertCount > 1 ? 's' : ''}
-            </button>
-          )}
         </div>
       )}
+
+      {/* ── Search + filters ── */}
       <div className="px-4 pb-2 shrink-0 flex gap-2">
         <input className="flex-1 bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500 placeholder-slate-500"
           placeholder="Search equipment, reg. no, category…" value={search} onChange={e => setSearch(e.target.value)} />
@@ -1375,7 +1704,18 @@ function FleetTab({ companyId }) {
           <option value="hired">Hired</option>
           <option value="client_supplied">Client</option>
         </select>
+        {/* View toggle */}
+        <div className="flex bg-dark-700 border border-dark-600 rounded-lg overflow-hidden shrink-0">
+          <button onClick={() => setViewMode('grid')}
+            className={`px-2.5 py-2 transition-colors ${viewMode === 'grid' ? 'bg-primary-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}
+            title="Grid view"><LayoutGrid className="w-3.5 h-3.5" /></button>
+          <button onClick={() => setViewMode('site')}
+            className={`px-2.5 py-2 transition-colors ${viewMode === 'site' ? 'bg-primary-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}
+            title="Group by site"><List className="w-3.5 h-3.5" /></button>
+        </div>
       </div>
+
+      {/* ── Equipment list ── */}
       <div className="flex-1 overflow-y-auto px-4 pb-24">
         {isLoading ? (
           <div className="flex items-center justify-center py-16"><Loader2 className="w-6 h-6 text-primary-400 animate-spin" /></div>
@@ -1387,12 +1727,32 @@ function FleetTab({ companyId }) {
               <button onClick={() => setShowAdd(true)} className="btn-primary text-sm mt-2"><Plus className="w-4 h-4" /> Add First Equipment</button>
             )}
           </div>
-        ) : (
+        ) : viewMode === 'grid' ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {filtered.map(eq => <EquipmentCard key={eq.id} equipment={eq} onClick={() => setSelected(eq)} />)}
           </div>
+        ) : (
+          /* Site-grouped view */
+          <div className="space-y-5">
+            {bySite.map(([site, items]) => (
+              <div key={site}>
+                <div className="flex items-center gap-2 mb-2">
+                  <Building2 className="w-3.5 h-3.5 text-slate-500" />
+                  <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                    {site === '__undeployed__' ? 'Not Deployed' : site}
+                  </span>
+                  <span className="text-xs text-slate-600">({items.length})</span>
+                  <div className="flex-1 h-px bg-dark-700" />
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {items.map(eq => <EquipmentCard key={eq.id} equipment={eq} onClick={() => setSelected(eq)} />)}
+                </div>
+              </div>
+            ))}
+          </div>
         )}
       </div>
+
       {equipment.length > 0 && (
         <div className="absolute bottom-0 left-0 right-0 px-4 pb-4 bg-gradient-to-t from-dark-900 pt-8">
           <button onClick={() => setShowAdd(true)} className="w-full btn-primary py-3"><Plus className="w-5 h-5" /> Add Equipment</button>
