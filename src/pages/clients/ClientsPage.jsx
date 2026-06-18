@@ -202,17 +202,17 @@ function SectionHeader({ icon: Icon, label }) {
 
 function PhoneInput({ codeValue, onCodeChange, phoneValue, onPhoneChange, placeholder }) {
   return (
-    <div className="flex">
+    <div className="flex rounded-lg overflow-hidden border border-dark-600 focus-within:border-primary-500 bg-dark-700">
       <select
         value={codeValue || '+91'}
         onChange={e => onCodeChange(e.target.value)}
-        className="bg-dark-700 border border-r-0 border-dark-600 rounded-l-lg text-xs text-slate-300 px-2 focus:outline-none focus:border-primary-500 shrink-0"
-        style={{ minWidth: '72px' }}
+        className="bg-dark-700 text-sm text-slate-300 pl-2 pr-1 py-2.5 focus:outline-none shrink-0 border-r border-dark-600"
+        style={{ width: '78px' }}
       >
         {COUNTRY_CODES.map(c => <option key={c.code} value={c.code}>{c.code}</option>)}
       </select>
       <input
-        className={`${inp()} rounded-l-none border-l-0 flex-1`}
+        className="flex-1 bg-transparent px-3 py-2.5 text-sm text-slate-100 focus:outline-none placeholder-slate-500 min-w-0"
         value={phoneValue || ''}
         onChange={e => onPhoneChange(e.target.value.replace(/\D/g, '').slice(0, 15))}
         placeholder={placeholder || 'Phone number'}
@@ -840,6 +840,12 @@ function AddEditClientModal({ companyId, client, onClose }) {
       {/* ── Step 1: Client Type ────────────────────────────────────────────── */}
       <div className="space-y-3">
         <SectionHeader icon={UserCheck} label="Client Type" />
+        <div className="flex items-center gap-2 text-xs">
+          <span className="text-slate-500">Client ID:</span>
+          <span className="font-mono font-semibold text-primary-400 bg-primary-900/20 px-2 py-0.5 rounded border border-primary-800/30">
+            {form.client_number || 'Auto-generating…'}
+          </span>
+        </div>
         <div className="grid grid-cols-2 gap-3">
           <button type="button"
             onClick={() => switchType('business')}
@@ -880,82 +886,7 @@ function AddEditClientModal({ companyId, client, onClose }) {
         </div>
       </div>
 
-      {/* ── Step 2: Primary Contact Details ───────────────────────────────── */}
-      <div className="space-y-3">
-        <SectionHeader icon={User} label="Primary Contact Details" />
-
-        {/* Client ID badge */}
-        <div className="flex items-center gap-2 text-xs">
-          <span className="text-slate-500">Client ID:</span>
-          <span className="font-mono font-semibold text-primary-400 bg-primary-900/20 px-2 py-0.5 rounded border border-primary-800/30">
-            {form.client_number || 'Auto-generating…'}
-          </span>
-        </div>
-
-        {/* Salutation + First + Last Name — always shown for both Business and Individual */}
-        <div className="flex gap-2">
-          <div style={{ width: '100px' }} className="shrink-0">
-            <Field label="Salutation">
-              <select className={inp()} value={form.salutation} onChange={e => set('salutation', e.target.value)}>
-                {salutations.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
-            </Field>
-          </div>
-          <div className="flex-1">
-            <Field label="First Name" required>
-              <input className={inp()} value={form.first_name}
-                onChange={e => set('first_name', e.target.value)}
-                placeholder={form.client_type === 'business' ? 'Contact person first name' : 'First name'} />
-            </Field>
-          </div>
-          <div className="flex-1">
-            <Field label="Last Name">
-              <input className={inp()} value={form.last_name}
-                onChange={e => set('last_name', e.target.value)}
-                placeholder="Last name" />
-            </Field>
-          </div>
-        </div>
-
-        {/* Display Name + Mobile */}
-        <div className="grid grid-cols-2 gap-3">
-          <DisplayNameField
-            value={form.display_name}
-            onChange={v => set('display_name', v)}
-            salutation={form.salutation}
-            firstName={form.first_name}
-            lastName={form.last_name}
-            businessName={form.business_name}
-            clientType={form.client_type}
-          />
-          <Field label="Mobile Number" required>
-            <PhoneInput
-              codeValue={form.contact_country_code}
-              onCodeChange={v => set('contact_country_code', v)}
-              phoneValue={form.contact_phone}
-              onPhoneChange={v => set('contact_phone', v)}
-              placeholder="98765 43210"
-            />
-          </Field>
-        </div>
-
-        {isAdvanced && (
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Designation">
-              <input className={inp()} value={form.contact_designation}
-                onChange={e => set('contact_designation', e.target.value)}
-                placeholder="MD, CEO, Manager…" />
-            </Field>
-            <Field label="Email ID">
-              <input type="email" className={inp()} value={form.contact_email}
-                onChange={e => set('contact_email', e.target.value)}
-                placeholder="name@company.com" />
-            </Field>
-          </div>
-        )}
-      </div>
-
-      {/* ── Step 3: GST Treatment + Tax Preference + Currency ─────────────── */}
+      {/* ── Step 2: GST Treatment + Tax Preference + Currency ─────────────── */}
       <div className="space-y-3">
         <SectionHeader icon={IndianRupee} label="Tax & Currency" />
         <Field label="GST Treatment" required hint="This determines what identification is needed next">
@@ -985,15 +916,14 @@ function AddEditClientModal({ companyId, client, onClose }) {
         </div>
       </div>
 
-      {/* ── Step 4: Identification (conditional on GST Treatment) ──────────── */}
+      {/* ── Step 3: GST / PAN Identification (conditional) ────────────────── */}
       {form.gst_treatment && !noTaxID && (
         <div className="space-y-3">
           <SectionHeader
             icon={needsGSTIN ? Shield : FileText}
-            label={needsGSTIN ? 'GST Identification' : 'PAN Identification'}
+            label={needsGSTIN ? 'GST Number' : 'PAN Number'}
           />
 
-          {/* Duplicate warning banner */}
           {dupWarning && <DupWarning info={dupWarning} />}
           {checkingDup && (
             <div className="flex items-center gap-2 text-xs text-slate-400">
@@ -1057,7 +987,7 @@ function AddEditClientModal({ companyId, client, onClose }) {
         </div>
       )}
 
-      {/* ── Step 5: Business / Legal Name ─────────────────────────────────── */}
+      {/* ── Step 4: Business / Legal Name ─────────────────────────────────── */}
       {(form.gst_treatment || isEdit) && (
         <div className="space-y-3">
           <SectionHeader icon={Building2} label={form.client_type === 'individual' ? 'Business / Trade Details' : 'Business Details'} />
@@ -1086,7 +1016,6 @@ function AddEditClientModal({ companyId, client, onClose }) {
             </div>
           )}
 
-          {/* Additional govt IDs — shown if no GSTIN route (pan already above) */}
           {isAdvanced && !needsGSTIN && (
             <div className="grid grid-cols-2 gap-3">
               <Field label="Udyam / MSME No.">
@@ -1102,7 +1031,6 @@ function AddEditClientModal({ companyId, client, onClose }) {
             </div>
           )}
 
-          {/* GSTIN route — show PAN (auto-filled) + others in Advanced */}
           {isAdvanced && needsGSTIN && (
             <div className="grid grid-cols-2 gap-3">
               <Field label="PAN" hint="Auto-filled from GSTIN">
@@ -1124,6 +1052,75 @@ function AddEditClientModal({ companyId, client, onClose }) {
                 <input className={inp('font-mono')} value={form.tan}
                   onChange={e => set('tan', e.target.value.toUpperCase())}
                   placeholder="MUMB12345F" maxLength={10} />
+              </Field>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Step 5: Primary Contact Person ────────────────────────────────── */}
+      {(form.gst_treatment || isEdit) && (
+        <div className="space-y-3">
+          <SectionHeader icon={User} label="Primary Contact Person" />
+
+          {/* Salutation + First + Last Name */}
+          <div className="flex gap-2">
+            <div style={{ width: '100px' }} className="shrink-0">
+              <Field label="Salutation">
+                <select className={inp()} value={form.salutation} onChange={e => set('salutation', e.target.value)}>
+                  {salutations.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </Field>
+            </div>
+            <div className="flex-1">
+              <Field label="First Name" required>
+                <input className={inp()} value={form.first_name}
+                  onChange={e => set('first_name', e.target.value)}
+                  placeholder={form.client_type === 'business' ? 'Contact person first name' : 'First name'} />
+              </Field>
+            </div>
+            <div className="flex-1">
+              <Field label="Last Name">
+                <input className={inp()} value={form.last_name}
+                  onChange={e => set('last_name', e.target.value)}
+                  placeholder="Last name" />
+              </Field>
+            </div>
+          </div>
+
+          {/* Display Name + Mobile */}
+          <div className="grid grid-cols-2 gap-3">
+            <DisplayNameField
+              value={form.display_name}
+              onChange={v => set('display_name', v)}
+              salutation={form.salutation}
+              firstName={form.first_name}
+              lastName={form.last_name}
+              businessName={form.business_name}
+              clientType={form.client_type}
+            />
+            <Field label="Mobile Number" required>
+              <PhoneInput
+                codeValue={form.contact_country_code}
+                onCodeChange={v => set('contact_country_code', v)}
+                phoneValue={form.contact_phone}
+                onPhoneChange={v => set('contact_phone', v)}
+                placeholder="98765 43210"
+              />
+            </Field>
+          </div>
+
+          {isAdvanced && (
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Designation">
+                <input className={inp()} value={form.contact_designation}
+                  onChange={e => set('contact_designation', e.target.value)}
+                  placeholder="MD, CEO, Manager…" />
+              </Field>
+              <Field label="Email ID">
+                <input type="email" className={inp()} value={form.contact_email}
+                  onChange={e => set('contact_email', e.target.value)}
+                  placeholder="name@company.com" />
               </Field>
             </div>
           )}
