@@ -448,6 +448,76 @@ function emptyForm() {
   }
 }
 
+// ── Display Name Field with suggestions ──────────────────────────────────────
+function DisplayNameField({ value, onChange, salutation, firstName, lastName, businessName, clientType }) {
+  const [open, setOpen] = useState(false)
+
+  // Build suggestion list from the current name fields
+  const suggestions = []
+  const f = (firstName || '').trim()
+  const l = (lastName || '').trim()
+  const s = (salutation || '').trim()
+  const b = (businessName || '').trim()
+
+  if (f && l) {
+    if (s) suggestions.push(`${s} ${f} ${l}`)   // Mr. John Smith
+    suggestions.push(`${f} ${l}`)                // John Smith
+  }
+  if (f) {
+    if (s && !suggestions.some(x => x === `${s} ${f}`)) suggestions.push(`${s} ${f}`) // Mr. John
+    if (!suggestions.some(x => x === f)) suggestions.push(f)                           // John
+  }
+  if (b && clientType === 'business') {
+    if (!suggestions.includes(b)) suggestions.push(b)                                  // ABC Pvt Ltd
+  }
+
+  const handleSelect = (v) => {
+    onChange(v)
+    setOpen(false)
+  }
+
+  return (
+    <div className="relative">
+      <Field label="Display Name" hint="Name shown on invoices & documents">
+        <div className="relative">
+          <input
+            className={inp('pr-8')}
+            value={value}
+            onChange={e => onChange(e.target.value)}
+            onFocus={() => suggestions.length > 0 && setOpen(true)}
+            onBlur={() => setTimeout(() => setOpen(false), 150)}
+            placeholder="How this client appears in documents"
+          />
+          {suggestions.length > 0 && (
+            <button
+              type="button"
+              onMouseDown={e => { e.preventDefault(); setOpen(o => !o) }}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
+            >
+              <ChevronRight className={`w-4 h-4 transition-transform ${open ? 'rotate-90' : 'rotate-0'}`} />
+            </button>
+          )}
+        </div>
+        {open && suggestions.length > 0 && (
+          <div className="absolute z-10 mt-1 w-full bg-dark-700 border border-dark-500 rounded-lg shadow-xl overflow-hidden">
+            <p className="text-[10px] text-slate-500 px-3 pt-2 pb-1 uppercase tracking-wider">Suggestions</p>
+            {suggestions.map((s, i) => (
+              <button
+                key={i}
+                type="button"
+                onMouseDown={() => handleSelect(s)}
+                className="w-full text-left px-3 py-2 text-sm text-slate-200 hover:bg-dark-600 transition-colors"
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+        )}
+      </Field>
+    </div>
+  )
+}
+
 // ── Add / Edit Client Modal ───────────────────────────────────────────────────
 function AddEditClientModal({ companyId, client, onClose }) {
   const qc = useQueryClient()
@@ -849,11 +919,15 @@ function AddEditClientModal({ companyId, client, onClose }) {
 
         {/* Display Name + Mobile */}
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Display Name" hint={form.client_type === 'individual' ? 'Auto-built from name above' : 'Name shown on invoices'}>
-            <input className={inp()} value={form.display_name}
-              onChange={e => set('display_name', e.target.value)}
-              placeholder="How this client appears in documents" />
-          </Field>
+          <DisplayNameField
+            value={form.display_name}
+            onChange={v => set('display_name', v)}
+            salutation={form.salutation}
+            firstName={form.first_name}
+            lastName={form.last_name}
+            businessName={form.business_name}
+            clientType={form.client_type}
+          />
           <Field label="Mobile Number" required>
             <PhoneInput
               codeValue={form.contact_country_code}
