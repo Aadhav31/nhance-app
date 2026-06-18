@@ -244,21 +244,43 @@ function DupWarning({ info }) {
 }
 
 // ── GSTIN Verifier ────────────────────────────────────────────────────────────
-function GSTINVerifier({ value, onChange, onVerified }) {
+function GSTINVerifier({ value, onChange, onVerified, companyId, existingClientId }) {
   const [verifying, setVerifying] = useState(false)
   const [result, setResult] = useState(null)
   const [apiResult, setApiResult] = useState(null)
+  const [dupInfo, setDupInfo] = useState(null)   // inline duplicate found during verify
   const validation = validateGSTIN(value)
 
   const handleChange = (v) => {
     onChange(v.toUpperCase())
-    setResult(null); setApiResult(null)
+    setResult(null); setApiResult(null); setDupInfo(null)
   }
 
   const handleVerify = async () => {
     if (!validation.valid) return
-    setVerifying(true); setApiResult(null)
+    setVerifying(true); setApiResult(null); setDupInfo(null)
     try {
+      // ── 1. Duplicate check first — no point hitting GST portal if already exists ──
+      if (companyId) {
+        const { data: matches } = await supabase
+          .from('clients')
+          .select('id, business_name, display_name, client_number, is_active')
+          .eq('company_id', companyId)
+          .eq('gstin', validation.gstin)
+        const others = (matches || []).filter(c => c.id !== existingClientId)
+        if (others.length > 0) {
+          const dup = others[0]
+          setDupInfo({
+            name: dup.display_name || dup.business_name || 'Unknown',
+            num: dup.client_number,
+            archived: dup.is_active === false,
+          })
+          setVerifying(false)
+          return   // stop here — no need to hit GST portal
+        }
+      }
+
+      // ── 2. No duplicate — proceed with GST portal lookup ─────────────────────
       const data = await fetchGSTINDetails(validation.gstin)
       if (data?.businessName) {
         setResult(data); setApiResult('success')
@@ -290,19 +312,38 @@ function GSTINVerifier({ value, onChange, onVerified }) {
           <input
             className={inp(`font-mono pr-8 ${
               value && !validation.valid ? 'border-red-500 focus:border-red-500' :
+              dupInfo ? 'border-red-500 focus:border-red-500' :
               validation.valid ? 'border-emerald-600 focus:border-emerald-500' : ''
             }`)}
             value={value} onChange={e => handleChange(e.target.value)}
             placeholder="e.g. 33AABCU9603R1ZX" maxLength={15}
           />
-          {validation.valid && <CheckCircle className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-emerald-400" />}
+          {validation.valid && !dupInfo && <CheckCircle className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-emerald-400" />}
+          {dupInfo && <AlertCircle className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-red-400" />}
         </div>
         <button type="button" onClick={handleVerify}
           disabled={!validation.valid || verifying}
           className="flex items-center gap-1.5 px-4 py-2.5 rounded-lg bg-primary-600 hover:bg-primary-500 text-white text-xs font-medium disabled:opacity-40 transition-colors shrink-0">
-          {verifying ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Verifying…</> : <><Shield className="w-3.5 h-3.5" /> Verify</>}
+          {verifying ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Checking…</> : <><Shield className="w-3.5 h-3.5" /> Verify</>}
         </button>
       </div>
+
+      {/* Duplicate found during verify — shown right here, not elsewhere */}
+      {dupInfo && (
+        <div className="flex items-start gap-2.5 bg-red-900/25 border border-red-600/50 rounded-lg p-3 text-xs">
+          <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+          <div>
+            <p className="text-red-300 font-semibold">This GSTIN is already registered in your account</p>
+            <p className="text-slate-300 mt-0.5 font-medium">
+              {dupInfo.name}{dupInfo.num ? ` · ${dupInfo.num}` : ''}
+              <span className={`ml-1.5 text-xs font-normal ${dupInfo.archived ? 'text-slate-500' : 'text-emerald-400'}`}>
+                ({dupInfo.archived ? 'archived' : 'active'})
+              </span>
+            </p>
+            <p className="text-slate-500 mt-1">Edit the existing client instead of adding a new one.</p>
+          </div>
+        </div>
+      )}
 
       {value && !validation.valid && validation.error && (
         <p className="text-xs text-red-400 flex items-center gap-1">
@@ -310,7 +351,7 @@ function GSTINVerifier({ value, onChange, onVerified }) {
         </p>
       )}
 
-      {validation.valid && apiResult === null && (
+      {validation.valid && apiResult === null && !dupInfo && (
         <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
           <span className="text-emerald-400 flex items-center gap-1">
             <CheckCircle className="w-3 h-3" /> Valid format
@@ -924,19 +965,14 @@ function AddEditClientModal({ companyId, client, onClose }) {
             label={needsGSTIN ? 'GST Number' : 'PAN Number'}
           />
 
-          {dupWarning && <DupWarning info={dupWarning} />}
-          {checkingDup && (
-            <div className="flex items-center gap-2 text-xs text-slate-400">
-              <Loader2 className="w-3 h-3 animate-spin" /> Checking for duplicates…
-            </div>
-          )}
-
           {needsGSTIN && (
-            <Field label="GSTIN (15-digit)" hint="Click Verify to auto-fill business name, address & PAN">
+            <Field label="GSTIN (15-digit)" hint="Click Verify — duplicate check + auto-fill run together">
               <GSTINVerifier
                 value={form.gstin}
                 onChange={v => set('gstin', v)}
                 onVerified={handleGSTINVerified}
+                companyId={companyId}
+                existingClientId={client?.id}
               />
             </Field>
           )}
