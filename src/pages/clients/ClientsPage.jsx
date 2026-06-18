@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
+import { useDisplayMode } from '../../contexts/DisplayModeContext'
 import {
   Building2, Plus, Search, Phone, Mail, ChevronRight,
   X, Loader2, CheckCircle, AlertTriangle, Edit2, User,
@@ -342,6 +343,7 @@ function AddEditClientModal({ companyId, client, onClose }) {
   const [saving, setSaving] = useState(false)
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
   const isEdit = !!client
+  const { isAdvanced } = useDisplayMode()
 
   const handleGSTINVerified = (data) => {
     setForm(p => ({
@@ -462,23 +464,25 @@ function AddEditClientModal({ companyId, client, onClose }) {
             onChange={e => set('business_name', e.target.value)}
             placeholder="As per GSTIN / Certificate of Incorporation" />
         </Field>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Trade Name / Brand Name">
-            <input className={inp()} value={form.trade_name}
-              onChange={e => set('trade_name', e.target.value)}
-              placeholder="If different from legal name" />
-          </Field>
-          <Field label="Business Type">
-            <select className={inp()} value={form.business_type} onChange={e => set('business_type', e.target.value)}>
-              <option value="">Select…</option>
-              {BUSINESS_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-            </select>
-          </Field>
-        </div>
+        {isAdvanced && (
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Trade Name / Brand Name">
+              <input className={inp()} value={form.trade_name}
+                onChange={e => set('trade_name', e.target.value)}
+                placeholder="If different from legal name" />
+            </Field>
+            <Field label="Business Type">
+              <select className={inp()} value={form.business_type} onChange={e => set('business_type', e.target.value)}>
+                <option value="">Select…</option>
+                {BUSINESS_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </Field>
+          </div>
+        )}
       </div>
 
-      {/* ── Section 3: Government Identifiers ────────────────────────────── */}
-      <div className="space-y-3">
+      {/* ── Section 3: Government Identifiers (Advanced) ─────────────────── */}
+      {isAdvanced && <div className="space-y-3">
         <SectionHeader icon={FileText} label="Government Registration Details" />
         <div className="grid grid-cols-2 gap-3">
           <Field label="PAN" hint="Auto-filled from GSTIN">
@@ -504,17 +508,19 @@ function AddEditClientModal({ companyId, client, onClose }) {
               placeholder="MUMB12345F" maxLength={10} />
           </Field>
         </div>
-      </div>
+      </div>}
 
-      {/* ── Section 4: Registered Address ─────────────────────────────────── */}
+      {/* ── Section 4: Location / Address ─────────────────────────────────── */}
       <div className="space-y-3">
-        <SectionHeader icon={MapPin} label="Registered Address" />
-        <Field label="Address" hint="Auto-filled from GST portal on verification">
-          <textarea className={inp()} rows={2} value={form.registered_address}
-            onChange={e => set('registered_address', e.target.value)}
-            placeholder="Door No., Street, Area, Landmark" />
-        </Field>
-        <div className="grid grid-cols-3 gap-3">
+        <SectionHeader icon={MapPin} label={isAdvanced ? 'Registered Address' : 'Location'} />
+        {isAdvanced && (
+          <Field label="Address" hint="Auto-filled from GST portal on verification">
+            <textarea className={inp()} rows={2} value={form.registered_address}
+              onChange={e => set('registered_address', e.target.value)}
+              placeholder="Door No., Street, Area, Landmark" />
+          </Field>
+        )}
+        <div className={`grid gap-3 ${isAdvanced ? 'grid-cols-3' : 'grid-cols-2'}`}>
           <Field label="City">
             <input className={inp()} value={form.city}
               onChange={e => set('city', e.target.value)} placeholder="City" />
@@ -525,43 +531,49 @@ function AddEditClientModal({ companyId, client, onClose }) {
               {INDIAN_STATES.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
           </Field>
-          <Field label="Pincode">
-            <input className={inp()} value={form.pincode}
-              onChange={e => set('pincode', e.target.value)} placeholder="600001" maxLength={6} />
-          </Field>
+          {isAdvanced && (
+            <Field label="Pincode">
+              <input className={inp()} value={form.pincode}
+                onChange={e => set('pincode', e.target.value)} placeholder="600001" maxLength={6} />
+            </Field>
+          )}
         </div>
 
-        {/* Billing address toggle */}
-        <label className="flex items-center gap-2 cursor-pointer">
-          <input type="checkbox" checked={form.same_as_registered}
-            onChange={e => set('same_as_registered', e.target.checked)}
-            className="w-4 h-4 rounded accent-primary-500" />
-          <span className="text-xs text-slate-400">Billing address same as registered address</span>
-        </label>
+        {/* Billing address toggle — Advanced only */}
+        {isAdvanced && (
+          <>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" checked={form.same_as_registered}
+                onChange={e => set('same_as_registered', e.target.checked)}
+                className="w-4 h-4 rounded accent-primary-500" />
+              <span className="text-xs text-slate-400">Billing address same as registered address</span>
+            </label>
 
-        {!form.same_as_registered && (
-          <div className="space-y-3 pl-3 border-l-2 border-dark-600">
-            <p className="text-xs text-slate-500">Billing Address</p>
-            <Field label="Billing Address">
-              <textarea className={inp()} rows={2} value={form.billing_address}
-                onChange={e => set('billing_address', e.target.value)}
-                placeholder="Door No., Street, Area" />
-            </Field>
-            <div className="grid grid-cols-3 gap-3">
-              <Field label="City">
-                <input className={inp()} value={form.billing_city} onChange={e => set('billing_city', e.target.value)} />
-              </Field>
-              <Field label="State">
-                <select className={inp()} value={form.billing_state} onChange={e => set('billing_state', e.target.value)}>
-                  <option value="">Select…</option>
-                  {INDIAN_STATES.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-              </Field>
-              <Field label="Pincode">
-                <input className={inp()} value={form.billing_pincode} onChange={e => set('billing_pincode', e.target.value)} maxLength={6} />
-              </Field>
-            </div>
-          </div>
+            {!form.same_as_registered && (
+              <div className="space-y-3 pl-3 border-l-2 border-dark-600">
+                <p className="text-xs text-slate-500">Billing Address</p>
+                <Field label="Billing Address">
+                  <textarea className={inp()} rows={2} value={form.billing_address}
+                    onChange={e => set('billing_address', e.target.value)}
+                    placeholder="Door No., Street, Area" />
+                </Field>
+                <div className="grid grid-cols-3 gap-3">
+                  <Field label="City">
+                    <input className={inp()} value={form.billing_city} onChange={e => set('billing_city', e.target.value)} />
+                  </Field>
+                  <Field label="State">
+                    <select className={inp()} value={form.billing_state} onChange={e => set('billing_state', e.target.value)}>
+                      <option value="">Select…</option>
+                      {INDIAN_STATES.map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </Field>
+                  <Field label="Pincode">
+                    <input className={inp()} value={form.billing_pincode} onChange={e => set('billing_pincode', e.target.value)} maxLength={6} />
+                  </Field>
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
 
@@ -573,13 +585,6 @@ function AddEditClientModal({ companyId, client, onClose }) {
             <input className={inp()} value={form.contact_name}
               onChange={e => set('contact_name', e.target.value)} placeholder="Name" />
           </Field>
-          <Field label="Designation">
-            <input className={inp()} value={form.contact_designation}
-              onChange={e => set('contact_designation', e.target.value)}
-              placeholder="MD, CEO, Manager…" />
-          </Field>
-        </div>
-        <div className="grid grid-cols-2 gap-3">
           <Field label="Mobile Number" required>
             <div className="flex">
               <span className="flex items-center px-3 bg-dark-600 border border-r-0 border-dark-600 rounded-l-lg text-sm text-slate-400">+91</span>
@@ -588,16 +593,25 @@ function AddEditClientModal({ companyId, client, onClose }) {
                 placeholder="98765 43210" maxLength={10} />
             </div>
           </Field>
-          <Field label="Email ID">
-            <input type="email" className={inp()} value={form.contact_email}
-              onChange={e => set('contact_email', e.target.value)}
-              placeholder="name@company.com" />
-          </Field>
         </div>
+        {isAdvanced && (
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Designation">
+              <input className={inp()} value={form.contact_designation}
+                onChange={e => set('contact_designation', e.target.value)}
+                placeholder="MD, CEO, Manager…" />
+            </Field>
+            <Field label="Email ID">
+              <input type="email" className={inp()} value={form.contact_email}
+                onChange={e => set('contact_email', e.target.value)}
+                placeholder="name@company.com" />
+            </Field>
+          </div>
+        )}
       </div>
 
-      {/* ── Section 6: Secondary Contact ─────────────────────────────────── */}
-      <div className="space-y-3">
+      {/* ── Section 6: Secondary Contact (Advanced) ──────────────────────── */}
+      {isAdvanced && <div className="space-y-3">
         <SectionHeader icon={Users} label="Secondary Contact Person (Optional)" />
         <div className="grid grid-cols-2 gap-3">
           <Field label="Full Name">
@@ -625,10 +639,10 @@ function AddEditClientModal({ companyId, client, onClose }) {
               placeholder="name@company.com" />
           </Field>
         </div>
-      </div>
+      </div>}
 
-      {/* ── Section 7: Business Terms ─────────────────────────────────────── */}
-      <div className="space-y-3">
+      {/* ── Section 7: Business Terms (Advanced) ─────────────────────────── */}
+      {isAdvanced && <div className="space-y-3">
         <SectionHeader icon={IndianRupee} label="Business Terms" />
         <div className="grid grid-cols-2 gap-3">
           <Field label="Payment Terms">
@@ -652,7 +666,7 @@ function AddEditClientModal({ companyId, client, onClose }) {
             onChange={e => set('notes', e.target.value)}
             placeholder="Any special terms, project notes, or remarks…" />
         </Field>
-      </div>
+      </div>}
     </Modal>
   )
 }
@@ -660,6 +674,7 @@ function AddEditClientModal({ companyId, client, onClose }) {
 // ── Client Detail Modal ───────────────────────────────────────────────────────
 function ClientDetail({ client, companyId, onClose, onEdit }) {
   const qc = useQueryClient()
+  const { isAdvanced } = useDisplayMode()
   const [archiving, setArchiving] = useState(false)
 
   const { data: projects = [] } = useQuery({
@@ -748,8 +763,8 @@ function ClientDetail({ client, companyId, onClose, onEdit }) {
         </div>
       </div>
 
-      {/* Government IDs */}
-      {(client.gstin || client.pan || client.udyam_number || client.cin) && (
+      {/* Government IDs — Advanced only */}
+      {isAdvanced && (client.gstin || client.pan || client.udyam_number || client.cin) && (
         <div>
           <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Registration Details</p>
           <div className="bg-dark-700 rounded-xl px-3 divide-y divide-dark-600">
@@ -773,16 +788,20 @@ function ClientDetail({ client, companyId, onClose, onEdit }) {
         </div>
       )}
 
-      {/* Address */}
+      {/* Address — city/state always; full address in Advanced */}
       {(client.registered_address || client.city) && (
         <div>
-          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Registered Address</p>
+          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
+            {isAdvanced ? 'Registered Address' : 'Location'}
+          </p>
           <div className="bg-dark-700 rounded-xl px-3 py-2.5 flex items-start gap-2">
             <MapPin className="w-4 h-4 text-slate-500 mt-0.5 shrink-0" />
             <div>
-              {client.registered_address && <p className="text-sm text-slate-200">{client.registered_address}</p>}
+              {isAdvanced && client.registered_address && (
+                <p className="text-sm text-slate-200">{client.registered_address}</p>
+              )}
               <p className="text-sm text-slate-300">
-                {[client.city, client.state, client.pincode].filter(Boolean).join(', ')}
+                {[client.city, client.state, isAdvanced ? client.pincode : null].filter(Boolean).join(', ')}
               </p>
             </div>
           </div>
@@ -793,11 +812,13 @@ function ClientDetail({ client, companyId, onClose, onEdit }) {
       <div>
         <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Contact Persons</p>
         <div className="space-y-2">
-          {/* Primary */}
+          {/* Primary — always visible */}
           <div className="bg-dark-700 rounded-xl p-3">
             <div className="flex items-center justify-between mb-2">
               <p className="text-xs font-semibold text-slate-300">{client.contact_name || 'Primary Contact'}</p>
-              {client.contact_designation && <span className="text-xs text-slate-500">{client.contact_designation}</span>}
+              {isAdvanced && client.contact_designation && (
+                <span className="text-xs text-slate-500">{client.contact_designation}</span>
+              )}
             </div>
             <div className="flex flex-wrap gap-3 text-xs">
               {client.contact_phone && (
@@ -805,15 +826,15 @@ function ClientDetail({ client, companyId, onClose, onEdit }) {
                   <Phone className="w-3.5 h-3.5" /> +91 {client.contact_phone}
                 </a>
               )}
-              {client.contact_email && (
+              {isAdvanced && client.contact_email && (
                 <a href={`mailto:${client.contact_email}`} className="flex items-center gap-1.5 text-primary-400 hover:text-primary-300">
                   <Mail className="w-3.5 h-3.5" /> {client.contact_email}
                 </a>
               )}
             </div>
           </div>
-          {/* Secondary */}
-          {(client.contact2_name || client.contact2_phone) && (
+          {/* Secondary — Advanced only */}
+          {isAdvanced && (client.contact2_name || client.contact2_phone) && (
             <div className="bg-dark-700 rounded-xl p-3">
               <div className="flex items-center justify-between mb-2">
                 <p className="text-xs font-semibold text-slate-300">{client.contact2_name || 'Secondary Contact'}</p>
@@ -857,7 +878,7 @@ function ClientDetail({ client, companyId, onClose, onEdit }) {
         </div>
       )}
 
-      {client.notes && (
+      {isAdvanced && client.notes && (
         <div className="bg-dark-700 rounded-xl p-3 text-xs text-slate-400">
           <p className="font-semibold text-slate-300 mb-1">Notes</p>
           <p>{client.notes}</p>

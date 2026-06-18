@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
+import { useDisplayMode } from '../../contexts/DisplayModeContext'
 import toast from 'react-hot-toast'
 import {
   Plus, X, Search, MapPin, Calendar, FileText, Wrench, Users,
@@ -215,6 +216,7 @@ function AddEditModal({ project, clients, projectCount, onClose, onSaved }) {
   const [rateItems, setRateItems] = useState([])
   const [ratesLoaded, setRatesLoaded] = useState(false)
   const [saving, setSaving] = useState(false)
+  const { isAdvanced } = useDisplayMode()
 
   // Load existing rate items when editing
   useQuery({
@@ -346,58 +348,66 @@ function AddEditModal({ project, clients, projectCount, onClose, onSaved }) {
           </F>
         </div>
         <div className={half}>
-          <F label="Division / Business Unit">
-            <input className={inp()} value={form.division} onChange={e=>set('division',e.target.value)} placeholder="e.g. Infrastructure, Mining…"/>
-          </F>
           <F label="Client">
             <select className={sel()} value={form.client_id} onChange={e=>set('client_id',e.target.value)}>
               <option value="">Select client…</option>
               {clients.map(c => <option key={c.id} value={c.id}>{c.business_name}</option>)}
             </select>
           </F>
+          <F label="Status">
+            <select className={sel()} value={form.status} onChange={e=>set('status',e.target.value)}>
+              {Object.entries(STATUS_CONFIG).map(([k,v]) => <option key={k} value={k}>{v.label}</option>)}
+            </select>
+          </F>
         </div>
-        <F label="Status">
-          <select className={sel('max-w-xs')} value={form.status} onChange={e=>set('status',e.target.value)}>
-            {Object.entries(STATUS_CONFIG).map(([k,v]) => <option key={k} value={k}>{v.label}</option>)}
-          </select>
-        </F>
+        {isAdvanced && (
+          <F label="Division / Business Unit">
+            <input className={inp()} value={form.division} onChange={e=>set('division',e.target.value)} placeholder="e.g. Infrastructure, Mining…"/>
+          </F>
+        )}
       </div>
 
       {/* 2 — Site & Location */}
       <div className="space-y-3">
         <Sec icon={MapPin} label="Site & Location" />
-        <div className={half}>
-          <F label="Site Name"><input className={inp()} value={form.site_name} onChange={e=>set('site_name',e.target.value)} placeholder="Name of project site"/></F>
+        <div className={isAdvanced ? half : 'grid grid-cols-1'}>
           <F label="City"><input className={inp()} value={form.city} onChange={e=>set('city',e.target.value)} placeholder="City"/></F>
+          {isAdvanced && <F label="Site Name"><input className={inp()} value={form.site_name} onChange={e=>set('site_name',e.target.value)} placeholder="Name of project site"/></F>}
         </div>
-        <F label="Address">
-          <textarea className={inp('resize-none')} rows={2} value={form.address} onChange={e=>set('address',e.target.value)} placeholder="Full site address"/>
-        </F>
-        <div className={half}>
-          <F label="State">
-            <select className={sel()} value={form.state} onChange={e=>set('state',e.target.value)}>
-              <option value="">Select state…</option>
-              {INDIAN_STATES.map(s => <option key={s} value={s}>{s}</option>)}
-            </select>
+        {isAdvanced && <>
+          <F label="Address">
+            <textarea className={inp('resize-none')} rows={2} value={form.address} onChange={e=>set('address',e.target.value)} placeholder="Full site address"/>
           </F>
-          <F label="Pincode"><input className={inp()} value={form.pincode} onChange={e=>set('pincode',e.target.value)} maxLength={6} placeholder="600001"/></F>
-        </div>
-        <F label="Google Maps Link" hint="Paste a Google Maps URL for quick navigation to site">
-          <input className={inp()} value={form.maps_link} onChange={e=>set('maps_link',e.target.value)} placeholder="https://maps.google.com/…"/>
-        </F>
+          <div className={half}>
+            <F label="State">
+              <select className={sel()} value={form.state} onChange={e=>set('state',e.target.value)}>
+                <option value="">Select state…</option>
+                {INDIAN_STATES.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </F>
+            <F label="Pincode"><input className={inp()} value={form.pincode} onChange={e=>set('pincode',e.target.value)} maxLength={6} placeholder="600001"/></F>
+          </div>
+          <F label="Google Maps Link" hint="Paste a Google Maps URL for quick navigation to site">
+            <input className={inp()} value={form.maps_link} onChange={e=>set('maps_link',e.target.value)} placeholder="https://maps.google.com/…"/>
+          </F>
+        </>}
       </div>
 
       {/* 3 — Timeline */}
       <div className="space-y-3">
         <Sec icon={Calendar} label="Timeline" />
-        <div className={half}>
-          <F label="Mobilization Date"><input className={inp()} type="date" value={form.mobilization_date} onChange={e=>set('mobilization_date',e.target.value)}/></F>
-          <F label="Work Commencement Date"><input className={inp()} type="date" value={form.start_date} onChange={e=>set('start_date',e.target.value)}/></F>
-        </div>
-        <div className={half}>
-          <F label="Expected Completion"><input className={inp()} type="date" value={form.expected_end_date} onChange={e=>set('expected_end_date',e.target.value)}/></F>
-          <F label="Actual Completion"><input className={inp()} type="date" value={form.actual_end_date} onChange={e=>set('actual_end_date',e.target.value)}/></F>
-        </div>
+        <F label="Work Commencement Date">
+          <input className={inp('max-w-xs')} type="date" value={form.start_date} onChange={e=>set('start_date',e.target.value)}/>
+        </F>
+        {isAdvanced && <>
+          <div className={half}>
+            <F label="Mobilization Date"><input className={inp()} type="date" value={form.mobilization_date} onChange={e=>set('mobilization_date',e.target.value)}/></F>
+            <F label="Expected Completion"><input className={inp()} type="date" value={form.expected_end_date} onChange={e=>set('expected_end_date',e.target.value)}/></F>
+          </div>
+          <F label="Actual Completion">
+            <input className={inp('max-w-xs')} type="date" value={form.actual_end_date} onChange={e=>set('actual_end_date',e.target.value)}/>
+          </F>
+        </>}
       </div>
 
       {/* 4 — Contract Terms */}
@@ -417,43 +427,45 @@ function AddEditModal({ project, clients, projectCount, onClose, onSaved }) {
             <input className={inp()} value={form.contract_value} onChange={e=>set('contract_value',e.target.value)} type="number" placeholder="0"/>
           </F>
         </div>
-        <div className={half}>
-          <F label="Billing Cycle">
-            <select className={sel()} value={form.billing_cycle} onChange={e=>set('billing_cycle',e.target.value)}>
-              <option value="">Select…</option>
-              {['Weekly','Fortnightly','Monthly','Milestone-based','On completion'].map(v=><option key={v} value={v}>{v}</option>)}
-            </select>
-          </F>
-          <F label="Payment Terms">
-            <select className={sel()} value={form.payment_terms} onChange={e=>set('payment_terms',e.target.value)}>
-              <option value="">Select…</option>
-              {['15 days','30 days','45 days','60 days','90 days'].map(v=><option key={v} value={v}>{v}</option>)}
-            </select>
-          </F>
-        </div>
-        <div className={third}>
-          <F label="Mobilization Advance (₹)">
-            <input className={inp()} value={form.mobilization_advance} onChange={e=>set('mobilization_advance',e.target.value)} type="number" placeholder="0"/>
-          </F>
-          <F label="Retention %">
-            <input className={inp()} value={form.retention_pct} onChange={e=>set('retention_pct',e.target.value)} type="number" placeholder="5"/>
-          </F>
-          <F label="GST Rate %">
-            <select className={sel()} value={form.gst_rate} onChange={e=>set('gst_rate',e.target.value)}>
-              {['0','5','12','18','28'].map(v=><option key={v} value={v}>{v}%</option>)}
-            </select>
-          </F>
-        </div>
+        {isAdvanced && <>
+          <div className={half}>
+            <F label="Billing Cycle">
+              <select className={sel()} value={form.billing_cycle} onChange={e=>set('billing_cycle',e.target.value)}>
+                <option value="">Select…</option>
+                {['Weekly','Fortnightly','Monthly','Milestone-based','On completion'].map(v=><option key={v} value={v}>{v}</option>)}
+              </select>
+            </F>
+            <F label="Payment Terms">
+              <select className={sel()} value={form.payment_terms} onChange={e=>set('payment_terms',e.target.value)}>
+                <option value="">Select…</option>
+                {['15 days','30 days','45 days','60 days','90 days'].map(v=><option key={v} value={v}>{v}</option>)}
+              </select>
+            </F>
+          </div>
+          <div className={third}>
+            <F label="Mobilization Advance (₹)">
+              <input className={inp()} value={form.mobilization_advance} onChange={e=>set('mobilization_advance',e.target.value)} type="number" placeholder="0"/>
+            </F>
+            <F label="Retention %">
+              <input className={inp()} value={form.retention_pct} onChange={e=>set('retention_pct',e.target.value)} type="number" placeholder="5"/>
+            </F>
+            <F label="GST Rate %">
+              <select className={sel()} value={form.gst_rate} onChange={e=>set('gst_rate',e.target.value)}>
+                {['0','5','12','18','28'].map(v=><option key={v} value={v}>{v}%</option>)}
+              </select>
+            </F>
+          </div>
+        </>}
       </div>
 
-      {/* 5 — Rate Card */}
-      <div className="space-y-3">
+      {/* 5 — Rate Card (Advanced) */}
+      {isAdvanced && <div className="space-y-3">
         <Sec icon={IndianRupee} label="Rate Card" />
         <RateCard job={form.nature_of_job} items={rateItems} onChange={setRateItems}/>
-      </div>
+      </div>}
 
-      {/* 6 — HSD Terms */}
-      <div className="space-y-3">
+      {/* 6 — HSD Terms (Advanced) */}
+      {isAdvanced && <div className="space-y-3">
         <Sec icon={Droplet} label="HSD (Diesel) Terms" />
         <div className="flex gap-3">
           {['company','client'].map(v => (
@@ -484,10 +496,10 @@ function AddEditModal({ project, clients, projectCount, onClose, onSaved }) {
             </div>
           </div>
         )}
-      </div>
+      </div>}
 
-      {/* 7 — Key Contacts */}
-      <div className="space-y-3">
+      {/* 7 — Key Contacts (Advanced) */}
+      {isAdvanced && <div className="space-y-3">
         <Sec icon={Users} label="Key Contacts" />
         <p className="text-xs text-slate-500 -mt-1">Client-side team</p>
         <div className="grid grid-cols-3 gap-3">
@@ -521,13 +533,13 @@ function AddEditModal({ project, clients, projectCount, onClose, onSaved }) {
             <input className={inp('text-xs')} value={form.our_pnm_phone} onChange={e=>set('our_pnm_phone',e.target.value)} placeholder="Mobile"/>
           </div>
         </div>
-      </div>
+      </div>}
 
-      {/* 8 — Notes */}
-      <div className="space-y-3">
+      {/* 8 — Notes (Advanced) */}
+      {isAdvanced && <div className="space-y-3">
         <Sec icon={FileText} label="Notes / Remarks" />
         <textarea className={inp('resize-none')} rows={3} value={form.notes} onChange={e=>set('notes',e.target.value)} placeholder="Special terms, scope notes, or project remarks…"/>
-      </div>
+      </div>}
     </Modal>
   )
 }
@@ -557,6 +569,7 @@ function ContactCard({ name, phone, email, role }) {
 }
 
 function ProjectDetail({ project, onClose, onEdit }) {
+  const { isAdvanced } = useDisplayMode()
   const { data: equipment = [] } = useQuery({
     queryKey: ['project_equipment', project.id],
     queryFn: async () => {
@@ -590,16 +603,16 @@ function ProjectDetail({ project, onClose, onEdit }) {
       <div className="flex flex-wrap gap-2 -mt-2">
         <StatusBadge status={project.status}/>
         {project.nature_of_job && <JobBadge type={project.nature_of_job}/>}
-        {project.division && <span className="text-xs bg-dark-700 text-slate-400 px-2 py-0.5 rounded-full">{project.division}</span>}
+        {isAdvanced && project.division && <span className="text-xs bg-dark-700 text-slate-400 px-2 py-0.5 rounded-full">{project.division}</span>}
         {clientName && <span className="text-xs bg-dark-700 text-slate-400 px-2 py-0.5 rounded-full flex items-center gap-1"><Building2 className="w-3 h-3"/>{clientName}</span>}
       </div>
 
-      {/* Quick stats */}
-      <div className="grid grid-cols-3 gap-3">
+      {/* Quick stats — Basic: Contract Value + Equipment; Advanced adds GST */}
+      <div className={`grid gap-3 ${isAdvanced ? 'grid-cols-3' : 'grid-cols-2'}`}>
         {[
           { label: 'Contract Value',    value: fmt(project.contract_value) },
           { label: 'Equipment on Site', value: `${equipment.length} unit${equipment.length !== 1 ? 's' : ''}` },
-          { label: 'GST Rate',          value: project.gst_rate ? `${project.gst_rate}%` : '18%' },
+          ...(isAdvanced ? [{ label: 'GST Rate', value: project.gst_rate ? `${project.gst_rate}%` : '18%' }] : []),
         ].map(s => (
           <div key={s.label} className="bg-dark-700/50 rounded-lg p-3 text-center">
             <p className="text-[11px] text-slate-500 mb-0.5">{s.label}</p>
@@ -608,53 +621,70 @@ function ProjectDetail({ project, onClose, onEdit }) {
         ))}
       </div>
 
-      {/* Site & Timeline */}
-      <div className={half}>
-        <div>
-          <Sec icon={MapPin} label="Site & Location"/>
-          <div className="mt-2">
-            <Row label="Site Name" value={project.site_name}/>
-            <Row label="Address" value={project.address}/>
-            <Row label="City" value={project.city}/>
-            <Row label="State" value={project.state}/>
-            <Row label="Pincode" value={project.pincode}/>
-            {project.maps_link && (
-              <a href={project.maps_link} target="_blank" rel="noopener noreferrer"
-                className="flex items-center gap-1.5 text-xs text-primary-400 hover:text-primary-300 pt-2">
-                <ExternalLink className="w-3 h-3"/> Open in Maps
-              </a>
-            )}
-          </div>
-        </div>
-        <div>
-          <Sec icon={Calendar} label="Timeline"/>
-          <div className="mt-2">
-            <Row label="Mobilization"  value={fmtDate(project.mobilization_date)}/>
-            <Row label="Start Date"    value={fmtDate(project.start_date)}/>
-            <Row label="Expected End"  value={fmtDate(project.expected_end_date)}/>
-            <Row label="Actual End"    value={fmtDate(project.actual_end_date)}/>
-          </div>
-        </div>
-      </div>
-
-      {/* Contract */}
-      <div>
-        <Sec icon={FileText} label="Contract Terms"/>
-        <div className="mt-2 grid grid-cols-2 gap-x-6">
+      {/* Site — Basic: city only; Advanced: full block */}
+      {isAdvanced ? (
+        <div className={half}>
           <div>
-            <Row label="Billing Cycle" value={project.billing_cycle}/>
-            <Row label="Payment Terms" value={project.payment_terms}/>
-            <Row label="Mob. Advance"  value={fmt(project.mobilization_advance)}/>
+            <Sec icon={MapPin} label="Site & Location"/>
+            <div className="mt-2">
+              <Row label="Site Name" value={project.site_name}/>
+              <Row label="Address"   value={project.address}/>
+              <Row label="City"      value={project.city}/>
+              <Row label="State"     value={project.state}/>
+              <Row label="Pincode"   value={project.pincode}/>
+              {project.maps_link && (
+                <a href={project.maps_link} target="_blank" rel="noopener noreferrer"
+                  className="flex items-center gap-1.5 text-xs text-primary-400 hover:text-primary-300 pt-2">
+                  <ExternalLink className="w-3 h-3"/> Open in Maps
+                </a>
+              )}
+            </div>
           </div>
           <div>
-            <Row label="Retention" value={project.retention_pct ? `${project.retention_pct}%` : null}/>
-            <Row label="GST Rate"  value={project.gst_rate ? `${project.gst_rate}%` : null}/>
+            <Sec icon={Calendar} label="Timeline"/>
+            <div className="mt-2">
+              <Row label="Mobilization"  value={fmtDate(project.mobilization_date)}/>
+              <Row label="Start Date"    value={fmtDate(project.start_date)}/>
+              <Row label="Expected End"  value={fmtDate(project.expected_end_date)}/>
+              <Row label="Actual End"    value={fmtDate(project.actual_end_date)}/>
+            </div>
           </div>
         </div>
-      </div>
+      ) : (
+        <div className="space-y-1">
+          {project.city && (
+            <div className="flex items-center gap-2 text-sm text-slate-300">
+              <MapPin className="w-3.5 h-3.5 text-slate-500"/> {project.city}{project.state ? `, ${project.state}` : ''}
+            </div>
+          )}
+          {project.start_date && (
+            <div className="flex items-center gap-2 text-sm text-slate-300">
+              <Calendar className="w-3.5 h-3.5 text-slate-500"/> Started {fmtDate(project.start_date)}
+            </div>
+          )}
+        </div>
+      )}
 
-      {/* Rate Card */}
-      {rateItems.length > 0 && (
+      {/* Contract — Advanced only */}
+      {isAdvanced && (
+        <div>
+          <Sec icon={FileText} label="Contract Terms"/>
+          <div className="mt-2 grid grid-cols-2 gap-x-6">
+            <div>
+              <Row label="Billing Cycle" value={project.billing_cycle}/>
+              <Row label="Payment Terms" value={project.payment_terms}/>
+              <Row label="Mob. Advance"  value={fmt(project.mobilization_advance)}/>
+            </div>
+            <div>
+              <Row label="Retention" value={project.retention_pct ? `${project.retention_pct}%` : null}/>
+              <Row label="GST Rate"  value={project.gst_rate ? `${project.gst_rate}%` : null}/>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Rate Card — Advanced only */}
+      {isAdvanced && rateItems.length > 0 && (
         <div>
           <Sec icon={IndianRupee} label="Rate Card"/>
           <div className="mt-2 overflow-x-auto">
@@ -712,8 +742,8 @@ function ProjectDetail({ project, onClose, onEdit }) {
         </div>
       )}
 
-      {/* HSD */}
-      {project.hsd_supplied_by === 'client' && (
+      {/* HSD — Advanced only */}
+      {isAdvanced && project.hsd_supplied_by === 'client' && (
         <div>
           <Sec icon={Droplet} label="HSD Terms (Client-supplied)"/>
           <div className="mt-2 grid grid-cols-2 gap-x-6">
@@ -729,8 +759,8 @@ function ProjectDetail({ project, onClose, onEdit }) {
         </div>
       )}
 
-      {/* Contacts */}
-      <div>
+      {/* Contacts — Advanced only */}
+      {isAdvanced && <div>
         <Sec icon={Users} label="Key Contacts"/>
         <div className="mt-2 grid grid-cols-3 gap-2">
           <ContactCard name={project.client_pm_name}       phone={project.client_pm_phone}       email={project.client_pm_email} role="Client PM"/>
@@ -761,9 +791,9 @@ function ProjectDetail({ project, onClose, onEdit }) {
             ))}
           </div>
         )}
-      </div>
+      </div>}
 
-      {project.notes && (
+      {isAdvanced && project.notes && (
         <div>
           <Sec icon={FileText} label="Notes"/>
           <p className="text-xs text-slate-300 mt-2 leading-relaxed">{project.notes}</p>

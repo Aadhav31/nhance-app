@@ -1,5 +1,6 @@
 import { useState, lazy, Suspense } from 'react'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
+import { DisplayModeProvider } from './contexts/DisplayModeContext'
 import LoadingScreen from './components/shared/LoadingScreen'
 import LoginPage from './pages/auth/LoginPage'
 import Sidebar from './components/layout/Sidebar'
@@ -84,6 +85,7 @@ function AppShell() {
   }
 
   return (
+    <DisplayModeProvider>
     <div className="app-container flex h-screen overflow-hidden">
       {/* Sidebar — hidden on mobile, shown on lg+ */}
       <div className="hidden lg:flex">
@@ -103,6 +105,7 @@ function AppShell() {
         </main>
       </div>
     </div>
+    </DisplayModeProvider>
   )
 }
 
