@@ -73,8 +73,9 @@ async function fetchGSTINDetails(gstin) {
 }
 
 // ── Lookup constants ──────────────────────────────────────────────────────────
-const SALUTATIONS_BUSINESS    = ['M/s.']
-const SALUTATIONS_INDIVIDUAL  = ['Mr.', 'Mrs.', 'Ms.', 'Dr.', 'Prof.', 'Er.']
+// Contact person salutations — used for both business contact and individual
+const SALUTATIONS_CONTACT    = ['Mr.', 'Mrs.', 'Ms.', 'Dr.', 'Prof.', 'Er.']
+const SALUTATIONS_INDIVIDUAL = SALUTATIONS_CONTACT  // alias for clarity
 
 const GST_TREATMENT_OPTIONS = [
   'Registered Business - Regular',
@@ -419,7 +420,7 @@ function emptyForm() {
   return {
     // Type & identity
     client_type: 'business',
-    salutation: 'M/s.',
+    salutation: 'Mr.',
     first_name: '', last_name: '', display_name: '',
     // Client number (auto-generated)
     client_number: '',
@@ -455,7 +456,7 @@ function AddEditClientModal({ companyId, client, onClose }) {
 
   const [form, setForm] = useState(isEdit ? {
     client_type: client.client_type || 'business',
-    salutation: client.salutation || (client.client_type === 'individual' ? 'Mr.' : 'M/s.'),
+    salutation: client.salutation || 'Mr.',
     first_name: client.first_name || '',
     last_name: client.last_name || '',
     display_name: client.display_name || '',
@@ -509,15 +510,15 @@ function AddEditClientModal({ companyId, client, onClose }) {
   const needsPAN   = form.gst_treatment === 'Unregistered Business'
   const noTaxID    = form.gst_treatment === 'Consumer' || form.gst_treatment === 'Overseas'
 
-  // Salutations based on type
-  const salutations = form.client_type === 'individual' ? SALUTATIONS_INDIVIDUAL : SALUTATIONS_BUSINESS
+  // Contact person salutations — always person titles regardless of client type
+  const salutations = SALUTATIONS_CONTACT
 
-  // Switch client type — reset relevant fields
+  // Switch client type — reset relevant fields, keep salutation (always a person title)
   const switchType = (type) => {
     setForm(p => ({
       ...p,
       client_type: type,
-      salutation: type === 'individual' ? 'Mr.' : 'M/s.',
+      salutation: p.salutation && SALUTATIONS_CONTACT.includes(p.salutation) ? p.salutation : 'Mr.',
       gstin: '', gstin_status: '', gstin_verified: false, gstin_verified_at: null,
       gst_treatment: '',
     }))
@@ -821,7 +822,7 @@ function AddEditClientModal({ companyId, client, onClose }) {
           </span>
         </div>
 
-        {/* Salutation + Name */}
+        {/* Salutation + First + Last Name — always shown for both Business and Individual */}
         <div className="flex gap-2">
           <div style={{ width: '100px' }} className="shrink-0">
             <Field label="Salutation">
@@ -831,21 +832,19 @@ function AddEditClientModal({ companyId, client, onClose }) {
             </Field>
           </div>
           <div className="flex-1">
-            <Field label={form.client_type === 'business' ? 'Contact Person Name' : 'First Name'} required>
+            <Field label="First Name" required>
               <input className={inp()} value={form.first_name}
                 onChange={e => set('first_name', e.target.value)}
-                placeholder={form.client_type === 'business' ? 'Contact person name' : 'First name'} />
+                placeholder={form.client_type === 'business' ? 'Contact person first name' : 'First name'} />
             </Field>
           </div>
-          {form.client_type === 'individual' && (
-            <div className="flex-1">
-              <Field label="Last Name">
-                <input className={inp()} value={form.last_name}
-                  onChange={e => set('last_name', e.target.value)}
-                  placeholder="Last name" />
-              </Field>
-            </div>
-          )}
+          <div className="flex-1">
+            <Field label="Last Name">
+              <input className={inp()} value={form.last_name}
+                onChange={e => set('last_name', e.target.value)}
+                placeholder="Last name" />
+            </Field>
+          </div>
         </div>
 
         {/* Display Name + Mobile */}
