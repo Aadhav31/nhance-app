@@ -158,7 +158,7 @@ const COUNTRY_CODES = [
 function Modal({ title, subtitle, onClose, children, footer, wide }) {
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/60">
-      <div className={`w-full ${wide ? 'sm:max-w-2xl' : 'sm:max-w-lg'} bg-dark-800 rounded-t-2xl sm:rounded-xl border border-dark-600 flex flex-col max-h-[94vh]`}>
+      <div className={`w-full ${wide ? 'sm:max-w-3xl' : 'sm:max-w-lg'} bg-dark-800 rounded-t-2xl sm:rounded-xl border border-dark-600 flex flex-col max-h-[94vh]`}>
         <div className="flex items-start justify-between px-5 py-4 border-b border-dark-700">
           <div>
             <h2 className="font-semibold text-slate-100 text-base">{title}</h2>
@@ -831,19 +831,21 @@ function AddEditClientModal({ companyId, client, onClose }) {
             </Field>
           </div>
           <div className="flex-1">
-            <Field label="First Name" required>
+            <Field label={form.client_type === 'business' ? 'Contact Person Name' : 'First Name'} required>
               <input className={inp()} value={form.first_name}
                 onChange={e => set('first_name', e.target.value)}
-                placeholder={form.client_type === 'business' ? 'Contact person first name' : 'First name'} />
+                placeholder={form.client_type === 'business' ? 'Contact person name' : 'First name'} />
             </Field>
           </div>
-          <div className="flex-1">
-            <Field label="Last Name">
-              <input className={inp()} value={form.last_name}
-                onChange={e => set('last_name', e.target.value)}
-                placeholder="Last name" />
-            </Field>
-          </div>
+          {form.client_type === 'individual' && (
+            <div className="flex-1">
+              <Field label="Last Name">
+                <input className={inp()} value={form.last_name}
+                  onChange={e => set('last_name', e.target.value)}
+                  placeholder="Last name" />
+              </Field>
+            </div>
+          )}
         </div>
 
         {/* Display Name + Mobile */}
