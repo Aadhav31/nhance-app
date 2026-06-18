@@ -760,18 +760,20 @@ function ProjectDetail({ project, onClose, onEdit }) {
       )}
 
       {/* Contacts — Advanced only */}
-      {isAdvanced && <div>
-        <Sec icon={Users} label="Key Contacts"/>
-        <div className="mt-2 grid grid-cols-3 gap-2">
-          <ContactCard name={project.client_pm_name}       phone={project.client_pm_phone}       email={project.client_pm_email} role="Client PM"/>
-          <ContactCard name={project.client_pnm_name}      phone={project.client_pnm_phone}       role="Client P&M"/>
-          <ContactCard name={project.client_accounts_name} phone={project.client_accounts_phone}  role="Client Accounts"/>
-          <ContactCard name={project.our_supervisor_name}  phone={project.our_supervisor_phone}   role="Our Supervisor"/>
-          <ContactCard name={project.our_pnm_name}         phone={project.our_pnm_phone}          role="Our P&M In-charge"/>
+      {isAdvanced && (
+        <div>
+          <Sec icon={Users} label="Key Contacts"/>
+          <div className="mt-2 grid grid-cols-3 gap-2">
+            <ContactCard name={project.client_pm_name}       phone={project.client_pm_phone}       email={project.client_pm_email} role="Client PM"/>
+            <ContactCard name={project.client_pnm_name}      phone={project.client_pnm_phone}       role="Client P&M"/>
+            <ContactCard name={project.client_accounts_name} phone={project.client_accounts_phone}  role="Client Accounts"/>
+            <ContactCard name={project.our_supervisor_name}  phone={project.our_supervisor_phone}   role="Our Supervisor"/>
+            <ContactCard name={project.our_pnm_name}         phone={project.our_pnm_phone}          role="Our P&M In-charge"/>
+          </div>
         </div>
-      </div>
+      )}
 
-      {/* Equipment on Site */}
+      {/* Equipment on Site — always shown */}
       <div>
         <Sec icon={Cpu} label={`Equipment on Site (${equipment.length})`}/>
         {equipment.length === 0 ? (
@@ -791,7 +793,7 @@ function ProjectDetail({ project, onClose, onEdit }) {
             ))}
           </div>
         )}
-      </div>}
+      </div>
 
       {isAdvanced && project.notes && (
         <div>
