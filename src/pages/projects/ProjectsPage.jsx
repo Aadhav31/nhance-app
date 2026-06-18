@@ -38,9 +38,10 @@ const INDIAN_STATES = [
 ]
 
 const BILLING_BASIS_OPTIONS = [
-  { value: 'daily',              label: 'Daily' },
-  { value: 'monthly',            label: 'Monthly' },
-  { value: 'short_term_hourly',  label: 'Short-term Hourly' },
+  { value: 'daily',             label: 'Daily' },
+  { value: 'monthly',           label: 'Monthly' },
+  { value: 'hourly',            label: 'Hourly' },
+  { value: 'short_term_hourly', label: 'Short-term' },
 ]
 
 const fmt     = (n) => n ? `₹${Number(n).toLocaleString('en-IN')}` : '—'
@@ -157,9 +158,13 @@ const emptyItem = () => ({
   min_quantity: '', overtime_rate: '', idle_rate: '', milestone_date: '',
   billing_basis: 'daily',
   max_hours_per_day: '8',
+  max_hours_per_month: '200',
   ot_percentage: '125',
   is_short_term: false,
   short_term_fixed_hours: '6',
+  rate_inclusive_hsd: false,
+  rate_inclusive_gst: false,
+  allowance_per_day: '',
 })
 
 function RateCard({ job, items, onChange }) {
@@ -260,21 +265,32 @@ function RateCard({ job, items, onChange }) {
                 </div>
                 <div className={half}>
                   <div>
-                    <p className="text-xs text-slate-500 mb-1">Max hrs/day before OT</p>
-                    <input className={inp('text-xs py-1.5')} value={r.max_hours_per_day}
-                      onChange={e=>set(i,'max_hours_per_day',e.target.value)} placeholder="8" type="number"/>
+                    <p className="text-xs text-slate-500 mb-1">Max hrs/month before OT</p>
+                    <input className={inp('text-xs py-1.5')} value={r.max_hours_per_month}
+                      onChange={e=>set(i,'max_hours_per_month',e.target.value)} placeholder="200" type="number"/>
                   </div>
                   <div>
-                    <p className="text-xs text-slate-500 mb-1">OT charge (% of hourly equiv.)</p>
+                    <p className="text-xs text-slate-500 mb-1">OT charge (% of pro-rata rate)</p>
                     <input className={inp('text-xs py-1.5')} value={r.ot_percentage}
                       onChange={e=>set(i,'ot_percentage',e.target.value)} placeholder="125" type="number"/>
                   </div>
                 </div>
-                {r.rate_per_month && r.max_hours_per_day && (
+                {r.rate_per_month && r.max_hours_per_month && (
                   <p className="text-[11px] text-slate-500 bg-dark-800 rounded px-2 py-1">
-                    OT beyond {r.max_hours_per_day} hrs/day charged at {r.ot_percentage || 125}% of pro-rata monthly rate
+                    OT beyond {r.max_hours_per_month} hrs/month charged at {r.ot_percentage || 125}% of pro-rata monthly rate
                   </p>
                 )}
+              </div>
+            )}
+
+            {/* Hourly */}
+            {basis === 'hourly' && (
+              <div className="space-y-2">
+                <div>
+                  <p className="text-xs text-slate-500 mb-1">Rent / hour (₹)</p>
+                  <input className={`${inp('text-xs py-1.5')} max-w-xs`} value={r.rate_per_hour}
+                    onChange={e=>set(i,'rate_per_hour',e.target.value)} placeholder="0" type="number"/>
+                </div>
               </div>
             )}
 
@@ -310,6 +326,29 @@ function RateCard({ job, items, onChange }) {
                 )}
               </div>
             )}
+
+            {/* Common: Allowance & Rate Inclusions — all hire types */}
+            <div className="border-t border-dark-600 pt-2.5 space-y-2">
+              <div>
+                <p className="text-xs text-slate-500 mb-1">Allowance per day (₹, if applicable)</p>
+                <input className={`${inp('text-xs py-1.5')} max-w-xs`} value={r.allowance_per_day}
+                  onChange={e=>set(i,'allowance_per_day',e.target.value)} placeholder="0" type="number"/>
+              </div>
+              <div className="flex gap-5 flex-wrap">
+                <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                  <input type="checkbox" checked={!!r.rate_inclusive_hsd}
+                    onChange={e=>set(i,'rate_inclusive_hsd',e.target.checked)}
+                    className="w-3.5 h-3.5 rounded accent-primary-500"/>
+                  <span className="text-xs text-slate-400">Rate inclusive of HSD</span>
+                </label>
+                <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                  <input type="checkbox" checked={!!r.rate_inclusive_gst}
+                    onChange={e=>set(i,'rate_inclusive_gst',e.target.checked)}
+                    className="w-3.5 h-3.5 rounded accent-primary-500"/>
+                  <span className="text-xs text-slate-400">Rate inclusive of GST</span>
+                </label>
+              </div>
+            </div>
           </div>
         )
       })}
@@ -426,9 +465,22 @@ function AddEditModal({ project, clients, onClose, onSaved }) {
   const [ratesLoaded, setRatesLoaded] = useState(false)
   const [saving, setSaving]         = useState(false)
 
-  // Optional contacts
-  const [showSiteSupervisor, setShowSiteSupervisor]   = useState(!!project?.our_supervisor_name)
-  const [showOurPnM, setShowOurPnM]                   = useState(!!project?.our_pnm_name)
+  // Dynamic site supervisors list
+  const mkContact = () => ({ _k: Math.random().toString(36).slice(2), name: '', phone: '' })
+  const initList = (jsonArr, legacyName, legacyPhone) => {
+    if (jsonArr && jsonArr.length > 0)
+      return jsonArr.map(c => ({ ...c, _k: Math.random().toString(36).slice(2) }))
+    if (legacyName) return [{ _k: '0', name: legacyName, phone: legacyPhone || '' }]
+    return []
+  }
+  const [supervisors, setSupervisors] = useState(() =>
+    initList(project?.our_supervisors, project?.our_supervisor_name, project?.our_supervisor_phone)
+  )
+  const [pnmContacts, setPnmContacts] = useState(() =>
+    initList(project?.our_pnm_contacts, project?.our_pnm_name, project?.our_pnm_phone)
+  )
+
+  // Optional client contacts
   const [showClientPnM, setShowClientPnM]             = useState(!!project?.client_pnm_name)
   const [showClientAccounts, setShowClientAccounts]   = useState(!!project?.client_accounts_name)
 
@@ -482,10 +534,14 @@ function AddEditModal({ project, clients, onClose, onSaved }) {
       setRateItems(d.map(r => ({
         ...r,
         _k:                    r.id,
-        billing_basis:         r.billing_basis         || 'daily',
-        max_hours_per_day:     r.max_hours_per_day     || '8',
-        ot_percentage:         r.ot_percentage         || '125',
+        billing_basis:          r.billing_basis          || 'daily',
+        max_hours_per_day:      r.max_hours_per_day      || '8',
+        max_hours_per_month:    r.max_hours_per_month    || '200',
+        ot_percentage:          r.ot_percentage          || '125',
         short_term_fixed_hours: r.short_term_fixed_hours || '6',
+        rate_inclusive_hsd:     !!r.rate_inclusive_hsd,
+        rate_inclusive_gst:     !!r.rate_inclusive_gst,
+        allowance_per_day:      r.allowance_per_day      || '',
       })))
       setRatesLoaded(true)
     },
@@ -530,10 +586,13 @@ function AddEditModal({ project, clients, onClose, onSaved }) {
         our_pm_name:           form.our_pm_name           || null,
         our_pm_phone:          form.our_pm_phone          || null,
         our_pm_email:          form.our_pm_email          || null,
-        our_supervisor_name:   form.our_supervisor_name   || null,
-        our_supervisor_phone:  form.our_supervisor_phone  || null,
-        our_pnm_name:          form.our_pnm_name          || null,
-        our_pnm_phone:         form.our_pnm_phone         || null,
+        our_supervisors:  supervisors.filter(s => s.name.trim()).map(({name, phone}) => ({name, phone})),
+        our_pnm_contacts: pnmContacts.filter(p => p.name.trim()).map(({name, phone}) => ({name, phone})),
+        // keep legacy columns in sync with first entry for backward compat
+        our_supervisor_name:   supervisors[0]?.name  || null,
+        our_supervisor_phone:  supervisors[0]?.phone || null,
+        our_pnm_name:          pnmContacts[0]?.name  || null,
+        our_pnm_phone:         pnmContacts[0]?.phone || null,
         client_pm_name:        form.client_pm_name        || null,
         client_pm_phone:       form.client_pm_phone       || null,
         client_pm_email:       form.client_pm_email       || null,
@@ -574,10 +633,14 @@ function AddEditModal({ project, clients, onClose, onSaved }) {
           idle_rate:      r.idle_rate      ? Number(r.idle_rate)      : null,
           milestone_date: r.milestone_date || null,
           billing_basis:  r.billing_basis  || 'daily',
-          max_hours_per_day:      r.max_hours_per_day     ? Number(r.max_hours_per_day)     : null,
-          ot_percentage:          r.ot_percentage         ? Number(r.ot_percentage)         : null,
-          is_short_term:          r.billing_basis === 'short_term_hourly',
-          short_term_fixed_hours: r.short_term_fixed_hours ? Number(r.short_term_fixed_hours) : null,
+          max_hours_per_day:       r.max_hours_per_day      ? Number(r.max_hours_per_day)      : null,
+          max_hours_per_month:     r.max_hours_per_month    ? Number(r.max_hours_per_month)    : null,
+          ot_percentage:           r.ot_percentage          ? Number(r.ot_percentage)          : null,
+          is_short_term:           r.billing_basis === 'short_term_hourly',
+          short_term_fixed_hours:  r.short_term_fixed_hours ? Number(r.short_term_fixed_hours) : null,
+          rate_inclusive_hsd:      !!r.rate_inclusive_hsd,
+          rate_inclusive_gst:      !!r.rate_inclusive_gst,
+          allowance_per_day:       r.allowance_per_day      ? Number(r.allowance_per_day)      : null,
           sort_order: idx,
         }))
         const { error } = await supabase.from('project_rate_items').insert(rows)
@@ -710,41 +773,55 @@ function AddEditModal({ project, clients, onClose, onSaved }) {
           </div>
         </div>
 
-        {/* Site Supervisor — optional */}
-        {showSiteSupervisor ? (
-          <div>
-            <p className="text-xs font-medium text-slate-400 mb-2">Site Supervisor</p>
-            <div className={half}>
-              <input className={inp('text-xs')} value={form.our_supervisor_name}
-                onChange={e=>set('our_supervisor_name',e.target.value)} placeholder="Name"/>
-              <input className={inp('text-xs')} value={form.our_supervisor_phone}
-                onChange={e=>set('our_supervisor_phone',e.target.value)} placeholder="Mobile"/>
+        {/* Site Supervisors — dynamic list */}
+        <div className="space-y-2">
+          <p className="text-xs font-medium text-slate-400">Site Supervisor(s)</p>
+          {supervisors.map((s, i) => (
+            <div key={s._k} className="flex gap-2 items-center">
+              <input className={inp('text-xs flex-1')} value={s.name}
+                onChange={e => setSupervisors(list => list.map((x,j)=>j===i?{...x,name:e.target.value}:x))}
+                placeholder="Name"/>
+              <input className={inp('text-xs w-36 shrink-0')} value={s.phone}
+                onChange={e => setSupervisors(list => list.map((x,j)=>j===i?{...x,phone:e.target.value}:x))}
+                placeholder="Mobile"/>
+              <button type="button"
+                onClick={() => setSupervisors(list => list.filter((_,j)=>j!==i))}
+                className="text-slate-500 hover:text-red-400 shrink-0 p-1">
+                <Trash2 className="w-3.5 h-3.5"/>
+              </button>
             </div>
-          </div>
-        ) : (
-          <button type="button" onClick={() => setShowSiteSupervisor(true)}
+          ))}
+          <button type="button"
+            onClick={() => setSupervisors(list => [...list, mkContact()])}
             className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-primary-400 transition-colors">
             <UserPlus className="w-3.5 h-3.5"/> Add Site Supervisor
           </button>
-        )}
+        </div>
 
-        {/* P&M In-charge — optional */}
-        {showOurPnM ? (
-          <div>
-            <p className="text-xs font-medium text-slate-400 mb-2">P&M In-charge</p>
-            <div className={half}>
-              <input className={inp('text-xs')} value={form.our_pnm_name}
-                onChange={e=>set('our_pnm_name',e.target.value)} placeholder="Name"/>
-              <input className={inp('text-xs')} value={form.our_pnm_phone}
-                onChange={e=>set('our_pnm_phone',e.target.value)} placeholder="Mobile"/>
+        {/* P&M In-charges — dynamic list */}
+        <div className="space-y-2">
+          <p className="text-xs font-medium text-slate-400">P&M In-charge(s)</p>
+          {pnmContacts.map((p, i) => (
+            <div key={p._k} className="flex gap-2 items-center">
+              <input className={inp('text-xs flex-1')} value={p.name}
+                onChange={e => setPnmContacts(list => list.map((x,j)=>j===i?{...x,name:e.target.value}:x))}
+                placeholder="Name"/>
+              <input className={inp('text-xs w-36 shrink-0')} value={p.phone}
+                onChange={e => setPnmContacts(list => list.map((x,j)=>j===i?{...x,phone:e.target.value}:x))}
+                placeholder="Mobile"/>
+              <button type="button"
+                onClick={() => setPnmContacts(list => list.filter((_,j)=>j!==i))}
+                className="text-slate-500 hover:text-red-400 shrink-0 p-1">
+                <Trash2 className="w-3.5 h-3.5"/>
+              </button>
             </div>
-          </div>
-        ) : (
-          <button type="button" onClick={() => setShowOurPnM(true)}
+          ))}
+          <button type="button"
+            onClick={() => setPnmContacts(list => [...list, mkContact()])}
             className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-primary-400 transition-colors">
             <UserPlus className="w-3.5 h-3.5"/> Add P&M In-charge
           </button>
-        )}
+        </div>
       </div>
 
       {/* ── 5. Timeline ── */}
@@ -1022,12 +1099,19 @@ function ProjectDetail({ project, onClose, onEdit }) {
     ? `https://maps.google.com/?q=${project.site_lat},${project.site_lng}`
     : project.maps_link || null
 
-  // Team contacts that exist
+  // Our team — build from new JSONB arrays with legacy fallback
+  const supervisorList = (project.our_supervisors?.length > 0)
+    ? project.our_supervisors
+    : project.our_supervisor_name ? [{ name: project.our_supervisor_name, phone: project.our_supervisor_phone }] : []
+  const pnmList = (project.our_pnm_contacts?.length > 0)
+    ? project.our_pnm_contacts
+    : project.our_pnm_name ? [{ name: project.our_pnm_name, phone: project.our_pnm_phone }] : []
+
   const ourTeam = [
-    { name: project.our_pm_name,          phone: project.our_pm_phone,          email: project.our_pm_email,  role: 'Our Project Manager' },
-    { name: project.our_supervisor_name,  phone: project.our_supervisor_phone,  role: 'Site Supervisor' },
-    { name: project.our_pnm_name,         phone: project.our_pnm_phone,         role: 'P&M In-charge' },
-  ].filter(c => c.name)
+    ...(project.our_pm_name ? [{ name: project.our_pm_name, phone: project.our_pm_phone, email: project.our_pm_email, role: 'Our Project Manager' }] : []),
+    ...supervisorList.map((s, i) => ({ ...s, role: supervisorList.length > 1 ? `Site Supervisor ${i+1}` : 'Site Supervisor' })),
+    ...pnmList.map((p, i) => ({ ...p, role: pnmList.length > 1 ? `P&M In-charge ${i+1}` : 'P&M In-charge' })),
+  ]
 
   const clientTeam = [
     { name: project.client_pm_name,       phone: project.client_pm_phone,       email: project.client_pm_email, role: 'Client PM' },
