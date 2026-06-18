@@ -244,39 +244,42 @@ function DupWarning({ info }) {
 }
 
 // ── GSTIN Verifier ────────────────────────────────────────────────────────────
-function GSTINVerifier({ value, onChange, onVerified, companyId, existingClientId }) {
+function GSTINVerifier({ value, onChange, onVerified, onDuplicateFound, companyId, existingClientId }) {
   const [verifying, setVerifying] = useState(false)
   const [result, setResult] = useState(null)
   const [apiResult, setApiResult] = useState(null)
-  const [dupInfo, setDupInfo] = useState(null)   // inline duplicate found during verify
+  const [dupInfo, setDupInfo] = useState(null)
   const validation = validateGSTIN(value)
 
   const handleChange = (v) => {
     onChange(v.toUpperCase())
-    setResult(null); setApiResult(null); setDupInfo(null)
+    setResult(null); setApiResult(null)
+    if (dupInfo) { setDupInfo(null); onDuplicateFound?.(false) }
   }
 
   const handleVerify = async () => {
     if (!validation.valid) return
-    setVerifying(true); setApiResult(null); setDupInfo(null)
+    setVerifying(true); setApiResult(null); setDupInfo(null); onDuplicateFound?.(false)
     try {
-      // ── 1. Duplicate check first — no point hitting GST portal if already exists ──
+      // ── 1. Duplicate check first (case-insensitive) ────────────────────────
       if (companyId) {
         const { data: matches } = await supabase
           .from('clients')
           .select('id, business_name, display_name, client_number, is_active')
           .eq('company_id', companyId)
-          .eq('gstin', validation.gstin)
+          .ilike('gstin', validation.gstin)   // ilike = case-insensitive match
         const others = (matches || []).filter(c => c.id !== existingClientId)
         if (others.length > 0) {
           const dup = others[0]
-          setDupInfo({
+          const info = {
             name: dup.display_name || dup.business_name || 'Unknown',
             num: dup.client_number,
             archived: dup.is_active === false,
-          })
+          }
+          setDupInfo(info)
+          onDuplicateFound?.(true)
           setVerifying(false)
-          return   // stop here — no need to hit GST portal
+          return
         }
       }
 
@@ -611,8 +614,11 @@ function AddEditClientModal({ companyId, client, onClose }) {
   } : emptyForm())
 
   const [saving, setSaving] = useState(false)
-  const [dupWarning, setDupWarning] = useState(null)
-  const [checkingDup, setCheckingDup] = useState(false)
+  // gstinDup: duplicate found during GSTIN verify (blocks save)
+  const [gstinDup, setGstinDup] = useState(false)
+  // panDup: duplicate found for PAN field
+  const [panDupInfo, setPanDupInfo] = useState(null)
+  const [checkingPan, setCheckingPan] = useState(false)
 
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
 
@@ -633,7 +639,7 @@ function AddEditClientModal({ companyId, client, onClose }) {
       gstin: '', gstin_status: '', gstin_verified: false, gstin_verified_at: null,
       gst_treatment: '',
     }))
-    setDupWarning(null)
+    setGstinDup(false); setPanDupInfo(null)
   }
 
   // Auto-generate client number
@@ -659,62 +665,43 @@ function AddEditClientModal({ companyId, client, onClose }) {
     }
   }, [form.salutation, form.first_name, form.last_name, form.client_type])
 
-  // ── Inline duplicate check ──────────────────────────────────────────────────
-  const checkDuplicate = useCallback(async (gstin, pan) => {
-    if (!gstin && !pan) { setDupWarning(null); return }
-    setCheckingDup(true)
-    try {
-      let q = supabase
-        .from('clients')
-        .select('id, business_name, display_name, client_number, is_active')
-        .eq('company_id', companyId)
-
-      if (gstin && pan) q = q.or(`gstin.eq.${gstin},pan.eq.${pan}`)
-      else if (gstin)   q = q.eq('gstin', gstin)
-      else              q = q.eq('pan', pan)
-
-      const { data: matches } = await q
-      const others = (matches || []).filter(c => c.id !== client?.id)
-      if (others.length > 0) {
-        const dup = others[0]
-        setDupWarning({
-          name: dup.display_name || dup.business_name || 'Unknown',
-          num: dup.client_number,
-          archived: dup.is_active === false,
-          field: gstin ? 'GSTIN' : 'PAN',
-        })
-      } else {
-        setDupWarning(null)
-      }
-    } finally { setCheckingDup(false) }
-  }, [companyId, client?.id])
-
-  // Watch GSTIN — fire inline check when format becomes valid
+  // PAN duplicate check — runs when PAN field reaches valid format
   useEffect(() => {
-    if (!needsGSTIN) return
-    const v = validateGSTIN(form.gstin)
-    if (v.valid) { checkDuplicate(v.gstin, null) }
-    else if (!form.gstin) setDupWarning(null)
-  }, [form.gstin, needsGSTIN])
-
-  // Watch PAN — fire inline check when 10 chars and valid format
-  useEffect(() => {
-    if (!needsPAN) return
+    if (!needsPAN) { setPanDupInfo(null); return }
     const pan = (form.pan || '').toUpperCase().trim()
-    if (pan.length === 10 && PAN_REGEX.test(pan)) { checkDuplicate(null, pan) }
-    else if (!form.pan) setDupWarning(null)
-  }, [form.pan, needsPAN])
+    if (pan.length !== 10 || !PAN_REGEX.test(pan)) { setPanDupInfo(null); return }
+    let cancelled = false
+    setCheckingPan(true)
+    supabase
+      .from('clients')
+      .select('id, business_name, display_name, client_number, is_active')
+      .eq('company_id', companyId)
+      .ilike('pan', pan)   // case-insensitive match
+      .then(({ data }) => {
+        if (cancelled) return
+        const others = (data || []).filter(c => c.id !== client?.id)
+        if (others.length > 0) {
+          const dup = others[0]
+          setPanDupInfo({
+            name: dup.display_name || dup.business_name || 'Unknown',
+            num: dup.client_number,
+            archived: dup.is_active === false,
+          })
+        } else { setPanDupInfo(null) }
+        setCheckingPan(false)
+      })
+    return () => { cancelled = true }
+  }, [form.pan, needsPAN, companyId, client?.id])
 
   // When GST treatment changes, clear identification fields
   const handleTreatmentChange = (treatment) => {
-    set('gst_treatment', treatment)
-    setDupWarning(null)
-    if (!GSTIN_TREATMENTS.has(treatment)) {
-      setForm(p => ({ ...p, gst_treatment: treatment, gstin: '', gstin_status: '', gstin_verified: false, gstin_verified_at: null }))
-    }
-    if (treatment !== 'Unregistered Business') {
-      setForm(p => ({ ...p, gst_treatment: treatment, pan: '' }))
-    }
+    setGstinDup(false); setPanDupInfo(null)
+    setForm(p => ({
+      ...p,
+      gst_treatment: treatment,
+      ...(!GSTIN_TREATMENTS.has(treatment) ? { gstin: '', gstin_status: '', gstin_verified: false, gstin_verified_at: null } : {}),
+      ...(treatment !== 'Unregistered Business' ? { pan: '' } : {}),
+    }))
   }
 
   const handleGSTINVerified = (data) => {
@@ -870,7 +857,7 @@ function AddEditClientModal({ companyId, client, onClose }) {
       footer={
         <>
           <button onClick={onClose} className="flex-1 py-2.5 rounded-xl bg-dark-700 border border-dark-600 text-slate-300 text-sm hover:bg-dark-600">Cancel</button>
-          <button onClick={handleSave} disabled={saving || !!dupWarning}
+          <button onClick={handleSave} disabled={saving || gstinDup || !!panDupInfo}
             className="flex-1 py-2.5 rounded-xl bg-primary-600 hover:bg-primary-500 text-white text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-2">
             {saving ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving…</> : isEdit ? 'Save Changes' : 'Add Client'}
           </button>
@@ -927,34 +914,15 @@ function AddEditClientModal({ companyId, client, onClose }) {
         </div>
       </div>
 
-      {/* ── Step 2: GST Treatment + Tax Preference + Currency ─────────────── */}
+      {/* ── Step 2: GST Treatment ─────────────────────────────────────────── */}
       <div className="space-y-3">
-        <SectionHeader icon={IndianRupee} label="Tax & Currency" />
+        <SectionHeader icon={IndianRupee} label="GST Treatment" />
         <Field label="GST Treatment" required hint="This determines what identification is needed next">
           <select className={inp()} value={form.gst_treatment} onChange={e => handleTreatmentChange(e.target.value)}>
             <option value="">Select GST Treatment…</option>
             {GST_TREATMENT_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
           </select>
         </Field>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Tax Preference">
-            <div className="flex rounded-lg overflow-hidden border border-dark-600 h-[42px]">
-              <button type="button" onClick={() => set('tax_preference', 'tax_payer')}
-                className={`flex-1 text-xs font-medium transition-all ${form.tax_preference === 'tax_payer' ? 'bg-primary-600 text-white' : 'bg-dark-700 text-slate-400 hover:text-slate-200'}`}>
-                Tax Payer
-              </button>
-              <button type="button" onClick={() => set('tax_preference', 'non_tax_payer')}
-                className={`flex-1 text-xs font-medium transition-all border-l border-dark-600 ${form.tax_preference === 'non_tax_payer' ? 'bg-primary-600 text-white' : 'bg-dark-700 text-slate-400 hover:text-slate-200'}`}>
-                Non-Tax Payer
-              </button>
-            </div>
-          </Field>
-          <Field label="Currency">
-            <select className={inp()} value={form.currency} onChange={e => set('currency', e.target.value)}>
-              {CURRENCIES.map(c => <option key={c.code} value={c.code}>{c.label}</option>)}
-            </select>
-          </Field>
-        </div>
       </div>
 
       {/* ── Step 3: GST / PAN Identification (conditional) ────────────────── */}
@@ -969,8 +937,9 @@ function AddEditClientModal({ companyId, client, onClose }) {
             <Field label="GSTIN (15-digit)" hint="Click Verify — duplicate check + auto-fill run together">
               <GSTINVerifier
                 value={form.gstin}
-                onChange={v => set('gstin', v)}
+                onChange={v => { set('gstin', v); setGstinDup(false) }}
                 onVerified={handleGSTINVerified}
+                onDuplicateFound={setGstinDup}
                 companyId={companyId}
                 existingClientId={client?.id}
               />
@@ -984,7 +953,10 @@ function AddEditClientModal({ companyId, client, onClose }) {
                   <input
                     className={inp(`font-mono pr-8 ${
                       form.pan && form.pan.length === 10 && !PAN_REGEX.test(form.pan.toUpperCase())
-                        ? 'border-red-500' : form.pan && form.pan.length === 10 && PAN_REGEX.test(form.pan.toUpperCase())
+                        ? 'border-red-500'
+                        : panDupInfo
+                        ? 'border-red-500'
+                        : form.pan && form.pan.length === 10 && PAN_REGEX.test(form.pan.toUpperCase())
                         ? 'border-emerald-600' : ''
                     }`)}
                     value={form.pan}
@@ -992,7 +964,9 @@ function AddEditClientModal({ companyId, client, onClose }) {
                     placeholder="AABCU9603R"
                     maxLength={10}
                   />
-                  {form.pan && form.pan.length === 10 && PAN_REGEX.test(form.pan) && (
+                  {checkingPan && <Loader2 className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 animate-spin" />}
+                  {!checkingPan && panDupInfo && <AlertCircle className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-red-400" />}
+                  {!checkingPan && !panDupInfo && form.pan && form.pan.length === 10 && PAN_REGEX.test(form.pan) && (
                     <CheckCircle className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-emerald-400" />
                   )}
                 </div>
@@ -1001,12 +975,30 @@ function AddEditClientModal({ companyId, client, onClose }) {
                     <AlertTriangle className="w-3 h-3" /> Invalid PAN format
                   </p>
                 )}
-                {form.pan && form.pan.length === 10 && PAN_REGEX.test(form.pan) && (
+                {!panDupInfo && !checkingPan && form.pan && form.pan.length === 10 && PAN_REGEX.test(form.pan) && (
                   <p className="text-xs text-emerald-400 mt-1 flex items-center gap-1">
                     <CheckCircle className="w-3 h-3" /> Valid PAN · Entity: {PAN_ENTITY[form.pan.charAt(4)] || 'Entity'}
                   </p>
                 )}
               </Field>
+
+              {/* PAN duplicate warning */}
+              {panDupInfo && (
+                <div className="flex items-start gap-2.5 bg-red-900/25 border border-red-600/50 rounded-lg p-3 text-xs">
+                  <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-red-300 font-semibold">This PAN is already registered in your account</p>
+                    <p className="text-slate-300 mt-0.5 font-medium">
+                      {panDupInfo.name}{panDupInfo.num ? ` · ${panDupInfo.num}` : ''}
+                      <span className={`ml-1.5 text-xs font-normal ${panDupInfo.archived ? 'text-slate-500' : 'text-emerald-400'}`}>
+                        ({panDupInfo.archived ? 'archived' : 'active'})
+                      </span>
+                    </p>
+                    <p className="text-slate-500 mt-1">Edit the existing client instead of adding a new one.</p>
+                  </div>
+                </div>
+              )}
+
               <p className="text-xs text-slate-500 bg-dark-700 rounded-lg p-2.5">
                 ℹ️ Unregistered businesses don't have GSTIN — all details must be entered manually below.
               </p>
@@ -1282,33 +1274,60 @@ function AddEditClientModal({ companyId, client, onClose }) {
         </div>
       )}
 
-      {/* ── Step 8: Business Terms (Advanced) ─────────────────────────────── */}
-      {isAdvanced && (form.gst_treatment || isEdit) && (
+      {/* ── Step 8: Business Terms + Tax Preference + Currency ─────────────── */}
+      {(form.gst_treatment || isEdit) && (
         <div className="space-y-3">
           <SectionHeader icon={Briefcase} label="Business Terms" />
+
+          {/* Tax Preference + Currency — always visible */}
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Payment Terms">
-              <select className={inp()} value={form.payment_terms} onChange={e => set('payment_terms', e.target.value)}>
-                <option value="">Select…</option>
-                {PAYMENT_TERMS_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
-            </Field>
-            <Field label="Credit Limit" hint="Leave blank for no limit">
-              <div className="flex">
-                <span className="flex items-center px-3 bg-dark-600 border border-r-0 border-dark-600 rounded-l-lg text-sm text-slate-400">
-                  {form.currency === 'INR' ? '₹' : form.currency}
-                </span>
-                <input type="number" className={`${inp()} rounded-l-none border-l-0`}
-                  value={form.credit_limit} onChange={e => set('credit_limit', e.target.value)}
-                  placeholder="500000" />
+            <Field label="Tax Preference">
+              <div className="flex rounded-lg overflow-hidden border border-dark-600 h-[42px]">
+                <button type="button" onClick={() => set('tax_preference', 'tax_payer')}
+                  className={`flex-1 text-xs font-medium transition-all ${form.tax_preference === 'tax_payer' ? 'bg-primary-600 text-white' : 'bg-dark-700 text-slate-400 hover:text-slate-200'}`}>
+                  Tax Payer
+                </button>
+                <button type="button" onClick={() => set('tax_preference', 'non_tax_payer')}
+                  className={`flex-1 text-xs font-medium transition-all border-l border-dark-600 ${form.tax_preference === 'non_tax_payer' ? 'bg-primary-600 text-white' : 'bg-dark-700 text-slate-400 hover:text-slate-200'}`}>
+                  Non-Tax Payer
+                </button>
               </div>
             </Field>
+            <Field label="Currency">
+              <select className={inp()} value={form.currency} onChange={e => set('currency', e.target.value)}>
+                {CURRENCIES.map(c => <option key={c.code} value={c.code}>{c.label}</option>)}
+              </select>
+            </Field>
           </div>
-          <Field label="Notes / Remarks">
-            <textarea className={inp()} rows={2} value={form.notes}
-              onChange={e => set('notes', e.target.value)}
-              placeholder="Special terms, project notes, remarks…" />
-          </Field>
+
+          {/* Advanced: Payment Terms, Credit Limit, Notes */}
+          {isAdvanced && (
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Payment Terms">
+                  <select className={inp()} value={form.payment_terms} onChange={e => set('payment_terms', e.target.value)}>
+                    <option value="">Select…</option>
+                    {PAYMENT_TERMS_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                </Field>
+                <Field label="Credit Limit" hint="Leave blank for no limit">
+                  <div className="flex">
+                    <span className="flex items-center px-3 bg-dark-600 border border-r-0 border-dark-600 rounded-l-lg text-sm text-slate-400">
+                      {form.currency === 'INR' ? '₹' : form.currency}
+                    </span>
+                    <input type="number" className={`${inp()} rounded-l-none border-l-0`}
+                      value={form.credit_limit} onChange={e => set('credit_limit', e.target.value)}
+                      placeholder="500000" />
+                  </div>
+                </Field>
+              </div>
+              <Field label="Notes / Remarks">
+                <textarea className={inp()} rows={2} value={form.notes}
+                  onChange={e => set('notes', e.target.value)}
+                  placeholder="Special terms, project notes, remarks…" />
+              </Field>
+            </>
+          )}
         </div>
       )}
 
