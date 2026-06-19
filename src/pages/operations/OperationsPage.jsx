@@ -6,7 +6,7 @@ import { INCIDENT_SEVERITY } from '../../lib/equipmentTypes'
 import {
   Truck, Plus, Fuel, AlertTriangle, X, Loader2, CheckCircle,
   Gauge, User, Mic, MicOff, MapPin, Camera,
-  Clock, Activity, PlayCircle, StopCircle, ChevronRight, Lock,
+  Clock, Activity, PlayCircle, StopCircle, ChevronRight, Lock, Bell,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format } from 'date-fns'
