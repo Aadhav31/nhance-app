@@ -3,7 +3,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import {
-  EQUIPMENT_CATEGORIES, getMeterType, STATUS_COLORS, INCIDENT_SEVERITY
+  EQUIPMENT_TYPES, EQUIPMENT_CATEGORIES, getMeterType, getPrefix, getSubCategories, getAttachments,
+  STATUS_COLORS, INCIDENT_SEVERITY
 } from '../../lib/equipmentTypes'
 import {
   Truck, Plus, Fuel, AlertTriangle, X, Loader2, CheckCircle,
@@ -17,13 +18,13 @@ import { format, differenceInDays } from 'date-fns'
 
 // ── Document types ────────────────────────────────────────────────────────────
 const DOC_TYPES = [
-  { value: 'purchase_invoice', label: 'Purchase Invoice',          hasExpiry: false, icon: '🧾' },
-  { value: 'rc_book',          label: 'RC Book',                   hasExpiry: true,  icon: '📋' },
-  { value: 'insurance',        label: 'Insurance Policy',          hasExpiry: true,  icon: '🛡️' },
-  { value: 'fitness',          label: 'Fitness Certificate',       hasExpiry: true,  icon: '✅' },
-  { value: 'puc',              label: 'PUC Certificate',           hasExpiry: true,  icon: '💨' },
-  { value: 'permit',           label: 'Route / Operating Permit',  hasExpiry: true,  icon: '📄' },
-  { value: 'other',            label: 'Other Document',            hasExpiry: false, icon: '📎' },
+  { value: 'purchase_invoice', label: 'Purchase Invoice',          hasExpiry: false, renewable: false, icon: '🧾', referenceLabel: 'Invoice / Serial No.' },
+  { value: 'rc_book',          label: 'RC Book',                   hasExpiry: true,  renewable: false, icon: '📋', referenceLabel: 'Registration No.' },
+  { value: 'insurance',        label: 'Insurance Policy',          hasExpiry: true,  renewable: true,  icon: '🛡️', referenceLabel: 'Policy No.' },
+  { value: 'fitness',          label: 'Fitness Certificate (FC)',  hasExpiry: true,  renewable: true,  icon: '✅', referenceLabel: 'Certificate No.' },
+  { value: 'puc',              label: 'PUC / Pollution Certificate',hasExpiry: true, renewable: true,  icon: '💨', referenceLabel: 'Certificate No.' },
+  { value: 'permit',           label: 'Route / Operating Permit',  hasExpiry: true,  renewable: true,  icon: '📄', referenceLabel: 'Permit No.' },
+  { value: 'other',            label: 'Other Document',            hasExpiry: false, renewable: false, icon: '📎', referenceLabel: 'Reference No.' },
 ]
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -248,7 +249,7 @@ function EquipmentFormModal({ companyId, initialValues, onClose, onSaved }) {
   const qc      = useQueryClient()
   const isEdit  = !!initialValues?.id
   const blankForm = {
-    equipment_number: '', name: '', category: '', make: '', model: '',
+    equipment_number: '', name: '', category: '', sub_category: '', make: '', model: '',
     year_of_manufacture: '', registration_number: '', chassis_number: '',
     capacity: '', fuel_type: 'diesel', meter_type: 'hours',
     current_meter_reading: '0', status: 'active', notes: '',
@@ -265,7 +266,18 @@ function EquipmentFormModal({ companyId, initialValues, onClose, onSaved }) {
   const [saving, setSaving] = useState(false)
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
 
-  const handleCategoryChange = (cat) => { set('category', cat); set('meter_type', getMeterType(cat)) }
+  const handleCategoryChange = (cat) => {
+    const prefix   = getPrefix(cat)
+    const subCats  = getSubCategories(cat)
+    const curNum   = form.equipment_number
+    // Auto-update prefix in equipment_number if it's still at default / matches old prefix
+    const oldPrefix = getPrefix(form.category)
+    const shouldUpdateNum = !curNum || curNum === `${oldPrefix}-` || curNum.startsWith(`${oldPrefix}-`)
+    set('category',      cat)
+    set('sub_category',  subCats.length > 0 ? subCats[0] : '')
+    set('meter_type',    getMeterType(cat))
+    if (shouldUpdateNum) set('equipment_number', `${prefix}-`)
+  }
 
   const handleSave = async () => {
     if (!form.name.trim())             { toast.error('Equipment name is required'); return }
@@ -278,6 +290,7 @@ function EquipmentFormModal({ companyId, initialValues, onClose, onSaved }) {
         equipment_number:      form.equipment_number,
         name:                  form.name,
         category:              form.category,
+        sub_category:          form.sub_category || null,
         make:                  form.make       || null,
         model:                 form.model      || null,
         year_of_manufacture:   form.year_of_manufacture ? Number(form.year_of_manufacture) : null,
@@ -353,12 +366,19 @@ function EquipmentFormModal({ companyId, initialValues, onClose, onSaved }) {
       <Field label="Equipment Name" required>
         <input className={inp()} value={form.name} onChange={e => set('name', e.target.value)} placeholder="e.g. Tata Hitachi EX200 — Site A" />
       </Field>
-      <Field label="Category" required>
+      <Field label="Equipment Type" required>
         <select className={inp()} value={form.category} onChange={e => handleCategoryChange(e.target.value)}>
-          <option value="">Select category…</option>
-          {EQUIPMENT_CATEGORIES.map(c => <option key={c.category} value={c.category}>{c.category}</option>)}
+          <option value="">Select equipment type…</option>
+          {EQUIPMENT_TYPES.map(e => <option key={e.type} value={e.type}>{e.type}</option>)}
         </select>
       </Field>
+      {form.category && getSubCategories(form.category).length > 0 && (
+        <Field label="Classification / Sub-category">
+          <select className={inp()} value={form.sub_category} onChange={e => set('sub_category', e.target.value)}>
+            {getSubCategories(form.category).map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+        </Field>
+      )}
       <div className="grid grid-cols-2 gap-3">
         <Field label="Make / Brand">
           <input className={inp()} value={form.make} onChange={e => set('make', e.target.value)} placeholder="Tata, JCB, Volvo…" />
@@ -441,7 +461,7 @@ function EquipmentFormModal({ companyId, initialValues, onClose, onSaved }) {
       )}
 
       {/* ── Documents ── */}
-      <SectionHeader icon={FileText} label="Document Expiry Dates" />
+      <SectionHeader icon={FileText} label="Equipment / Vehicle Documents" />
       <div className="grid grid-cols-2 gap-3">
         <Field label="Insurance Expiry">
           <input type="date" className={inp()} value={form.insurance_expiry} onChange={e => set('insurance_expiry', e.target.value)} />
@@ -495,39 +515,59 @@ async function uploadDocFile(file, companyId, equipmentId, docType) {
   return publicUrl
 }
 
-function DocumentUploadModal({ equipment, companyId, onClose }) {
-  const qc = useQueryClient()
+function DocumentUploadModal({ equipment, companyId, onClose, editDoc = null }) {
+  const qc      = useQueryClient()
   const fileRef = useRef(null)
+  const isEdit  = !!editDoc
   const [form, setForm] = useState({
-    doc_type: '', doc_name: '', issued_date: '', expiry_date: '', notes: '',
+    doc_type:         editDoc?.doc_type        || '',
+    doc_name:         editDoc?.doc_name        || '',
+    reference_number: editDoc?.reference_number|| '',
+    issued_date:      editDoc?.issued_date     || '',
+    expiry_date:      editDoc?.expiry_date     || '',
+    notes:            editDoc?.notes           || '',
   })
-  const [file, setFile]       = useState(null)
-  const [saving, setSaving]   = useState(false)
+  const [file, setFile]     = useState(null)
+  const [saving, setSaving] = useState(false)
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
 
   const docMeta = DOC_TYPES.find(d => d.value === form.doc_type)
 
   const handleSave = async () => {
-    if (!form.doc_type)                { toast.error('Select document type'); return }
-    if (!file)                         { toast.error('Select a file to upload'); return }
+    if (!form.doc_type) { toast.error('Select document type'); return }
+    if (!isEdit && !file) { toast.error('Select a file to upload'); return }
     if (form.doc_type === 'other' && !form.doc_name.trim()) { toast.error('Enter a name for this document'); return }
     setSaving(true)
     try {
-      const fileUrl = await uploadDocFile(file, companyId, equipment.id, form.doc_type)
-      const { error } = await supabase.from('equipment_documents').insert({
-        company_id:   companyId,
-        equipment_id: equipment.id,
-        doc_type:     form.doc_type,
-        doc_name:     form.doc_name || docMeta?.label || form.doc_type,
-        file_url:     fileUrl,
-        file_name:    file.name,
-        file_size_kb: Math.round(file.size / 1024),
-        issued_date:  form.issued_date  || null,
-        expiry_date:  form.expiry_date  || null,
-        notes:        form.notes        || null,
-      })
+      let fileUrl   = editDoc?.file_url  || null
+      let fileName  = editDoc?.file_name || null
+      let fileSizeKb= editDoc?.file_size_kb || null
+      if (file) {
+        fileUrl    = await uploadDocFile(file, companyId, equipment.id, form.doc_type)
+        fileName   = file.name
+        fileSizeKb = Math.round(file.size / 1024)
+      }
+      const payload = {
+        company_id:       companyId,
+        equipment_id:     equipment.id,
+        doc_type:         form.doc_type,
+        doc_name:         form.doc_name || docMeta?.label || form.doc_type,
+        reference_number: form.reference_number || null,
+        file_url:         fileUrl,
+        file_name:        fileName,
+        file_size_kb:     fileSizeKb,
+        issued_date:      form.issued_date || null,
+        expiry_date:      form.expiry_date || null,
+        notes:            form.notes       || null,
+      }
+      let error
+      if (isEdit) {
+        ;({ error } = await supabase.from('equipment_documents').update(payload).eq('id', editDoc.id))
+      } else {
+        ;({ error } = await supabase.from('equipment_documents').insert(payload))
+      }
       if (error) throw error
-      toast.success('Document uploaded')
+      toast.success(isEdit ? 'Document updated' : 'Document uploaded')
       qc.invalidateQueries(['equipment_docs', equipment.id])
       onClose()
     } catch (err) { toast.error(err.message || 'Upload failed')
@@ -535,16 +575,17 @@ function DocumentUploadModal({ equipment, companyId, onClose }) {
   }
 
   return (
-    <Modal title="Upload Document" onClose={onClose} footer={
+    <Modal title={isEdit ? `Edit — ${docMeta?.label || 'Document'}` : 'Upload Document'} onClose={onClose} footer={
       <>
         <button onClick={onClose} className="flex-1 btn-secondary">Cancel</button>
-        <button onClick={handleSave} disabled={saving || !file} className="flex-1 btn-primary">
-          {saving ? <><Loader2 className="w-4 h-4 animate-spin" />Uploading…</> : <><Upload className="w-4 h-4" />Upload</>}
+        <button onClick={handleSave} disabled={saving || (!isEdit && !file)} className="flex-1 btn-primary">
+          {saving ? <><Loader2 className="w-4 h-4 animate-spin" />{isEdit ? 'Saving…' : 'Uploading…'}</>
+            : isEdit ? <><Save className="w-4 h-4" />Save Changes</> : <><Upload className="w-4 h-4" />Upload</>}
         </button>
       </>
     }>
       <Field label="Document Type" required>
-        <select className={inp()} value={form.doc_type} onChange={e => set('doc_type', e.target.value)}>
+        <select className={inp()} value={form.doc_type} onChange={e => set('doc_type', e.target.value)} disabled={isEdit}>
           <option value="">Select type…</option>
           {DOC_TYPES.map(d => <option key={d.value} value={d.value}>{d.icon} {d.label}</option>)}
         </select>
@@ -555,9 +596,20 @@ function DocumentUploadModal({ equipment, companyId, onClose }) {
         </Field>
       )}
 
+      {/* Reference number — label changes per doc type */}
+      {form.doc_type && (
+        <Field label={docMeta?.referenceLabel || 'Reference No.'}>
+          <input className={inp()} value={form.reference_number} onChange={e => set('reference_number', e.target.value)}
+            placeholder={`Enter ${docMeta?.referenceLabel || 'reference number'}…`} />
+        </Field>
+      )}
+
       {/* File picker */}
       <div>
-        <p className="text-xs font-medium text-slate-400 mb-1.5">File <span className="text-red-400">*</span></p>
+        <p className="text-xs font-medium text-slate-400 mb-1.5">
+          File {!isEdit && <span className="text-red-400">*</span>}
+          {isEdit && <span className="text-slate-500 font-normal"> (leave blank to keep existing)</span>}
+        </p>
         <input ref={fileRef} type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx"
           className="hidden" onChange={e => setFile(e.target.files?.[0] || null)} />
         <button type="button" onClick={() => fileRef.current?.click()}
@@ -565,7 +617,9 @@ function DocumentUploadModal({ equipment, companyId, onClose }) {
             ${file ? 'border-emerald-600 bg-emerald-900/20 text-emerald-400' : 'border-dark-500 bg-dark-700 text-slate-400 hover:border-primary-500 hover:text-primary-300'}`}>
           {file
             ? <><CheckCircle className="w-4 h-4" />{file.name} ({Math.round(file.size / 1024)} KB)</>
-            : <><FolderOpen className="w-4 h-4" />Choose PDF / Image / Word doc</>}
+            : editDoc?.file_name
+              ? <><FolderOpen className="w-4 h-4" />Current: {editDoc.file_name} — click to replace</>
+              : <><FolderOpen className="w-4 h-4" />Choose PDF / Image / Word doc</>}
         </button>
       </div>
 
@@ -580,7 +634,7 @@ function DocumentUploadModal({ equipment, companyId, onClose }) {
         )}
       </div>
       <Field label="Notes">
-        <input className={inp()} value={form.notes} onChange={e => set('notes', e.target.value)} placeholder="Policy number, renewal ref, etc." />
+        <input className={inp()} value={form.notes} onChange={e => set('notes', e.target.value)} placeholder="Additional notes…" />
       </Field>
     </Modal>
   )
@@ -590,6 +644,7 @@ function DocumentUploadModal({ equipment, companyId, onClose }) {
 function DocumentsSection({ equipment, companyId, isAdmin }) {
   const qc = useQueryClient()
   const [showUpload, setShowUpload] = useState(false)
+  const [editDoc,    setEditDoc]    = useState(null)
 
   const { data: docs = [], isLoading } = useQuery({
     queryKey: ['equipment_docs', equipment.id],
@@ -644,28 +699,39 @@ function DocumentsSection({ equipment, companyId, isAdmin }) {
               <p className="text-xs text-slate-500 mb-1.5">{dt.icon} {dt.label}</p>
               <div className="space-y-1.5">
                 {dt.items.map(doc => {
-                  const days   = doc.expiry_date ? differenceInDays(new Date(doc.expiry_date), new Date()) : null
+                  const days     = doc.expiry_date ? differenceInDays(new Date(doc.expiry_date), new Date()) : null
                   const expColor = days === null ? '' : days < 0 ? 'text-red-400' : days < 30 ? 'text-orange-400' : 'text-emerald-400'
                   return (
-                    <div key={doc.id} className="flex items-center gap-2 bg-dark-700 rounded-lg px-3 py-2">
+                    <div key={doc.id} className="flex items-start gap-2 bg-dark-700 rounded-lg px-3 py-2">
                       <div className="flex-1 min-w-0">
                         <p className="text-xs text-slate-200 truncate">{doc.doc_name || dt.label}</p>
                         <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                          {doc.file_name && <span className="text-xs text-slate-500 truncate max-w-[120px]">{doc.file_name}</span>}
+                          {doc.reference_number && (
+                            <span className="text-xs text-primary-400 font-mono">{doc.reference_number}</span>
+                          )}
                           {doc.expiry_date && (
                             <span className={`text-xs font-medium ${expColor}`}>
                               {days < 0 ? '⚠ Expired' : `Exp: ${format(new Date(doc.expiry_date), 'dd MMM yyyy')}`}
                               {days !== null && days >= 0 && ` (${days}d)`}
                             </span>
                           )}
+                          {doc.issued_date && (
+                            <span className="text-xs text-slate-500">Issued: {format(new Date(doc.issued_date), 'dd MMM yyyy')}</span>
+                          )}
                           {doc.notes && <span className="text-xs text-slate-500 italic truncate max-w-[100px]">{doc.notes}</span>}
                         </div>
                       </div>
-                      <div className="flex items-center gap-1 shrink-0">
+                      <div className="flex items-center gap-1 shrink-0 mt-0.5">
                         <a href={doc.file_url} target="_blank" rel="noopener noreferrer"
                           className="p-1.5 rounded-lg text-slate-400 hover:text-primary-400 hover:bg-dark-600 transition-colors" title="View / Download">
                           <Eye className="w-3.5 h-3.5" />
                         </a>
+                        {isAdmin && dt.renewable && (
+                          <button onClick={() => setEditDoc(doc)}
+                            className="p-1.5 rounded-lg text-slate-500 hover:text-primary-400 hover:bg-dark-600 transition-colors" title="Renew / Edit">
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                         {isAdmin && (
                           <button onClick={() => handleDelete(doc.id, doc.file_url)}
                             className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-dark-600 transition-colors" title="Delete">
@@ -689,7 +755,245 @@ function DocumentsSection({ equipment, companyId, isAdmin }) {
       )}
 
       {showUpload && <DocumentUploadModal equipment={equipment} companyId={companyId} onClose={() => setShowUpload(false)} />}
+      {editDoc    && <DocumentUploadModal equipment={equipment} companyId={companyId} editDoc={editDoc} onClose={() => setEditDoc(null)} />}
     </div>
+  )
+}
+
+// ── Attachments Section ───────────────────────────────────────────────────────
+function AttachmentsSection({ equipment, companyId, isAdmin }) {
+  const qc = useQueryClient()
+  const fileRef = useRef(null)
+  const [showAdd,   setShowAdd]   = useState(false)
+  const [editItem,  setEditItem]  = useState(null)
+  const availableAttachments = getAttachments(equipment.category || '')
+
+  const { data: attachments = [], isLoading } = useQuery({
+    queryKey: ['equipment_attachments', equipment.id],
+    queryFn: async () => {
+      const { data } = await supabase.from('equipment_attachments')
+        .select('*').eq('equipment_id', equipment.id).order('attachment_name')
+      return data || []
+    },
+  })
+
+  const handleDelete = async (id) => {
+    if (!confirm('Remove this attachment?')) return
+    const { error } = await supabase.from('equipment_attachments').delete().eq('id', id)
+    if (error) { toast.error('Delete failed'); return }
+    toast.success('Attachment removed')
+    qc.invalidateQueries(['equipment_attachments', equipment.id])
+  }
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2">
+          <Wrench className="w-3.5 h-3.5 text-primary-400" />
+          <span className="text-xs font-semibold text-slate-300 uppercase tracking-wider">Attachments</span>
+          <div className="h-px bg-dark-600 w-8" />
+        </div>
+        {isAdmin && (
+          <button onClick={() => setShowAdd(true)}
+            className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-dark-700 border border-dark-600 hover:border-primary-500 text-xs text-slate-300 transition-colors">
+            <Plus className="w-3 h-3" /> Add
+          </button>
+        )}
+      </div>
+
+      {isLoading ? (
+        <div className="flex items-center gap-2 text-xs text-slate-500 py-2"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading…</div>
+      ) : attachments.length === 0 ? (
+        <div className="flex flex-col items-center py-4 gap-2 bg-dark-700/50 rounded-xl border border-dashed border-dark-600">
+          <Wrench className="w-7 h-7 text-slate-600" />
+          <p className="text-xs text-slate-500">No attachments added</p>
+          {isAdmin && availableAttachments.length > 0 && (
+            <button onClick={() => setShowAdd(true)} className="text-xs text-primary-400 underline">Add first attachment</button>
+          )}
+        </div>
+      ) : (
+        <div className="space-y-1.5">
+          {attachments.map(att => (
+            <div key={att.id} className="flex items-start gap-2 bg-dark-700 rounded-lg px-3 py-2">
+              <div className="flex-1 min-w-0">
+                <p className="text-xs text-slate-200">{att.attachment_name}</p>
+                <div className="flex flex-wrap gap-2 mt-0.5">
+                  {att.make  && <span className="text-xs text-slate-500">{att.make}</span>}
+                  {att.model && <span className="text-xs text-slate-500">{att.model}</span>}
+                  {att.serial_number  && <span className="text-xs text-slate-400 font-mono">S/N: {att.serial_number}</span>}
+                  {att.invoice_number && <span className="text-xs text-primary-400 font-mono">Inv: {att.invoice_number}</span>}
+                  {att.purchase_date  && <span className="text-xs text-slate-500">Purchased: {format(new Date(att.purchase_date), 'dd MMM yyyy')}</span>}
+                </div>
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
+                {att.invoice_url && (
+                  <a href={att.invoice_url} target="_blank" rel="noopener noreferrer"
+                    className="p-1.5 rounded-lg text-slate-400 hover:text-primary-400 hover:bg-dark-600 transition-colors" title="View Invoice">
+                    <Eye className="w-3.5 h-3.5" />
+                  </a>
+                )}
+                {isAdmin && (
+                  <>
+                    <button onClick={() => setEditItem(att)}
+                      className="p-1.5 rounded-lg text-slate-500 hover:text-primary-400 hover:bg-dark-600 transition-colors" title="Edit">
+                      <Edit2 className="w-3.5 h-3.5" />
+                    </button>
+                    <button onClick={() => handleDelete(att.id)}
+                      className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-dark-600 transition-colors" title="Remove">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          ))}
+          {isAdmin && (
+            <button onClick={() => setShowAdd(true)}
+              className="w-full flex items-center justify-center gap-1.5 py-2 rounded-lg border border-dashed border-dark-600 text-xs text-slate-500 hover:border-primary-500 hover:text-primary-400 transition-colors">
+              <Plus className="w-3 h-3" /> Add attachment
+            </button>
+          )}
+        </div>
+      )}
+
+      {(showAdd || editItem) && (
+        <AttachmentFormModal
+          equipment={equipment}
+          companyId={companyId}
+          initialValues={editItem}
+          availableAttachments={availableAttachments}
+          onClose={() => { setShowAdd(false); setEditItem(null) }}
+        />
+      )}
+    </div>
+  )
+}
+
+// ── Attachment Form Modal ─────────────────────────────────────────────────────
+function AttachmentFormModal({ equipment, companyId, initialValues, availableAttachments, onClose }) {
+  const qc     = useQueryClient()
+  const isEdit = !!initialValues?.id
+  const fileRef = useRef(null)
+  const [form, setForm] = useState({
+    attachment_name: initialValues?.attachment_name || '',
+    make:            initialValues?.make            || '',
+    model:           initialValues?.model           || '',
+    serial_number:   initialValues?.serial_number   || '',
+    purchase_date:   initialValues?.purchase_date   || '',
+    invoice_number:  initialValues?.invoice_number  || '',
+    notes:           initialValues?.notes           || '',
+    invoice_url:     initialValues?.invoice_url     || '',
+  })
+  const [file,    setFile]   = useState(null)
+  const [saving, setSaving]  = useState(false)
+  const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
+
+  const handleSave = async () => {
+    if (!form.attachment_name.trim()) { toast.error('Select or enter attachment name'); return }
+    setSaving(true)
+    try {
+      let invoiceUrl = form.invoice_url || null
+      if (file) {
+        const ext  = file.name.split('.').pop()
+        const path = `${companyId}/attachments/${equipment.id}/${Date.now()}.${ext}`
+        const { error: upErr } = await supabase.storage.from('nhance-photos').upload(path, file, { upsert: false })
+        if (upErr) throw upErr
+        const { data: { publicUrl } } = supabase.storage.from('nhance-photos').getPublicUrl(path)
+        invoiceUrl = publicUrl
+      }
+      const payload = {
+        company_id:      companyId,
+        equipment_id:    equipment.id,
+        attachment_name: form.attachment_name,
+        make:            form.make           || null,
+        model:           form.model          || null,
+        serial_number:   form.serial_number  || null,
+        purchase_date:   form.purchase_date  || null,
+        invoice_number:  form.invoice_number || null,
+        invoice_url:     invoiceUrl,
+        notes:           form.notes          || null,
+      }
+      let error
+      if (isEdit) {
+        ;({ error } = await supabase.from('equipment_attachments').update(payload).eq('id', initialValues.id))
+      } else {
+        ;({ error } = await supabase.from('equipment_attachments').insert(payload))
+      }
+      if (error) throw error
+      toast.success(isEdit ? 'Attachment updated' : 'Attachment added')
+      qc.invalidateQueries(['equipment_attachments', equipment.id])
+      onClose()
+    } catch (err) { toast.error(err.message || 'Save failed')
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <Modal title={isEdit ? 'Edit Attachment' : 'Add Attachment'} onClose={onClose} footer={
+      <>
+        <button onClick={onClose} className="flex-1 btn-secondary">Cancel</button>
+        <button onClick={handleSave} disabled={saving} className="flex-1 btn-primary">
+          {saving ? <><Loader2 className="w-4 h-4 animate-spin" />Saving…</> : <><Save className="w-4 h-4" />{isEdit ? 'Save' : 'Add'}</>}
+        </button>
+      </>
+    }>
+      <Field label="Attachment Name" required>
+        {availableAttachments.length > 0 ? (
+          <select className={inp()} value={form.attachment_name} onChange={e => set('attachment_name', e.target.value)}>
+            <option value="">Select attachment…</option>
+            {availableAttachments.map(a => <option key={a} value={a}>{a}</option>)}
+            <option value="__custom__">Other (type below)</option>
+          </select>
+        ) : (
+          <input className={inp()} value={form.attachment_name} onChange={e => set('attachment_name', e.target.value)} placeholder="e.g. Hydraulic Breaker" />
+        )}
+        {form.attachment_name === '__custom__' && (
+          <input className={`${inp()} mt-2`} placeholder="Enter attachment name…"
+            onChange={e => set('attachment_name', e.target.value === '' ? '__custom__' : e.target.value)} />
+        )}
+      </Field>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Make / Brand">
+          <input className={inp()} value={form.make} onChange={e => set('make', e.target.value)} placeholder="Sandvik, Atlas Copco…" />
+        </Field>
+        <Field label="Model">
+          <input className={inp()} value={form.model} onChange={e => set('model', e.target.value)} placeholder="Model number" />
+        </Field>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Serial No.">
+          <input className={inp()} value={form.serial_number} onChange={e => set('serial_number', e.target.value)} placeholder="S/N" />
+        </Field>
+        <Field label="Purchase Date">
+          <input type="date" className={inp()} value={form.purchase_date} onChange={e => set('purchase_date', e.target.value)} />
+        </Field>
+      </div>
+      <Field label="Invoice No.">
+        <input className={inp()} value={form.invoice_number} onChange={e => set('invoice_number', e.target.value)} placeholder="Purchase invoice number" />
+      </Field>
+
+      {/* Invoice file upload */}
+      <div>
+        <p className="text-xs font-medium text-slate-400 mb-1.5">
+          Invoice / Document
+          {form.invoice_url && <span className="text-slate-500 font-normal"> (already uploaded)</span>}
+        </p>
+        <input ref={fileRef} type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx"
+          className="hidden" onChange={e => setFile(e.target.files?.[0] || null)} />
+        <button type="button" onClick={() => fileRef.current?.click()}
+          className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border-2 border-dashed text-sm transition-colors
+            ${file ? 'border-emerald-600 bg-emerald-900/20 text-emerald-400' : 'border-dark-500 bg-dark-700 text-slate-400 hover:border-primary-500 hover:text-primary-300'}`}>
+          {file
+            ? <><CheckCircle className="w-4 h-4" />{file.name}</>
+            : form.invoice_url
+              ? <><FolderOpen className="w-4 h-4" />Replace existing invoice</>
+              : <><FolderOpen className="w-4 h-4" />Attach invoice / document (optional)</>}
+        </button>
+      </div>
+
+      <Field label="Notes">
+        <input className={inp()} value={form.notes} onChange={e => set('notes', e.target.value)} placeholder="Condition, warranty, etc." />
+      </Field>
+    </Modal>
   )
 }
 
@@ -1413,7 +1717,8 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
         )}
 
         {/* ── Documents ── */}
-        <DocumentsSection equipment={equipment} companyId={companyId} isAdmin={isAdmin} />
+        <AttachmentsSection equipment={equipment} companyId={companyId} isAdmin={isAdmin} />
+        <DocumentsSection   equipment={equipment} companyId={companyId} isAdmin={isAdmin} />
 
         {/* ── Recent Fuel ── */}
         {recentFuel.length > 0 && (
