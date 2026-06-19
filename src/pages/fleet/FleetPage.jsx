@@ -1295,6 +1295,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
   const [deploySiteName,  setDeploySiteName]  = useState(equipment.current_site_name  || '')
   const [deploySaving,    setDeploySaving]    = useState(false)
   const [newOperator,     setNewOperator]     = useState('')
+  const [newShiftType,    setNewShiftType]    = useState('day')
   const [operatorSaving,  setOperatorSaving]  = useState(false)
 
   // ── Queries ──────────────────────────────────────────────────────────────────
@@ -1443,16 +1444,17 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
 
   const handleAddOperator = async () => {
     const name = newOperator.trim()
-    if (!name) { toast.error('Enter operator name'); return }
+    if (!name) { toast.error('Select an operator'); return }
     setOperatorSaving(true)
     try {
       const { error } = await supabase.from('equipment_assignments').insert({
-        company_id: companyId, equipment_id: equipment.id, operator_name: name, is_active: true,
+        company_id: companyId, equipment_id: equipment.id,
+        operator_name: name, shift_type: newShiftType, is_active: true,
       })
       if (error) { if (error.code === '23505') { toast.error('Operator already assigned'); return }; throw error }
-      setNewOperator(''); refetchAssignments()
+      setNewOperator(''); setNewShiftType('day'); refetchAssignments()
       qc.invalidateQueries(['equipment_assignments', equipment.id])
-      toast.success(`${name} assigned`)
+      toast.success(`${name} assigned — ${newShiftType} shift`)
     } catch (err) { toast.error(err.message || 'Failed to assign operator')
     } finally { setOperatorSaving(false) }
   }
@@ -1795,24 +1797,26 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
                 <p className="text-xs text-slate-500 italic">No operators assigned yet</p>
               ) : (
                 <div className="space-y-1.5">
-                  {assignments.map(a => (
-                    <div key={a.id} className="flex items-center justify-between bg-dark-700 rounded-lg px-2.5 py-1.5">
-                      <div>
-                        <span className="text-xs text-slate-200">{a.operator_name}</span>
-                        {(() => {
-                          const hr = hrOperators.find(e => e.name === a.operator_name)
-                          return hr ? <span className="text-[10px] text-slate-500 ml-2">{hr.employee_number} · {hr.designation}</span> : null
-                        })()}
+                  {assignments.map(a => {
+                    const hr = hrOperators.find(e => e.name === a.operator_name)
+                    const shiftLabel = { day: '☀️ Day', night: '🌙 Night', double: '🔄 Double' }[a.shift_type] || '☀️ Day'
+                    return (
+                      <div key={a.id} className="flex items-center justify-between bg-dark-700 rounded-lg px-2.5 py-1.5">
+                        <div className="flex-1 min-w-0">
+                          <span className="text-xs text-slate-200">{a.operator_name}</span>
+                          {hr && <span className="text-[10px] text-slate-500 ml-2">{hr.employee_number}</span>}
+                          <span className="text-[10px] text-primary-400 ml-2">{shiftLabel}</span>
+                        </div>
+                        <button onClick={() => handleRemoveOperator(a.id, a.operator_name)}
+                          className="p-1 text-slate-500 hover:text-red-400 transition-colors shrink-0">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       </div>
-                      <button onClick={() => handleRemoveOperator(a.id, a.operator_name)}
-                        className="p-1 text-slate-500 hover:text-red-400 transition-colors">
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               )}
-              {/* Select from HR employees — filtered to operator/driver designations */}
+              {/* Select from HR employees + preset shift type */}
               {(() => {
                 const assignedNames = new Set(assignments.map(a => a.operator_name))
                 const available = hrOperators.filter(e => !assignedNames.has(e.name))
@@ -1825,22 +1829,30 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
                   <p className="text-xs text-slate-500 italic">All HR operators already assigned</p>
                 )
                 return (
-                  <div className="flex gap-2">
+                  <div className="space-y-1.5">
                     <select
-                      className="flex-1 bg-dark-700 border border-dark-600 rounded-lg px-2.5 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-primary-500"
+                      className="w-full bg-dark-700 border border-dark-600 rounded-lg px-2.5 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-primary-500"
                       value={newOperator}
                       onChange={e => setNewOperator(e.target.value)}>
                       <option value="">Select operator from HR…</option>
                       {available.map(e => (
-                        <option key={e.id} value={e.name}>
-                          {e.name} — {e.designation}
-                        </option>
+                        <option key={e.id} value={e.name}>{e.name} — {e.designation}</option>
                       ))}
                     </select>
-                    <button onClick={handleAddOperator} disabled={operatorSaving || !newOperator.trim()}
-                      className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-dark-600 border border-dark-500 hover:border-primary-500 text-xs text-slate-300 disabled:opacity-40 transition-colors shrink-0">
-                      {operatorSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />} Assign
-                    </button>
+                    <div className="flex gap-2">
+                      <select
+                        className="flex-1 bg-dark-700 border border-dark-600 rounded-lg px-2.5 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-primary-500"
+                        value={newShiftType}
+                        onChange={e => setNewShiftType(e.target.value)}>
+                        <option value="day">☀️ Day Shift</option>
+                        <option value="night">🌙 Night Shift</option>
+                        <option value="double">🔄 Double Shift</option>
+                      </select>
+                      <button onClick={handleAddOperator} disabled={operatorSaving || !newOperator.trim()}
+                        className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-dark-600 border border-dark-500 hover:border-primary-500 text-xs text-slate-300 disabled:opacity-40 transition-colors shrink-0">
+                        {operatorSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />} Assign
+                      </button>
+                    </div>
                   </div>
                 )
               })()}

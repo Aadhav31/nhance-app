@@ -6,7 +6,7 @@ import { INCIDENT_SEVERITY } from '../../lib/equipmentTypes'
 import {
   Truck, Plus, Fuel, AlertTriangle, X, Loader2, CheckCircle,
   Gauge, User, Mic, MicOff, MapPin, Camera,
-  Clock, Activity, PlayCircle, StopCircle, ChevronRight,
+  Clock, Activity, PlayCircle, StopCircle, ChevronRight, Lock,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format } from 'date-fns'
@@ -198,11 +198,14 @@ const INCIDENT_OPTIONS = [
 // ── Start Shift Modal ─────────────────────────────────────────────────────────
 function StartShiftModal({ equipment, companyId, onClose }) {
   const qc = useQueryClient()
+  const { role } = useAuth()
   const { location, loading: gpsLoading } = useGPS()
+  const isManager = ['admin', 'manager', 'superadmin'].includes(role)
+
   const [form, setForm] = useState({
     shift_date: today(), shift_type: 'day',
     operator_name: '', site_incharge_name: '',
-    start_time: nowTime(),
+    start_time: nowTime(),   // auto-captured at modal open
     start_meter: String(equipment.current_meter_reading || ''),
     start_km: '', notes: '',
   })
@@ -221,6 +224,15 @@ function StartShiftModal({ equipment, companyId, onClose }) {
   const [saving, setSaving] = useState(false)
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
   const mt = equipment.meter_type
+
+  // When operator is selected, auto-fill shift type from their assignment config
+  const handleOperatorChange = (name) => {
+    set('operator_name', name)
+    if (!isManager) {
+      const assignment = assignments.find(a => a.operator_name === name)
+      if (assignment?.shift_type) set('shift_type', assignment.shift_type)
+    }
+  }
 
   useEffect(() => {
     supabase.from('shifts').select('end_meter, end_km, operator_name, shift_date')
@@ -321,32 +333,64 @@ function StartShiftModal({ equipment, companyId, onClose }) {
             📍 {equipment.current_site_name}
           </div>
         )}
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Date">
-            <input type="date" className={inp()} value={form.shift_date} onChange={e => set('shift_date', e.target.value)} />
-          </Field>
-          <Field label="Shift Type">
-            <select className={inp()} value={form.shift_type} onChange={e => set('shift_type', e.target.value)}>
-              <option value="day">Day Shift</option>
-              <option value="night">Night Shift</option>
-              <option value="double">Double Shift</option>
-            </select>
-          </Field>
-        </div>
+        {/* Date (managers can change, operators locked to today) */}
+        <Field label="Date">
+          {isManager
+            ? <input type="date" className={inp()} value={form.shift_date} onChange={e => set('shift_date', e.target.value)} />
+            : <div className="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 flex items-center gap-2">
+                <span className="text-sm text-slate-200 flex-1">{form.shift_date}</span>
+                <Lock className="w-3.5 h-3.5 text-slate-600" />
+              </div>}
+        </Field>
+
+        {/* Operator select — auto-fills shift type */}
         <Field label="Operator / Driver" required>
           {assignmentsLoading
             ? <div className="text-xs text-slate-500 py-2 flex items-center gap-2"><Loader2 className="w-3.5 h-3.5 animate-spin" />Loading…</div>
-            : <select className={inp()} value={form.operator_name} onChange={e => set('operator_name', e.target.value)}>
+            : <select className={inp()} value={form.operator_name} onChange={e => handleOperatorChange(e.target.value)}>
                 <option value="">Select operator…</option>
-                {assignments.map(a => <option key={a.id} value={a.operator_name}>{a.operator_name}</option>)}
-              </select>
-          }
+                {assignments.map(a => (
+                  <option key={a.id} value={a.operator_name}>
+                    {a.operator_name}
+                  </option>
+                ))}
+              </select>}
         </Field>
-        <Field label="Site Incharge">
-          <input className={inp()} value={form.site_incharge_name} onChange={e => set('site_incharge_name', e.target.value)} placeholder="Supervisor name" />
+
+        {/* Shift Type — preset from assignment, locked for operators */}
+        <Field label="Shift Type">
+          {isManager ? (
+            <select className={inp()} value={form.shift_type} onChange={e => set('shift_type', e.target.value)}>
+              <option value="day">☀️ Day Shift</option>
+              <option value="night">🌙 Night Shift</option>
+              <option value="double">🔄 Double Shift</option>
+            </select>
+          ) : (
+            <div className="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 flex items-center gap-2">
+              <span className="text-sm text-slate-200 flex-1">
+                {{ day: '☀️ Day Shift', night: '🌙 Night Shift', double: '🔄 Double Shift' }[form.shift_type] || '☀️ Day Shift'}
+              </span>
+              <span className="text-[10px] text-slate-500">preset by admin</span>
+              <Lock className="w-3.5 h-3.5 text-slate-600" />
+            </div>
+          )}
         </Field>
+
+        {/* Start Time — auto-captured, locked for operators */}
         <Field label="Shift Start Time">
-          <input type="time" className={inp()} value={form.start_time} onChange={e => set('start_time', e.target.value)} />
+          {isManager ? (
+            <input type="time" className={inp()} value={form.start_time} onChange={e => set('start_time', e.target.value)} />
+          ) : (
+            <div className="bg-dark-700 border border-emerald-700/40 rounded-lg px-3 py-2 flex items-center gap-2">
+              <Clock className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span className="font-mono font-semibold text-emerald-300 text-base flex-1">{form.start_time}</span>
+              <span className="text-[10px] text-slate-500">auto-captured</span>
+            </div>
+          )}
+        </Field>
+
+        <Field label="Site Incharge">
+          <input className={inp()} value={form.site_incharge_name} onChange={e => set('site_incharge_name', e.target.value)} placeholder="Supervisor / incharge name" />
         </Field>
         {(mt === 'hours' || mt === 'both') && (
           <div>
@@ -373,8 +417,13 @@ function StartShiftModal({ equipment, companyId, onClose }) {
           </Field>
         )}
         <GPSField location={location} loading={gpsLoading} />
-        <Field label="Notes">
-          <VoiceTextarea value={form.notes} onChange={v => set('notes', v)} placeholder="Site location, work details…" />
+        <Field label="Remarks">
+          <VoiceTextarea value={form.notes} onChange={v => set('notes', v)}
+            placeholder="Tap 🎤 to dictate or type remarks — site conditions, work instructions, any notes…"
+            rows={3} />
+          <p className="text-[10px] text-slate-500 mt-1 flex items-center gap-1">
+            <Mic className="w-3 h-3" /> Tap the mic icon to speak your remarks
+          </p>
         </Field>
       </>)}
     </Modal>
