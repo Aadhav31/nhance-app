@@ -1568,8 +1568,7 @@ function EquipmentCard({ equipment, onClick }) {
 }
 
 // ── Fleet Tab ─────────────────────────────────────────────────────────────────
-function FleetTab({ companyId }) {
-  const [showAdd,         setShowAdd]         = useState(false)
+function FleetTab({ companyId, showAdd, setShowAdd }) {
   const [selected,        setSelected]        = useState(null)
   const [search,          setSearch]          = useState('')
   const [filterStatus,    setFilterStatus]    = useState('all')
@@ -1753,11 +1752,6 @@ function FleetTab({ companyId }) {
         )}
       </div>
 
-      {equipment.length > 0 && (
-        <div className="absolute bottom-0 left-0 right-0 px-4 pb-4 bg-gradient-to-t from-dark-900 pt-8">
-          <button onClick={() => setShowAdd(true)} className="w-full btn-primary py-3"><Plus className="w-5 h-5" /> Add Equipment</button>
-        </div>
-      )}
       {showAdd  && <EquipmentFormModal companyId={companyId} onClose={() => setShowAdd(false)} />}
       {selected && <EquipmentDetail   equipment={selected}  companyId={companyId} onClose={() => setSelected(null)} />}
     </div>
@@ -1921,7 +1915,8 @@ function IncidentsTab({ companyId }) {
 // ── Main FleetPage ────────────────────────────────────────────────────────────
 export default function FleetPage() {
   const { companyId } = useAuth()
-  const [activeTab, setActiveTab] = useState('fleet')
+  const [activeTab,  setActiveTab]  = useState('fleet')
+  const [showAdd,    setShowAdd]    = useState(false)
 
   const tabs = [
     { id: 'fleet',     label: 'Fleet',     icon: Truck },
@@ -1931,9 +1926,16 @@ export default function FleetPage() {
 
   return (
     <div className="relative flex flex-col h-full bg-dark-900">
-      <div className="px-4 pt-4 pb-2 shrink-0">
-        <h1 className="text-lg font-bold text-slate-100">Equipment Fleet</h1>
-        <p className="text-xs text-slate-400">Registry · Documents · Service · Deployment</p>
+      <div className="px-4 pt-4 pb-2 shrink-0 flex items-center justify-between">
+        <div>
+          <h1 className="text-lg font-bold text-slate-100">Equipment Fleet</h1>
+          <p className="text-xs text-slate-400">Registry · Documents · Service · Deployment</p>
+        </div>
+        {activeTab === 'fleet' && (
+          <button onClick={() => setShowAdd(true)} className="btn-primary flex items-center gap-1.5 text-sm px-3 py-2">
+            <Plus className="w-4 h-4" /> Add Equipment
+          </button>
+        )}
       </div>
       <div className="flex border-b border-dark-700 shrink-0 px-2">
         {tabs.map(t => {
@@ -1948,7 +1950,7 @@ export default function FleetPage() {
         })}
       </div>
       <div className="flex-1 overflow-hidden">
-        {activeTab === 'fleet'     && <FleetTab     companyId={companyId} />}
+        {activeTab === 'fleet'     && <FleetTab     companyId={companyId} showAdd={showAdd} setShowAdd={setShowAdd} />}
         {activeTab === 'fuel'      && <FuelTab      companyId={companyId} />}
         {activeTab === 'incidents' && <IncidentsTab companyId={companyId} />}
       </div>
