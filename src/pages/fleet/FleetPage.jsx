@@ -228,15 +228,8 @@ function ExpiryRow({ label, date }) {
   )
 }
 
-function hasAnyExpiry(eq) {
-  return ['insurance_expiry','rc_expiry','fitness_expiry','puc_expiry','permit_expiry'].some(f => eq[f])
-}
-function hasExpiryAlert(eq) {
-  return ['insurance_expiry','rc_expiry','fitness_expiry','puc_expiry','permit_expiry'].some(f => {
-    if (!eq[f]) return false
-    return differenceInDays(new Date(eq[f]), new Date()) < 30
-  })
-}
+function hasAnyExpiry(_eq) { return false }   // legacy – expiry now tracked in equipment_documents
+function hasExpiryAlert(_eq) { return false } // legacy – alerts come from docAlerts query
 
 // ── Equipment Form Modal (shared Add + Edit) ──────────────────────────────────
 const OWNERSHIP_TYPES = [
@@ -256,8 +249,6 @@ function EquipmentFormModal({ companyId, initialValues, onClose, onSaved }) {
     // Ownership
     ownership_type: 'own', owner_name: '', owner_contact: '',
     hire_start_date: '', hire_end_date: '',
-    // Documents
-    insurance_expiry: '', rc_expiry: '', fitness_expiry: '', puc_expiry: '', permit_expiry: '',
     // Service
     last_service_date: '', last_service_meter: '', service_interval_hrs: '250',
     next_service_date: '', next_service_meter: '',
@@ -308,12 +299,6 @@ function EquipmentFormModal({ companyId, initialValues, onClose, onSaved }) {
         owner_contact:    form.ownership_type !== 'own' ? (form.owner_contact || null) : null,
         hire_start_date:  form.ownership_type === 'hired' ? (form.hire_start_date || null) : null,
         hire_end_date:    form.ownership_type === 'hired' ? (form.hire_end_date   || null) : null,
-        // Documents
-        insurance_expiry: form.insurance_expiry || null,
-        rc_expiry:        form.rc_expiry        || null,
-        fitness_expiry:   form.fitness_expiry   || null,
-        puc_expiry:       form.puc_expiry       || null,
-        permit_expiry:    form.permit_expiry    || null,
         // Service
         last_service_date:    form.last_service_date    || null,
         last_service_meter:   form.last_service_meter   ? Number(form.last_service_meter)   : null,
@@ -1598,20 +1583,6 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
           </>
         )}
 
-        {/* ── Documents ── */}
-        {hasAnyExpiry(equipment) && (
-          <>
-            <SectionHeader icon={FileText} label="Document Status" />
-            <div className="space-y-1.5">
-              <ExpiryRow label="Insurance"            date={equipment.insurance_expiry} />
-              <ExpiryRow label="RC (Registration)"    date={equipment.rc_expiry} />
-              <ExpiryRow label="Fitness Certificate"  date={equipment.fitness_expiry} />
-              <ExpiryRow label="PUC"                  date={equipment.puc_expiry} />
-              <ExpiryRow label="Permit"               date={equipment.permit_expiry} />
-            </div>
-          </>
-        )}
-
         {/* ── Service Schedule ── */}
         {(equipment.last_service_date || equipment.next_service_date || equipment.next_service_meter) && (
           <>
@@ -1967,8 +1938,7 @@ function FleetTab({ companyId, showAdd, setShowAdd }) {
 
   const counts = { active: 0, idle: 0, breakdown: 0, maintenance: 0 }
   equipment.forEach(e => { if (counts[e.status] !== undefined) counts[e.status]++ })
-  const equipmentAlertCount = equipment.filter(hasExpiryAlert).length
-  const totalAlerts = equipmentAlertCount + docAlerts.length
+  const totalAlerts = docAlerts.length
 
   return (
     <div className="flex flex-col h-full">
@@ -1984,19 +1954,7 @@ function FleetTab({ companyId, showAdd, setShowAdd }) {
                   {totalAlerts} document expiry alert{totalAlerts > 1 ? 's' : ''} — action required
                 </p>
                 <div className="mt-1 space-y-0.5">
-                  {/* Equipment-level expiry alerts */}
-                  {equipment.filter(hasExpiryAlert).slice(0, 3).map(e => {
-                    const fields = ['insurance_expiry','rc_expiry','fitness_expiry','puc_expiry','permit_expiry']
-                    const expField = fields.find(f => e[f] && differenceInDays(new Date(e[f]), new Date()) < 30)
-                    const days = expField ? differenceInDays(new Date(e[expField]), new Date()) : null
-                    return (
-                      <p key={e.id} className="text-xs text-orange-400">
-                        · {e.name}: {expField?.replace('_expiry','').replace('_',' ')} {days < 0 ? 'expired' : `expires in ${days}d`}
-                      </p>
-                    )
-                  })}
-                  {/* Doc-level expiry alerts */}
-                  {docAlerts.slice(0, 3).map((d, i) => {
+                  {docAlerts.slice(0, 6).map((d, i) => {
                     const days = differenceInDays(new Date(d.expiry_date), new Date())
                     return (
                       <p key={i} className="text-xs text-orange-400">
@@ -2004,7 +1962,7 @@ function FleetTab({ companyId, showAdd, setShowAdd }) {
                       </p>
                     )
                   })}
-                  {totalAlerts > 6 && <p className="text-xs text-orange-500">+ {totalAlerts - 6} more…</p>}
+                  {totalAlerts > 6 && <p className="text-xs text-orange-500">+ {totalAlerts - 6} more — open equipment to view</p>}
                 </div>
               </div>
             </div>
