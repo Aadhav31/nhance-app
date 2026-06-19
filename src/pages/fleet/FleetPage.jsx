@@ -349,23 +349,8 @@ function EquipmentFormModal({ companyId, initialValues, onClose, onSaved }) {
     }>
       {/* ── Basic Info ── */}
       <SectionHeader icon={Truck} label="Equipment Details" />
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Equipment No." required>
-          <input className={inp()} value={form.equipment_number} onChange={e => set('equipment_number', e.target.value)} placeholder="EQ-001" />
-        </Field>
-        <Field label="Status">
-          <select className={inp()} value={form.status} onChange={e => set('status', e.target.value)}>
-            <option value="active">Active</option>
-            <option value="idle">Idle</option>
-            <option value="maintenance">Maintenance</option>
-            <option value="breakdown">Breakdown</option>
-            <option value="disposed">Disposed</option>
-          </select>
-        </Field>
-      </div>
-      <Field label="Equipment Name" required>
-        <input className={inp()} value={form.name} onChange={e => set('name', e.target.value)} placeholder="e.g. Tata Hitachi EX200 — Site A" />
-      </Field>
+
+      {/* Step 1 — Type first */}
       <Field label="Equipment Type" required>
         <select className={inp()} value={form.category} onChange={e => handleCategoryChange(e.target.value)}>
           <option value="">Select equipment type…</option>
@@ -379,6 +364,31 @@ function EquipmentFormModal({ companyId, initialValues, onClose, onSaved }) {
           </select>
         </Field>
       )}
+
+      {/* Step 2 — Auto-prefixed number + status */}
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Equipment No." required>
+          <input className={inp()} value={form.equipment_number}
+            onChange={e => set('equipment_number', e.target.value)}
+            placeholder={form.category ? `${getPrefix(form.category)}-001` : 'Select type first…'} />
+        </Field>
+        <Field label="Status">
+          <select className={inp()} value={form.status} onChange={e => set('status', e.target.value)}>
+            <option value="active">Active</option>
+            <option value="idle">Idle</option>
+            <option value="maintenance">Maintenance</option>
+            <option value="breakdown">Breakdown</option>
+            <option value="disposed">Disposed</option>
+          </select>
+        </Field>
+      </div>
+
+      {/* Step 3 — Name */}
+      <Field label="Equipment Name" required>
+        <input className={inp()} value={form.name} onChange={e => set('name', e.target.value)} placeholder="e.g. Tata Hitachi ZAxis 220 LC" />
+      </Field>
+
+      {/* Step 4 — Make, Model, Year, Reg */}
       <div className="grid grid-cols-2 gap-3">
         <Field label="Make / Brand">
           <input className={inp()} value={form.make} onChange={e => set('make', e.target.value)} placeholder="Tata, JCB, Volvo…" />
@@ -391,7 +401,7 @@ function EquipmentFormModal({ companyId, initialValues, onClose, onSaved }) {
         <Field label="Year of Manufacture">
           <input type="number" className={inp()} value={form.year_of_manufacture} onChange={e => set('year_of_manufacture', e.target.value)} placeholder="2022" />
         </Field>
-        <Field label="Reg. / Serial No.">
+        <Field label="Reg. / Vehicle No.">
           <input className={inp()} value={form.registration_number} onChange={e => set('registration_number', e.target.value)} placeholder="TN 01 AB 1234" />
         </Field>
       </div>
@@ -460,24 +470,14 @@ function EquipmentFormModal({ companyId, initialValues, onClose, onSaved }) {
         </>
       )}
 
-      {/* ── Documents ── */}
+      {/* ── Documents — added after creation ── */}
       <SectionHeader icon={FileText} label="Equipment / Vehicle Documents" />
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Insurance Expiry">
-          <input type="date" className={inp()} value={form.insurance_expiry} onChange={e => set('insurance_expiry', e.target.value)} />
-        </Field>
-        <Field label="RC Expiry">
-          <input type="date" className={inp()} value={form.rc_expiry} onChange={e => set('rc_expiry', e.target.value)} />
-        </Field>
-        <Field label="Fitness Certificate Expiry">
-          <input type="date" className={inp()} value={form.fitness_expiry} onChange={e => set('fitness_expiry', e.target.value)} />
-        </Field>
-        <Field label="PUC Expiry">
-          <input type="date" className={inp()} value={form.puc_expiry} onChange={e => set('puc_expiry', e.target.value)} />
-        </Field>
-        <Field label="Permit Expiry">
-          <input type="date" className={inp()} value={form.permit_expiry} onChange={e => set('permit_expiry', e.target.value)} />
-        </Field>
+      <div className="flex items-start gap-2.5 bg-dark-700/60 border border-dark-600 rounded-xl px-3 py-3">
+        <FileText className="w-4 h-4 text-primary-400 shrink-0 mt-0.5" />
+        <p className="text-xs text-slate-400 leading-relaxed">
+          Documents (Invoice, RC, Insurance, FC, PUC, Permit) can be uploaded from the equipment detail page after saving.
+          Each document supports a reference number, issued date, expiry date and file upload.
+        </p>
       </div>
 
       {/* ── Service Schedule ── */}
