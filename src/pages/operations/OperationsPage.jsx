@@ -488,17 +488,21 @@ function StartShiftModal({ equipment, companyId, onClose }) {
 // ── End Shift Modal ───────────────────────────────────────────────────────────
 function EndShiftModal({ equipment, shift, companyId, onClose }) {
   const qc = useQueryClient()
-  const { location, loading: gpsLoading } = useGPS()
+  const { location, loading: gpsLoading } = useGPS()   // auto-fires on mount
   const [form, setForm] = useState({
-    end_time: nowTime(), end_meter: '', end_km: '',
-    working_hours: '', idle_hours: '0', breakdown_hours: '0', notes: '',
+    end_time: nowTime(),
+    end_meter: '', end_km: '',
+    working_hours: '', idle_hours: '0', breakdown_hours: '0',
+    work_done: '',        // what was accomplished this shift
+    handover_notes: '',   // notes passed to the next operator
   })
-  const [meterPhotoUrl,   setMeterPhotoUrl]   = useState(null)
+  const [meterPhotoUrl,    setMeterPhotoUrl]    = useState(null)
   const [logsheetPhotoUrl, setLogsheetPhotoUrl] = useState(null)
   const [saving, setSaving] = useState(false)
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
   const mt = equipment.meter_type
 
+  // ── Clock-based hours (cross-midnight safe) ───────────────────────────────
   const getClockHours = (endTime = form.end_time) => {
     if (!shift.start_time || !endTime) return null
     const [sh, sm] = shift.start_time.split(':').map(Number)
@@ -508,17 +512,32 @@ function EndShiftModal({ equipment, shift, companyId, onClose }) {
     return +(mins / 60).toFixed(2)
   }
 
+  // Auto-calculate working hours from meter diff when closing meter is entered
   const handleEndMeterChange = (v) => {
     set('end_meter', v)
     if (v && shift.start_meter) {
-      const diff = Math.max(0, Number(v) - Number(shift.start_meter))
-      const clockHrs = getClockHours()
-      set('working_hours', clockHrs ? String(Math.min(diff, clockHrs).toFixed(1)) : String(diff.toFixed(1)))
+      const meterDiff = Math.max(0, Number(v) - Number(shift.start_meter))
+      const clockHrs  = getClockHours()
+      // Use meter diff as authoritative; cap at clock time if wildly different
+      const hrs = clockHrs ? String(Math.min(meterDiff, clockHrs + 0.5).toFixed(1)) : String(meterDiff.toFixed(1))
+      set('working_hours', hrs)
+    }
+  }
+
+  // Re-calc working hours when end time changes
+  const handleEndTimeChange = (v) => {
+    set('end_time', v)
+    if (!form.end_meter && shift.start_time) {
+      const [sh, sm] = shift.start_time.split(':').map(Number)
+      const [eh, em] = v.split(':').map(Number)
+      let mins = (eh * 60 + em) - (sh * 60 + sm)
+      if (mins < 0) mins += 24 * 60
+      set('working_hours', (mins / 60).toFixed(1))
     }
   }
 
   const handleSave = async () => {
-    if ((mt === 'hours' || mt === 'both') && !form.end_meter) { toast.error('End meter reading required'); return }
+    if ((mt === 'hours' || mt === 'both') && !form.end_meter) { toast.error('Closing meter reading is required'); return }
     const clockHrs  = getClockHours()
     const meterDiff = Number(form.end_meter || 0) - Number(shift.start_meter || 0)
     if (clockHrs && meterDiff > clockHrs + 0.5) {
@@ -533,16 +552,21 @@ function EndShiftModal({ equipment, shift, companyId, onClose }) {
         : Number(form.working_hours || 0)
 
       const { error } = await supabase.from('shifts').update({
-        end_time: form.end_time,
-        end_meter: form.end_meter ? endMeter : null,
-        end_km: form.end_km ? Number(form.end_km) : null,
-        working_hours: hoursWorked,
-        idle_hours: Number(form.idle_hours || 0),
-        breakdown_hours: Number(form.breakdown_hours || 0),
-        status: 'closed',
-        notes: form.notes || shift.notes,
-        meter_photo_url: meterPhotoUrl || null,
-        logsheet_photo_url: logsheetPhotoUrl || null,
+        end_time:              form.end_time,
+        end_meter:             form.end_meter ? endMeter : null,
+        end_km:                form.end_km ? Number(form.end_km) : null,
+        working_hours:         hoursWorked,
+        idle_hours:            Number(form.idle_hours || 0),
+        breakdown_hours:       Number(form.breakdown_hours || 0),
+        status:                'closed',
+        notes:                 shift.notes,                          // preserve start-shift remarks
+        work_done:             form.work_done || null,
+        handover_notes:        form.handover_notes || null,
+        meter_photo_url:       meterPhotoUrl || null,
+        logsheet_photo_url:    logsheetPhotoUrl || null,
+        end_location_lat:      location?.lat    || null,
+        end_location_lng:      location?.lng    || null,
+        end_location_address:  location?.address || null,
       }).eq('id', shift.id)
       if (error) throw error
       if (form.end_meter) {
@@ -558,6 +582,9 @@ function EndShiftModal({ equipment, shift, companyId, onClose }) {
     } finally { setSaving(false) }
   }
 
+  const clockHrs   = getClockHours()
+  const meterDiff  = form.end_meter ? Math.max(0, Number(form.end_meter) - Number(shift.start_meter || 0)) : null
+
   return (
     <Modal title={`End Shift — ${equipment.name}`} onClose={onClose} footer={
       <>
@@ -567,27 +594,37 @@ function EndShiftModal({ equipment, shift, companyId, onClose }) {
         </button>
       </>
     }>
-      <div className="bg-dark-700 rounded-lg p-3 text-sm">
-        <p className="text-slate-400 text-xs">Operator</p>
-        <p className="text-slate-100 font-medium">{shift.operator_name}</p>
-        <p className="text-slate-400 text-xs">Started {shift.start_time} · Opening: {shift.start_meter} {mt === 'kilometers' ? 'km' : 'hrs'}</p>
+      {/* Shift summary header */}
+      <div className="bg-dark-700 rounded-xl p-3 space-y-1">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-xs text-slate-500">Operator</p>
+            <p className="text-sm font-semibold text-slate-100">{shift.operator_name}</p>
+          </div>
+          <div className="text-right">
+            <p className="text-xs text-slate-500">Started</p>
+            <p className="text-sm font-mono text-slate-300">{shift.start_time}</p>
+          </div>
+        </div>
+        {shift.start_meter && (
+          <p className="text-xs text-slate-500">Opening meter: {shift.start_meter} {mt === 'kilometers' ? 'km' : 'hrs'}</p>
+        )}
       </div>
+
+      {/* End time — manual entry */}
       <Field label="Shift End Time">
-        <input type="time" className={inp()} value={form.end_time} onChange={e => set('end_time', e.target.value)} />
+        <input type="time" className={inp()} value={form.end_time}
+          onChange={e => handleEndTimeChange(e.target.value)} />
       </Field>
+
+      {/* Hour meter */}
       {(mt === 'hours' || mt === 'both') && (
-        <div>
+        <div className="space-y-1.5">
           <Field label="Closing Hour Meter (hrs)" required>
             <input type="number" className={inp()} value={form.end_meter}
               onChange={e => handleEndMeterChange(e.target.value)}
-              placeholder={`≥ ${shift.start_meter}`} step="0.1" />
+              placeholder={`≥ ${shift.start_meter || '0'}`} step="0.1" />
           </Field>
-          {form.end_meter && shift.start_meter && (
-            <p className="text-xs text-slate-500 mt-1">
-              Meter diff: {Math.max(0, Number(form.end_meter) - Number(shift.start_meter)).toFixed(1)} hrs
-              {getClockHours() ? ` · Clock: ${getClockHours().toFixed(1)} hrs` : ''}
-            </p>
-          )}
           <CameraButton companyId={companyId} label="meter_end" photoUrl={meterPhotoUrl} onCapture={setMeterPhotoUrl} location={location} />
         </div>
       )}
@@ -596,20 +633,69 @@ function EndShiftModal({ equipment, shift, companyId, onClose }) {
           <input type="number" className={inp()} value={form.end_km} onChange={e => set('end_km', e.target.value)} />
         </Field>
       )}
+
+      {/* Auto-calculated working hours summary */}
+      {(meterDiff !== null || clockHrs) && (
+        <div className="bg-primary-900/20 border border-primary-700/30 rounded-xl px-3 py-2.5 space-y-1">
+          <p className="text-xs font-medium text-primary-400">Hours Calculation</p>
+          <div className="grid grid-cols-2 gap-x-4 text-xs text-slate-400">
+            {meterDiff !== null && <span>Meter diff: <span className="text-slate-200 font-semibold">{meterDiff.toFixed(1)} hrs</span></span>}
+            {clockHrs && <span>Clock time: <span className="text-slate-200 font-semibold">{clockHrs.toFixed(1)} hrs</span></span>}
+          </div>
+        </div>
+      )}
+
+      {/* Working / Idle / Breakdown hrs */}
       <div className="grid grid-cols-3 gap-2">
         <Field label="Working Hrs">
-          <input type="number" className={inp()} value={form.working_hours} onChange={e => set('working_hours', e.target.value)} placeholder="Auto" step="0.1" />
+          <input type="number" className={inp('text-center')} value={form.working_hours}
+            onChange={e => set('working_hours', e.target.value)} placeholder="Auto" step="0.1" />
         </Field>
         <Field label="Idle Hrs">
-          <input type="number" className={inp()} value={form.idle_hours} onChange={e => set('idle_hours', e.target.value)} placeholder="0" step="0.1" />
+          <input type="number" className={inp('text-center')} value={form.idle_hours}
+            onChange={e => set('idle_hours', e.target.value)} placeholder="0" step="0.1" />
         </Field>
         <Field label="Breakdown Hrs">
-          <input type="number" className={inp()} value={form.breakdown_hours} onChange={e => set('breakdown_hours', e.target.value)} placeholder="0" step="0.1" />
+          <input type="number" className={inp('text-center')} value={form.breakdown_hours}
+            onChange={e => set('breakdown_hours', e.target.value)} placeholder="0" step="0.1" />
         </Field>
       </div>
-      <Field label="Notes">
-        <VoiceTextarea value={form.notes} onChange={v => set('notes', v)} placeholder="Work done, issues, remarks…" />
+
+      {/* End location — auto-tagged */}
+      <div className="flex items-start gap-2 text-xs bg-dark-700 rounded-lg px-3 py-2">
+        <MapPin className="w-3.5 h-3.5 text-primary-400 shrink-0 mt-0.5" />
+        <span className="text-slate-400">
+          {gpsLoading ? 'Getting location…' : location ? location.address : 'Location not captured'}
+        </span>
+      </div>
+
+      {/* Work done — voice */}
+      <Field label="Work Done This Shift">
+        <VoiceTextarea
+          value={form.work_done}
+          onChange={v => set('work_done', v)}
+          placeholder="Tap 🎤 or type — trips completed, quantity moved, work area, progress…"
+          rows={3}
+        />
+        <p className="text-[10px] text-slate-500 mt-1 flex items-center gap-1">
+          <Mic className="w-3 h-3" /> Speak to auto-transcribe your summary
+        </p>
       </Field>
+
+      {/* Handover notes — voice */}
+      <Field label="Notes to Next Shift">
+        <VoiceTextarea
+          value={form.handover_notes}
+          onChange={v => set('handover_notes', v)}
+          placeholder="Tap 🎤 or type — machine condition, pending work, warnings for next operator…"
+          rows={3}
+        />
+        <p className="text-[10px] text-slate-500 mt-1 flex items-center gap-1">
+          <Mic className="w-3 h-3" /> Speak your handover notes
+        </p>
+      </Field>
+
+      {/* Log sheet photo */}
       <div>
         <p className="text-xs font-medium text-slate-400 mb-1">Log Sheet Photo</p>
         <p className="text-xs text-slate-500 mb-2">Photograph the paper log / daily report before closing</p>
@@ -1218,7 +1304,24 @@ function ShiftsTab({ companyId }) {
                     <MapPin className="w-3 h-3" />{s.location_address.slice(0, 70)}
                   </p>
                 )}
-                {s.notes && <p className="text-xs text-slate-400 mt-1 italic">{s.notes}</p>}
+                {s.notes && <p className="text-xs text-slate-400 mt-1 italic">📝 {s.notes}</p>}
+                {s.work_done && (
+                  <div className="mt-2 bg-dark-700 rounded-lg px-2.5 py-1.5">
+                    <p className="text-[10px] font-medium text-slate-500 mb-0.5">Work Done</p>
+                    <p className="text-xs text-slate-300">{s.work_done}</p>
+                  </div>
+                )}
+                {s.handover_notes && (
+                  <div className="mt-1.5 bg-yellow-900/20 border border-yellow-700/20 rounded-lg px-2.5 py-1.5">
+                    <p className="text-[10px] font-medium text-yellow-500 mb-0.5">Handover to Next Shift</p>
+                    <p className="text-xs text-yellow-200/80">{s.handover_notes}</p>
+                  </div>
+                )}
+                {s.end_location_address && (
+                  <p className="text-xs text-slate-500 mt-1 flex items-center gap-1">
+                    <MapPin className="w-3 h-3 text-red-400 shrink-0" />End: {s.end_location_address.slice(0, 60)}
+                  </p>
+                )}
               </div>
             ))}
           </div>
