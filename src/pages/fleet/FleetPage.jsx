@@ -1205,16 +1205,18 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
                   <Trash2 className="w-3.5 h-3.5" /> Delete
                 </button>
               ) : (
-                <div className="flex items-center gap-1.5">
-                  <span className="text-xs text-red-400">Sure?</span>
-                  <button onClick={handleDelete} disabled={deleting}
-                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-xs text-white font-medium transition-colors">
-                    {deleting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />} Yes
-                  </button>
-                  <button onClick={() => setConfirmDelete(false)}
-                    className="px-2.5 py-1.5 rounded-lg border border-dark-500 bg-dark-700 text-xs text-slate-300 hover:text-slate-100 transition-colors">
-                    No
-                  </button>
+                <div className="flex flex-col items-end gap-1.5">
+                  <p className="text-xs text-red-400 text-right">Deletes all shifts, fuel &amp; documents</p>
+                  <div className="flex items-center gap-1.5">
+                    <button onClick={handleDelete} disabled={deleting}
+                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-xs text-white font-medium transition-colors">
+                      {deleting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />} Delete
+                    </button>
+                    <button onClick={() => setConfirmDelete(false)}
+                      className="px-2.5 py-1.5 rounded-lg border border-dark-500 bg-dark-700 text-xs text-slate-300 hover:text-slate-100 transition-colors">
+                      Cancel
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
