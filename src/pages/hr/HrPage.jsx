@@ -184,12 +184,26 @@ function EmployeeFormModal({ companyId, initialValues, onClose }) {
     basic_salary: '', hra: '', special_allowance: '', other_allowance: '',
     daily_rate: '',
     day_shift_rate: '', night_shift_rate: '', double_shift_rate: '', ot_rate_per_hour: '',
+    user_id: '',
   }
 
   const [form, setForm] = useState(() => ({ ...blank, ...initialValues }))
   const [saving, setSaving] = useState(false)
   const [tab, setTab] = useState('basic')
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
+
+  // Fetch all login accounts for this company to show in "Link Account" dropdown
+  const { data: companyUsers = [] } = useQuery({
+    queryKey: ['company_users', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('user_profiles')
+        .select('user_id, full_name, email, role')
+        .eq('company_id', companyId)
+        .order('full_name')
+      return data || []
+    },
+    enabled: !!companyId && tab === 'compliance',
+  })
 
   const grossMonthly = Number(form.basic_salary || 0) + Number(form.hra || 0) +
     Number(form.special_allowance || 0) + Number(form.other_allowance || 0)
@@ -228,6 +242,7 @@ function EmployeeFormModal({ companyId, initialValues, onClose }) {
         bonus_applicable: form.bonus_applicable, gratuity_applicable: form.gratuity_applicable,
         bocw_number: form.bocw_number || null, min_wage_category: form.min_wage_category || 'unskilled',
         notes: form.notes || null,
+        user_id: form.user_id || null,
       }
 
       let empId = initialValues?.id
@@ -474,6 +489,32 @@ function EmployeeFormModal({ companyId, initialValues, onClose }) {
 
       {/* ── Compliance & Bank ── */}
       {tab === 'compliance' && (<>
+        {/* Login Account Link */}
+        <SectionHeader label="App Login Account" icon={Users} />
+        <div className="bg-dark-700 rounded-xl p-3 space-y-2">
+          <p className="text-xs text-slate-400">
+            Link this employee to their login account so the system can auto-identify them when they log in as Operator.
+          </p>
+          <select
+            className="w-full bg-dark-600 border border-dark-500 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
+            value={form.user_id}
+            onChange={e => set('user_id', e.target.value)}
+          >
+            <option value="">— Not linked (no operator login) —</option>
+            {companyUsers.map(u => (
+              <option key={u.user_id} value={u.user_id}>
+                {u.full_name || u.email} {u.role ? `(${u.role})` : ''}
+              </option>
+            ))}
+          </select>
+          {form.user_id && (
+            <div className="flex items-center gap-2 text-xs text-emerald-400">
+              <CheckCircle className="w-3.5 h-3.5 shrink-0" />
+              Linked — this employee will see only their assigned equipment when they log in.
+            </div>
+          )}
+        </div>
+
         <SectionHeader label="Statutory Deductions" icon={FileText} />
         <div className="space-y-2">
           {[
@@ -633,6 +674,13 @@ function EmployeeDetailModal({ emp, companyId, onClose, onEdit }) {
         {emp.pt_applicable       && <span className="text-xs bg-blue-900/20 border border-blue-700/30 text-blue-400 px-2 py-0.5 rounded-full">PT</span>}
         {emp.bonus_applicable    && <span className="text-xs bg-emerald-900/20 border border-emerald-700/30 text-emerald-400 px-2 py-0.5 rounded-full">Bonus</span>}
         {emp.gratuity_applicable && <span className="text-xs bg-purple-900/20 border border-purple-700/30 text-purple-400 px-2 py-0.5 rounded-full">Gratuity</span>}
+        {emp.user_id ? (
+          <span className="text-xs bg-primary-900/20 border border-primary-700/30 text-primary-400 px-2 py-0.5 rounded-full flex items-center gap-1">
+            <CheckCircle className="w-3 h-3" /> Login Linked
+          </span>
+        ) : (
+          <span className="text-xs bg-dark-700 border border-dark-600 text-slate-500 px-2 py-0.5 rounded-full">No Login</span>
+        )}
       </div>
 
       {/* Service & Compliance info */}

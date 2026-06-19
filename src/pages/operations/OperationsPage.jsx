@@ -198,9 +198,24 @@ const INCIDENT_OPTIONS = [
 // ── Start Shift Modal ─────────────────────────────────────────────────────────
 function StartShiftModal({ equipment, companyId, onClose }) {
   const qc = useQueryClient()
-  const { role } = useAuth()
+  const { role, session } = useAuth()
   const { location, loading: gpsLoading } = useGPS()
-  const isManager = ['admin', 'manager', 'superadmin'].includes(role)
+  const isAdmin    = ['admin', 'superadmin'].includes(role)
+  const isOperator = role === 'operator'
+
+  // Look up the logged-in user's HR employee record (operators only)
+  const { data: myEmployee, isLoading: employeeLoading } = useQuery({
+    queryKey: ['my_employee_shift', session?.user?.id, companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('hr_employees')
+        .select('id, name, designation, employee_number')
+        .eq('company_id', companyId)
+        .eq('user_id', session.user.id)
+        .maybeSingle()
+      return data
+    },
+    enabled: !!companyId && !!session?.user?.id && isOperator,
+  })
 
   const [form, setForm] = useState({
     shift_date: today(), shift_type: 'day',
@@ -225,10 +240,27 @@ function StartShiftModal({ equipment, companyId, onClose }) {
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
   const mt = equipment.meter_type
 
-  // When operator is selected, auto-fill shift type from their assignment config
+  // Auto-fill operator name from HR record once loaded
+  useEffect(() => {
+    if (myEmployee && isOperator) {
+      setForm(p => ({ ...p, operator_name: myEmployee.name }))
+    }
+  }, [myEmployee, isOperator])
+
+  // Auto-fill shift type from assignment once both are loaded
+  useEffect(() => {
+    if (myEmployee && isOperator && assignments.length > 0) {
+      const myAssignment = assignments.find(a => a.operator_name === myEmployee.name)
+      if (myAssignment?.shift_type) {
+        setForm(p => ({ ...p, shift_type: myAssignment.shift_type }))
+      }
+    }
+  }, [myEmployee, assignments, isOperator])
+
+  // When operator is selected manually (non-operator roles), auto-fill shift type
   const handleOperatorChange = (name) => {
     set('operator_name', name)
-    if (!isManager) {
+    if (!isAdmin) {
       const assignment = assignments.find(a => a.operator_name === name)
       if (assignment?.shift_type) set('shift_type', assignment.shift_type)
     }
@@ -298,7 +330,9 @@ function StartShiftModal({ equipment, companyId, onClose }) {
 
   const notLinked   = !equipment.current_project_id
   const noOperators = !assignmentsLoading && assignments.length === 0
-  const isBlocked   = notLinked || noOperators
+  // Operator without linked HR record can't start a shift
+  const notLinkedHR = isOperator && !employeeLoading && !myEmployee
+  const isBlocked   = notLinked || noOperators || notLinkedHR
 
   return (
     <Modal title={`Start Shift — ${equipment.name}`} onClose={onClose} footer={
@@ -327,15 +361,24 @@ function StartShiftModal({ equipment, companyId, onClose }) {
           </div>
         </div>
       )}
+      {notLinkedHR && (
+        <div className="bg-orange-900/20 border border-orange-700/40 rounded-xl p-4 flex gap-3 items-start">
+          <AlertTriangle className="w-5 h-5 text-orange-400 shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-semibold text-orange-300">Account not linked to an employee record</p>
+            <p className="text-xs text-orange-400/80 mt-1">Ask your admin to link your login account in HR → Employee → Compliance & Bank.</p>
+          </div>
+        </div>
+      )}
       {!isBlocked && (<>
         {equipment.current_site_name && (
           <div className="bg-dark-700 rounded-lg px-3 py-2 text-xs text-slate-400">
             📍 {equipment.current_site_name}
           </div>
         )}
-        {/* Date (managers can change, operators locked to today) */}
+        {/* Date (admin can change, everyone else locked to today) */}
         <Field label="Date">
-          {isManager
+          {isAdmin
             ? <input type="date" className={inp()} value={form.shift_date} onChange={e => set('shift_date', e.target.value)} />
             : <div className="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 flex items-center gap-2">
                 <span className="text-sm text-slate-200 flex-1">{form.shift_date}</span>
@@ -343,23 +386,35 @@ function StartShiftModal({ equipment, companyId, onClose }) {
               </div>}
         </Field>
 
-        {/* Operator select — auto-fills shift type */}
+        {/* Operator — auto-identified for operators, dropdown for admin/supervisor */}
         <Field label="Operator / Driver" required>
-          {assignmentsLoading
-            ? <div className="text-xs text-slate-500 py-2 flex items-center gap-2"><Loader2 className="w-3.5 h-3.5 animate-spin" />Loading…</div>
-            : <select className={inp()} value={form.operator_name} onChange={e => handleOperatorChange(e.target.value)}>
-                <option value="">Select operator…</option>
-                {assignments.map(a => (
-                  <option key={a.id} value={a.operator_name}>
-                    {a.operator_name}
-                  </option>
-                ))}
-              </select>}
+          {isOperator && myEmployee ? (
+            /* Operator sees their own name auto-filled, locked */
+            <div className="bg-dark-700 border border-primary-700/40 rounded-lg px-3 py-2 flex items-center gap-3">
+              <div className="w-8 h-8 rounded-full bg-primary-500/20 border border-primary-600/40 flex items-center justify-center shrink-0">
+                <User className="w-4 h-4 text-primary-400" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-slate-100">{myEmployee.name}</p>
+                <p className="text-xs text-slate-500">{myEmployee.designation || 'Operator'}{myEmployee.employee_number ? ` · ${myEmployee.employee_number}` : ''}</p>
+              </div>
+              <Lock className="w-3.5 h-3.5 text-slate-600 shrink-0" />
+            </div>
+          ) : assignmentsLoading ? (
+            <div className="text-xs text-slate-500 py-2 flex items-center gap-2"><Loader2 className="w-3.5 h-3.5 animate-spin" />Loading…</div>
+          ) : (
+            <select className={inp()} value={form.operator_name} onChange={e => handleOperatorChange(e.target.value)}>
+              <option value="">Select operator…</option>
+              {assignments.map(a => (
+                <option key={a.id} value={a.operator_name}>{a.operator_name}</option>
+              ))}
+            </select>
+          )}
         </Field>
 
         {/* Shift Type — preset from assignment, locked for operators */}
         <Field label="Shift Type">
-          {isManager ? (
+          {isAdmin ? (
             <select className={inp()} value={form.shift_type} onChange={e => set('shift_type', e.target.value)}>
               <option value="day">☀️ Day Shift</option>
               <option value="night">🌙 Night Shift</option>
@@ -378,7 +433,7 @@ function StartShiftModal({ equipment, companyId, onClose }) {
 
         {/* Start Time — auto-captured, locked for operators */}
         <Field label="Shift Start Time">
-          {isManager ? (
+          {isAdmin ? (
             <input type="time" className={inp()} value={form.start_time} onChange={e => set('start_time', e.target.value)} />
           ) : (
             <div className="bg-dark-700 border border-emerald-700/40 rounded-lg px-3 py-2 flex items-center gap-2">
@@ -943,6 +998,38 @@ function EquipmentOpCard({ equipment, companyId }) {
 function TodayTab({ companyId }) {
   const [search, setSearch] = useState('')
   const [filterStatus, setFilterStatus] = useState('all')
+  const { role, session } = useAuth()
+  const isOperator = role === 'operator'
+
+  // Identify the logged-in operator's HR record
+  const { data: myEmployee } = useQuery({
+    queryKey: ['my_employee_today', session?.user?.id, companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('hr_employees')
+        .select('id, name')
+        .eq('company_id', companyId)
+        .eq('user_id', session.user.id)
+        .maybeSingle()
+      return data
+    },
+    enabled: !!companyId && !!session?.user?.id && isOperator,
+  })
+
+  // Get only equipment IDs assigned to this operator
+  const { data: myAssignments = [] } = useQuery({
+    queryKey: ['my_equipment_assignments', myEmployee?.name, companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('equipment_assignments')
+        .select('equipment_id')
+        .eq('company_id', companyId)
+        .eq('operator_name', myEmployee.name)
+        .eq('is_active', true)
+      return data || []
+    },
+    enabled: !!myEmployee?.name,
+  })
+
+  const myEquipmentIds = myAssignments.map(a => a.equipment_id)
 
   const { data: equipment = [], isLoading } = useQuery({
     queryKey: ['equipment', companyId],
@@ -971,14 +1058,40 @@ function TodayTab({ companyId }) {
   const totalHrsToday  = todayShifts.reduce((s, sh) => s + Number(sh.working_hours || 0), 0)
 
   const filtered = equipment.filter(e =>
+    // Operators see only their assigned equipment
+    (!isOperator || !myEmployee || myEquipmentIds.includes(e.id)) &&
     (filterStatus === 'all' || e.status === filterStatus) &&
     (!search || e.name.toLowerCase().includes(search.toLowerCase()) ||
       (e.registration_number || '').toLowerCase().includes(search.toLowerCase()) ||
       (e.current_site_name || '').toLowerCase().includes(search.toLowerCase()))
   )
 
+  const operatorNotLinked = isOperator && session?.user?.id && myEmployee === null
+
   return (
     <div className="flex flex-col h-full">
+      {/* Operator account not linked warning */}
+      {operatorNotLinked && (
+        <div className="mx-4 mt-3 mb-1 bg-orange-900/20 border border-orange-700/40 rounded-xl p-3 flex gap-3 items-start shrink-0">
+          <AlertTriangle className="w-4 h-4 text-orange-400 shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-semibold text-orange-300">Account not linked</p>
+            <p className="text-xs text-orange-400/80 mt-0.5">Ask your admin to link your login in HR → Employee → Compliance & Bank.</p>
+          </div>
+        </div>
+      )}
+      {/* Operator identity banner */}
+      {isOperator && myEmployee && (
+        <div className="mx-4 mt-3 mb-1 bg-primary-900/20 border border-primary-700/30 rounded-xl px-3 py-2 flex items-center gap-2.5 shrink-0">
+          <div className="w-7 h-7 rounded-full bg-primary-500/20 border border-primary-600/40 flex items-center justify-center shrink-0">
+            <User className="w-3.5 h-3.5 text-primary-400" />
+          </div>
+          <div>
+            <p className="text-xs font-semibold text-primary-300">{myEmployee.name}</p>
+            <p className="text-[10px] text-slate-500">Showing your assigned equipment only</p>
+          </div>
+        </div>
+      )}
       {/* Summary chips */}
       <div className="flex gap-2 px-4 py-2 overflow-x-auto shrink-0">
         {[
@@ -1013,8 +1126,15 @@ function TodayTab({ companyId }) {
         ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 gap-2 text-center">
             <Truck className="w-10 h-10 text-slate-600" />
-            <p className="text-slate-400">{equipment.length === 0 ? 'No equipment in fleet' : 'No equipment matches filter'}</p>
+            <p className="text-slate-400">
+              {equipment.length === 0 ? 'No equipment in fleet'
+                : isOperator && myEmployee && myEquipmentIds.length === 0 ? 'No equipment assigned to you'
+                : 'No equipment matches filter'}
+            </p>
             {equipment.length === 0 && <p className="text-xs text-slate-500">Add equipment in the Fleet module first</p>}
+            {isOperator && myEmployee && myEquipmentIds.length === 0 && (
+              <p className="text-xs text-slate-500">Ask your admin to assign equipment to you in the Fleet module</p>
+            )}
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
