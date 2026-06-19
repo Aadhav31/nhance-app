@@ -1336,6 +1336,24 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
     enabled: !!deployProjectId,
   })
 
+  // HR employees eligible to operate equipment (linked from HR module)
+  const { data: hrOperators = [] } = useQuery({
+    queryKey: ['hr_operators', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('hr_employees')
+        .select('id, name, designation, employee_number')
+        .eq('company_id', companyId)
+        .eq('status', 'active')
+        .in('designation', [
+          'Equipment Operator', 'Tipper / Dumper Driver',
+          'Site Supervisor', 'P&M Manager', 'Labour', 'Helper',
+        ])
+        .order('name')
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+
   // Project details for currently deployed project (contacts, PM)
   const { data: deployedProject } = useQuery({
     queryKey: ['project_detail', equipment.current_project_id],
@@ -1767,11 +1785,11 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
               </button>
             </div>
 
-            {/* Operators */}
+            {/* Operators — linked from HR module */}
             <div className="p-3 space-y-2">
               <p className="text-xs font-medium text-slate-400 flex items-center gap-1.5">
                 <Users className="w-3.5 h-3.5" /> Assigned Operators
-                <span className="text-slate-600 font-normal ml-1">(will link to HR module)</span>
+                <span className="text-slate-600 font-normal ml-1">· from HR module</span>
               </p>
               {assignments.length === 0 ? (
                 <p className="text-xs text-slate-500 italic">No operators assigned yet</p>
@@ -1779,21 +1797,53 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
                 <div className="space-y-1.5">
                   {assignments.map(a => (
                     <div key={a.id} className="flex items-center justify-between bg-dark-700 rounded-lg px-2.5 py-1.5">
-                      <span className="text-xs text-slate-200">{a.operator_name}</span>
+                      <div>
+                        <span className="text-xs text-slate-200">{a.operator_name}</span>
+                        {(() => {
+                          const hr = hrOperators.find(e => e.name === a.operator_name)
+                          return hr ? <span className="text-[10px] text-slate-500 ml-2">{hr.employee_number} · {hr.designation}</span> : null
+                        })()}
+                      </div>
                       <button onClick={() => handleRemoveOperator(a.id, a.operator_name)}
-                        className="p-1 text-slate-500 hover:text-red-400 transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
+                        className="p-1 text-slate-500 hover:text-red-400 transition-colors">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
                     </div>
                   ))}
                 </div>
               )}
-              <div className="flex gap-2">
-                <input className={inp('text-xs flex-1')} value={newOperator} onChange={e => setNewOperator(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && handleAddOperator()} placeholder="Operator name…" />
-                <button onClick={handleAddOperator} disabled={operatorSaving || !newOperator.trim()}
-                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-dark-600 border border-dark-500 hover:border-primary-500 text-xs text-slate-300 disabled:opacity-40 transition-colors shrink-0">
-                  {operatorSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />} Add
-                </button>
-              </div>
+              {/* Select from HR employees — filtered to operator/driver designations */}
+              {(() => {
+                const assignedNames = new Set(assignments.map(a => a.operator_name))
+                const available = hrOperators.filter(e => !assignedNames.has(e.name))
+                if (hrOperators.length === 0) return (
+                  <p className="text-xs text-amber-400/80 bg-amber-900/20 border border-amber-700/30 rounded-lg px-2.5 py-2">
+                    No operators found in HR module. Add employees with Equipment Operator / Driver designation first.
+                  </p>
+                )
+                if (available.length === 0) return (
+                  <p className="text-xs text-slate-500 italic">All HR operators already assigned</p>
+                )
+                return (
+                  <div className="flex gap-2">
+                    <select
+                      className="flex-1 bg-dark-700 border border-dark-600 rounded-lg px-2.5 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-primary-500"
+                      value={newOperator}
+                      onChange={e => setNewOperator(e.target.value)}>
+                      <option value="">Select operator from HR…</option>
+                      {available.map(e => (
+                        <option key={e.id} value={e.name}>
+                          {e.name} — {e.designation}
+                        </option>
+                      ))}
+                    </select>
+                    <button onClick={handleAddOperator} disabled={operatorSaving || !newOperator.trim()}
+                      className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-dark-600 border border-dark-500 hover:border-primary-500 text-xs text-slate-300 disabled:opacity-40 transition-colors shrink-0">
+                      {operatorSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />} Assign
+                    </button>
+                  </div>
+                )
+              })()}
             </div>
           </div>
         )}
