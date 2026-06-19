@@ -1,7 +1,1264 @@
-export default function HRPage() {
+import { useState, useMemo } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { supabase } from '../../lib/supabase'
+import { useAuth } from '../../contexts/AuthContext'
+import {
+  Users, Plus, X, Loader2, Save, Trash2, Edit2,
+  Phone, Calendar, CreditCard, FileText,
+  CheckCircle, Banknote, BarChart2, Search
+} from 'lucide-react'
+import toast from 'react-hot-toast'
+import { format, getDaysInMonth, parseISO } from 'date-fns'
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+const DEPARTMENTS = [
+  'Plant & Machinery (P&M)', 'Projects', 'Site / Field', 'Transport',
+  'Admin', 'Accounts', 'Management', 'Other'
+]
+
+const DESIGNATIONS = [
+  'Equipment Operator', 'Tipper / Dumper Driver', 'Site Supervisor',
+  'P&M Manager', 'Project Manager', 'Admin Executive', 'Accounts Executive',
+  'HR Executive', 'Management', 'Labour', 'Helper', 'Other'
+]
+
+const EMP_TYPES = [
+  { value: 'shift',   label: 'Shift-based',    desc: 'Paid per shift worked',            icon: '🔄' },
+  { value: 'daily',   label: 'Daily Wage',      desc: 'Paid per day present',             icon: '📅' },
+  { value: 'monthly', label: 'Monthly Salary',  desc: 'Fixed monthly, prorated absences', icon: '📆' },
+]
+
+const LEAVE_TYPES = [
+  { value: 'casual',  label: 'Casual Leave (CL)',  color: 'text-blue-400' },
+  { value: 'earned',  label: 'Earned Leave (EL)',  color: 'text-emerald-400' },
+  { value: 'sick',    label: 'Sick Leave (SL)',    color: 'text-yellow-400' },
+  { value: 'unpaid',  label: 'Unpaid Leave (LOP)', color: 'text-red-400' },
+]
+
+const ATTENDANCE_STATUS = [
+  { value: 'present',  full: 'Present',   cls: 'bg-emerald-500/20 text-emerald-400 border-emerald-700/40' },
+  { value: 'absent',   full: 'Absent',    cls: 'bg-red-500/20 text-red-400 border-red-700/40' },
+  { value: 'half_day', full: 'Half Day',  cls: 'bg-yellow-500/20 text-yellow-400 border-yellow-700/40' },
+  { value: 'leave',    full: 'Leave',     cls: 'bg-blue-500/20 text-blue-400 border-blue-700/40' },
+  { value: 'week_off', full: 'Week Off',  cls: 'bg-slate-500/20 text-slate-400 border-slate-600' },
+  { value: 'holiday',  full: 'Holiday',   cls: 'bg-purple-500/20 text-purple-400 border-purple-700/40' },
+]
+
+function calcPT(grossMonthly) {
+  if (grossMonthly <= 21000) return 0
+  if (grossMonthly <= 30000) return 135
+  if (grossMonthly <= 45000) return 315
+  if (grossMonthly <= 60000) return 690
+  if (grossMonthly <= 75000) return 1025
+  return 1250
+}
+
+// ── Shared UI ─────────────────────────────────────────────────────────────────
+function inp(extra = '') {
+  return `w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500 ${extra}`
+}
+
+function Field({ label, required, children, hint }) {
   return (
-    <div className="flex items-center justify-center h-full text-slate-500 text-sm">
-      🚧 This module is being built — check back soon
+    <div className="space-y-1.5">
+      <label className="text-xs font-medium text-slate-400">
+        {label}{required && <span className="text-red-400 ml-1">*</span>}
+      </label>
+      {children}
+      {hint && <p className="text-xs text-slate-500">{hint}</p>}
+    </div>
+  )
+}
+
+function SectionHeader({ label, icon: Icon }) {
+  return (
+    <div className="flex items-center gap-2 pt-2">
+      {Icon && <Icon className="w-3.5 h-3.5 text-primary-400" />}
+      <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">{label}</span>
+      <div className="flex-1 h-px bg-dark-600" />
+    </div>
+  )
+}
+
+function Modal({ title, onClose, children, footer, wide }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+      <div className={`w-full ${wide ? 'max-w-2xl' : 'max-w-md'} bg-dark-800 rounded-2xl border border-dark-600 shadow-2xl flex flex-col max-h-[92vh]`}>
+        <div className="flex items-center justify-between px-4 py-3 border-b border-dark-700 shrink-0">
+          <h2 className="font-semibold text-slate-100">{title}</h2>
+          <button onClick={onClose} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-dark-700">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="overflow-y-auto flex-1 px-4 py-3 space-y-3">{children}</div>
+        {footer && <div className="flex gap-2 px-4 py-3 border-t border-dark-700 shrink-0">{footer}</div>}
+      </div>
+    </div>
+  )
+}
+
+// ── Employee Form Modal ───────────────────────────────────────────────────────
+function EmployeeFormModal({ companyId, initialValues, onClose }) {
+  const qc = useQueryClient()
+  const isEdit = !!initialValues?.id
+
+  const blank = {
+    name: '', designation: '', department: '', employment_type: 'monthly',
+    status: 'active', joining_date: '', date_of_birth: '',
+    phone: '', email: '', address: '',
+    aadhar_number: '', pan_number: '',
+    bank_account: '', bank_name: '', ifsc_code: '',
+    uan_number: '', esi_number: '',
+    pf_applicable: false, esi_applicable: false, pt_applicable: true,
+    notes: '',
+    basic_salary: '', hra: '', special_allowance: '', other_allowance: '',
+    daily_rate: '',
+    day_shift_rate: '', night_shift_rate: '', double_shift_rate: '', ot_rate_per_hour: '',
+  }
+
+  const [form, setForm] = useState(() => ({ ...blank, ...initialValues }))
+  const [saving, setSaving] = useState(false)
+  const [tab, setTab] = useState('basic')
+  const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
+
+  const grossMonthly = Number(form.basic_salary || 0) + Number(form.hra || 0) +
+    Number(form.special_allowance || 0) + Number(form.other_allowance || 0)
+
+  const handleSave = async () => {
+    if (!form.name.trim()) { toast.error('Name is required'); return }
+    setSaving(true)
+    try {
+      let empNumber = form.employee_number
+      if (!isEdit && !empNumber) {
+        const { count } = await supabase.from('hr_employees')
+          .select('*', { count: 'exact', head: true }).eq('company_id', companyId)
+        empNumber = `EMP-${String((count || 0) + 1).padStart(3, '0')}`
+      }
+
+      const payload = {
+        company_id: companyId, name: form.name.trim(),
+        employee_number: empNumber,
+        designation: form.designation || null, department: form.department || null,
+        employment_type: form.employment_type, status: form.status,
+        joining_date: form.joining_date || null, date_of_birth: form.date_of_birth || null,
+        phone: form.phone || null, email: form.email || null, address: form.address || null,
+        aadhar_number: form.aadhar_number || null, pan_number: form.pan_number || null,
+        bank_account: form.bank_account || null, bank_name: form.bank_name || null,
+        ifsc_code: form.ifsc_code || null,
+        uan_number: form.uan_number || null, esi_number: form.esi_number || null,
+        pf_applicable: form.pf_applicable, esi_applicable: form.esi_applicable,
+        pt_applicable: form.pt_applicable, notes: form.notes || null,
+      }
+
+      let empId = initialValues?.id
+      if (isEdit) {
+        const { error } = await supabase.from('hr_employees').update(payload).eq('id', empId)
+        if (error) throw error
+      } else {
+        const { data, error } = await supabase.from('hr_employees').insert(payload).select().single()
+        if (error) throw error
+        empId = data.id
+      }
+
+      const hasAnySalary = form.basic_salary || form.daily_rate || form.day_shift_rate
+      if (hasAnySalary) {
+        const salPayload = {
+          company_id: companyId, employee_id: empId,
+          effective_from: form.joining_date || new Date().toISOString().split('T')[0],
+          basic_salary: Number(form.basic_salary || 0),
+          hra: Number(form.hra || 0),
+          special_allowance: Number(form.special_allowance || 0),
+          other_allowance: Number(form.other_allowance || 0),
+          daily_rate: Number(form.daily_rate || 0),
+          day_shift_rate: Number(form.day_shift_rate || 0),
+          night_shift_rate: Number(form.night_shift_rate || 0),
+          double_shift_rate: Number(form.double_shift_rate || 0),
+          ot_rate_per_hour: Number(form.ot_rate_per_hour || 0),
+        }
+        const { data: existing } = await supabase.from('hr_salary_structure')
+          .select('id').eq('employee_id', empId)
+          .order('effective_from', { ascending: false }).limit(1).maybeSingle()
+        if (existing) {
+          await supabase.from('hr_salary_structure').update(salPayload).eq('id', existing.id)
+        } else {
+          await supabase.from('hr_salary_structure').insert(salPayload)
+        }
+      }
+
+      toast.success(isEdit ? 'Employee updated' : 'Employee added')
+      qc.invalidateQueries(['hr_employees', companyId])
+      qc.invalidateQueries(['hr_employees_active', companyId])
+      qc.invalidateQueries(['hr_emp_count', companyId])
+      onClose()
+    } catch (err) {
+      toast.error(err.message || 'Failed to save')
+    } finally { setSaving(false) }
+  }
+
+  const tabCls = (t) => `px-3 py-2 text-xs font-medium border-b-2 transition-colors ${tab === t
+    ? 'border-primary-500 text-primary-400' : 'border-transparent text-slate-500 hover:text-slate-300'}`
+
+  return (
+    <Modal title={isEdit ? `Edit — ${initialValues.name}` : 'Add Employee'} onClose={onClose} wide footer={
+      <>
+        <button onClick={onClose} className="flex-1 btn-secondary">Cancel</button>
+        <button onClick={handleSave} disabled={saving} className="flex-1 btn-primary flex items-center justify-center gap-2">
+          {saving ? <><Loader2 className="w-4 h-4 animate-spin" />Saving…</> : <><Save className="w-4 h-4" />{isEdit ? 'Update' : 'Add Employee'}</>}
+        </button>
+      </>
+    }>
+      <div className="flex border-b border-dark-700 -mx-4 px-4 mb-1">
+        {['basic', 'salary', 'compliance'].map(t => (
+          <button key={t} className={tabCls(t)} onClick={() => setTab(t)}>
+            {t === 'basic' ? 'Basic Info' : t === 'salary' ? 'Salary' : 'Compliance & Bank'}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Basic ── */}
+      {tab === 'basic' && (<>
+        <Field label="How is this employee paid?" required>
+          <div className="grid grid-cols-3 gap-2">
+            {EMP_TYPES.map(t => (
+              <button key={t.value} type="button" onClick={() => set('employment_type', t.value)}
+                className={`flex flex-col items-center gap-1 px-2 py-3 rounded-xl border text-center transition-all
+                  ${form.employment_type === t.value
+                    ? 'border-primary-500 bg-primary-500/10 text-primary-300'
+                    : 'border-dark-600 bg-dark-700 text-slate-400 hover:border-dark-500'}`}>
+                <span className="text-lg">{t.icon}</span>
+                <span className="text-xs font-semibold">{t.label}</span>
+                <span className="text-[10px] text-slate-500 leading-tight">{t.desc}</span>
+              </button>
+            ))}
+          </div>
+        </Field>
+
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Full Name" required>
+            <input className={inp()} value={form.name} onChange={e => set('name', e.target.value)} placeholder="Employee full name" />
+          </Field>
+          <Field label="Status">
+            <select className={inp()} value={form.status} onChange={e => set('status', e.target.value)}>
+              <option value="active">Active</option>
+              <option value="inactive">Inactive</option>
+            </select>
+          </Field>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Designation">
+            <select className={inp()} value={form.designation} onChange={e => set('designation', e.target.value)}>
+              <option value="">Select…</option>
+              {DESIGNATIONS.map(d => <option key={d} value={d}>{d}</option>)}
+            </select>
+          </Field>
+          <Field label="Department">
+            <select className={inp()} value={form.department} onChange={e => set('department', e.target.value)}>
+              <option value="">Select…</option>
+              {DEPARTMENTS.map(d => <option key={d} value={d}>{d}</option>)}
+            </select>
+          </Field>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Joining Date">
+            <input type="date" className={inp()} value={form.joining_date} onChange={e => set('joining_date', e.target.value)} />
+          </Field>
+          <Field label="Date of Birth">
+            <input type="date" className={inp()} value={form.date_of_birth} onChange={e => set('date_of_birth', e.target.value)} />
+          </Field>
+        </div>
+
+        <SectionHeader label="Contact" icon={Phone} />
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Phone">
+            <input className={inp()} value={form.phone} onChange={e => set('phone', e.target.value)} placeholder="Mobile number" />
+          </Field>
+          <Field label="Email">
+            <input className={inp()} value={form.email} onChange={e => set('email', e.target.value)} placeholder="Email address" />
+          </Field>
+        </div>
+        <Field label="Address">
+          <textarea className={inp('resize-none')} rows={2} value={form.address} onChange={e => set('address', e.target.value)} placeholder="Residential address" />
+        </Field>
+        <Field label="Notes">
+          <textarea className={inp('resize-none')} rows={2} value={form.notes} onChange={e => set('notes', e.target.value)} placeholder="Additional info…" />
+        </Field>
+      </>)}
+
+      {/* ── Salary ── */}
+      {tab === 'salary' && (<>
+        <div className="bg-dark-700 border border-dark-600 rounded-xl px-3 py-2.5 flex items-center gap-2">
+          <span className="text-xl">{EMP_TYPES.find(t => t.value === form.employment_type)?.icon}</span>
+          <div>
+            <p className="text-sm font-medium text-slate-200">{EMP_TYPES.find(t => t.value === form.employment_type)?.label}</p>
+            <p className="text-xs text-slate-500">{EMP_TYPES.find(t => t.value === form.employment_type)?.desc}</p>
+          </div>
+          <button onClick={() => setTab('basic')} className="ml-auto text-xs text-primary-400 hover:text-primary-300">Change</button>
+        </div>
+
+        {form.employment_type === 'monthly' && (<>
+          <SectionHeader label="Monthly Salary Components" />
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Basic Salary (₹)">
+              <input type="number" className={inp()} value={form.basic_salary} onChange={e => set('basic_salary', e.target.value)} placeholder="0" />
+            </Field>
+            <Field label="HRA (₹)">
+              <input type="number" className={inp()} value={form.hra} onChange={e => set('hra', e.target.value)} placeholder="0" />
+            </Field>
+            <Field label="Special Allowance (₹)">
+              <input type="number" className={inp()} value={form.special_allowance} onChange={e => set('special_allowance', e.target.value)} placeholder="0" />
+            </Field>
+            <Field label="Other Allowance (₹)">
+              <input type="number" className={inp()} value={form.other_allowance} onChange={e => set('other_allowance', e.target.value)} placeholder="0" />
+            </Field>
+          </div>
+          {grossMonthly > 0 && (
+            <div className="bg-primary-900/20 border border-primary-700/30 rounded-xl p-3 space-y-1.5">
+              <div className="flex justify-between text-sm">
+                <span className="text-slate-400">Gross Monthly</span>
+                <span className="font-bold text-primary-300">₹{grossMonthly.toLocaleString('en-IN')}</span>
+              </div>
+              {form.pf_applicable && <div className="flex justify-between text-xs text-slate-400"><span>PF (12% of basic)</span><span>−₹{Math.round(Number(form.basic_salary || 0) * 0.12).toLocaleString('en-IN')}</span></div>}
+              {form.esi_applicable && grossMonthly <= 21000 && <div className="flex justify-between text-xs text-slate-400"><span>ESI (0.75%)</span><span>−₹{Math.round(grossMonthly * 0.0075).toLocaleString('en-IN')}</span></div>}
+              {form.pt_applicable && <div className="flex justify-between text-xs text-slate-400"><span>Professional Tax</span><span>−₹{calcPT(grossMonthly).toLocaleString('en-IN')}</span></div>}
+              <div className="flex justify-between text-sm font-semibold border-t border-dark-600 pt-1">
+                <span className="text-slate-300">Est. Net Pay</span>
+                <span className="text-emerald-400">₹{Math.round(
+                  grossMonthly
+                  - (form.pf_applicable ? Number(form.basic_salary || 0) * 0.12 : 0)
+                  - (form.esi_applicable && grossMonthly <= 21000 ? grossMonthly * 0.0075 : 0)
+                  - (form.pt_applicable ? calcPT(grossMonthly) : 0)
+                ).toLocaleString('en-IN')}</span>
+              </div>
+            </div>
+          )}
+        </>)}
+
+        {form.employment_type === 'daily' && (<>
+          <SectionHeader label="Daily Wage Rate" />
+          <Field label="Daily Rate (₹ per day)" required>
+            <input type="number" className={inp()} value={form.daily_rate} onChange={e => set('daily_rate', e.target.value)} placeholder="e.g. 800" />
+          </Field>
+          {Number(form.daily_rate) > 0 && (
+            <div className="bg-dark-700 rounded-lg px-3 py-2 text-xs text-slate-400">
+              26 working days → <span className="text-slate-200 font-semibold">₹{(Number(form.daily_rate) * 26).toLocaleString('en-IN')}/month approx</span>
+            </div>
+          )}
+        </>)}
+
+        {form.employment_type === 'shift' && (<>
+          <SectionHeader label="Shift Rates" />
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Day Shift Rate (₹)">
+              <input type="number" className={inp()} value={form.day_shift_rate} onChange={e => set('day_shift_rate', e.target.value)} placeholder="e.g. 600" />
+            </Field>
+            <Field label="Night Shift Rate (₹)">
+              <input type="number" className={inp()} value={form.night_shift_rate} onChange={e => set('night_shift_rate', e.target.value)} placeholder="e.g. 700" />
+            </Field>
+            <Field label="Double Shift Rate (₹)">
+              <input type="number" className={inp()} value={form.double_shift_rate} onChange={e => set('double_shift_rate', e.target.value)} placeholder="e.g. 1100" />
+            </Field>
+            <Field label="OT Rate / Hour (₹)">
+              <input type="number" className={inp()} value={form.ot_rate_per_hour} onChange={e => set('ot_rate_per_hour', e.target.value)} placeholder="e.g. 100" />
+            </Field>
+          </div>
+        </>)}
+
+        {form.employment_type !== 'shift' && (
+          <Field label="OT Rate per Hour (₹)">
+            <input type="number" className={inp()} value={form.ot_rate_per_hour} onChange={e => set('ot_rate_per_hour', e.target.value)} placeholder="0" />
+          </Field>
+        )}
+      </>)}
+
+      {/* ── Compliance & Bank ── */}
+      {tab === 'compliance' && (<>
+        <SectionHeader label="Statutory Deductions" icon={FileText} />
+        <div className="space-y-2">
+          {[
+            { key: 'pf_applicable',  label: 'PF Applicable',               desc: '12% employee + 12% employer on basic' },
+            { key: 'esi_applicable', label: 'ESI Applicable',              desc: '0.75% + 3.25% employer (gross ≤ ₹21,000)' },
+            { key: 'pt_applicable',  label: 'Professional Tax Applicable',  desc: 'Slab-based monthly deduction' },
+          ].map(item => (
+            <label key={item.key} className="flex items-center gap-3 bg-dark-700 rounded-xl px-3 py-2.5 cursor-pointer">
+              <input type="checkbox" checked={form[item.key]} onChange={e => set(item.key, e.target.checked)}
+                className="w-4 h-4 rounded accent-primary-500" />
+              <div>
+                <p className="text-sm font-medium text-slate-200">{item.label}</p>
+                <p className="text-xs text-slate-500">{item.desc}</p>
+              </div>
+            </label>
+          ))}
+        </div>
+
+        <SectionHeader label="Government IDs" icon={CreditCard} />
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Aadhar Number">
+            <input className={inp()} value={form.aadhar_number} onChange={e => set('aadhar_number', e.target.value)} placeholder="XXXX XXXX XXXX" />
+          </Field>
+          <Field label="PAN Number">
+            <input className={inp('uppercase')} value={form.pan_number} onChange={e => set('pan_number', e.target.value.toUpperCase())} placeholder="ABCDE1234F" maxLength={10} />
+          </Field>
+          <Field label="UAN Number (PF)">
+            <input className={inp()} value={form.uan_number} onChange={e => set('uan_number', e.target.value)} placeholder="Universal Account No." />
+          </Field>
+          <Field label="ESI Number">
+            <input className={inp()} value={form.esi_number} onChange={e => set('esi_number', e.target.value)} placeholder="ESI member no." />
+          </Field>
+        </div>
+
+        <SectionHeader label="Bank Details" icon={Banknote} />
+        <Field label="Bank Account Number">
+          <input className={inp()} value={form.bank_account} onChange={e => set('bank_account', e.target.value)} placeholder="Account number" />
+        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Bank Name">
+            <input className={inp()} value={form.bank_name} onChange={e => set('bank_name', e.target.value)} placeholder="e.g. SBI, HDFC" />
+          </Field>
+          <Field label="IFSC Code">
+            <input className={inp('uppercase')} value={form.ifsc_code} onChange={e => set('ifsc_code', e.target.value.toUpperCase())} placeholder="SBIN0001234" maxLength={11} />
+          </Field>
+        </div>
+      </>)}
+    </Modal>
+  )
+}
+
+// ── Employee Card ──────────────────────────────────────────────────────────────
+function EmployeeCard({ emp, onClick }) {
+  const typeInfo = EMP_TYPES.find(t => t.value === emp.employment_type)
+  return (
+    <button onClick={onClick} className="w-full text-left bg-dark-800 border border-dark-700 hover:border-dark-500 rounded-xl p-3.5 transition-all">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex-1 min-w-0">
+          <p className="font-semibold text-slate-100 text-sm truncate">{emp.name}</p>
+          <p className="text-xs text-slate-500 truncate">{emp.designation || '—'}{emp.department ? ` · ${emp.department}` : ''}</p>
+        </div>
+        <span className={`shrink-0 text-xs font-medium px-2 py-0.5 rounded-full border
+          ${emp.status === 'active' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-700/40' : 'bg-dark-700 text-slate-500 border-dark-600'}`}>
+          {emp.status}
+        </span>
+      </div>
+      <div className="flex items-center gap-3 mt-2 text-xs text-slate-400 flex-wrap">
+        <span className="font-mono text-primary-400">{emp.employee_number}</span>
+        <span>{typeInfo?.icon} {typeInfo?.label}</span>
+        {emp.phone && <span className="flex items-center gap-1"><Phone className="w-3 h-3" />{emp.phone}</span>}
+      </div>
+    </button>
+  )
+}
+
+// ── Employee Detail Modal ─────────────────────────────────────────────────────
+function EmployeeDetailModal({ emp, companyId, onClose, onEdit }) {
+  const qc = useQueryClient()
+  const [delConfirm, setDelConfirm] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+
+  const { data: salary } = useQuery({
+    queryKey: ['hr_salary', emp.id],
+    queryFn: async () => {
+      const { data } = await supabase.from('hr_salary_structure')
+        .select('*').eq('employee_id', emp.id).order('effective_from', { ascending: false }).limit(1).maybeSingle()
+      return data
+    },
+  })
+
+  const handleDelete = async () => {
+    setDeleting(true)
+    const { error } = await supabase.from('hr_employees').delete().eq('id', emp.id)
+    if (error) { toast.error(error.message); setDeleting(false); return }
+    toast.success(`${emp.name} removed`)
+    qc.invalidateQueries(['hr_employees', companyId])
+    qc.invalidateQueries(['hr_employees_active', companyId])
+    qc.invalidateQueries(['hr_emp_count', companyId])
+    onClose()
+  }
+
+  const typeInfo = EMP_TYPES.find(t => t.value === emp.employment_type)
+
+  return (
+    <Modal title={emp.name} onClose={onClose} footer={
+      delConfirm
+        ? <>
+            <span className="text-xs text-red-400 flex-1 flex items-center">Remove {emp.name}?</span>
+            <button onClick={() => setDelConfirm(false)} className="btn-secondary px-3 py-1.5 text-xs">Cancel</button>
+            <button onClick={handleDelete} disabled={deleting}
+              className="px-4 py-1.5 text-xs rounded-lg bg-red-600/20 border border-red-700/40 text-red-400 hover:bg-red-600/30 flex items-center gap-1">
+              {deleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Confirm Remove'}
+            </button>
+          </>
+        : <>
+            <button onClick={() => setDelConfirm(true)} className="btn-secondary flex items-center gap-1.5 text-xs px-3">
+              <Trash2 className="w-3.5 h-3.5 text-red-400" /> Remove
+            </button>
+            <button onClick={onEdit} className="flex-1 btn-primary text-sm flex items-center justify-center gap-1.5">
+              <Edit2 className="w-3.5 h-3.5" /> Edit
+            </button>
+          </>
+    }>
+      <div className="flex items-center gap-3">
+        <div className="w-12 h-12 rounded-full bg-primary-900/40 border border-primary-700/40 flex items-center justify-center shrink-0">
+          <span className="text-lg font-bold text-primary-400">{emp.name[0]}</span>
+        </div>
+        <div>
+          <p className="font-bold text-slate-100">{emp.name}</p>
+          <p className="text-xs text-slate-400">{emp.employee_number} · {emp.designation || 'No designation'}</p>
+          <p className="text-xs text-slate-500">{emp.department}</p>
+        </div>
+      </div>
+
+      <div className="flex gap-2 flex-wrap">
+        <span className={`text-xs px-2 py-1 rounded-full border ${emp.status === 'active' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-700/40' : 'bg-dark-700 text-slate-500 border-dark-600'}`}>{emp.status}</span>
+        <span className="text-xs px-2 py-1 rounded-full border border-dark-600 bg-dark-700 text-slate-400">{typeInfo?.icon} {typeInfo?.label}</span>
+        {emp.pf_applicable  && <span className="text-xs bg-blue-900/20 border border-blue-700/30 text-blue-400 px-2 py-0.5 rounded-full">PF</span>}
+        {emp.esi_applicable && <span className="text-xs bg-blue-900/20 border border-blue-700/30 text-blue-400 px-2 py-0.5 rounded-full">ESI</span>}
+        {emp.pt_applicable  && <span className="text-xs bg-blue-900/20 border border-blue-700/30 text-blue-400 px-2 py-0.5 rounded-full">PT</span>}
+      </div>
+
+      {[
+        { label: 'Phone',        value: emp.phone },
+        { label: 'Email',        value: emp.email },
+        { label: 'Joining Date', value: emp.joining_date ? format(parseISO(emp.joining_date), 'dd MMM yyyy') : null },
+        { label: 'Address',      value: emp.address },
+        { label: 'UAN',          value: emp.uan_number },
+        { label: 'Bank',         value: emp.bank_name && emp.bank_account ? `${emp.bank_name} — ${emp.bank_account}` : null },
+      ].filter(r => r.value).map(r => (
+        <div key={r.label} className="flex justify-between text-xs">
+          <span className="text-slate-500 shrink-0 mr-4">{r.label}</span>
+          <span className="text-slate-200 text-right break-words">{r.value}</span>
+        </div>
+      ))}
+
+      {salary && (<>
+        <div className="h-px bg-dark-600" />
+        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Salary</p>
+        {emp.employment_type === 'monthly' && (
+          <div className="bg-dark-700 rounded-lg p-3 text-xs space-y-1.5">
+            {salary.basic_salary > 0 && <div className="flex justify-between"><span className="text-slate-400">Basic</span><span>₹{Number(salary.basic_salary).toLocaleString('en-IN')}</span></div>}
+            {salary.hra > 0 && <div className="flex justify-between"><span className="text-slate-400">HRA</span><span>₹{Number(salary.hra).toLocaleString('en-IN')}</span></div>}
+            {salary.special_allowance > 0 && <div className="flex justify-between"><span className="text-slate-400">Special Allowance</span><span>₹{Number(salary.special_allowance).toLocaleString('en-IN')}</span></div>}
+            {salary.other_allowance > 0 && <div className="flex justify-between"><span className="text-slate-400">Other</span><span>₹{Number(salary.other_allowance).toLocaleString('en-IN')}</span></div>}
+            <div className="flex justify-between font-semibold border-t border-dark-600 pt-1">
+              <span className="text-slate-300">Gross</span>
+              <span className="text-primary-400">₹{(Number(salary.basic_salary) + Number(salary.hra) + Number(salary.special_allowance) + Number(salary.other_allowance)).toLocaleString('en-IN')}</span>
+            </div>
+          </div>
+        )}
+        {emp.employment_type === 'daily' && Number(salary.daily_rate) > 0 && (
+          <div className="bg-dark-700 rounded-lg px-3 py-2 text-xs flex justify-between">
+            <span className="text-slate-400">Daily Rate</span>
+            <span className="text-primary-400 font-semibold">₹{Number(salary.daily_rate).toLocaleString('en-IN')}/day</span>
+          </div>
+        )}
+        {emp.employment_type === 'shift' && (
+          <div className="bg-dark-700 rounded-lg p-3 text-xs space-y-1">
+            {Number(salary.day_shift_rate) > 0   && <div className="flex justify-between"><span className="text-slate-400">Day Shift</span><span>₹{Number(salary.day_shift_rate).toLocaleString('en-IN')}</span></div>}
+            {Number(salary.night_shift_rate) > 0 && <div className="flex justify-between"><span className="text-slate-400">Night Shift</span><span>₹{Number(salary.night_shift_rate).toLocaleString('en-IN')}</span></div>}
+            {Number(salary.double_shift_rate) > 0 && <div className="flex justify-between"><span className="text-slate-400">Double Shift</span><span>₹{Number(salary.double_shift_rate).toLocaleString('en-IN')}</span></div>}
+          </div>
+        )}
+      </>)}
+    </Modal>
+  )
+}
+
+// ── Employees Tab ─────────────────────────────────────────────────────────────
+function EmployeesTab({ companyId }) {
+  const [showAdd, setShowAdd]   = useState(false)
+  const [selected, setSelected] = useState(null)
+  const [editing, setEditing]   = useState(null)
+  const [search, setSearch]     = useState('')
+  const [filterType, setFilterType] = useState('all')
+  const [filterDept, setFilterDept] = useState('all')
+
+  const { data: employees = [], isLoading } = useQuery({
+    queryKey: ['hr_employees', companyId],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('hr_employees').select('*')
+        .eq('company_id', companyId).order('name')
+      if (error) throw error
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+
+  const filtered = employees.filter(e =>
+    (filterType === 'all' || e.employment_type === filterType) &&
+    (filterDept === 'all' || e.department === filterDept) &&
+    (!search || e.name.toLowerCase().includes(search.toLowerCase()) ||
+      (e.employee_number || '').toLowerCase().includes(search.toLowerCase()) ||
+      (e.designation || '').toLowerCase().includes(search.toLowerCase()))
+  )
+
+  const depts = [...new Set(employees.map(e => e.department).filter(Boolean))]
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="px-4 py-2 shrink-0 space-y-2">
+        <div className="flex gap-2">
+          <div className="flex-1 relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" />
+            <input className="w-full bg-dark-700 border border-dark-600 rounded-lg pl-8 pr-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500 placeholder-slate-500"
+              placeholder="Search employees…" value={search} onChange={e => setSearch(e.target.value)} />
+          </div>
+          <select className="bg-dark-700 border border-dark-600 rounded-lg px-2 py-2 text-xs text-slate-300 focus:outline-none"
+            value={filterType} onChange={e => setFilterType(e.target.value)}>
+            <option value="all">All Types</option>
+            {EMP_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+          </select>
+        </div>
+        {depts.length > 0 && (
+          <div className="flex gap-1.5 overflow-x-auto pb-0.5">
+            <button onClick={() => setFilterDept('all')}
+              className={`shrink-0 text-xs px-3 py-1 rounded-full border transition-colors
+                ${filterDept === 'all' ? 'border-primary-500 bg-primary-500/10 text-primary-400' : 'border-dark-600 text-slate-500'}`}>
+              All Depts
+            </button>
+            {depts.map(d => (
+              <button key={d} onClick={() => setFilterDept(filterDept === d ? 'all' : d)}
+                className={`shrink-0 text-xs px-3 py-1 rounded-full border transition-colors
+                  ${filterDept === d ? 'border-primary-500 bg-primary-500/10 text-primary-400' : 'border-dark-600 text-slate-500'}`}>
+                {d}
+              </button>
+            ))}
+          </div>
+        )}
+        {employees.length > 0 && (
+          <div className="flex gap-2 text-xs text-slate-500 flex-wrap">
+            <span>{employees.filter(e => e.status === 'active').length} active</span>
+            {EMP_TYPES.map(t => (
+              <span key={t.value}>· {employees.filter(e => e.employment_type === t.value).length} {t.label.toLowerCase()}</span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-4 pb-4">
+        {isLoading ? (
+          <div className="flex items-center justify-center py-16"><Loader2 className="w-6 h-6 text-primary-400 animate-spin" /></div>
+        ) : filtered.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 gap-3 text-center">
+            <Users className="w-12 h-12 text-slate-600" />
+            <p className="text-slate-400">{employees.length === 0 ? 'No employees added yet' : 'No match'}</p>
+            {employees.length === 0 && (
+              <button onClick={() => setShowAdd(true)} className="btn-primary text-sm flex items-center gap-1.5"><Plus className="w-4 h-4" /> Add First Employee</button>
+            )}
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {filtered.map(emp => <EmployeeCard key={emp.id} emp={emp} onClick={() => setSelected(emp)} />)}
+          </div>
+        )}
+      </div>
+
+      {showAdd && <EmployeeFormModal companyId={companyId} onClose={() => setShowAdd(false)} />}
+      {selected && !editing && (
+        <EmployeeDetailModal emp={selected} companyId={companyId}
+          onClose={() => setSelected(null)}
+          onEdit={() => { setEditing(selected); setSelected(null) }} />
+      )}
+      {editing && <EmployeeFormModal companyId={companyId} initialValues={editing} onClose={() => setEditing(null)} />}
+    </div>
+  )
+}
+
+// ── Attendance Tab ────────────────────────────────────────────────────────────
+function AttendanceTab({ companyId }) {
+  const [date, setDate] = useState(new Date().toISOString().split('T')[0])
+  const [saving, setSaving] = useState(false)
+
+  const { data: employees = [] } = useQuery({
+    queryKey: ['hr_employees_active', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('hr_employees').select('id, name, designation, employment_type, employee_number')
+        .eq('company_id', companyId).eq('status', 'active').order('name')
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+
+  const { data: attendance = [], refetch } = useQuery({
+    queryKey: ['hr_attendance', companyId, date],
+    queryFn: async () => {
+      const { data } = await supabase.from('hr_attendance').select('*')
+        .eq('company_id', companyId).eq('attendance_date', date)
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+
+  const attMap = useMemo(() => {
+    const m = {}
+    attendance.forEach(a => { m[a.employee_id] = a })
+    return m
+  }, [attendance])
+
+  const markAttendance = async (empId, status) => {
+    const existing = attMap[empId]
+    if (existing) {
+      await supabase.from('hr_attendance').update({ status }).eq('id', existing.id)
+    } else {
+      await supabase.from('hr_attendance').insert({ company_id: companyId, employee_id: empId, attendance_date: date, status })
+    }
+    refetch()
+  }
+
+  const markAll = async (status) => {
+    setSaving(true)
+    for (const emp of employees) {
+      const existing = attMap[emp.id]
+      if (existing) {
+        await supabase.from('hr_attendance').update({ status }).eq('id', existing.id)
+      } else {
+        await supabase.from('hr_attendance').insert({ company_id: companyId, employee_id: emp.id, attendance_date: date, status })
+      }
+    }
+    refetch()
+    setSaving(false)
+    toast.success(`All marked as ${status}`)
+  }
+
+  const summary = useMemo(() => {
+    const s = { present: 0, absent: 0, half_day: 0, leave: 0, week_off: 0, holiday: 0, unmarked: 0 }
+    employees.forEach(e => {
+      const a = attMap[e.id]
+      if (!a) s.unmarked++
+      else s[a.status] = (s[a.status] || 0) + 1
+    })
+    return s
+  }, [employees, attMap])
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="px-4 py-2 shrink-0 space-y-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <input type="date" className="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
+            value={date} onChange={e => setDate(e.target.value)} />
+          <button onClick={() => setDate(new Date().toISOString().split('T')[0])} className="text-xs text-primary-400 hover:text-primary-300">Today</button>
+          <div className="ml-auto flex gap-1.5">
+            <button onClick={() => markAll('present')} disabled={saving}
+              className="text-xs px-2.5 py-1.5 rounded-lg bg-emerald-600/20 border border-emerald-700/40 text-emerald-400 hover:bg-emerald-600/30">
+              All Present
+            </button>
+            <button onClick={() => markAll('week_off')} disabled={saving}
+              className="text-xs px-2.5 py-1.5 rounded-lg bg-dark-700 border border-dark-600 text-slate-400 hover:border-dark-500">
+              All Week Off
+            </button>
+          </div>
+        </div>
+        <div className="flex gap-2 overflow-x-auto pb-0.5 text-xs">
+          {[
+            { label: `${summary.present} Present`,    cls: 'text-emerald-400 bg-emerald-500/10 border-emerald-700/40' },
+            { label: `${summary.absent} Absent`,      cls: 'text-red-400 bg-red-500/10 border-red-700/40' },
+            { label: `${summary.half_day} Half Day`,  cls: 'text-yellow-400 bg-yellow-500/10 border-yellow-700/40' },
+            { label: `${summary.leave} Leave`,        cls: 'text-blue-400 bg-blue-500/10 border-blue-700/40' },
+            summary.unmarked > 0 && { label: `${summary.unmarked} Unmarked`, cls: 'text-slate-400 border-slate-600 bg-dark-700' },
+          ].filter(Boolean).map(c => (
+            <span key={c.label} className={`shrink-0 px-2.5 py-1 rounded-full border font-medium ${c.cls}`}>{c.label}</span>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-4 pb-4">
+        {employees.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 gap-2">
+            <Users className="w-10 h-10 text-slate-600" />
+            <p className="text-slate-400">No active employees</p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {employees.map(emp => {
+              const att    = attMap[emp.id]
+              const status = att?.status || null
+              return (
+                <div key={emp.id} className="bg-dark-800 border border-dark-700 rounded-xl p-3">
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-slate-100 truncate">{emp.name}</p>
+                      <p className="text-xs text-slate-500">{emp.designation || EMP_TYPES.find(t => t.value === emp.employment_type)?.label}</p>
+                    </div>
+                    {status && (
+                      <span className={`shrink-0 text-xs px-2 py-0.5 rounded-full border font-medium
+                        ${ATTENDANCE_STATUS.find(s => s.value === status)?.cls || 'border-dark-600 text-slate-400'}`}>
+                        {ATTENDANCE_STATUS.find(s => s.value === status)?.full}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex gap-1.5 flex-wrap">
+                    {ATTENDANCE_STATUS.map(s => (
+                      <button key={s.value} onClick={() => markAttendance(emp.id, s.value)}
+                        className={`px-2.5 py-1 rounded-lg border text-xs font-medium transition-all
+                          ${status === s.value ? s.cls : 'border-dark-600 bg-dark-700 text-slate-500 hover:border-dark-500'}`}>
+                        {s.full}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── Payroll Tab ────────────────────────────────────────────────────────────────
+function PayrollTab({ companyId }) {
+  const qc = useQueryClient()
+  const now = new Date()
+  const [month, setMonth] = useState(now.getMonth() + 1)
+  const [year,  setYear]  = useState(now.getFullYear())
+  const [processing, setProcessing] = useState(false)
+
+  const { data: payroll } = useQuery({
+    queryKey: ['hr_payroll', companyId, month, year],
+    queryFn: async () => {
+      const { data } = await supabase.from('hr_payroll').select('*')
+        .eq('company_id', companyId).eq('month', month).eq('year', year).maybeSingle()
+      return data
+    },
+    enabled: !!companyId,
+  })
+
+  const { data: payrollItems = [] } = useQuery({
+    queryKey: ['hr_payroll_items', payroll?.id],
+    queryFn: async () => {
+      const { data } = await supabase.from('hr_payroll_items')
+        .select('*, hr_employees(name, designation, employment_type, employee_number)')
+        .eq('payroll_id', payroll.id).order('created_at')
+      return data || []
+    },
+    enabled: !!payroll?.id,
+  })
+
+  const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+
+  const processPayroll = async () => {
+    setProcessing(true)
+    try {
+      const daysInMonth = getDaysInMonth(new Date(year, month - 1))
+      const { data: employees } = await supabase.from('hr_employees').select('*')
+        .eq('company_id', companyId).eq('status', 'active')
+      if (!employees?.length) { toast.error('No active employees found'); setProcessing(false); return }
+
+      let payrollId = payroll?.id
+      if (!payrollId) {
+        const { data: pr, error } = await supabase.from('hr_payroll').insert({
+          company_id: companyId, month, year, status: 'draft',
+          processed_at: new Date().toISOString(),
+        }).select().single()
+        if (error) throw error
+        payrollId = pr.id
+      }
+
+      let totalGross = 0, totalDed = 0, totalNet = 0, totalPfEmp = 0, totalEsiEmp = 0
+
+      for (const emp of employees) {
+        const { data: sal } = await supabase.from('hr_salary_structure')
+          .select('*').eq('employee_id', emp.id)
+          .order('effective_from', { ascending: false }).limit(1).maybeSingle()
+        if (!sal) continue
+
+        const startDate = `${year}-${String(month).padStart(2,'0')}-01`
+        const endDate   = `${year}-${String(month).padStart(2,'0')}-${String(daysInMonth).padStart(2,'0')}`
+        const { data: att } = await supabase.from('hr_attendance').select('*')
+          .eq('employee_id', emp.id).gte('attendance_date', startDate).lte('attendance_date', endDate)
+
+        const attArr      = att || []
+        const weekOffs    = attArr.filter(a => a.status === 'week_off' || a.status === 'holiday').length
+        const workingDays = daysInMonth - weekOffs
+        const daysPresent = attArr.filter(a => a.status === 'present').length
+          + attArr.filter(a => a.status === 'half_day').length * 0.5
+        const daysLeave   = attArr.filter(a => a.status === 'leave').length
+        const daysAbsent  = Math.max(0, workingDays - daysPresent - daysLeave)
+        const otHours     = attArr.reduce((s, a) => s + Number(a.ot_hours || 0), 0)
+
+        let basicEarned = 0, hraEarned = 0, allowancesEarned = 0
+
+        if (emp.employment_type === 'monthly') {
+          const ratio = workingDays > 0 ? daysPresent / workingDays : 1
+          basicEarned      = Math.round(Number(sal.basic_salary || 0) * ratio)
+          hraEarned        = Math.round(Number(sal.hra || 0) * ratio)
+          allowancesEarned = Math.round((Number(sal.special_allowance || 0) + Number(sal.other_allowance || 0)) * ratio)
+        } else if (emp.employment_type === 'daily') {
+          basicEarned = Math.round(daysPresent * Number(sal.daily_rate || 0))
+        } else if (emp.employment_type === 'shift') {
+          basicEarned = Math.round(daysPresent * Number(sal.day_shift_rate || 0))
+        }
+
+        const otAmount    = Math.round(otHours * Number(sal.ot_rate_per_hour || 0))
+        const grossPay    = basicEarned + hraEarned + allowancesEarned + otAmount
+        const pfEmployee  = emp.pf_applicable ? Math.round(basicEarned * 0.12) : 0
+        const pfEmployer  = emp.pf_applicable ? Math.round(basicEarned * 0.12) : 0
+        const esiEmployee = emp.esi_applicable && grossPay <= 21000 ? Math.round(grossPay * 0.0075) : 0
+        const esiEmployer = emp.esi_applicable && grossPay <= 21000 ? Math.round(grossPay * 0.0325) : 0
+        const pt          = emp.pt_applicable ? calcPT(grossPay) : 0
+        const totalDeductions = pfEmployee + esiEmployee + pt
+        const netPay = grossPay - totalDeductions
+
+        totalGross += grossPay; totalDed += totalDeductions; totalNet += netPay
+        totalPfEmp += pfEmployer; totalEsiEmp += esiEmployer
+
+        await supabase.from('hr_payroll_items').upsert({
+          company_id: companyId, payroll_id: payrollId, employee_id: emp.id,
+          total_working_days: daysInMonth, days_present: daysPresent,
+          days_absent: daysAbsent, days_leave: daysLeave,
+          shifts_worked: Math.round(daysPresent), ot_hours: otHours,
+          basic_earned: basicEarned, hra_earned: hraEarned,
+          allowances_earned: allowancesEarned, ot_amount: otAmount, gross_pay: grossPay,
+          pf_employee: pfEmployee, pf_employer: pfEmployer,
+          esi_employee: esiEmployee, esi_employer: esiEmployer,
+          professional_tax: pt, total_deductions: totalDeductions, net_pay: netPay,
+        }, { onConflict: 'payroll_id,employee_id' })
+      }
+
+      await supabase.from('hr_payroll').update({
+        status: 'processed', total_gross: totalGross, total_deductions: totalDed,
+        total_net: totalNet, total_pf_employer: totalPfEmp, total_esi_employer: totalEsiEmp,
+        processed_at: new Date().toISOString(),
+      }).eq('id', payrollId)
+
+      toast.success('Payroll processed!')
+      qc.invalidateQueries(['hr_payroll', companyId, month, year])
+      qc.invalidateQueries(['hr_payroll_items', payrollId])
+    } catch (err) {
+      toast.error(err.message || 'Failed to process payroll')
+    } finally { setProcessing(false) }
+  }
+
+  const markPaid = async (itemId) => {
+    await supabase.from('hr_payroll_items').update({
+      payment_status: 'paid', payment_date: new Date().toISOString().split('T')[0],
+    }).eq('id', itemId)
+    qc.invalidateQueries(['hr_payroll_items', payroll?.id])
+    toast.success('Marked as paid')
+  }
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="px-4 py-2 shrink-0 space-y-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <select className="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none"
+            value={month} onChange={e => setMonth(Number(e.target.value))}>
+            {MONTHS.map((m, i) => <option key={i} value={i+1}>{m}</option>)}
+          </select>
+          <select className="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none"
+            value={year} onChange={e => setYear(Number(e.target.value))}>
+            {[2024,2025,2026,2027].map(y => <option key={y} value={y}>{y}</option>)}
+          </select>
+          <span className={`text-xs px-2.5 py-1 rounded-full border font-medium
+            ${!payroll ? 'border-dark-600 text-slate-500 bg-dark-700'
+              : payroll.status === 'paid' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-700/40'
+              : payroll.status === 'processed' ? 'bg-blue-500/10 text-blue-400 border-blue-700/40'
+              : 'bg-yellow-500/10 text-yellow-400 border-yellow-700/40'}`}>
+            {payroll?.status || 'Not processed'}
+          </span>
+          <button onClick={processPayroll} disabled={processing}
+            className="ml-auto btn-primary text-xs px-3 py-2 flex items-center gap-1.5">
+            {processing ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />Processing…</>
+              : <><BarChart2 className="w-3.5 h-3.5" />{payroll ? 'Re-process' : 'Process Payroll'}</>}
+          </button>
+        </div>
+
+        {payroll && (
+          <div className="grid grid-cols-3 gap-2">
+            {[
+              { label: 'Gross',      value: payroll.total_gross,       cls: 'text-primary-400' },
+              { label: 'Deductions', value: payroll.total_deductions,  cls: 'text-red-400' },
+              { label: 'Net Pay',    value: payroll.total_net,         cls: 'text-emerald-400' },
+            ].map(c => (
+              <div key={c.label} className="bg-dark-700 rounded-xl px-3 py-2.5 text-center">
+                <p className="text-xs text-slate-400">{c.label}</p>
+                <p className={`text-sm font-bold ${c.cls}`}>₹{Number(c.value || 0).toLocaleString('en-IN')}</p>
+              </div>
+            ))}
+          </div>
+        )}
+        {payroll && (
+          <p className="text-xs text-slate-500">
+            PF Employer: ₹{Number(payroll.total_pf_employer || 0).toLocaleString('en-IN')} · ESI Employer: ₹{Number(payroll.total_esi_employer || 0).toLocaleString('en-IN')}
+          </p>
+        )}
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-4 pb-4">
+        {!payroll ? (
+          <div className="flex flex-col items-center justify-center py-16 gap-2 text-center">
+            <Banknote className="w-10 h-10 text-slate-600" />
+            <p className="text-slate-400">No payroll for {MONTHS[month-1]} {year}</p>
+            <p className="text-xs text-slate-500">Click "Process Payroll" to calculate from attendance</p>
+          </div>
+        ) : payrollItems.length === 0 ? (
+          <div className="flex items-center justify-center py-10"><Loader2 className="w-5 h-5 text-primary-400 animate-spin" /></div>
+        ) : (
+          <div className="space-y-2">
+            {payrollItems.map(item => {
+              const emp = item.hr_employees
+              return (
+                <div key={item.id} className="bg-dark-800 border border-dark-700 rounded-xl p-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex-1 min-w-0">
+                      <p className="font-semibold text-slate-100 text-sm truncate">{emp?.name}</p>
+                      <p className="text-xs text-slate-500">{emp?.employee_number} · {emp?.designation}</p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="font-bold text-emerald-400 text-sm">₹{Number(item.net_pay).toLocaleString('en-IN')}</p>
+                      <p className="text-xs text-slate-500">Net Pay</p>
+                    </div>
+                  </div>
+                  <div className="mt-2 grid grid-cols-3 gap-x-4 gap-y-1 text-xs text-slate-400">
+                    <span>Present: <strong className="text-slate-200">{item.days_present}</strong></span>
+                    <span>Absent: <strong className="text-red-400">{item.days_absent}</strong></span>
+                    <span>Leave: <strong className="text-blue-400">{item.days_leave}</strong></span>
+                    <span>Gross: ₹{Number(item.gross_pay).toLocaleString('en-IN')}</span>
+                    <span>PF: ₹{Number(item.pf_employee).toLocaleString('en-IN')}</span>
+                    <span>PT: ₹{Number(item.professional_tax).toLocaleString('en-IN')}</span>
+                  </div>
+                  <div className="mt-2 flex items-center justify-between">
+                    <span className={`text-xs px-2 py-0.5 rounded-full border font-medium
+                      ${item.payment_status === 'paid' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-700/40' : 'bg-yellow-500/10 text-yellow-400 border-yellow-700/40'}`}>
+                      {item.payment_status === 'paid' ? '✓ Paid' : 'Pending'}
+                    </span>
+                    <div className="flex items-center gap-2">
+                      {item.payment_status !== 'paid' && (
+                        <button onClick={() => markPaid(item.id)}
+                          className="text-xs px-3 py-1 rounded-lg bg-emerald-600/20 border border-emerald-700/40 text-emerald-400 hover:bg-emerald-600/30 flex items-center gap-1">
+                          <CheckCircle className="w-3 h-3" /> Mark Paid
+                        </button>
+                      )}
+                      {item.payment_date && <span className="text-xs text-slate-500">{format(parseISO(item.payment_date), 'dd MMM yyyy')}</span>}
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── Leaves Tab ────────────────────────────────────────────────────────────────
+function LeavesTab({ companyId }) {
+  const qc = useQueryClient()
+  const { role } = useAuth()
+  const isAdmin = ['admin', 'superadmin', 'manager'].includes(role)
+  const [showAdd, setShowAdd]         = useState(false)
+  const [selectedEmp, setSelectedEmp] = useState('')
+  const [leaveForm, setLeaveForm]     = useState({ leave_type: 'casual', from_date: '', to_date: '', reason: '' })
+  const [saving, setSaving]           = useState(false)
+
+  const { data: employees = [] } = useQuery({
+    queryKey: ['hr_employees_active', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('hr_employees').select('id, name, employee_number')
+        .eq('company_id', companyId).eq('status', 'active').order('name')
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+
+  const { data: leaves = [], isLoading } = useQuery({
+    queryKey: ['hr_leaves', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('hr_leaves')
+        .select('*, hr_employees(name, employee_number)')
+        .eq('company_id', companyId).order('created_at', { ascending: false }).limit(100)
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+
+  const calcDays = (from, to) => {
+    if (!from || !to) return 0
+    return Math.max(0, Math.ceil((new Date(to) - new Date(from)) / (1000 * 60 * 60 * 24)) + 1)
+  }
+
+  const handleApply = async () => {
+    if (!selectedEmp)         { toast.error('Select employee'); return }
+    if (!leaveForm.from_date) { toast.error('Select from date'); return }
+    if (!leaveForm.to_date)   { toast.error('Select to date'); return }
+    const days = calcDays(leaveForm.from_date, leaveForm.to_date)
+    setSaving(true)
+    try {
+      const { error } = await supabase.from('hr_leaves').insert({
+        company_id: companyId, employee_id: selectedEmp,
+        leave_type: leaveForm.leave_type, from_date: leaveForm.from_date,
+        to_date: leaveForm.to_date, days, reason: leaveForm.reason || null, status: 'pending',
+      })
+      if (error) throw error
+      toast.success('Leave applied')
+      qc.invalidateQueries(['hr_leaves', companyId])
+      setShowAdd(false)
+      setLeaveForm({ leave_type: 'casual', from_date: '', to_date: '', reason: '' })
+      setSelectedEmp('')
+    } catch (err) { toast.error(err.message || 'Failed') } finally { setSaving(false) }
+  }
+
+  const updateStatus = async (id, status) => {
+    await supabase.from('hr_leaves').update({ status, approved_at: new Date().toISOString() }).eq('id', id)
+    qc.invalidateQueries(['hr_leaves', companyId])
+    toast.success(status === 'approved' ? 'Approved' : 'Rejected')
+  }
+
+  const statusCls = {
+    pending:  'text-yellow-400 bg-yellow-500/10 border-yellow-700/40',
+    approved: 'text-emerald-400 bg-emerald-500/10 border-emerald-700/40',
+    rejected: 'text-red-400 bg-red-500/10 border-red-700/40',
+  }
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="px-4 py-2 shrink-0 flex items-center justify-between">
+        <p className="text-xs text-slate-400">{leaves.filter(l => l.status === 'pending').length} pending approval</p>
+        <button onClick={() => setShowAdd(v => !v)} className="btn-primary text-xs px-3 py-2 flex items-center gap-1.5">
+          <Plus className="w-3.5 h-3.5" /> Apply Leave
+        </button>
+      </div>
+
+      {showAdd && (
+        <div className="mx-4 mb-2 bg-dark-800 border border-dark-600 rounded-xl p-3 space-y-2.5 shrink-0">
+          <p className="text-xs font-semibold text-slate-300">New Leave Request</p>
+          <Field label="Employee" required>
+            <select className={inp()} value={selectedEmp} onChange={e => setSelectedEmp(e.target.value)}>
+              <option value="">Select employee…</option>
+              {employees.map(e => <option key={e.id} value={e.id}>{e.name} ({e.employee_number})</option>)}
+            </select>
+          </Field>
+          <Field label="Leave Type">
+            <select className={inp()} value={leaveForm.leave_type} onChange={e => setLeaveForm(p => ({ ...p, leave_type: e.target.value }))}>
+              {LEAVE_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+            </select>
+          </Field>
+          <div className="grid grid-cols-2 gap-2">
+            <Field label="From"><input type="date" className={inp()} value={leaveForm.from_date} onChange={e => setLeaveForm(p => ({ ...p, from_date: e.target.value }))} /></Field>
+            <Field label="To"><input type="date" className={inp()} value={leaveForm.to_date} onChange={e => setLeaveForm(p => ({ ...p, to_date: e.target.value }))} /></Field>
+          </div>
+          {leaveForm.from_date && leaveForm.to_date && (
+            <p className="text-xs text-primary-400">{calcDays(leaveForm.from_date, leaveForm.to_date)} day(s)</p>
+          )}
+          <Field label="Reason">
+            <textarea className={inp('resize-none')} rows={2} value={leaveForm.reason}
+              onChange={e => setLeaveForm(p => ({ ...p, reason: e.target.value }))} placeholder="Reason…" />
+          </Field>
+          <div className="flex gap-2">
+            <button onClick={() => setShowAdd(false)} className="flex-1 btn-secondary text-xs">Cancel</button>
+            <button onClick={handleApply} disabled={saving} className="flex-1 btn-primary text-xs flex items-center justify-center gap-1">
+              {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Apply'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="flex-1 overflow-y-auto px-4 pb-4">
+        {isLoading ? (
+          <div className="flex items-center justify-center py-16"><Loader2 className="w-6 h-6 text-primary-400 animate-spin" /></div>
+        ) : leaves.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 gap-2">
+            <Calendar className="w-10 h-10 text-slate-600" />
+            <p className="text-slate-400">No leave requests yet</p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {leaves.map(l => {
+              const lt = LEAVE_TYPES.find(t => t.value === l.leave_type)
+              return (
+                <div key={l.id} className="bg-dark-800 border border-dark-700 rounded-xl p-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex-1 min-w-0">
+                      <p className="font-semibold text-slate-100 text-sm truncate">{l.hr_employees?.name}</p>
+                      <p className={`text-xs font-medium ${lt?.color}`}>{lt?.label}</p>
+                    </div>
+                    <span className={`shrink-0 text-xs px-2 py-0.5 rounded-full border font-medium ${statusCls[l.status]}`}>{l.status}</span>
+                  </div>
+                  <div className="mt-1.5 text-xs text-slate-400 flex items-center gap-3 flex-wrap">
+                    <span>{format(parseISO(l.from_date), 'dd MMM')} → {format(parseISO(l.to_date), 'dd MMM yyyy')}</span>
+                    <span className="font-medium text-slate-200">{l.days} day{l.days > 1 ? 's' : ''}</span>
+                  </div>
+                  {l.reason && <p className="text-xs text-slate-500 mt-1">{l.reason}</p>}
+                  {isAdmin && l.status === 'pending' && (
+                    <div className="flex gap-2 mt-2">
+                      <button onClick={() => updateStatus(l.id, 'approved')}
+                        className="flex-1 text-xs py-1.5 rounded-lg bg-emerald-600/20 border border-emerald-700/40 text-emerald-400 hover:bg-emerald-600/30">
+                        ✓ Approve
+                      </button>
+                      <button onClick={() => updateStatus(l.id, 'rejected')}
+                        className="flex-1 text-xs py-1.5 rounded-lg bg-red-600/10 border border-red-700/30 text-red-400 hover:bg-red-600/20">
+                        ✗ Reject
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── Main HRPage ───────────────────────────────────────────────────────────────
+export default function HRPage() {
+  const { companyId } = useAuth()
+  const [activeTab, setActiveTab] = useState('employees')
+  const [showAdd, setShowAdd] = useState(false)
+
+  const { data: empCount = 0 } = useQuery({
+    queryKey: ['hr_emp_count', companyId],
+    queryFn: async () => {
+      const { count } = await supabase.from('hr_employees').select('*', { count: 'exact', head: true })
+        .eq('company_id', companyId).eq('status', 'active')
+      return count || 0
+    },
+    enabled: !!companyId,
+  })
+
+  const tabs = [
+    { id: 'employees',  label: 'Employees',  icon: Users },
+    { id: 'attendance', label: 'Attendance', icon: CheckCircle },
+    { id: 'payroll',    label: 'Payroll',    icon: Banknote },
+    { id: 'leaves',     label: 'Leaves',     icon: Calendar },
+  ]
+
+  return (
+    <div className="flex flex-col h-full bg-dark-900">
+      <div className="px-4 pt-4 pb-2 shrink-0 flex items-center justify-between">
+        <div>
+          <h1 className="text-lg font-bold text-slate-100">Employee Management</h1>
+          <p className="text-xs text-slate-400">{empCount} active · Attendance · Payroll · Leaves</p>
+        </div>
+        {activeTab === 'employees' && (
+          <button onClick={() => setShowAdd(true)} className="btn-primary flex items-center gap-1.5 text-sm px-3 py-2">
+            <Plus className="w-4 h-4" /> Add Employee
+          </button>
+        )}
+      </div>
+
+      <div className="flex border-b border-dark-700 shrink-0 px-2 overflow-x-auto">
+        {tabs.map(t => {
+          const Icon = t.icon
+          return (
+            <button key={t.id} onClick={() => setActiveTab(t.id)}
+              className={`shrink-0 flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium border-b-2 transition-colors
+                ${activeTab === t.id ? 'border-primary-500 text-primary-400' : 'border-transparent text-slate-500 hover:text-slate-300'}`}>
+              <Icon className="w-3.5 h-3.5" />{t.label}
+            </button>
+          )
+        })}
+      </div>
+
+      <div className="flex-1 overflow-hidden">
+        {activeTab === 'employees'  && <EmployeesTab  companyId={companyId} />}
+        {activeTab === 'attendance' && <AttendanceTab companyId={companyId} />}
+        {activeTab === 'payroll'    && <PayrollTab    companyId={companyId} />}
+        {activeTab === 'leaves'     && <LeavesTab     companyId={companyId} />}
+      </div>
+
+      {showAdd && <EmployeeFormModal companyId={companyId} onClose={() => setShowAdd(false)} />}
     </div>
   )
 }
