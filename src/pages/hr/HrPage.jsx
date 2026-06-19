@@ -44,6 +44,45 @@ const ATTENDANCE_STATUS = [
   { value: 'holiday',  full: 'Holiday',   cls: 'bg-purple-500/20 text-purple-400 border-purple-700/40' },
 ]
 
+const WAGE_CATEGORIES = [
+  { value: 'unskilled',      label: 'Unskilled' },
+  { value: 'semi_skilled',   label: 'Semi-skilled' },
+  { value: 'skilled',        label: 'Skilled' },
+  { value: 'highly_skilled', label: 'Highly Skilled' },
+  { value: 'supervisory',    label: 'Supervisory / Clerical' },
+]
+
+// ── Labour law helpers ────────────────────────────────────────────────────────
+// Child Labour (Prohibition & Regulation) Act + BOCW Act: min 18 yrs for construction
+function calcAge(dob) {
+  if (!dob) return null
+  const today = new Date()
+  const birth = new Date(dob)
+  let age = today.getFullYear() - birth.getFullYear()
+  const m = today.getMonth() - birth.getMonth()
+  if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) age--
+  return age
+}
+
+// Years of service from joining date
+function yearsOfService(joiningDate) {
+  if (!joiningDate) return 0
+  return (new Date() - new Date(joiningDate)) / (365.25 * 24 * 60 * 60 * 1000)
+}
+
+// Payment of Gratuity Act, 1972: eligible after 5 years, 15/26 × basic × years
+function calcGratuity(joiningDate, basicSalary) {
+  const yrs = yearsOfService(joiningDate)
+  if (yrs < 5) return null
+  return Math.round((Number(basicSalary || 0) * 15 / 26) * Math.floor(yrs))
+}
+
+// Payment of Bonus Act, 1965: min 8.33% on wage base ≤ ₹7,000 if gross ≤ ₹21,000
+function calcMinBonus(basicOrRate) {
+  const base = Math.min(Number(basicOrRate || 0), 7000)
+  return Math.round(base * 0.0833)
+}
+
 function calcPT(grossMonthly) {
   if (grossMonthly <= 21000) return 0
   if (grossMonthly <= 30000) return 135
@@ -110,6 +149,8 @@ function EmployeeFormModal({ companyId, initialValues, onClose }) {
     bank_account: '', bank_name: '', ifsc_code: '',
     uan_number: '', esi_number: '',
     pf_applicable: false, esi_applicable: false, pt_applicable: true,
+    bonus_applicable: false, gratuity_applicable: true,
+    bocw_number: '', min_wage_category: 'unskilled',
     notes: '',
     basic_salary: '', hra: '', special_allowance: '', other_allowance: '',
     daily_rate: '',
@@ -126,6 +167,13 @@ function EmployeeFormModal({ companyId, initialValues, onClose }) {
 
   const handleSave = async () => {
     if (!form.name.trim()) { toast.error('Name is required'); return }
+    if (form.date_of_birth) {
+      const age = calcAge(form.date_of_birth)
+      if (age < 18) {
+        toast.error(`Age ${age} — minimum age is 18 years (Child Labour Act / BOCW Act)`)
+        return
+      }
+    }
     setSaving(true)
     try {
       let empNumber = form.employee_number
@@ -147,7 +195,10 @@ function EmployeeFormModal({ companyId, initialValues, onClose }) {
         ifsc_code: form.ifsc_code || null,
         uan_number: form.uan_number || null, esi_number: form.esi_number || null,
         pf_applicable: form.pf_applicable, esi_applicable: form.esi_applicable,
-        pt_applicable: form.pt_applicable, notes: form.notes || null,
+        pt_applicable: form.pt_applicable,
+        bonus_applicable: form.bonus_applicable, gratuity_applicable: form.gratuity_applicable,
+        bocw_number: form.bocw_number || null, min_wage_category: form.min_wage_category || 'unskilled',
+        notes: form.notes || null,
       }
 
       let empId = initialValues?.id
@@ -233,6 +284,20 @@ function EmployeeFormModal({ companyId, initialValues, onClose }) {
           </div>
         </Field>
 
+        {/* Employee Number */}
+        {isEdit && form.employee_number && (
+          <div className="bg-primary-900/20 border border-primary-700/30 rounded-xl px-3 py-2 flex items-center justify-between">
+            <span className="text-xs text-slate-400">Employee Number</span>
+            <span className="font-mono font-bold text-primary-300 text-sm">{form.employee_number}</span>
+          </div>
+        )}
+        {!isEdit && (
+          <div className="bg-dark-700 border border-dark-600 rounded-xl px-3 py-2 flex items-center justify-between">
+            <span className="text-xs text-slate-400">Employee Number</span>
+            <span className="text-xs text-slate-500 italic">Auto-assigned on save (e.g. EMP-001)</span>
+          </div>
+        )}
+
         <div className="grid grid-cols-2 gap-3">
           <Field label="Full Name" required>
             <input className={inp()} value={form.name} onChange={e => set('name', e.target.value)} placeholder="Employee full name" />
@@ -266,6 +331,12 @@ function EmployeeFormModal({ companyId, initialValues, onClose }) {
           </Field>
           <Field label="Date of Birth">
             <input type="date" className={inp()} value={form.date_of_birth} onChange={e => set('date_of_birth', e.target.value)} />
+            {form.date_of_birth && (() => {
+              const age = calcAge(form.date_of_birth)
+              return age < 18
+                ? <p className="text-xs text-red-400 mt-1">⚠ Age {age} — must be 18+ (BOCW Act)</p>
+                : <p className="text-xs text-slate-500 mt-1">Age: {age} years</p>
+            })()}
           </Field>
         </div>
 
@@ -377,9 +448,11 @@ function EmployeeFormModal({ companyId, initialValues, onClose }) {
         <SectionHeader label="Statutory Deductions" icon={FileText} />
         <div className="space-y-2">
           {[
-            { key: 'pf_applicable',  label: 'PF Applicable',               desc: '12% employee + 12% employer on basic' },
-            { key: 'esi_applicable', label: 'ESI Applicable',              desc: '0.75% + 3.25% employer (gross ≤ ₹21,000)' },
-            { key: 'pt_applicable',  label: 'Professional Tax Applicable',  desc: 'Slab-based monthly deduction' },
+            { key: 'pf_applicable',       label: 'PF Applicable',                desc: '12% employee + 12% employer on basic (EPF Act 1952)' },
+            { key: 'esi_applicable',      label: 'ESI Applicable',               desc: '0.75% employee + 3.25% employer (gross ≤ ₹21,000)' },
+            { key: 'pt_applicable',       label: 'Professional Tax Applicable',   desc: 'Slab-based monthly deduction' },
+            { key: 'bonus_applicable',    label: 'Bonus Applicable',             desc: 'Payment of Bonus Act — min 8.33% (gross ≤ ₹21,000)' },
+            { key: 'gratuity_applicable', label: 'Gratuity Applicable',          desc: 'Payment of Gratuity Act — eligible after 5 years service' },
           ].map(item => (
             <label key={item.key} className="flex items-center gap-3 bg-dark-700 rounded-xl px-3 py-2.5 cursor-pointer">
               <input type="checkbox" checked={form[item.key]} onChange={e => set(item.key, e.target.checked)}
@@ -390,6 +463,21 @@ function EmployeeFormModal({ companyId, initialValues, onClose }) {
               </div>
             </label>
           ))}
+        </div>
+
+        <SectionHeader label="BOCW & Wage Category" />
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="BOCW Registration No." hint="Building & Other Construction Workers Act, 1996">
+            <input className={inp()} value={form.bocw_number} onChange={e => set('bocw_number', e.target.value)} placeholder="BOCW Reg. number" />
+          </Field>
+          <Field label="Wage Category" hint="For minimum wage compliance tracking">
+            <select className={inp()} value={form.min_wage_category} onChange={e => set('min_wage_category', e.target.value)}>
+              {WAGE_CATEGORIES.map(w => <option key={w.value} value={w.value}>{w.label}</option>)}
+            </select>
+          </Field>
+        </div>
+        <div className="bg-yellow-900/20 border border-yellow-700/30 rounded-xl px-3 py-2 text-xs text-yellow-400">
+          ⚠ Verify current minimum wages for your state from the Labour Department website — rates change periodically.
         </div>
 
         <SectionHeader label="Government IDs" icon={CreditCard} />
@@ -511,10 +599,50 @@ function EmployeeDetailModal({ emp, companyId, onClose, onEdit }) {
       <div className="flex gap-2 flex-wrap">
         <span className={`text-xs px-2 py-1 rounded-full border ${emp.status === 'active' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-700/40' : 'bg-dark-700 text-slate-500 border-dark-600'}`}>{emp.status}</span>
         <span className="text-xs px-2 py-1 rounded-full border border-dark-600 bg-dark-700 text-slate-400">{typeInfo?.icon} {typeInfo?.label}</span>
-        {emp.pf_applicable  && <span className="text-xs bg-blue-900/20 border border-blue-700/30 text-blue-400 px-2 py-0.5 rounded-full">PF</span>}
-        {emp.esi_applicable && <span className="text-xs bg-blue-900/20 border border-blue-700/30 text-blue-400 px-2 py-0.5 rounded-full">ESI</span>}
-        {emp.pt_applicable  && <span className="text-xs bg-blue-900/20 border border-blue-700/30 text-blue-400 px-2 py-0.5 rounded-full">PT</span>}
+        {emp.pf_applicable       && <span className="text-xs bg-blue-900/20 border border-blue-700/30 text-blue-400 px-2 py-0.5 rounded-full">PF</span>}
+        {emp.esi_applicable      && <span className="text-xs bg-blue-900/20 border border-blue-700/30 text-blue-400 px-2 py-0.5 rounded-full">ESI</span>}
+        {emp.pt_applicable       && <span className="text-xs bg-blue-900/20 border border-blue-700/30 text-blue-400 px-2 py-0.5 rounded-full">PT</span>}
+        {emp.bonus_applicable    && <span className="text-xs bg-emerald-900/20 border border-emerald-700/30 text-emerald-400 px-2 py-0.5 rounded-full">Bonus</span>}
+        {emp.gratuity_applicable && <span className="text-xs bg-purple-900/20 border border-purple-700/30 text-purple-400 px-2 py-0.5 rounded-full">Gratuity</span>}
       </div>
+
+      {/* Service & Compliance info */}
+      {emp.joining_date && (() => {
+        const yrs = yearsOfService(emp.joining_date)
+        const completedYrs = Math.floor(yrs)
+        return (
+          <div className="bg-dark-700 rounded-xl px-3 py-2.5 space-y-1 text-xs">
+            <div className="flex justify-between">
+              <span className="text-slate-400">Years of Service</span>
+              <span className="text-slate-200 font-medium">{completedYrs} yr{completedYrs !== 1 ? 's' : ''} {Math.round((yrs % 1) * 12)} mo</span>
+            </div>
+            {emp.gratuity_applicable && yrs >= 5 && salary && (
+              <div className="flex justify-between border-t border-dark-600 pt-1">
+                <span className="text-purple-400">Gratuity Liability</span>
+                <span className="text-purple-300 font-semibold">₹{calcGratuity(emp.joining_date, salary?.basic_salary || 0)?.toLocaleString('en-IN')}</span>
+              </div>
+            )}
+            {emp.gratuity_applicable && yrs < 5 && (
+              <div className="flex justify-between text-slate-500">
+                <span>Gratuity eligible in</span>
+                <span>{Math.ceil(5 - yrs)} yr(s)</span>
+              </div>
+            )}
+            {emp.bocw_number && (
+              <div className="flex justify-between border-t border-dark-600 pt-1">
+                <span className="text-slate-400">BOCW No.</span>
+                <span className="text-slate-200">{emp.bocw_number}</span>
+              </div>
+            )}
+            {emp.min_wage_category && (
+              <div className="flex justify-between">
+                <span className="text-slate-400">Wage Category</span>
+                <span className="text-slate-200 capitalize">{emp.min_wage_category.replace('_', ' ')}</span>
+              </div>
+            )}
+          </div>
+        )
+      })()}
 
       {[
         { label: 'Phone',        value: emp.phone },
