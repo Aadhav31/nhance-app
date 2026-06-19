@@ -932,13 +932,131 @@ function AttendanceTab({ companyId }) {
   )
 }
 
+// ── Payslip Modal ─────────────────────────────────────────────────────────────
+function PayslipModal({ item, month, year, onClose }) {
+  const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December']
+  const emp    = item.hr_employees
+  const basic  = Number(item.basic_earned || 0)
+  const hra    = Number(item.hra_earned || 0)
+  const allow  = Number(item.allowances_earned || 0)
+  const ot     = Number(item.ot_amount || 0)
+  const gross  = Number(item.gross_pay || 0)
+  const pfEmp  = Number(item.pf_employee || 0)
+  const esiEmp = Number(item.esi_employee || 0)
+  const pt     = Number(item.professional_tax || 0)
+  const totDed = Number(item.total_deductions || 0)
+  const net    = Number(item.net_pay || 0)
+  const pfEr   = Number(item.pf_employer || 0)
+  const esiEr  = Number(item.esi_employer || 0)
+
+  // Employer PF breakdown: EPS (8.33% capped ₹1,250) + EPF (3.67%) + EDLI (0.5%)
+  const eps  = Math.min(Math.round(basic * 0.0833), 1250)
+  const edli = Math.round(basic * 0.005)
+  const epf  = Math.max(0, pfEr - eps - edli)
+  const fmt  = n => Number(n || 0).toLocaleString('en-IN')
+
+  return (
+    <Modal title="Payslip" onClose={onClose}>
+      <div className="bg-dark-700 rounded-xl px-3 py-2.5">
+        <p className="font-bold text-slate-100">{emp?.name}</p>
+        <p className="text-xs text-slate-400 mt-0.5">{emp?.employee_number} · {emp?.designation || '—'}</p>
+        <p className="text-xs text-slate-500">{MONTH_NAMES[month - 1]} {year}</p>
+      </div>
+
+      <div className="grid grid-cols-3 gap-2 text-xs text-center">
+        {[
+          { label: 'Present', val: item.days_present, cls: 'text-emerald-400' },
+          { label: 'Absent',  val: item.days_absent,  cls: 'text-red-400'     },
+          { label: 'Leave',   val: item.days_leave,   cls: 'text-blue-400'    },
+        ].map(c => (
+          <div key={c.label} className="bg-dark-700 rounded-xl py-2.5">
+            <p className="text-slate-400 mb-0.5">{c.label}</p>
+            <p className={`font-bold text-base ${c.cls}`}>{c.val}</p>
+          </div>
+        ))}
+      </div>
+
+      <SectionHeader label="Earnings" />
+      <div className="space-y-1.5 text-xs">
+        {basic > 0 && <div className="flex justify-between"><span className="text-slate-400">Basic / Wage</span><span className="text-slate-200">₹{fmt(basic)}</span></div>}
+        {hra   > 0 && <div className="flex justify-between"><span className="text-slate-400">HRA</span><span className="text-slate-200">₹{fmt(hra)}</span></div>}
+        {allow > 0 && <div className="flex justify-between"><span className="text-slate-400">Allowances</span><span className="text-slate-200">₹{fmt(allow)}</span></div>}
+        {ot    > 0 && (
+          <div className="flex justify-between">
+            <span className="text-orange-400">Overtime ({Number(item.ot_hours || 0)} hrs)</span>
+            <span className="text-orange-300">₹{fmt(ot)}</span>
+          </div>
+        )}
+        <div className="flex justify-between font-semibold border-t border-dark-600 pt-1.5">
+          <span className="text-slate-300">Gross Pay</span>
+          <span className="text-primary-400">₹{fmt(gross)}</span>
+        </div>
+      </div>
+
+      <SectionHeader label="Deductions (Employee)" />
+      <div className="space-y-1.5 text-xs">
+        {pfEmp  > 0 && <div className="flex justify-between"><span className="text-slate-400">Provident Fund — EPF (12%)</span><span className="text-red-400">−₹{fmt(pfEmp)}</span></div>}
+        {esiEmp > 0 && <div className="flex justify-between"><span className="text-slate-400">ESI (0.75% of gross)</span><span className="text-red-400">−₹{fmt(esiEmp)}</span></div>}
+        {pt     > 0 && <div className="flex justify-between"><span className="text-slate-400">Professional Tax</span><span className="text-red-400">−₹{fmt(pt)}</span></div>}
+        {totDed === 0
+          ? <p className="text-slate-500 italic">No statutory deductions applicable</p>
+          : <div className="flex justify-between font-semibold border-t border-dark-600 pt-1.5">
+              <span className="text-slate-300">Total Deductions</span>
+              <span className="text-red-400">−₹{fmt(totDed)}</span>
+            </div>}
+      </div>
+
+      <div className="bg-emerald-900/20 border border-emerald-700/30 rounded-xl px-4 py-3 flex items-center justify-between">
+        <div>
+          <p className="text-xs text-slate-400 mb-0.5">Net Take-Home Pay</p>
+          <p className="text-[10px] text-slate-500">After all deductions</p>
+        </div>
+        <p className="font-bold text-emerald-400 text-xl">₹{fmt(net)}</p>
+      </div>
+
+      {(pfEr > 0 || esiEr > 0) && (<>
+        <SectionHeader label="Employer Contributions (not deducted from salary)" />
+        <div className="bg-dark-700 border border-dark-600 rounded-xl p-3 space-y-1.5 text-xs">
+          {pfEr > 0 && (<>
+            <div className="flex justify-between"><span className="text-slate-400">EPF Employer (3.67% of basic)</span><span className="text-slate-200">₹{fmt(epf)}</span></div>
+            <div className="flex justify-between"><span className="text-slate-400">EPS — Pension (8.33%, cap ₹1,250)</span><span className="text-slate-200">₹{fmt(eps)}</span></div>
+            <div className="flex justify-between"><span className="text-slate-400">EDLI — Insurance (0.5%)</span><span className="text-slate-200">₹{fmt(edli)}</span></div>
+          </>)}
+          {esiEr > 0 && <div className="flex justify-between"><span className="text-slate-400">ESI Employer (3.25% of gross)</span><span className="text-slate-200">₹{fmt(esiEr)}</span></div>}
+          <div className="flex justify-between font-semibold border-t border-dark-600 pt-1.5">
+            <span className="text-slate-300">Total Cost to Company</span>
+            <span className="text-purple-400">₹{fmt(gross + pfEr + esiEr)}</span>
+          </div>
+        </div>
+        <p className="text-[10px] text-slate-500 leading-relaxed">
+          Employer PF/ESI contributions are remitted separately to EPFO/ESIC — not deducted from employee salary.
+        </p>
+      </>)}
+
+      <div className="flex items-center justify-between text-xs pt-1">
+        <span className="text-slate-400">Payment Status</span>
+        <span className={`px-2.5 py-1 rounded-full border font-medium
+          ${item.payment_status === 'paid'
+            ? 'bg-emerald-500/10 text-emerald-400 border-emerald-700/40'
+            : 'bg-yellow-500/10 text-yellow-400 border-yellow-700/40'}`}>
+          {item.payment_status === 'paid'
+            ? `✓ Paid${item.payment_date ? ` on ${format(parseISO(item.payment_date), 'dd MMM yyyy')}` : ''}`
+            : 'Pending'}
+        </span>
+      </div>
+    </Modal>
+  )
+}
+
 // ── Payroll Tab ────────────────────────────────────────────────────────────────
 function PayrollTab({ companyId }) {
   const qc = useQueryClient()
   const now = new Date()
-  const [month, setMonth] = useState(now.getMonth() + 1)
-  const [year,  setYear]  = useState(now.getFullYear())
+  const [month, setMonth]           = useState(now.getMonth() + 1)
+  const [year,  setYear]            = useState(now.getFullYear())
   const [processing, setProcessing] = useState(false)
+  const [markingAll, setMarkingAll] = useState(false)
+  const [payslipItem, setPayslipItem] = useState(null)
 
   const { data: payroll } = useQuery({
     queryKey: ['hr_payroll', companyId, month, year],
@@ -1018,13 +1136,20 @@ function PayrollTab({ companyId }) {
 
         const otAmount    = Math.round(otHours * Number(sal.ot_rate_per_hour || 0))
         const grossPay    = basicEarned + hraEarned + allowancesEarned + otAmount
+
+        // Employee deductions
         const pfEmployee  = emp.pf_applicable ? Math.round(basicEarned * 0.12) : 0
-        const pfEmployer  = emp.pf_applicable ? Math.round(basicEarned * 0.12) : 0
         const esiEmployee = emp.esi_applicable && grossPay <= 21000 ? Math.round(grossPay * 0.0075) : 0
-        const esiEmployer = emp.esi_applicable && grossPay <= 21000 ? Math.round(grossPay * 0.0325) : 0
         const pt          = emp.pt_applicable ? calcPT(grossPay) : 0
         const totalDeductions = pfEmployee + esiEmployee + pt
         const netPay = grossPay - totalDeductions
+
+        // Employer contributions (EPF Act): EPS 8.33% (cap ₹1,250) + EPF 3.67% + EDLI 0.5%
+        const epsContrib  = emp.pf_applicable ? Math.min(Math.round(basicEarned * 0.0833), 1250) : 0
+        const epfEmployer = emp.pf_applicable ? Math.round(basicEarned * 0.0367) : 0
+        const edliContrib = emp.pf_applicable ? Math.round(basicEarned * 0.005) : 0
+        const pfEmployer  = epsContrib + epfEmployer + edliContrib
+        const esiEmployer = emp.esi_applicable && grossPay <= 21000 ? Math.round(grossPay * 0.0325) : 0
 
         totalGross += grossPay; totalDed += totalDeductions; totalNet += netPay
         totalPfEmp += pfEmployer; totalEsiEmp += esiEmployer
@@ -1064,9 +1189,32 @@ function PayrollTab({ companyId }) {
     toast.success('Marked as paid')
   }
 
+  const markAllPaid = async () => {
+    const unpaid = payrollItems.filter(i => i.payment_status !== 'paid')
+    if (!unpaid.length) { toast('All already paid'); return }
+    setMarkingAll(true)
+    const today = new Date().toISOString().split('T')[0]
+    for (const item of unpaid) {
+      await supabase.from('hr_payroll_items').update({
+        payment_status: 'paid', payment_date: today,
+      }).eq('id', item.id)
+    }
+    qc.invalidateQueries(['hr_payroll_items', payroll?.id])
+    toast.success(`${unpaid.length} employee${unpaid.length > 1 ? 's' : ''} marked paid`)
+    setMarkingAll(false)
+  }
+
+  const totalCost = Number(payroll?.total_gross || 0)
+    + Number(payroll?.total_pf_employer || 0)
+    + Number(payroll?.total_esi_employer || 0)
+  const paidCount   = payrollItems.filter(i => i.payment_status === 'paid').length
+  const pendingCount = payrollItems.length - paidCount
+  const fmt = n => Number(n || 0).toLocaleString('en-IN')
+
   return (
     <div className="flex flex-col h-full">
       <div className="px-4 py-2 shrink-0 space-y-2">
+        {/* Month / Year / Status / Actions */}
         <div className="flex items-center gap-2 flex-wrap">
           <select className="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none"
             value={month} onChange={e => setMonth(Number(e.target.value))}>
@@ -1083,32 +1231,54 @@ function PayrollTab({ companyId }) {
               : 'bg-yellow-500/10 text-yellow-400 border-yellow-700/40'}`}>
             {payroll?.status || 'Not processed'}
           </span>
-          <button onClick={processPayroll} disabled={processing}
-            className="ml-auto btn-primary text-xs px-3 py-2 flex items-center gap-1.5">
-            {processing ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />Processing…</>
-              : <><BarChart2 className="w-3.5 h-3.5" />{payroll ? 'Re-process' : 'Process Payroll'}</>}
-          </button>
+          <div className="ml-auto flex gap-1.5">
+            {payroll && pendingCount > 0 && (
+              <button onClick={markAllPaid} disabled={markingAll}
+                className="text-xs px-3 py-2 rounded-lg bg-emerald-600/20 border border-emerald-700/40 text-emerald-400 hover:bg-emerald-600/30 flex items-center gap-1.5">
+                {markingAll ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle className="w-3.5 h-3.5" />}
+                Pay All ({pendingCount})
+              </button>
+            )}
+            <button onClick={processPayroll} disabled={processing}
+              className="btn-primary text-xs px-3 py-2 flex items-center gap-1.5">
+              {processing ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />Processing…</>
+                : <><BarChart2 className="w-3.5 h-3.5" />{payroll ? 'Re-process' : 'Process Payroll'}</>}
+            </button>
+          </div>
         </div>
 
-        {payroll && (
+        {/* Summary cards */}
+        {payroll && (<>
           <div className="grid grid-cols-3 gap-2">
             {[
-              { label: 'Gross',      value: payroll.total_gross,       cls: 'text-primary-400' },
-              { label: 'Deductions', value: payroll.total_deductions,  cls: 'text-red-400' },
-              { label: 'Net Pay',    value: payroll.total_net,         cls: 'text-emerald-400' },
+              { label: 'Gross Payable', value: payroll.total_gross,      cls: 'text-primary-400' },
+              { label: 'Deductions',    value: payroll.total_deductions, cls: 'text-red-400'     },
+              { label: 'Net Pay',       value: payroll.total_net,        cls: 'text-emerald-400' },
             ].map(c => (
               <div key={c.label} className="bg-dark-700 rounded-xl px-3 py-2.5 text-center">
                 <p className="text-xs text-slate-400">{c.label}</p>
-                <p className={`text-sm font-bold ${c.cls}`}>₹{Number(c.value || 0).toLocaleString('en-IN')}</p>
+                <p className={`text-sm font-bold ${c.cls}`}>₹{fmt(c.value)}</p>
               </div>
             ))}
           </div>
-        )}
-        {payroll && (
-          <p className="text-xs text-slate-500">
-            PF Employer: ₹{Number(payroll.total_pf_employer || 0).toLocaleString('en-IN')} · ESI Employer: ₹{Number(payroll.total_esi_employer || 0).toLocaleString('en-IN')}
-          </p>
-        )}
+          <div className="grid grid-cols-3 gap-2">
+            {[
+              { label: 'Employer PF',  value: payroll.total_pf_employer,  cls: 'text-blue-400'   },
+              { label: 'Employer ESI', value: payroll.total_esi_employer, cls: 'text-blue-400'   },
+              { label: 'Total CTC',    value: totalCost,                  cls: 'text-purple-400' },
+            ].map(c => (
+              <div key={c.label} className="bg-dark-700 rounded-xl px-3 py-2 text-center">
+                <p className="text-[10px] text-slate-400">{c.label}</p>
+                <p className={`text-xs font-bold ${c.cls}`}>₹{fmt(c.value)}</p>
+              </div>
+            ))}
+          </div>
+          {payrollItems.length > 0 && (
+            <p className="text-xs text-slate-500">
+              {paidCount} paid · {pendingCount} pending · {payrollItems.length} employees
+            </p>
+          )}
+        </>)}
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 pb-4">
@@ -1116,7 +1286,7 @@ function PayrollTab({ companyId }) {
           <div className="flex flex-col items-center justify-center py-16 gap-2 text-center">
             <Banknote className="w-10 h-10 text-slate-600" />
             <p className="text-slate-400">No payroll for {MONTHS[month-1]} {year}</p>
-            <p className="text-xs text-slate-500">Click "Process Payroll" to calculate from attendance</p>
+            <p className="text-xs text-slate-500">Process payroll to auto-calculate from attendance data</p>
           </div>
         ) : payrollItems.length === 0 ? (
           <div className="flex items-center justify-center py-10"><Loader2 className="w-5 h-5 text-primary-400 animate-spin" /></div>
@@ -1124,39 +1294,64 @@ function PayrollTab({ companyId }) {
           <div className="space-y-2">
             {payrollItems.map(item => {
               const emp = item.hr_employees
+              const isPaid = item.payment_status === 'paid'
               return (
-                <div key={item.id} className="bg-dark-800 border border-dark-700 rounded-xl p-3">
+                <div key={item.id} className={`bg-dark-800 border rounded-xl p-3 transition-all
+                  ${isPaid ? 'border-dark-700 opacity-80' : 'border-dark-700 hover:border-dark-600'}`}>
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex-1 min-w-0">
                       <p className="font-semibold text-slate-100 text-sm truncate">{emp?.name}</p>
                       <p className="text-xs text-slate-500">{emp?.employee_number} · {emp?.designation}</p>
                     </div>
                     <div className="text-right shrink-0">
-                      <p className="font-bold text-emerald-400 text-sm">₹{Number(item.net_pay).toLocaleString('en-IN')}</p>
-                      <p className="text-xs text-slate-500">Net Pay</p>
+                      <p className="font-bold text-emerald-400 text-sm">₹{fmt(item.net_pay)}</p>
+                      <p className="text-[10px] text-slate-500">Take Home</p>
                     </div>
                   </div>
-                  <div className="mt-2 grid grid-cols-3 gap-x-4 gap-y-1 text-xs text-slate-400">
-                    <span>Present: <strong className="text-slate-200">{item.days_present}</strong></span>
-                    <span>Absent: <strong className="text-red-400">{item.days_absent}</strong></span>
-                    <span>Leave: <strong className="text-blue-400">{item.days_leave}</strong></span>
-                    <span>Gross: ₹{Number(item.gross_pay).toLocaleString('en-IN')}</span>
-                    <span>PF: ₹{Number(item.pf_employee).toLocaleString('en-IN')}</span>
-                    <span>PT: ₹{Number(item.professional_tax).toLocaleString('en-IN')}</span>
+
+                  {/* Attendance row */}
+                  <div className="mt-2 flex gap-3 text-xs text-slate-400 flex-wrap">
+                    <span>Present <strong className="text-emerald-400">{item.days_present}</strong></span>
+                    <span>Absent <strong className="text-red-400">{item.days_absent}</strong></span>
+                    <span>Leave <strong className="text-blue-400">{item.days_leave}</strong></span>
+                    {Number(item.ot_hours) > 0 && (
+                      <span>OT <strong className="text-orange-400">{item.ot_hours}h</strong></span>
+                    )}
                   </div>
-                  <div className="mt-2 flex items-center justify-between">
+
+                  {/* Earnings / deductions row */}
+                  <div className="mt-1.5 flex gap-3 text-xs text-slate-400 flex-wrap">
+                    <span>Gross <strong className="text-slate-200">₹{fmt(item.gross_pay)}</strong></span>
+                    {Number(item.pf_employee) > 0 && (
+                      <span>PF <strong className="text-slate-300">₹{fmt(item.pf_employee)}</strong></span>
+                    )}
+                    {Number(item.esi_employee) > 0 && (
+                      <span>ESI <strong className="text-slate-300">₹{fmt(item.esi_employee)}</strong></span>
+                    )}
+                    {Number(item.professional_tax) > 0 && (
+                      <span>PT <strong className="text-slate-300">₹{fmt(item.professional_tax)}</strong></span>
+                    )}
+                  </div>
+
+                  <div className="mt-2 flex items-center justify-between gap-2 flex-wrap">
                     <span className={`text-xs px-2 py-0.5 rounded-full border font-medium
-                      ${item.payment_status === 'paid' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-700/40' : 'bg-yellow-500/10 text-yellow-400 border-yellow-700/40'}`}>
-                      {item.payment_status === 'paid' ? '✓ Paid' : 'Pending'}
+                      ${isPaid ? 'bg-emerald-500/10 text-emerald-400 border-emerald-700/40' : 'bg-yellow-500/10 text-yellow-400 border-yellow-700/40'}`}>
+                      {isPaid ? '✓ Paid' : 'Pending'}
                     </span>
-                    <div className="flex items-center gap-2">
-                      {item.payment_status !== 'paid' && (
+                    <div className="flex items-center gap-1.5">
+                      <button onClick={() => setPayslipItem(item)}
+                        className="text-xs px-2.5 py-1 rounded-lg bg-dark-700 border border-dark-600 text-slate-400 hover:text-slate-200 hover:border-dark-500 flex items-center gap-1">
+                        <FileText className="w-3 h-3" /> Payslip
+                      </button>
+                      {!isPaid && (
                         <button onClick={() => markPaid(item.id)}
-                          className="text-xs px-3 py-1 rounded-lg bg-emerald-600/20 border border-emerald-700/40 text-emerald-400 hover:bg-emerald-600/30 flex items-center gap-1">
+                          className="text-xs px-2.5 py-1 rounded-lg bg-emerald-600/20 border border-emerald-700/40 text-emerald-400 hover:bg-emerald-600/30 flex items-center gap-1">
                           <CheckCircle className="w-3 h-3" /> Mark Paid
                         </button>
                       )}
-                      {item.payment_date && <span className="text-xs text-slate-500">{format(parseISO(item.payment_date), 'dd MMM yyyy')}</span>}
+                      {isPaid && item.payment_date && (
+                        <span className="text-xs text-slate-500">{format(parseISO(item.payment_date), 'dd MMM yyyy')}</span>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -1165,6 +1360,15 @@ function PayrollTab({ companyId }) {
           </div>
         )}
       </div>
+
+      {payslipItem && (
+        <PayslipModal
+          item={payslipItem}
+          month={month}
+          year={year}
+          onClose={() => setPayslipItem(null)}
+        />
+      )}
     </div>
   )
 }
