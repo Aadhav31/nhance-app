@@ -988,6 +988,18 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
     if (data) setEquipment(data)
   }
 
+  // Delete equipment
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [deleting,      setDeleting]      = useState(false)
+  const handleDelete = async () => {
+    setDeleting(true)
+    const { error } = await supabase.from('equipment').delete().eq('id', equipment.id)
+    if (error) { toast.error('Delete failed: ' + error.message); setDeleting(false); return }
+    qc.invalidateQueries(['equipment', companyId])
+    toast.success(`${equipment.name} deleted`)
+    onClose()
+  }
+
   // ── Admin deploy state ───────────────────────────────────────────────────────
   const [deployClientId,  setDeployClientId]  = useState(equipment.current_client_id  || '')
   const [deployProjectId, setDeployProjectId] = useState(equipment.current_project_id || '')
@@ -1182,10 +1194,30 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
             </div>
           </div>
           {isAdmin && (
-            <button onClick={() => setShowEdit(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-dark-500 bg-dark-700 hover:border-primary-500 text-xs text-slate-300 transition-colors shrink-0">
-              <Edit2 className="w-3.5 h-3.5" /> Edit
-            </button>
+            <div className="flex items-center gap-2 shrink-0">
+              <button onClick={() => setShowEdit(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-dark-500 bg-dark-700 hover:border-primary-500 text-xs text-slate-300 transition-colors">
+                <Edit2 className="w-3.5 h-3.5" /> Edit
+              </button>
+              {!confirmDelete ? (
+                <button onClick={() => setConfirmDelete(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-dark-500 bg-dark-700 hover:border-red-500 hover:text-red-400 text-xs text-slate-300 transition-colors">
+                  <Trash2 className="w-3.5 h-3.5" /> Delete
+                </button>
+              ) : (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs text-red-400">Sure?</span>
+                  <button onClick={handleDelete} disabled={deleting}
+                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-xs text-white font-medium transition-colors">
+                    {deleting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />} Yes
+                  </button>
+                  <button onClick={() => setConfirmDelete(false)}
+                    className="px-2.5 py-1.5 rounded-lg border border-dark-500 bg-dark-700 text-xs text-slate-300 hover:text-slate-100 transition-colors">
+                    No
+                  </button>
+                </div>
+              )}
+            </div>
           )}
         </div>
 
