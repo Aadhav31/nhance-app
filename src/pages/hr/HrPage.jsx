@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
@@ -90,6 +90,35 @@ function calcPT(grossMonthly) {
   if (grossMonthly <= 60000) return 690
   if (grossMonthly <= 75000) return 1025
   return 1250
+}
+
+// ── Shift attendance helpers ──────────────────────────────────────────────────
+// Returns decimal hours between two 'HH:MM' strings. Handles cross-midnight.
+function calcShiftHours(startTime, endTime) {
+  if (!startTime || !endTime) return 0
+  const [sh, sm] = startTime.split(':').map(Number)
+  const [eh, em] = endTime.split(':').map(Number)
+  let startMins = sh * 60 + sm
+  let endMins   = eh * 60 + em
+  if (endMins <= startMins) endMins += 24 * 60   // cross-midnight shift
+  return Math.round((endMins - startMins) / 60 * 10) / 10
+}
+
+// < 4 hrs → half_day, ≥ 4 hrs → present (per user rule)
+function calcShiftStatus(hours) {
+  if (hours <= 0) return null
+  return hours < 4 ? 'half_day' : 'present'
+}
+
+// Designations that must use clock-in / clock-out (regardless of pay type)
+const SHIFT_CLOCK_DESIGNATIONS = [
+  'Equipment Operator', 'Tipper / Dumper Driver', 'Site Supervisor',
+  'P&M Manager', 'Labour', 'Helper',
+]
+
+function isShiftWorker(emp) {
+  return emp.employment_type === 'shift' ||
+    SHIFT_CLOCK_DESIGNATIONS.includes(emp.designation)
 }
 
 // ── Shared UI ─────────────────────────────────────────────────────────────────
@@ -793,13 +822,15 @@ function EmployeesTab({ companyId }) {
 
 // ── Attendance Tab ────────────────────────────────────────────────────────────
 function AttendanceTab({ companyId }) {
-  const [date, setDate] = useState(new Date().toISOString().split('T')[0])
-  const [saving, setSaving] = useState(false)
+  const [date, setDate]           = useState(new Date().toISOString().split('T')[0])
+  const [saving, setSaving]       = useState(false)
+  const [shiftTimes, setShiftTimes] = useState({})  // { [empId]: { start, end } }
 
   const { data: employees = [] } = useQuery({
     queryKey: ['hr_employees_active', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('hr_employees').select('id, name, designation, employment_type, employee_number')
+      const { data } = await supabase.from('hr_employees')
+        .select('id, name, designation, employment_type, employee_number')
         .eq('company_id', companyId).eq('status', 'active').order('name')
       return data || []
     },
@@ -816,35 +847,81 @@ function AttendanceTab({ companyId }) {
     enabled: !!companyId,
   })
 
+  // Pre-populate shift time inputs from existing DB records when date changes
+  useEffect(() => {
+    const times = {}
+    attendance.forEach(a => {
+      if (a.shift_start_time || a.shift_end_time) {
+        times[a.employee_id] = {
+          start: a.shift_start_time || '',
+          end:   a.shift_end_time   || '',
+        }
+      }
+    })
+    setShiftTimes(prev => ({ ...prev, ...times }))
+  }, [attendance])
+
   const attMap = useMemo(() => {
     const m = {}
     attendance.forEach(a => { m[a.employee_id] = a })
     return m
   }, [attendance])
 
-  const markAttendance = async (empId, status) => {
+  const setShiftTime = (empId, field, value) =>
+    setShiftTimes(prev => ({ ...prev, [empId]: { ...prev[empId], [field]: value } }))
+
+  // Core upsert — accepts optional shift time & OT fields
+  const markAttendance = async (empId, status, extraFields = {}) => {
     const existing = attMap[empId]
+    const payload  = { status, shift_start_time: null, shift_end_time: null, ot_hours: 0, ...extraFields }
     if (existing) {
-      await supabase.from('hr_attendance').update({ status }).eq('id', existing.id)
+      await supabase.from('hr_attendance').update(payload).eq('id', existing.id)
     } else {
-      await supabase.from('hr_attendance').insert({ company_id: companyId, employee_id: empId, attendance_date: date, status })
+      await supabase.from('hr_attendance').insert({
+        company_id: companyId, employee_id: empId, attendance_date: date, ...payload,
+      })
     }
     refetch()
   }
 
+  // Save shift-based attendance: auto-derives status and OT from times
+  const saveShiftAttendance = async (emp) => {
+    const st = shiftTimes[emp.id] || {}
+    if (!st.start) { toast.error('Enter shift start time'); return }
+    if (!st.end)   { toast.error('Enter shift end time');   return }
+    const hours  = calcShiftHours(st.start, st.end)
+    const status = calcShiftStatus(hours)
+    if (!status)  { toast.error('Duration is 0 — check times'); return }
+    // OT = hours beyond 8 (Factories Act standard working day)
+    const otHours = hours > 8 ? Math.round((hours - 8) * 10) / 10 : 0
+    await markAttendance(emp.id, status, {
+      shift_start_time: st.start,
+      shift_end_time:   st.end,
+      ot_hours:         otHours,
+    })
+    const label = status === 'half_day'
+      ? `Half Day (${hours}h — under 4 hrs)`
+      : otHours > 0 ? `Present + ${otHours}h OT` : `Present (${hours}h)`
+    toast.success(`${emp.name} — ${label}`)
+  }
+
+  // Bulk mark — skips shift workers (they must use clock-in/out)
   const markAll = async (status) => {
     setSaving(true)
     for (const emp of employees) {
+      if (isShiftWorker(emp)) continue
       const existing = attMap[emp.id]
       if (existing) {
-        await supabase.from('hr_attendance').update({ status }).eq('id', existing.id)
+        await supabase.from('hr_attendance').update({ status, shift_start_time: null, shift_end_time: null }).eq('id', existing.id)
       } else {
-        await supabase.from('hr_attendance').insert({ company_id: companyId, employee_id: emp.id, attendance_date: date, status })
+        await supabase.from('hr_attendance').insert({
+          company_id: companyId, employee_id: emp.id, attendance_date: date, status,
+        })
       }
     }
     refetch()
     setSaving(false)
-    toast.success(`All marked as ${status}`)
+    toast.success(`Non-shift employees marked ${status}`)
   }
 
   const summary = useMemo(() => {
@@ -861,9 +938,11 @@ function AttendanceTab({ companyId }) {
     <div className="flex flex-col h-full">
       <div className="px-4 py-2 shrink-0 space-y-2">
         <div className="flex items-center gap-2 flex-wrap">
-          <input type="date" className="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
+          <input type="date"
+            className="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
             value={date} onChange={e => setDate(e.target.value)} />
-          <button onClick={() => setDate(new Date().toISOString().split('T')[0])} className="text-xs text-primary-400 hover:text-primary-300">Today</button>
+          <button onClick={() => setDate(new Date().toISOString().split('T')[0])}
+            className="text-xs text-primary-400 hover:text-primary-300">Today</button>
           <div className="ml-auto flex gap-1.5">
             <button onClick={() => markAll('present')} disabled={saving}
               className="text-xs px-2.5 py-1.5 rounded-lg bg-emerald-600/20 border border-emerald-700/40 text-emerald-400 hover:bg-emerald-600/30">
@@ -875,12 +954,13 @@ function AttendanceTab({ companyId }) {
             </button>
           </div>
         </div>
+
         <div className="flex gap-2 overflow-x-auto pb-0.5 text-xs">
           {[
-            { label: `${summary.present} Present`,    cls: 'text-emerald-400 bg-emerald-500/10 border-emerald-700/40' },
-            { label: `${summary.absent} Absent`,      cls: 'text-red-400 bg-red-500/10 border-red-700/40' },
-            { label: `${summary.half_day} Half Day`,  cls: 'text-yellow-400 bg-yellow-500/10 border-yellow-700/40' },
-            { label: `${summary.leave} Leave`,        cls: 'text-blue-400 bg-blue-500/10 border-blue-700/40' },
+            { label: `${summary.present} Present`,   cls: 'text-emerald-400 bg-emerald-500/10 border-emerald-700/40' },
+            { label: `${summary.absent} Absent`,     cls: 'text-red-400 bg-red-500/10 border-red-700/40' },
+            { label: `${summary.half_day} Half Day`, cls: 'text-yellow-400 bg-yellow-500/10 border-yellow-700/40' },
+            { label: `${summary.leave} Leave`,       cls: 'text-blue-400 bg-blue-500/10 border-blue-700/40' },
             summary.unmarked > 0 && { label: `${summary.unmarked} Unmarked`, cls: 'text-slate-400 border-slate-600 bg-dark-700' },
           ].filter(Boolean).map(c => (
             <span key={c.label} className={`shrink-0 px-2.5 py-1 rounded-full border font-medium ${c.cls}`}>{c.label}</span>
@@ -897,31 +977,106 @@ function AttendanceTab({ companyId }) {
         ) : (
           <div className="space-y-2">
             {employees.map(emp => {
-              const att    = attMap[emp.id]
-              const status = att?.status || null
+              const att      = attMap[emp.id]
+              const status   = att?.status || null
+              const isShift  = isShiftWorker(emp)
+              const st       = shiftTimes[emp.id] || {}
+              const shiftHrs = (st.start && st.end) ? calcShiftHours(st.start, st.end) : 0
+              const autoStatus = (st.start && st.end) ? calcShiftStatus(shiftHrs) : null
+              const autoOT   = shiftHrs > 8 ? Math.round((shiftHrs - 8) * 10) / 10 : 0
+
               return (
                 <div key={emp.id} className="bg-dark-800 border border-dark-700 rounded-xl p-3">
+                  {/* Employee header */}
                   <div className="flex items-center justify-between gap-2 mb-2">
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-semibold text-slate-100 truncate">{emp.name}</p>
-                      <p className="text-xs text-slate-500">{emp.designation || EMP_TYPES.find(t => t.value === emp.employment_type)?.label}</p>
+                      <p className="text-xs text-slate-500">
+                        {emp.employee_number}
+                        {emp.designation ? ` · ${emp.designation}` : ''}
+                        {isShift && <span className="ml-1.5 text-orange-400/60">· shift</span>}
+                      </p>
                     </div>
                     {status && (
                       <span className={`shrink-0 text-xs px-2 py-0.5 rounded-full border font-medium
                         ${ATTENDANCE_STATUS.find(s => s.value === status)?.cls || 'border-dark-600 text-slate-400'}`}>
                         {ATTENDANCE_STATUS.find(s => s.value === status)?.full}
+                        {att?.ot_hours > 0 && <span className="ml-1 text-orange-400">+{att.ot_hours}h OT</span>}
                       </span>
                     )}
                   </div>
-                  <div className="flex gap-1.5 flex-wrap">
-                    {ATTENDANCE_STATUS.map(s => (
-                      <button key={s.value} onClick={() => markAttendance(emp.id, s.value)}
-                        className={`px-2.5 py-1 rounded-lg border text-xs font-medium transition-all
-                          ${status === s.value ? s.cls : 'border-dark-600 bg-dark-700 text-slate-500 hover:border-dark-500'}`}>
-                        {s.full}
-                      </button>
-                    ))}
-                  </div>
+
+                  {isShift ? (
+                    /* ── Shift worker: clock in / clock out ── */
+                    <div className="space-y-2">
+                      <div className="flex gap-2 items-end">
+                        <div className="flex-1">
+                          <p className="text-[10px] text-slate-500 mb-1">Start Time</p>
+                          <input type="time"
+                            className="w-full bg-dark-700 border border-dark-600 rounded-lg px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
+                            value={st.start || ''}
+                            onChange={e => setShiftTime(emp.id, 'start', e.target.value)} />
+                        </div>
+                        <div className="flex-1">
+                          <p className="text-[10px] text-slate-500 mb-1">End Time</p>
+                          <input type="time"
+                            className="w-full bg-dark-700 border border-dark-600 rounded-lg px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
+                            value={st.end || ''}
+                            onChange={e => setShiftTime(emp.id, 'end', e.target.value)} />
+                        </div>
+                        <button onClick={() => saveShiftAttendance(emp)}
+                          className="shrink-0 px-3 py-1.5 text-xs rounded-lg bg-primary-600/20 border border-primary-700/40 text-primary-400 hover:bg-primary-600/30">
+                          Save
+                        </button>
+                      </div>
+
+                      {/* Live duration & auto-status preview */}
+                      {st.start && st.end ? (
+                        <div className={`text-xs flex items-center gap-2 px-2.5 py-1.5 rounded-lg border
+                          ${autoStatus === 'half_day'
+                            ? 'bg-yellow-500/10 text-yellow-400 border-yellow-700/30'
+                            : 'bg-emerald-500/10 text-emerald-400 border-emerald-700/30'}`}>
+                          <span>{autoStatus === 'half_day' ? '⚡' : '✅'}</span>
+                          <span>
+                            {shiftHrs}h —{' '}
+                            {autoStatus === 'half_day'
+                              ? 'Half Day (below 4 hrs)'
+                              : autoOT > 0
+                                ? `Full Day + ${autoOT}h OT`
+                                : 'Full Day'}
+                          </span>
+                        </div>
+                      ) : (
+                        !status && <p className="text-[10px] text-slate-500 italic px-1">Enter start & end time to log attendance</p>
+                      )}
+
+                      {/* Override for absent / leave / week_off / holiday */}
+                      <div className="flex gap-1.5 flex-wrap">
+                        {['absent', 'leave', 'week_off', 'holiday'].map(sv => {
+                          const s = ATTENDANCE_STATUS.find(s => s.value === sv)
+                          return (
+                            <button key={sv}
+                              onClick={() => markAttendance(emp.id, sv)}
+                              className={`px-2.5 py-1 rounded-lg border text-xs font-medium transition-all
+                                ${status === sv ? s.cls : 'border-dark-600 bg-dark-700 text-slate-500 hover:border-dark-500'}`}>
+                              {s.full}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  ) : (
+                    /* ── Non-shift: manual status buttons ── */
+                    <div className="flex gap-1.5 flex-wrap">
+                      {ATTENDANCE_STATUS.map(s => (
+                        <button key={s.value} onClick={() => markAttendance(emp.id, s.value)}
+                          className={`px-2.5 py-1 rounded-lg border text-xs font-medium transition-all
+                            ${status === s.value ? s.cls : 'border-dark-600 bg-dark-700 text-slate-500 hover:border-dark-500'}`}>
+                          {s.full}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )
             })}
