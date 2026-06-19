@@ -39,7 +39,7 @@ export const MODULE_LABELS = {
   clients_projects: 'Clients & Projects',
   accounts:         'Accounts',
   reports_analytics:'Reports & Analytics',
-  hr_payroll:       'HR & Payroll',
+  hr_payroll:       'Employee Management',
 }
 
 // ─── Equipment status ─────────────────────────────────────────────────────────
@@ -174,7 +174,7 @@ export const NAV_ITEMS = [
   {
     section: 'People',
     items: [
-      { key: 'hr', label: 'HR & Payroll', icon: 'Users', module: MODULES.HR_PAYROLL,
+      { key: 'hr', label: 'Employee Management', icon: 'Users', module: MODULES.HR_PAYROLL,
         roles: [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
     ],
   },
