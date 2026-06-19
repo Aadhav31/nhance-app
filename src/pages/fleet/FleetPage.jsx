@@ -1298,6 +1298,21 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
   const [newShiftType,    setNewShiftType]    = useState('day')
   const [operatorSaving,  setOperatorSaving]  = useState(false)
 
+  // ── Shift Schedule state ─────────────────────────────────────────────────────
+  const SHIFT_DEFAULTS = [
+    { label: 'Day',   start: '06:00', end: '18:00' },
+    { label: 'Night', start: '18:00', end: '06:00' },
+    { label: 'Mid',   start: '14:00', end: '22:00' },
+  ]
+  const [shiftCount,     setShiftCount]     = useState(1)
+  const [shiftRows,      setShiftRows]      = useState(SHIFT_DEFAULTS)   // [{label,start,end}]
+  const [alertEnabled,   setAlertEnabled]   = useState(true)
+  const [graceMinutes,   setGraceMinutes]   = useState(30)
+  const [scheduleSaving, setScheduleSaving] = useState(false)
+
+  const setShiftRow = (i, key, val) =>
+    setShiftRows(prev => prev.map((r, idx) => idx === i ? { ...r, [key]: val } : r))
+
   // ── Queries ──────────────────────────────────────────────────────────────────
   const { data: assignments = [], refetch: refetchAssignments } = useQuery({
     queryKey: ['equipment_assignments', equipment.id],
@@ -1366,6 +1381,58 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
     },
     enabled: !!equipment.current_project_id,
   })
+
+  // Shift schedule for this equipment
+  const { data: shiftSchedule } = useQuery({
+    queryKey: ['shift_schedule', equipment.id],
+    queryFn: async () => {
+      const { data } = await supabase.from('equipment_shift_schedule')
+        .select('*').eq('equipment_id', equipment.id).maybeSingle()
+      return data
+    },
+  })
+
+  // Populate state when schedule loads
+  useEffect(() => {
+    if (shiftSchedule) {
+      setShiftCount(shiftSchedule.shift_count || 1)
+      setAlertEnabled(shiftSchedule.alert_enabled ?? true)
+      setGraceMinutes(shiftSchedule.grace_minutes ?? 30)
+      setShiftRows([
+        { label: shiftSchedule.shift1_label || 'Day',   start: shiftSchedule.shift1_start?.slice(0,5) || '06:00', end: shiftSchedule.shift1_end?.slice(0,5) || '18:00' },
+        { label: shiftSchedule.shift2_label || 'Night', start: shiftSchedule.shift2_start?.slice(0,5) || '18:00', end: shiftSchedule.shift2_end?.slice(0,5) || '06:00' },
+        { label: shiftSchedule.shift3_label || 'Mid',   start: shiftSchedule.shift3_start?.slice(0,5) || '14:00', end: shiftSchedule.shift3_end?.slice(0,5) || '22:00' },
+      ])
+    }
+  }, [shiftSchedule])
+
+  const handleSaveSchedule = async () => {
+    setScheduleSaving(true)
+    try {
+      const payload = {
+        equipment_id: equipment.id, company_id: companyId,
+        shift_count: shiftCount,
+        shift1_label: shiftRows[0].label, shift1_start: shiftRows[0].start, shift1_end: shiftRows[0].end,
+        shift2_label: shiftCount >= 2 ? shiftRows[1].label : null,
+        shift2_start: shiftCount >= 2 ? shiftRows[1].start : null,
+        shift2_end:   shiftCount >= 2 ? shiftRows[1].end   : null,
+        shift3_label: shiftCount >= 3 ? shiftRows[2].label : null,
+        shift3_start: shiftCount >= 3 ? shiftRows[2].start : null,
+        shift3_end:   shiftCount >= 3 ? shiftRows[2].end   : null,
+        alert_enabled: alertEnabled, grace_minutes: Number(graceMinutes),
+        updated_at: new Date().toISOString(),
+      }
+      const { error } = shiftSchedule
+        ? await supabase.from('equipment_shift_schedule').update(payload).eq('equipment_id', equipment.id)
+        : await supabase.from('equipment_shift_schedule').insert(payload)
+      if (error) throw error
+      qc.invalidateQueries(['shift_schedule', equipment.id])
+      qc.invalidateQueries(['all_shift_schedules', companyId])
+      toast.success('Shift schedule saved')
+    } catch (err) {
+      toast.error(err.message || 'Failed to save schedule')
+    } finally { setScheduleSaving(false) }
+  }
 
   // Equipment stats (lifetime hours + shifts)
   const { data: stats } = useQuery({
@@ -1856,6 +1923,94 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
                   </div>
                 )
               })()}
+            </div>
+
+            {/* ── Shift Schedule ── */}
+            <div className="p-3 space-y-3 border-t border-dark-600">
+              <p className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5 text-primary-400" /> Shift Schedule
+              </p>
+
+              {/* Shift count selector */}
+              <div className="flex gap-2">
+                {[1, 2, 3].map(n => (
+                  <button key={n} type="button" onClick={() => setShiftCount(n)}
+                    className={`flex-1 py-2 rounded-lg border text-xs font-medium transition-all
+                      ${shiftCount === n
+                        ? 'border-primary-500 bg-primary-500/10 text-primary-300'
+                        : 'border-dark-600 bg-dark-700 text-slate-500 hover:text-slate-300'}`}>
+                    {n === 1 ? '☀️ Single' : n === 2 ? '☀️🌙 Double' : '☀️🌙🌒 Triple'}
+                  </button>
+                ))}
+              </div>
+
+              {/* Per-shift timing */}
+              <div className="space-y-2">
+                {Array.from({ length: shiftCount }, (_, i) => i).map(i => (
+                  <div key={i} className="bg-dark-700 rounded-xl p-2.5 space-y-2">
+                    <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">
+                      Shift {i + 1}
+                    </p>
+                    <div className="grid grid-cols-3 gap-2">
+                      <div>
+                        <p className="text-[10px] text-slate-500 mb-1">Name</p>
+                        <input
+                          className="w-full bg-dark-600 border border-dark-500 rounded-lg px-2 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-primary-500"
+                          value={shiftRows[i].label}
+                          onChange={e => setShiftRow(i, 'label', e.target.value)}
+                          placeholder={['Day', 'Night', 'Mid'][i]} />
+                      </div>
+                      <div>
+                        <p className="text-[10px] text-slate-500 mb-1">Start</p>
+                        <input type="time"
+                          className="w-full bg-dark-600 border border-dark-500 rounded-lg px-2 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-primary-500"
+                          value={shiftRows[i].start}
+                          onChange={e => setShiftRow(i, 'start', e.target.value)} />
+                      </div>
+                      <div>
+                        <p className="text-[10px] text-slate-500 mb-1">End</p>
+                        <input type="time"
+                          className="w-full bg-dark-600 border border-dark-500 rounded-lg px-2 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-primary-500"
+                          value={shiftRows[i].end}
+                          onChange={e => setShiftRow(i, 'end', e.target.value)} />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Alert settings */}
+              <div className="bg-dark-700 rounded-xl px-3 py-2.5 space-y-2">
+                <label className="flex items-center gap-2.5 cursor-pointer">
+                  <input type="checkbox" checked={alertEnabled} onChange={e => setAlertEnabled(e.target.checked)}
+                    className="w-4 h-4 rounded accent-primary-500" />
+                  <div>
+                    <p className="text-xs font-medium text-slate-200">Alert on late start / overdue end</p>
+                    <p className="text-[10px] text-slate-500">Notify when shift hasn't started or ended on time</p>
+                  </div>
+                </label>
+                {alertEnabled && (
+                  <div className="flex items-center gap-2 text-xs text-slate-400 pl-6">
+                    <span>Alert after</span>
+                    <input type="number" min="5" max="120" step="5"
+                      className="w-14 bg-dark-600 border border-dark-500 rounded-lg px-2 py-1 text-xs text-center text-slate-100 focus:outline-none focus:border-primary-500"
+                      value={graceMinutes} onChange={e => setGraceMinutes(e.target.value)} />
+                    <span>minutes past scheduled time</span>
+                  </div>
+                )}
+              </div>
+
+              {shiftCount === 1 && (
+                <p className="text-[10px] text-slate-500 italic">
+                  Single shift — no fixed time enforced. Operators can start anytime.
+                </p>
+              )}
+
+              <button onClick={handleSaveSchedule} disabled={scheduleSaving}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary-600 hover:bg-primary-500 text-white text-xs font-medium disabled:opacity-40 transition-colors">
+                {scheduleSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                {scheduleSaving ? 'Saving…' : shiftSchedule ? 'Update Schedule' : 'Save Schedule'}
+              </button>
             </div>
           </div>
         )}

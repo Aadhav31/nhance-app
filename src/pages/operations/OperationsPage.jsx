@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
@@ -1131,12 +1131,85 @@ function TodayTab({ companyId }) {
   const { data: todayShifts = [] } = useQuery({
     queryKey: ['today_ops', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('shifts').select('equipment_id, status, working_hours')
+      const { data } = await supabase.from('shifts').select('equipment_id, status, working_hours, shift_type, start_time')
         .eq('company_id', companyId).eq('shift_date', today())
       return data || []
     },
     enabled: !!companyId,
   })
+
+  // Shift schedules for alert calculation
+  const { data: shiftSchedules = [] } = useQuery({
+    queryKey: ['all_shift_schedules', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('equipment_shift_schedule')
+        .select('*').eq('company_id', companyId).eq('alert_enabled', true)
+      return data || []
+    },
+    enabled: !!companyId,
+    refetchInterval: 5 * 60 * 1000,   // re-check every 5 min
+  })
+
+  // ── Alert computation ────────────────────────────────────────────────────────
+  const shiftAlerts = useMemo(() => {
+    const alerts = []
+    const nowMins = new Date().getHours() * 60 + new Date().getMinutes()
+
+    shiftSchedules.forEach(sched => {
+      if (sched.shift_count < 2) return   // single shift — no enforcement
+      const eq = equipment.find(e => e.id === sched.equipment_id)
+      if (!eq) return
+
+      const openShift   = todayShifts.find(s => s.equipment_id === sched.equipment_id && s.status === 'open')
+      const closedToday = todayShifts.filter(s => s.equipment_id === sched.equipment_id && s.status === 'closed')
+      const grace = sched.grace_minutes || 30
+
+      const toMins = (t) => {
+        if (!t) return null
+        const [h, m] = t.slice(0, 5).split(':').map(Number)
+        return h * 60 + m
+      }
+
+      for (let i = 1; i <= sched.shift_count; i++) {
+        const label = sched[`shift${i}_label`] || `Shift ${i}`
+        const startMins = toMins(sched[`shift${i}_start`])
+        const endMins   = toMins(sched[`shift${i}_end`])
+        if (!startMins || !endMins) continue
+
+        // Cross-midnight end: if end < start, end is next day
+        const effectiveEnd = endMins <= startMins ? endMins + 24 * 60 : endMins
+
+        const alreadyStarted = openShift ||
+          closedToday.some(s => {
+            const st = toMins(s.start_time)
+            return st && Math.abs(st - startMins) < 90
+          })
+
+        // LATE START: current time > scheduled start + grace, shift not started yet
+        if (!alreadyStarted && nowMins > startMins + grace && nowMins < effectiveEnd) {
+          alerts.push({
+            type: 'late_start',
+            equipment: eq,
+            label,
+            scheduledStart: sched[`shift${i}_start`]?.slice(0, 5),
+            minutesLate: nowMins - startMins,
+          })
+        }
+
+        // OVERDUE END: shift open, current time > scheduled end + grace
+        if (openShift && nowMins > effectiveEnd + grace) {
+          alerts.push({
+            type: 'overdue_end',
+            equipment: eq,
+            label,
+            scheduledEnd: sched[`shift${i}_end`]?.slice(0, 5),
+            minutesOver: nowMins - effectiveEnd,
+          })
+        }
+      }
+    })
+    return alerts
+  }, [shiftSchedules, equipment, todayShifts])
 
   const activeCount    = equipment.filter(e => e.status === 'active').length
   const idleCount      = equipment.filter(e => e.status === 'idle').length
@@ -1178,6 +1251,33 @@ function TodayTab({ companyId }) {
           </div>
         </div>
       )}
+      {/* Shift alerts */}
+      {shiftAlerts.length > 0 && (
+        <div className="mx-4 mt-2 mb-1 space-y-1.5 shrink-0">
+          {shiftAlerts.map((a, idx) => (
+            <div key={idx}
+              className={`flex items-start gap-2.5 rounded-xl px-3 py-2.5 border
+                ${a.type === 'late_start'
+                  ? 'bg-orange-900/20 border-orange-700/40'
+                  : 'bg-red-900/20 border-red-700/40'}`}>
+              <Bell className={`w-4 h-4 shrink-0 mt-0.5 ${a.type === 'late_start' ? 'text-orange-400' : 'text-red-400'}`} />
+              <div className="flex-1 min-w-0">
+                <p className={`text-xs font-semibold ${a.type === 'late_start' ? 'text-orange-300' : 'text-red-300'}`}>
+                  {a.type === 'late_start' ? '⏰ Shift Not Started' : '🔴 Shift Overdue to End'}
+                </p>
+                <p className="text-xs text-slate-400 truncate">
+                  <span className="font-medium text-slate-300">{a.equipment.name}</span>
+                  {' · '}{a.label}
+                  {a.type === 'late_start'
+                    ? ` · Was scheduled at ${a.scheduledStart} (${a.minutesLate} min ago)`
+                    : ` · Should have ended at ${a.scheduledEnd} (${a.minutesOver} min ago)`}
+                </p>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Summary chips */}
       <div className="flex gap-2 px-4 py-2 overflow-x-auto shrink-0">
         {[
