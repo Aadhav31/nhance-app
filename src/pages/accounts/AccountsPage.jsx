@@ -6,6 +6,7 @@ import {
   Receipt, Plus, X, Loader2, Trash2,
   TrendingUp, TrendingDown, Clock, Search, Banknote,
   ArrowUpCircle, ArrowDownCircle, ChevronRight, ChevronDown,
+  Link, Copy, ExternalLink, Share2,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format, startOfMonth, endOfMonth, parseISO } from 'date-fns'
@@ -714,6 +715,37 @@ function InvoicesTab({ companyId, session }) {
   const [showCreate, setShowCreate] = useState(false)
   const [payTarget, setPayTarget] = useState(null)
   const [expandedId, setExpandedId] = useState(null)
+  const [generatingLink, setGeneratingLink] = useState(null) // invoice id being processed
+
+  // ── Generate Razorpay payment link ────────────────────────────────────────
+  const generatePaymentLink = async (inv) => {
+    setGeneratingLink(inv.id)
+    try {
+      const { data, error } = await supabase.functions.invoke('create-payment-link', {
+        body: { invoice_id: inv.id },
+      })
+      if (error) throw error
+      if (!data?.success) throw new Error(data?.error || 'Failed to create link')
+      toast.success('Payment link ready — copy and send to client')
+      qc.invalidateQueries({ queryKey: ['client_invoices', companyId] })
+    } catch (e) {
+      toast.error(e.message || 'Could not generate payment link')
+    } finally {
+      setGeneratingLink(null)
+    }
+  }
+
+  const copyLink = (url) => {
+    navigator.clipboard.writeText(url)
+    toast.success('Link copied!')
+  }
+
+  const shareWhatsApp = (inv) => {
+    const msg = encodeURIComponent(
+      `Hi, please find the payment link for ${inv.invoice_number}:\n${inv.payment_link_url}\n\nAmount due: ₹${Number(inv.balance_due).toLocaleString('en-IN')}`
+    )
+    window.open(`https://wa.me/?text=${msg}`, '_blank')
+  }
 
   const { data: invoices = [], isLoading } = useQuery({
     queryKey: ['client_invoices', companyId],
@@ -835,6 +867,50 @@ function InvoicesTab({ companyId, session }) {
                             </button>
                           )}
                         </div>
+
+                        {/* ── Razorpay Payment Link Section ── */}
+                        {['sent', 'partial', 'overdue'].includes(inv.status) && (
+                          <div className="mt-3 pt-3 border-t border-dark-600">
+                            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">
+                              Online Payment Link (Razorpay)
+                            </p>
+                            {inv.payment_link_url ? (
+                              <div className="space-y-2">
+                                <div className="flex items-center gap-2 bg-dark-700 rounded-lg px-3 py-2">
+                                  <Link className="w-3 h-3 text-emerald-400 flex-shrink-0" />
+                                  <span className="text-xs text-slate-300 font-mono flex-1 truncate">{inv.payment_link_url}</span>
+                                </div>
+                                <div className="flex gap-2">
+                                  <button
+                                    onClick={() => copyLink(inv.payment_link_url)}
+                                    className="btn-ghost text-xs py-1.5 flex-1 border-emerald-700/50 text-emerald-400 hover:bg-emerald-500/10">
+                                    <Copy className="w-3.5 h-3.5" /> Copy Link
+                                  </button>
+                                  <button
+                                    onClick={() => shareWhatsApp(inv)}
+                                    className="btn-ghost text-xs py-1.5 flex-1 border-green-700/50 text-green-400 hover:bg-green-500/10">
+                                    <Share2 className="w-3.5 h-3.5" /> WhatsApp
+                                  </button>
+                                  <a
+                                    href={inv.payment_link_url} target="_blank" rel="noopener noreferrer"
+                                    className="btn-ghost text-xs py-1.5 flex-1 text-slate-400 hover:text-slate-200 flex items-center justify-center gap-1">
+                                    <ExternalLink className="w-3.5 h-3.5" /> Preview
+                                  </a>
+                                </div>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() => generatePaymentLink(inv)}
+                                disabled={generatingLink === inv.id}
+                                className="w-full btn-ghost text-xs py-2 border-primary-700/50 text-primary-400 hover:bg-primary-500/10 disabled:opacity-50">
+                                {generatingLink === inv.id
+                                  ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Generating link…</>
+                                  : <><Link className="w-3.5 h-3.5" /> Generate Razorpay Payment Link — client pays online</>
+                                }
+                              </button>
+                            )}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>

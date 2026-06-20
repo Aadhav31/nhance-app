@@ -32,15 +32,18 @@ CREATE INDEX IF NOT EXISTS idx_equipment_docs_expiry ON equipment_documents(expi
 -- RLS: same pattern as other tables — company_id based
 ALTER TABLE equipment_documents ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY IF NOT EXISTS "company_docs_select"
+DROP POLICY IF EXISTS "company_docs_select" ON equipment_documents;
+CREATE POLICY "company_docs_select"
   ON equipment_documents FOR SELECT
   USING (company_id = (SELECT company_id FROM user_profiles WHERE id = auth.uid()));
 
-CREATE POLICY IF NOT EXISTS "company_docs_insert"
+DROP POLICY IF EXISTS "company_docs_insert" ON equipment_documents;
+CREATE POLICY "company_docs_insert"
   ON equipment_documents FOR INSERT
   WITH CHECK (company_id = (SELECT company_id FROM user_profiles WHERE id = auth.uid()));
 
-CREATE POLICY IF NOT EXISTS "company_docs_delete"
+DROP POLICY IF EXISTS "company_docs_delete" ON equipment_documents;
+CREATE POLICY "company_docs_delete"
   ON equipment_documents FOR DELETE
   USING (company_id = (SELECT company_id FROM user_profiles WHERE id = auth.uid()));
 
