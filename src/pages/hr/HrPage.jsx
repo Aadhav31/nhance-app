@@ -5,7 +5,7 @@ import { useAuth } from '../../contexts/AuthContext'
 import {
   Users, Plus, X, Loader2, Save, Trash2, Edit2,
   Phone, Calendar, CreditCard, FileText,
-  CheckCircle, Banknote, BarChart2, Search
+  CheckCircle, Banknote, BarChart2, Search, Mail, UserPlus
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format, getDaysInMonth, parseISO } from 'date-fns'
@@ -583,6 +583,87 @@ function EmployeeFormModal({ companyId, initialValues, onClose }) {
   )
 }
 
+// ── Invite & Link Modal ────────────────────────────────────────────────────────
+const INVITE_ROLES = [
+  { key: 'operator',   label: 'Operator — daily operations only' },
+  { key: 'supervisor', label: 'Supervisor — operations, fleet, projects' },
+  { key: 'manager',    label: 'Manager — full operations + business' },
+  { key: 'accounts',   label: 'Accounts — invoices, expenses, ledger' },
+  { key: 'admin',      label: 'Admin — full access including settings' },
+]
+
+function InviteAndLinkModal({ emp, companyId, onClose, onDone }) {
+  const [form, setForm] = useState({ email: '', role: 'operator' })
+  const [sending, setSending] = useState(false)
+  const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
+
+  const handleSend = async () => {
+    if (!form.email.trim() || !form.email.includes('@')) return toast.error('Valid email required')
+    setSending(true)
+    try {
+      const { data, error } = await supabase.functions.invoke('invite-user', {
+        body: {
+          email: form.email.trim().toLowerCase(),
+          full_name: emp.name || emp.full_name,
+          role: form.role,
+          employee_id: emp.id,
+        },
+      })
+      if (error) throw error
+      if (!data?.success) throw new Error(data?.error || 'Invite failed')
+      toast.success(`Invite sent to ${form.email} — they'll receive an email to set their password`)
+      onDone()
+    } catch (e) {
+      toast.error(e.message || 'Failed to send invite')
+    } finally {
+      setSending(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[60] bg-black/70 flex items-center justify-center p-4">
+      <div className="bg-dark-800 rounded-xl border border-dark-700 shadow-2xl w-full max-w-md">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-dark-700">
+          <h2 className="text-base font-bold text-slate-100">Invite & Link Login — {emp.name || emp.full_name}</h2>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-100"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="p-6 space-y-4">
+          <div className="bg-dark-700 rounded-xl p-3 flex items-center gap-3">
+            <div className="w-9 h-9 rounded-full bg-primary-600/20 border border-primary-700/40 flex items-center justify-center text-sm font-bold text-primary-400">
+              {((emp.name || emp.full_name || 'E').split(' ').map(w => w[0]).join('').slice(0, 2)).toUpperCase()}
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-slate-200">{emp.name || emp.full_name}</p>
+              <p className="text-xs text-slate-500">{emp.designation || 'Employee'} · {emp.employee_number || ''}</p>
+            </div>
+          </div>
+          <p className="text-xs text-slate-400">
+            Enter their work email. Nhance will send an invite — they click the link and set their own password. No manual SQL needed.
+          </p>
+          <div>
+            <label className="text-xs text-slate-400 mb-1 block">Work Email *</label>
+            <input type="email" className="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
+              value={form.email} onChange={e => setF('email', e.target.value)} placeholder="employee@yourcompany.com" autoFocus />
+          </div>
+          <div>
+            <label className="text-xs text-slate-400 mb-1 block">App Role *</label>
+            <select className="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
+              value={form.role} onChange={e => setF('role', e.target.value)}>
+              {INVITE_ROLES.map(r => <option key={r.key} value={r.key}>{r.label}</option>)}
+            </select>
+          </div>
+          <div className="flex gap-3 pt-2">
+            <button onClick={onClose} className="btn-ghost flex-1">Cancel</button>
+            <button onClick={handleSend} disabled={sending} className="btn-primary flex-1">
+              {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <><Mail className="w-4 h-4" /> Send Invite</>}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Employee Card ──────────────────────────────────────────────────────────────
 function EmployeeCard({ emp, onClick }) {
   const typeInfo = EMP_TYPES.find(t => t.value === emp.employment_type)
@@ -612,6 +693,7 @@ function EmployeeDetailModal({ emp, companyId, onClose, onEdit }) {
   const qc = useQueryClient()
   const [delConfirm, setDelConfirm] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [showInvite, setShowInvite] = useState(false)
 
   const { data: salary } = useQuery({
     queryKey: ['hr_salary', emp.id],
@@ -650,11 +732,27 @@ function EmployeeDetailModal({ emp, companyId, onClose, onEdit }) {
             <button onClick={() => setDelConfirm(true)} className="btn-secondary flex items-center gap-1.5 text-xs px-3">
               <Trash2 className="w-3.5 h-3.5 text-red-400" /> Remove
             </button>
+            {!emp.user_id && (
+              <button onClick={() => setShowInvite(true)} className="btn-ghost flex items-center gap-1.5 text-xs px-3 border-primary-700/50 text-primary-400 hover:bg-primary-500/10">
+                <UserPlus className="w-3.5 h-3.5" /> Invite & Link Login
+              </button>
+            )}
             <button onClick={onEdit} className="flex-1 btn-primary text-sm flex items-center justify-center gap-1.5">
               <Edit2 className="w-3.5 h-3.5" /> Edit
             </button>
           </>
     }>
+      {showInvite && (
+        <InviteAndLinkModal
+          emp={emp} companyId={companyId}
+          onClose={() => setShowInvite(false)}
+          onDone={() => {
+            setShowInvite(false)
+            qc.invalidateQueries(['hr_employees', companyId])
+            onClose()
+          }}
+        />
+      )}
       <div className="flex items-center gap-3">
         <div className="w-12 h-12 rounded-full bg-primary-900/40 border border-primary-700/40 flex items-center justify-center shrink-0">
           <span className="text-lg font-bold text-primary-400">{emp.name[0]}</span>
