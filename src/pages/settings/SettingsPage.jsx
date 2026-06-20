@@ -263,7 +263,7 @@ function TeamMembers({ companyId, isAdmin }) {
                     </div>
                   </div>
                   {isAdmin && (
-                    <div className="flex items-center gap-1 flex-shrink-0">
+                    <div className="flex items-center gap-2 flex-shrink-0">
                       <select
                         value={m.role}
                         onChange={e => handleChangeRole(m.id, e.target.value)}
@@ -273,14 +273,13 @@ function TeamMembers({ companyId, isAdmin }) {
                       </select>
                       <button
                         onClick={() => setResendTarget(m)}
-                        title="Resend invite email"
-                        className="p-1.5 rounded-lg text-slate-500 hover:text-cyan-400 hover:bg-cyan-500/10 transition-colors"
+                        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium text-cyan-400 bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/20 transition-colors"
                       >
-                        <Send className="w-3.5 h-3.5" />
+                        <Send className="w-3 h-3" /> Resend Invite
                       </button>
                       <button
                         onClick={() => handleDeactivate(m.id, m.is_active)}
-                        title={m.is_active ? 'Deactivate' : 'Reactivate'}
+                        title={m.is_active ? 'Deactivate user' : 'Reactivate user'}
                         className={`p-1.5 rounded-lg transition-colors ${m.is_active ? 'text-slate-500 hover:text-red-400 hover:bg-red-500/10' : 'text-slate-500 hover:text-emerald-400 hover:bg-emerald-500/10'}`}
                       >
                         {m.is_active ? <Trash2 className="w-3.5 h-3.5" /> : <RefreshCw className="w-3.5 h-3.5" />}
