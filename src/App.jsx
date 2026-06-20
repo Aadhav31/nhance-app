@@ -1,10 +1,12 @@
-import { useState, lazy, Suspense } from 'react'
+import { useState, useEffect, lazy, Suspense } from 'react'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { DisplayModeProvider } from './contexts/DisplayModeContext'
 import LoadingScreen from './components/shared/LoadingScreen'
 import LoginPage from './pages/auth/LoginPage'
+import ResetPasswordPage from './pages/auth/ResetPasswordPage'
 import Sidebar from './components/layout/Sidebar'
 import TopBar from './components/layout/TopBar'
+import { supabase } from './lib/supabase'
 import { MODULES } from './lib/constants'
 
 // Lazy-load all pages for performance
@@ -36,8 +38,27 @@ function AppShell() {
   const { loading, session, role, hasModule, isSuperAdmin } = useAuth()
   const [activePage, setActivePage] = useState('dashboard')
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [isRecovery, setIsRecovery] = useState(false)
+
+  // Detect password-reset / invite links — Supabase fires PASSWORD_RECOVERY event
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'PASSWORD_RECOVERY' || event === 'USER_UPDATED') {
+        // Only show reset page for PASSWORD_RECOVERY; USER_UPDATED means done
+        if (event === 'PASSWORD_RECOVERY') setIsRecovery(true)
+        if (event === 'USER_UPDATED')      setIsRecovery(false)
+      }
+    })
+    return () => subscription.unsubscribe()
+  }, [])
 
   if (loading) return <LoadingScreen />
+
+  // Show reset password page when coming from email link
+  if (isRecovery) {
+    return <ResetPasswordPage onDone={() => setIsRecovery(false)} />
+  }
+
   if (!session) return <LoginPage />
 
   const handleNavigate = (page) => setActivePage(page)
