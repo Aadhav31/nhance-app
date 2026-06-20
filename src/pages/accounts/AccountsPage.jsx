@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import {
-  Receipt, Plus, X, Loader2, Trash2,
+  Receipt, Plus, X, Loader2, Trash2, Pencil,
   TrendingUp, TrendingDown, Clock, Search, Banknote,
   ArrowUpCircle, ArrowDownCircle, ChevronRight, ChevronDown,
   Link, Copy, ExternalLink, Share2,
@@ -303,6 +303,261 @@ function CreateInvoiceModal({ companyId, session, invoiceCount, onClose, onSaved
           </button>
         </div>
       </div>
+    </Modal>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Edit Invoice Modal
+// ─────────────────────────────────────────────────────────────────────────────
+function EditInvoiceModal({ invoice, companyId, session, onClose, onSaved }) {
+  const [saving, setSaving] = useState(false)
+  const [loadingLines, setLoadingLines] = useState(true)
+  const [form, setForm] = useState({
+    client_name:     invoice.client_name || '',
+    client_address:  invoice.client_address || '',
+    client_gstin:    invoice.client_gstin || '',
+    project_name:    invoice.project_name || '',
+    invoice_date:    invoice.invoice_date || today(),
+    due_date:        invoice.due_date || '',
+    cgst_rate:       invoice.cgst_rate ?? 9,
+    sgst_rate:       invoice.sgst_rate ?? 9,
+    igst_rate:       invoice.igst_rate ?? 18,
+    use_igst:        (invoice.igst_rate > 0 && !invoice.cgst_rate),
+    discount_amount: invoice.discount_amount || 0,
+    notes:           invoice.notes || '',
+    terms:           invoice.terms || 'Payment due within 30 days.',
+  })
+  const [lines, setLines] = useState([blankLine()])
+  const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
+
+  // Load existing line items
+  useState(() => {
+    supabase.from('invoice_line_items')
+      .select('*').eq('invoice_id', invoice.id).order('sort_order')
+      .then(({ data }) => {
+        if (data && data.length > 0) {
+          setLines(data.map(l => ({
+            _id: l.id, description: l.description,
+            quantity: l.quantity, unit: l.unit, rate: l.rate, amount: l.amount,
+          })))
+        }
+        setLoadingLines(false)
+      })
+  })
+
+  const updateLine = (id, key, val) => {
+    setLines(prev => prev.map(l => {
+      if (l._id !== id) return l
+      const upd = { ...l, [key]: val }
+      if (key === 'quantity' || key === 'rate') {
+        upd.amount = (parseFloat(upd.quantity) || 0) * (parseFloat(upd.rate) || 0)
+      }
+      return upd
+    }))
+  }
+
+  const subtotal = useMemo(() => lines.reduce((s, l) => s + (l.amount || 0), 0), [lines])
+  const taxable  = useMemo(() => subtotal - (parseFloat(form.discount_amount) || 0), [subtotal, form.discount_amount])
+  const cgst_amt = useMemo(() => form.use_igst ? 0 : taxable * (parseFloat(form.cgst_rate) || 0) / 100, [taxable, form.cgst_rate, form.use_igst])
+  const sgst_amt = useMemo(() => form.use_igst ? 0 : taxable * (parseFloat(form.sgst_rate) || 0) / 100, [taxable, form.sgst_rate, form.use_igst])
+  const igst_amt = useMemo(() => form.use_igst ? taxable * (parseFloat(form.igst_rate) || 0) / 100 : 0, [taxable, form.igst_rate, form.use_igst])
+  const total    = useMemo(() => taxable + cgst_amt + sgst_amt + igst_amt, [taxable, cgst_amt, sgst_amt, igst_amt])
+
+  const handleSave = async () => {
+    if (!form.client_name.trim()) return toast.error('Client name required')
+    if (lines.every(l => !l.description.trim())) return toast.error('Add at least one line item')
+    setSaving(true)
+    try {
+      // Update invoice header
+      const newBalance = Math.max(0, total - (invoice.paid_amount || 0))
+      const { error: invErr } = await supabase.from('client_invoices').update({
+        invoice_date:    form.invoice_date,
+        due_date:        form.due_date || null,
+        client_name:     form.client_name.trim(),
+        client_address:  form.client_address.trim() || null,
+        client_gstin:    form.client_gstin.trim() || null,
+        project_name:    form.project_name.trim() || null,
+        subtotal, discount_amount: parseFloat(form.discount_amount) || 0, taxable_amount: taxable,
+        cgst_rate: form.use_igst ? 0 : parseFloat(form.cgst_rate),
+        sgst_rate: form.use_igst ? 0 : parseFloat(form.sgst_rate),
+        igst_rate: form.use_igst ? parseFloat(form.igst_rate) : 0,
+        cgst_amount: cgst_amt, sgst_amount: sgst_amt, igst_amount: igst_amt,
+        total_amount: total, balance_due: newBalance,
+        notes: form.notes.trim() || null, terms: form.terms.trim() || null,
+        updated_at: new Date().toISOString(),
+      }).eq('id', invoice.id)
+      if (invErr) throw invErr
+
+      // Replace line items: delete old, insert new
+      await supabase.from('invoice_line_items').delete().eq('invoice_id', invoice.id)
+      const linePayload = lines.filter(l => l.description.trim()).map((l, i) => ({
+        invoice_id: invoice.id, company_id: companyId, description: l.description.trim(),
+        quantity: parseFloat(l.quantity) || 1, unit: l.unit,
+        rate: parseFloat(l.rate) || 0, amount: l.amount, sort_order: i,
+      }))
+      if (linePayload.length > 0) {
+        const { error: le } = await supabase.from('invoice_line_items').insert(linePayload)
+        if (le) throw le
+      }
+      toast.success(`Invoice ${invoice.invoice_number} updated`)
+      onSaved()
+    } catch (e) { toast.error(e.message || 'Failed to update invoice')
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <Modal title={`Edit Invoice — ${invoice.invoice_number}`} onClose={onClose} wide>
+      {loadingLines ? (
+        <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-primary-400" /></div>
+      ) : (
+        <div className="space-y-5">
+          {/* Client details */}
+          <div>
+            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Client Details</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="col-span-2">
+                <label className="text-xs text-slate-400 mb-1 block">Client / Company Name *</label>
+                <input className={inp()} value={form.client_name} onChange={e => setF('client_name', e.target.value)} />
+              </div>
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Client GSTIN</label>
+                <input className={inp()} value={form.client_gstin} onChange={e => setF('client_gstin', e.target.value.toUpperCase())} placeholder="22AAAAA0000A1Z5" />
+              </div>
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Project / Work Order</label>
+                <input className={inp()} value={form.project_name} onChange={e => setF('project_name', e.target.value)} placeholder="Optional" />
+              </div>
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Invoice Date</label>
+                <input type="date" className={inp()} value={form.invoice_date} onChange={e => setF('invoice_date', e.target.value)} />
+              </div>
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Due Date</label>
+                <input type="date" className={inp()} value={form.due_date} onChange={e => setF('due_date', e.target.value)} />
+              </div>
+            </div>
+          </div>
+
+          {/* Line items */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Line Items</p>
+              <button onClick={() => setLines(p => [...p, blankLine()])}
+                className="text-xs text-primary-400 hover:text-primary-300 flex items-center gap-1">
+                <Plus className="w-3.5 h-3.5" /> Add Row
+              </button>
+            </div>
+            <div className="space-y-2">
+              <div className="hidden lg:grid grid-cols-12 gap-2 text-[10px] text-slate-500 font-bold uppercase px-1">
+                <div className="col-span-5">Description</div>
+                <div className="col-span-2">Qty</div>
+                <div className="col-span-1">Unit</div>
+                <div className="col-span-2">Rate (₹)</div>
+                <div className="col-span-1 text-right">Amount</div>
+                <div className="col-span-1" />
+              </div>
+              {lines.map(l => (
+                <div key={l._id} className="grid grid-cols-12 gap-2 items-center">
+                  <div className="col-span-5">
+                    <input className={inp('text-xs')} value={l.description}
+                      onChange={e => updateLine(l._id, 'description', e.target.value)} placeholder="Service description…" />
+                  </div>
+                  <div className="col-span-2">
+                    <input type="number" className={inp('text-xs')} value={l.quantity}
+                      onChange={e => updateLine(l._id, 'quantity', e.target.value)} min="0" step="0.5" />
+                  </div>
+                  <div className="col-span-1">
+                    <select className={inp('text-xs')} value={l.unit} onChange={e => updateLine(l._id, 'unit', e.target.value)}>
+                      {UNITS.map(u => <option key={u}>{u}</option>)}
+                    </select>
+                  </div>
+                  <div className="col-span-2">
+                    <input type="number" className={inp('text-xs')} value={l.rate}
+                      onChange={e => updateLine(l._id, 'rate', e.target.value)} placeholder="0" min="0" />
+                  </div>
+                  <div className="col-span-1 text-right text-xs text-slate-300 font-mono">{fmt(l.amount)}</div>
+                  <div className="col-span-1 text-right">
+                    <button onClick={() => lines.length > 1 && setLines(p => p.filter(x => x._id !== l._id))}
+                      className="text-slate-600 hover:text-red-400 transition-colors">
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* GST + Totals */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+            <div className="space-y-3">
+              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Tax</p>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={form.use_igst} onChange={e => setF('use_igst', e.target.checked)} className="rounded" />
+                <span className="text-xs text-slate-300">Use IGST (interstate supply)</span>
+              </label>
+              {form.use_igst ? (
+                <div>
+                  <label className="text-xs text-slate-400 mb-1 block">IGST Rate (%)</label>
+                  <input type="number" className={inp()} value={form.igst_rate} onChange={e => setF('igst_rate', e.target.value)} min="0" max="28" step="0.5" />
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-xs text-slate-400 mb-1 block">CGST (%)</label>
+                    <input type="number" className={inp()} value={form.cgst_rate} onChange={e => setF('cgst_rate', e.target.value)} min="0" max="14" step="0.5" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-400 mb-1 block">SGST (%)</label>
+                    <input type="number" className={inp()} value={form.sgst_rate} onChange={e => setF('sgst_rate', e.target.value)} min="0" max="14" step="0.5" />
+                  </div>
+                </div>
+              )}
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Discount (₹)</label>
+                <input type="number" className={inp()} value={form.discount_amount} onChange={e => setF('discount_amount', e.target.value)} min="0" />
+              </div>
+            </div>
+            <div className="bg-dark-700 rounded-xl p-4 space-y-2.5">
+              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Summary</p>
+              <Row label="Subtotal" val={fmt(subtotal)} />
+              {parseFloat(form.discount_amount) > 0 && <Row label="Discount" val={`− ${fmt(form.discount_amount)}`} cls="text-red-400" />}
+              <Row label="Taxable" val={fmt(taxable)} />
+              {form.use_igst
+                ? <Row label={`IGST (${form.igst_rate}%)`} val={fmt(igst_amt)} cls="text-slate-400" />
+                : <>
+                    <Row label={`CGST (${form.cgst_rate}%)`} val={fmt(cgst_amt)} cls="text-slate-400" />
+                    <Row label={`SGST (${form.sgst_rate}%)`} val={fmt(sgst_amt)} cls="text-slate-400" />
+                  </>
+              }
+              {invoice.paid_amount > 0 && <Row label="Already Paid" val={fmt(invoice.paid_amount)} cls="text-emerald-400" />}
+              <div className="border-t border-dark-600 pt-2.5 flex justify-between font-bold text-base text-slate-100">
+                <span>Total</span>
+                <span className="font-mono text-emerald-400">{fmt(total)}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Notes / Terms */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-slate-400 mb-1 block">Notes</label>
+              <textarea className={inp('h-16 resize-none')} value={form.notes} onChange={e => setF('notes', e.target.value)} placeholder="Any special instructions…" />
+            </div>
+            <div>
+              <label className="text-xs text-slate-400 mb-1 block">Terms & Conditions</label>
+              <textarea className={inp('h-16 resize-none')} value={form.terms} onChange={e => setF('terms', e.target.value)} />
+            </div>
+          </div>
+
+          <div className="flex gap-3 pt-2 border-t border-dark-700">
+            <button onClick={onClose} className="btn-ghost flex-1">Cancel</button>
+            <button onClick={handleSave} disabled={saving} className="btn-primary flex-1">
+              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save Changes'}
+            </button>
+          </div>
+        </div>
+      )}
     </Modal>
   )
 }
@@ -714,6 +969,7 @@ function InvoicesTab({ companyId, session }) {
   const [search, setSearch] = useState('')
   const [showCreate, setShowCreate] = useState(false)
   const [payTarget, setPayTarget] = useState(null)
+  const [editTarget, setEditTarget] = useState(null)
   const [expandedId, setExpandedId] = useState(null)
   const [generatingLink, setGeneratingLink] = useState(null) // invoice id being processed
 
@@ -778,6 +1034,19 @@ function InvoicesTab({ companyId, session }) {
     const { error } = await supabase.from('client_invoices').update({ status: s, updated_at: new Date().toISOString() }).eq('id', id)
     if (error) toast.error(error.message)
     else { toast.success(`Marked as ${s}`); refresh() }
+  }
+
+  const handleDeleteInvoice = async (inv) => {
+    if (inv.paid_amount > 0) {
+      toast.error('Cannot delete — payments have been recorded against this invoice. Cancel it instead.')
+      return
+    }
+    if (!window.confirm(`Delete invoice ${inv.invoice_number} for ${inv.client_name}? This cannot be undone.`)) return
+    await supabase.from('invoice_line_items').delete().eq('invoice_id', inv.id)
+    await supabase.from('client_invoices').delete().eq('id', inv.id)
+    toast.success('Invoice deleted')
+    setExpandedId(null)
+    refresh()
   }
 
   const STATUS_FILTERS = ['all', 'draft', 'sent', 'partial', 'overdue', 'paid', 'cancelled']
@@ -861,9 +1130,19 @@ function InvoicesTab({ companyId, session }) {
                               <Banknote className="w-3.5 h-3.5" /> Record Payment
                             </button>
                           )}
+                          {!['paid', 'cancelled'].includes(inv.status) && (
+                            <button onClick={() => setEditTarget(inv)} className="btn-ghost text-xs py-1.5 text-primary-400 hover:bg-primary-500/10">
+                              <Pencil className="w-3.5 h-3.5" /> Edit
+                            </button>
+                          )}
                           {!['cancelled', 'paid'].includes(inv.status) && (
                             <button onClick={() => handleStatus(inv.id, 'cancelled')} className="btn-ghost text-xs py-1.5 text-red-400 hover:bg-red-500/10">
                               Cancel Invoice
+                            </button>
+                          )}
+                          {['draft', 'cancelled'].includes(inv.status) && (
+                            <button onClick={() => handleDeleteInvoice(inv)} className="btn-ghost text-xs py-1.5 text-red-500 hover:bg-red-500/10">
+                              <Trash2 className="w-3.5 h-3.5" /> Delete
                             </button>
                           )}
                         </div>
@@ -922,6 +1201,10 @@ function InvoicesTab({ companyId, session }) {
       {showCreate && (
         <CreateInvoiceModal companyId={companyId} session={session} invoiceCount={invoices.length}
           onClose={() => setShowCreate(false)} onSaved={() => { setShowCreate(false); refresh() }} />
+      )}
+      {editTarget && (
+        <EditInvoiceModal invoice={editTarget} companyId={companyId} session={session}
+          onClose={() => setEditTarget(null)} onSaved={() => { setEditTarget(null); refresh() }} />
       )}
       {payTarget && (
         <RecordPaymentModal invoice={payTarget} companyId={companyId} session={session}
