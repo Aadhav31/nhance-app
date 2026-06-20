@@ -58,7 +58,6 @@ serve(async (req: Request) => {
     const company_id = callerRole.company_id
 
     // ── Send invite email via Supabase Auth ───────────────────────────────────
-    // This sends an email with a magic link — employee clicks and sets their password
     const { data: inviteData, error: inviteErr } = await supabaseAdmin.auth.admin.inviteUserByEmail(
       email,
       {
@@ -67,25 +66,21 @@ serve(async (req: Request) => {
       }
     )
 
-    if (inviteErr) {
-      // If user already exists in auth, still try to create profile/role
-      if (!inviteErr.message.includes('already been registered')) {
+    let newUserId = inviteData?.user?.id
+
+    // If user already exists in Auth, look them up by listing users
+    if (!newUserId) {
+      const { data: userList } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 })
+      const existing = userList?.users?.find(u => u.email?.toLowerCase() === email.toLowerCase())
+      if (existing) {
+        newUserId = existing.id
+        console.log(`User already exists in auth — reusing: ${newUserId}`)
+      } else if (inviteErr) {
         throw inviteErr
       }
     }
 
-    const newUserId = inviteData?.user?.id
-
-    if (!newUserId) {
-      // User already exists in auth — check if profile exists
-      const { data: existingProfile } = await supabaseAdmin
-        .from('user_profiles')
-        .select('id')
-        .eq('id', caller.id) // won't match, just checking pattern
-        .single()
-
-      throw new Error('User with this email already has a login. Link them manually from HR.')
-    }
+    if (!newUserId) throw new Error('Could not create or find user account')
 
     // ── Create user_profiles record ───────────────────────────────────────────
     const { error: profileErr } = await supabaseAdmin
