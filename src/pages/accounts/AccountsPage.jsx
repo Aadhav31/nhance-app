@@ -135,11 +135,20 @@ function CreateInvoiceModal({ companyId, session, invoiceCount, onClose, onSaved
         total_amount: total, paid_amount: 0, balance_due: total,
         status, notes: form.notes.trim() || null, terms: form.terms.trim() || null,
         created_by: session.user.id,
-      }).select().single()
+      }).select('id').single()
       if (invErr) throw invErr
 
+      // If RLS blocks the returning select, fetch the invoice by number
+      let invoiceId = inv?.id
+      if (!invoiceId) {
+        const { data: fetched } = await supabase.from('client_invoices')
+          .select('id').eq('invoice_number', invNum).eq('company_id', companyId).single()
+        invoiceId = fetched?.id
+      }
+      if (!invoiceId) throw new Error('Invoice saved but could not retrieve ID — please refresh and check.')
+
       const linePayload = lines.filter(l => l.description.trim()).map((l, i) => ({
-        invoice_id: inv.id, company_id: companyId, description: l.description.trim(),
+        invoice_id: invoiceId, company_id: companyId, description: l.description.trim(),
         quantity: parseFloat(l.quantity) || 1, unit: l.unit,
         rate: parseFloat(l.rate) || 0, amount: l.amount, sort_order: i,
       }))
