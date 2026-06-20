@@ -5,7 +5,7 @@ import { fmtDate, fmtCurrency } from '../../lib/utils'
 import {
   Building2, Users, Package, Plus, ChevronRight,
   CheckCircle, XCircle, Loader2, X, ToggleLeft, ToggleRight,
-  Pencil, Trash2
+  Pencil, Trash2, Send, ShieldCheck, Clock
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import Modal, { FormField } from '../../components/shared/Modal'
@@ -363,6 +363,41 @@ function CompanyDetail({ company: initialCompany, onClose }) {
     },
   })
 
+  const { data: adminInfo = [], refetch: refetchAdmin } = useQuery({
+    queryKey: ['company_admin', company.id],
+    queryFn: async () => {
+      const { data } = await supabase.functions.invoke('get-company-admin', {
+        body: { company_id: company.id },
+      })
+      return data?.admins || []
+    },
+  })
+
+  const [resending, setResending] = useState(false)
+
+  const handleResendInvite = async (admin) => {
+    if (!admin?.email) { toast.error('No email found for this admin'); return }
+    setResending(true)
+    try {
+      const { data, error } = await supabase.functions.invoke('invite-user', {
+        body: {
+          email: admin.email,
+          full_name: admin.full_name || 'Company Admin',
+          role: 'admin',
+          company_id: company.id,
+        },
+      })
+      if (error) throw error
+      if (!data?.success) throw new Error(data?.error || 'Resend failed')
+      toast.success(`Invite resent to ${admin.email}`)
+      refetchAdmin()
+    } catch (err) {
+      toast.error(err.message || 'Failed to resend invite')
+    } finally {
+      setResending(false)
+    }
+  }
+
   const toggleModule = async (mod, currentState) => {
     const newState = !currentState
     // Upsert so it works even if the row doesn't exist yet
@@ -468,6 +503,51 @@ function CompanyDetail({ company: initialCompany, onClose }) {
             <p className="label">Industry</p>
             <p className="text-sm text-slate-200 capitalize">{company.industry?.replace('_', ' ')}</p>
           </div>
+        </div>
+
+        {/* Admin Login Status */}
+        <div className="border border-dark-600 rounded-lg p-4 bg-dark-700/40">
+          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Company Admin Login</p>
+          {adminInfo.length === 0 ? (
+            <p className="text-sm text-slate-500 italic">No admin user linked yet</p>
+          ) : (
+            <div className="space-y-3">
+              {adminInfo.map((adm) => (
+                <div key={adm.user_id} className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-8 h-8 rounded-full bg-primary-600/20 border border-primary-700/40 flex items-center justify-center text-xs font-bold text-primary-400 flex-shrink-0">
+                      {(adm.full_name || adm.email || 'A').charAt(0).toUpperCase()}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-slate-200 truncate">{adm.full_name || '—'}</p>
+                      <p className="text-xs text-slate-400 truncate">{adm.email || '—'}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3 flex-shrink-0">
+                    {adm.has_logged_in ? (
+                      <span className="flex items-center gap-1.5 text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded-full">
+                        <ShieldCheck className="w-3 h-3" /> Logged In
+                      </span>
+                    ) : (
+                      <>
+                        <span className="flex items-center gap-1.5 text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-full">
+                          <Clock className="w-3 h-3" /> Invite Pending
+                        </span>
+                        <button
+                          onClick={() => handleResendInvite(adm)}
+                          disabled={resending}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-cyan-400 bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/20 transition-colors disabled:opacity-50"
+                        >
+                          {resending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
+                          Resend Invitation
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Modules toggle */}
