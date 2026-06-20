@@ -139,7 +139,7 @@ function CreateInvoiceModal({ companyId, session, invoiceCount, onClose, onSaved
       if (invErr) throw invErr
 
       const linePayload = lines.filter(l => l.description.trim()).map((l, i) => ({
-        invoice_id: inv.id, description: l.description.trim(),
+        invoice_id: inv.id, company_id: companyId, description: l.description.trim(),
         quantity: parseFloat(l.quantity) || 1, unit: l.unit,
         rate: parseFloat(l.rate) || 0, amount: l.amount, sort_order: i,
       }))
