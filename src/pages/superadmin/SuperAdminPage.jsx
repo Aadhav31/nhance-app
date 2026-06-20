@@ -392,13 +392,16 @@ function CompanyDetail({ company: initialCompany, onClose }) {
 
   const handleDelete = async () => {
     if (!window.confirm(
-      `⚠️ Permanently delete "${company.name}"?\n\nThis will remove all company data including employees, equipment, invoices, and records. This cannot be undone.\n\nType OK to confirm.`
+      `⚠️ Permanently delete "${company.name}"?\n\nThis will remove ALL company data — employees, equipment, invoices, projects, and users. This cannot be undone.`
     )) return
     setDeleting(true)
     try {
-      const { error } = await supabase.from('companies').delete().eq('id', company.id)
+      const { data, error } = await supabase.functions.invoke('delete-company', {
+        body: { company_id: company.id },
+      })
       if (error) throw error
-      toast.success(`"${company.name}" deleted`)
+      if (!data?.success) throw new Error(data?.error || 'Delete failed')
+      toast.success(`"${company.name}" permanently deleted`)
       qc.invalidateQueries(['companies'])
       onClose()
     } catch (err) {
