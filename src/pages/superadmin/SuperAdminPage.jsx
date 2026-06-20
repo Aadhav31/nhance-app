@@ -5,7 +5,7 @@ import { fmtDate, fmtCurrency } from '../../lib/utils'
 import {
   Building2, Users, Package, Plus, ChevronRight,
   CheckCircle, XCircle, Loader2, X, ToggleLeft, ToggleRight,
-  Pencil, Trash2, Send, ShieldCheck, Clock
+  Pencil, Trash2, Send, ShieldCheck, Clock, Copy, Link, RefreshCw
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import Modal, { FormField } from '../../components/shared/Modal'
@@ -373,28 +373,47 @@ function CompanyDetail({ company: initialCompany, onClose }) {
     },
   })
 
-  const [resending, setResending] = useState(false)
+  const [linkModal, setLinkModal] = useState(null) // { email, link }
+  const [generatingLink, setGeneratingLink] = useState(false)
+  const [resendingFor, setResendingFor] = useState(null)
 
-  const handleResendInvite = async (admin) => {
-    if (!admin?.email) { toast.error('No email found for this admin'); return }
-    setResending(true)
+  const handleGenerateLink = async (adm) => {
+    if (!adm?.email) { toast.error('No email found for this admin'); return }
+    setGeneratingLink(true)
+    try {
+      const { data, error } = await supabase.functions.invoke('generate-login-link', {
+        body: { email: adm.email },
+      })
+      if (error) throw error
+      if (!data?.success) throw new Error(data?.error || 'Failed to generate link')
+      setLinkModal({ email: adm.email, link: data.link })
+    } catch (err) {
+      toast.error(err.message || 'Failed to generate login link')
+    } finally {
+      setGeneratingLink(false)
+    }
+  }
+
+  const handleResendInvite = async (adm) => {
+    if (!adm?.email) { toast.error('No email found for this admin'); return }
+    setResendingFor(adm.user_id)
     try {
       const { data, error } = await supabase.functions.invoke('invite-user', {
         body: {
-          email: admin.email,
-          full_name: admin.full_name || 'Company Admin',
+          email: adm.email,
+          full_name: adm.full_name || 'Company Admin',
           role: 'admin',
           company_id: company.id,
         },
       })
       if (error) throw error
       if (!data?.success) throw new Error(data?.error || 'Resend failed')
-      toast.success(`Invite resent to ${admin.email}`)
+      toast.success(`Invite resent to ${adm.email}`)
       refetchAdmin()
     } catch (err) {
       toast.error(err.message || 'Failed to resend invite')
     } finally {
-      setResending(false)
+      setResendingFor(null)
     }
   }
 
@@ -506,43 +525,54 @@ function CompanyDetail({ company: initialCompany, onClose }) {
         </div>
 
         {/* Admin Login Status */}
-        <div className="border border-dark-600 rounded-lg p-4 bg-dark-700/40">
-          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Company Admin Login</p>
+        <div className="border border-dark-600 rounded-lg p-4 bg-dark-700/40 space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Company Admin Login</p>
+            <p className="text-[11px] text-slate-500">Generate a link to share via WhatsApp or SMS</p>
+          </div>
           {adminInfo.length === 0 ? (
             <p className="text-sm text-slate-500 italic">No admin user linked yet</p>
           ) : (
             <div className="space-y-3">
               {adminInfo.map((adm) => (
-                <div key={adm.user_id} className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-8 h-8 rounded-full bg-primary-600/20 border border-primary-700/40 flex items-center justify-center text-xs font-bold text-primary-400 flex-shrink-0">
-                      {(adm.full_name || adm.email || 'A').charAt(0).toUpperCase()}
+                <div key={adm.user_id} className="flex flex-col gap-2.5 p-3 rounded-lg bg-dark-800/60 border border-dark-600">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-8 h-8 rounded-full bg-primary-600/20 border border-primary-700/40 flex items-center justify-center text-xs font-bold text-primary-400 flex-shrink-0">
+                        {(adm.full_name || adm.email || 'A').charAt(0).toUpperCase()}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-slate-200 truncate">{adm.full_name || '—'}</p>
+                        <p className="text-xs text-slate-400 truncate">{adm.email || '—'}</p>
+                      </div>
                     </div>
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold text-slate-200 truncate">{adm.full_name || '—'}</p>
-                      <p className="text-xs text-slate-400 truncate">{adm.email || '—'}</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3 flex-shrink-0">
                     {adm.has_logged_in ? (
-                      <span className="flex items-center gap-1.5 text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded-full">
-                        <ShieldCheck className="w-3 h-3" /> Logged In
+                      <span className="flex items-center gap-1.5 text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded-full flex-shrink-0">
+                        <ShieldCheck className="w-3 h-3" /> Active
                       </span>
                     ) : (
-                      <>
-                        <span className="flex items-center gap-1.5 text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-full">
-                          <Clock className="w-3 h-3" /> Invite Pending
-                        </span>
-                        <button
-                          onClick={() => handleResendInvite(adm)}
-                          disabled={resending}
-                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-cyan-400 bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/20 transition-colors disabled:opacity-50"
-                        >
-                          {resending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
-                          Resend Invitation
-                        </button>
-                      </>
+                      <span className="flex items-center gap-1.5 text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-full flex-shrink-0">
+                        <Clock className="w-3 h-3" /> Never Logged In
+                      </span>
                     )}
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => handleGenerateLink(adm)}
+                      disabled={generatingLink}
+                      className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-white bg-primary-600 hover:bg-primary-500 transition-colors disabled:opacity-50"
+                    >
+                      {generatingLink ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Link className="w-3.5 h-3.5" />}
+                      Generate Login Link
+                    </button>
+                    <button
+                      onClick={() => handleResendInvite(adm)}
+                      disabled={resendingFor === adm.user_id}
+                      className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-cyan-400 bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/20 transition-colors disabled:opacity-50"
+                    >
+                      {resendingFor === adm.user_id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                      Resend Email Invite
+                    </button>
                   </div>
                 </div>
               ))}
@@ -610,6 +640,47 @@ function CompanyDetail({ company: initialCompany, onClose }) {
         onClose={() => setShowEdit(false)}
         onUpdated={updated => setCompany(updated)}
       />
+    )}
+
+    {linkModal && (
+      <div className="fixed inset-0 z-[60] bg-black/80 flex items-center justify-center p-4">
+        <div className="bg-dark-800 rounded-xl border border-dark-600 shadow-2xl w-full max-w-lg">
+          <div className="flex items-center justify-between px-6 py-4 border-b border-dark-700">
+            <h2 className="text-base font-bold text-slate-100">Login Link Generated</h2>
+            <button onClick={() => setLinkModal(null)} className="text-slate-400 hover:text-slate-100">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+          <div className="p-6 space-y-4">
+            <div className="bg-primary-900/20 border border-primary-700/30 rounded-lg p-3 text-xs text-primary-300">
+              <strong>Share this link</strong> with <span className="font-semibold">{linkModal.email}</span> via WhatsApp, SMS, or any messaging app.
+              They click it and are instantly logged into Nhance — no password needed. Link expires in 1 hour.
+            </div>
+            <div className="relative">
+              <textarea
+                readOnly
+                rows={3}
+                value={linkModal.link}
+                className="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2.5 text-xs text-slate-300 font-mono resize-none focus:outline-none"
+              />
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(linkModal.link)
+                  toast.success('Link copied to clipboard!')
+                }}
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-primary-600 hover:bg-primary-500 text-white text-sm font-medium rounded-lg transition-all"
+              >
+                <Copy className="w-4 h-4" /> Copy Link
+              </button>
+              <button onClick={() => setLinkModal(null)} className="btn-secondary">
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
     )}
     </>
   )
