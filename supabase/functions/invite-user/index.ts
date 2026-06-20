@@ -39,12 +39,15 @@ serve(async (req: Request) => {
       .eq('user_id', caller.id)
       .single()
 
-    if (!callerRole || !['admin', 'manager'].includes(callerRole.role)) {
+    // Allow Nhance superadmin (no user_roles entry) or company admin/manager
+    const nhanceAdminEmail = Deno.env.get('NHANCE_ADMIN_EMAIL') || ''
+    const isSuperAdmin = caller.email === nhanceAdminEmail
+    if (!isSuperAdmin && (!callerRole || !['admin', 'manager'].includes(callerRole.role))) {
       throw new Error('Only admins and managers can invite users')
     }
 
     // ── Parse request ─────────────────────────────────────────────────────────
-    const { email, full_name, role, employee_id } = await req.json()
+    const { email, full_name, role, employee_id, company_id: bodyCompanyId } = await req.json()
 
     if (!email || !full_name || !role) {
       throw new Error('email, full_name, and role are required')
@@ -55,7 +58,14 @@ serve(async (req: Request) => {
       throw new Error(`Invalid role. Must be one of: ${validRoles.join(', ')}`)
     }
 
-    const company_id = callerRole.company_id
+    // Use company_id from user_roles, or from request body (superadmin case), or first company
+    let company_id = callerRole?.company_id || bodyCompanyId
+    if (!company_id) {
+      const { data: firstCompany } = await supabaseAdmin
+        .from('companies').select('id').limit(1).single()
+      company_id = firstCompany?.id
+    }
+    if (!company_id) throw new Error('Could not determine company')
 
     // ── Send invite email via Supabase Auth ───────────────────────────────────
     const { data: inviteData, error: inviteErr } = await supabaseAdmin.auth.admin.inviteUserByEmail(

@@ -53,6 +53,7 @@ function NewCompanyModal({ onClose }) {
   const qc = useQueryClient()
   const [form, setForm] = useState({
     name: '', industry: 'equipment_rental', contact_name: '', contact_email: '',
+    admin_name: '', admin_email: '',
     contact_phone: '', gstin: '', address: '', max_users: 10,
     modules: ['core'],
   })
@@ -72,9 +73,14 @@ function NewCompanyModal({ onClose }) {
 
   const handleSave = async () => {
     if (!form.name.trim()) { toast.error('Company name is required'); return }
+    if (!form.admin_email.trim() || !form.admin_email.includes('@')) {
+      toast.error('Admin email is required — this person will manage the company')
+      return
+    }
+    if (!form.admin_name.trim()) { toast.error('Admin name is required'); return }
     setSaving(true)
     try {
-      // Create company
+      // 1. Create company
       const { data: company, error: cErr } = await supabase
         .from('companies')
         .insert({
@@ -86,10 +92,9 @@ function NewCompanyModal({ onClose }) {
         })
         .select()
         .single()
-
       if (cErr) throw cErr
 
-      // Create module entries
+      // 2. Create module entries
       const moduleRows = ALL_MODULES.map(mod => ({
         company_id: company.id,
         module_key: mod,
@@ -99,7 +104,23 @@ function NewCompanyModal({ onClose }) {
       const { error: mErr } = await supabase.from('company_modules').insert(moduleRows)
       if (mErr) throw mErr
 
-      toast.success(`Company "${form.name}" created`)
+      // 3. Invite admin user — sends email invite, creates profile + role
+      const { data: inviteData, error: inviteErr } = await supabase.functions.invoke('invite-user', {
+        body: {
+          email: form.admin_email.trim().toLowerCase(),
+          full_name: form.admin_name.trim(),
+          role: 'admin',
+          company_id: company.id,
+        },
+      })
+      if (inviteErr || !inviteData?.success) {
+        // Company created but invite failed — warn but don't block
+        toast.success(`Company "${form.name}" created`)
+        toast.error(`Admin invite failed: ${inviteData?.error || inviteErr?.message} — send invite manually from Settings`)
+      } else {
+        toast.success(`Company "${form.name}" created — invite sent to ${form.admin_email}`)
+      }
+
       qc.invalidateQueries(['companies'])
       onClose()
     } catch (err) {
@@ -124,6 +145,25 @@ function NewCompanyModal({ onClose }) {
       }
     >
       <div className="space-y-5">
+
+        {/* Admin Login — most important, shown first */}
+        <div className="bg-primary-900/20 border border-primary-700/40 rounded-xl p-4">
+          <p className="text-xs font-bold text-primary-400 uppercase tracking-widest mb-3">
+            Company Admin Login (required)
+          </p>
+          <p className="text-xs text-slate-400 mb-3">
+            This person will manage the company in Nhance. They'll receive an email to set their password.
+          </p>
+          <div className="form-grid-2">
+            <FormField label="Admin Full Name" required>
+              <input className="input" value={form.admin_name} onChange={e => set('admin_name', e.target.value)} placeholder="e.g. Ravi Kumar" />
+            </FormField>
+            <FormField label="Admin Email" required>
+              <input type="email" className="input" value={form.admin_email} onChange={e => set('admin_email', e.target.value)} placeholder="admin@company.com" />
+            </FormField>
+          </div>
+        </div>
+
         <div className="form-grid-2">
           <FormField label="Company Name" required>
             <input className="input" value={form.name} onChange={e => set('name', e.target.value)} placeholder="Acme Equipment Pvt Ltd" />
