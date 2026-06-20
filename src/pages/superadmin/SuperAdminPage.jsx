@@ -4,7 +4,8 @@ import { supabase } from '../../lib/supabase'
 import { fmtDate, fmtCurrency } from '../../lib/utils'
 import {
   Building2, Users, Package, Plus, ChevronRight,
-  CheckCircle, XCircle, Loader2, X, ToggleLeft, ToggleRight
+  CheckCircle, XCircle, Loader2, X, ToggleLeft, ToggleRight,
+  Pencil, Trash2
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import Modal, { FormField } from '../../components/shared/Modal'
@@ -232,10 +233,113 @@ function NewCompanyModal({ onClose }) {
   )
 }
 
+// ─── Edit company modal ───────────────────────────────────────────────────────
+function EditCompanyModal({ company, onClose, onUpdated }) {
+  const qc = useQueryClient()
+  const [form, setForm] = useState({
+    name:          company.name          || '',
+    industry:      company.industry      || 'equipment_rental',
+    contact_name:  company.contact_name  || '',
+    contact_email: company.contact_email || '',
+    contact_phone: company.contact_phone || '',
+    gstin:         company.gstin         || '',
+    address:       company.address       || '',
+    max_users:     company.max_users     || 10,
+  })
+  const [saving, setSaving] = useState(false)
+  const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
+
+  const handleSave = async () => {
+    if (!form.name.trim()) { toast.error('Company name is required'); return }
+    setSaving(true)
+    try {
+      const { error } = await supabase
+        .from('companies')
+        .update({
+          name:          form.name.trim(),
+          industry:      form.industry,
+          contact_name:  form.contact_name,
+          contact_email: form.contact_email,
+          contact_phone: form.contact_phone,
+          gstin:         form.gstin,
+          address:       form.address,
+          max_users:     Number(form.max_users),
+        })
+        .eq('id', company.id)
+      if (error) throw error
+      toast.success('Company updated')
+      qc.invalidateQueries(['companies'])
+      onUpdated({ ...company, ...form, max_users: Number(form.max_users) })
+      onClose()
+    } catch (err) {
+      toast.error(err.message || 'Failed to update company')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Modal
+      title={`Edit: ${company.name}`}
+      onClose={onClose}
+      size="lg"
+      footer={
+        <>
+          <button onClick={onClose} className="btn-secondary">Cancel</button>
+          <button onClick={handleSave} disabled={saving} className="btn-primary">
+            {saving ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving…</> : 'Save Changes'}
+          </button>
+        </>
+      }
+    >
+      <div className="space-y-5">
+        <div className="form-grid-2">
+          <FormField label="Company Name" required>
+            <input className="input" value={form.name} onChange={e => set('name', e.target.value)} />
+          </FormField>
+          <FormField label="Industry">
+            <select className="input" value={form.industry} onChange={e => set('industry', e.target.value)}>
+              <option value="equipment_rental">Equipment Rental</option>
+              <option value="transport">Transport &amp; Logistics</option>
+              <option value="construction">Construction</option>
+            </select>
+          </FormField>
+        </div>
+        <div className="form-grid-2">
+          <FormField label="Contact Person">
+            <input className="input" value={form.contact_name} onChange={e => set('contact_name', e.target.value)} />
+          </FormField>
+          <FormField label="Contact Phone">
+            <input className="input" value={form.contact_phone} onChange={e => set('contact_phone', e.target.value)} />
+          </FormField>
+        </div>
+        <div className="form-grid-2">
+          <FormField label="Contact Email">
+            <input type="email" className="input" value={form.contact_email} onChange={e => set('contact_email', e.target.value)} />
+          </FormField>
+          <FormField label="Max Users (Seats)">
+            <input type="number" className="input" value={form.max_users} onChange={e => set('max_users', e.target.value)} min={1} />
+          </FormField>
+        </div>
+        <div className="form-grid-2">
+          <FormField label="GSTIN">
+            <input className="input" value={form.gstin} onChange={e => set('gstin', e.target.value)} placeholder="22AAAAA0000A1Z5" />
+          </FormField>
+          <FormField label="Address">
+            <input className="input" value={form.address} onChange={e => set('address', e.target.value)} />
+          </FormField>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
 // ─── Company detail panel ─────────────────────────────────────────────────────
 function CompanyDetail({ company: initialCompany, onClose }) {
   const qc = useQueryClient()
   const [company, setCompany] = useState(initialCompany)
+  const [showEdit, setShowEdit] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   const { data: modules = [] } = useQuery({
     queryKey: ['company_modules', company.id],
@@ -286,8 +390,39 @@ function CompanyDetail({ company: initialCompany, onClose }) {
     qc.invalidateQueries(['companies'])
   }
 
+  const handleDelete = async () => {
+    if (!window.confirm(
+      `⚠️ Permanently delete "${company.name}"?\n\nThis will remove all company data including employees, equipment, invoices, and records. This cannot be undone.\n\nType OK to confirm.`
+    )) return
+    setDeleting(true)
+    try {
+      const { error } = await supabase.from('companies').delete().eq('id', company.id)
+      if (error) throw error
+      toast.success(`"${company.name}" deleted`)
+      qc.invalidateQueries(['companies'])
+      onClose()
+    } catch (err) {
+      toast.error(err.message || 'Failed to delete company')
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   return (
-    <Modal title={company.name} onClose={onClose} size="lg">
+    <>
+    <Modal
+      title={company.name}
+      onClose={onClose}
+      size="lg"
+      footer={
+        <div className="flex justify-between w-full">
+          <button onClick={onClose} className="btn-secondary">Close</button>
+          <button onClick={() => setShowEdit(true)} className="btn-primary text-xs">
+            <Pencil className="w-3.5 h-3.5" /> Edit Company
+          </button>
+        </div>
+      }
+    >
       <div className="space-y-5">
         {/* Overview */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -359,8 +494,8 @@ function CompanyDetail({ company: initialCompany, onClose }) {
         </div>
 
         {/* Danger zone */}
-        <div className="border border-red-500/20 rounded-lg p-4 bg-red-500/5">
-          <p className="text-xs font-semibold text-red-400 uppercase tracking-wider mb-2">Account Status</p>
+        <div className="border border-red-500/20 rounded-lg p-4 bg-red-500/5 space-y-3">
+          <p className="text-xs font-semibold text-red-400 uppercase tracking-wider">Danger Zone</p>
           <div className="flex items-center justify-between">
             <p className="text-sm text-slate-300">
               {company.is_active ? 'Suspend this company account' : 'Re-activate this company account'}
@@ -372,9 +507,28 @@ function CompanyDetail({ company: initialCompany, onClose }) {
               {company.is_active ? 'Suspend' : 'Activate'}
             </button>
           </div>
+          <div className="flex items-center justify-between border-t border-red-500/20 pt-3">
+            <p className="text-sm text-slate-300">Permanently delete all company data</p>
+            <button
+              onClick={handleDelete}
+              disabled={deleting}
+              className="btn-danger text-xs"
+            >
+              {deleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <><Trash2 className="w-3.5 h-3.5" /> Delete</>}
+            </button>
+          </div>
         </div>
       </div>
     </Modal>
+
+    {showEdit && (
+      <EditCompanyModal
+        company={company}
+        onClose={() => setShowEdit(false)}
+        onUpdated={updated => setCompany(updated)}
+      />
+    )}
+    </>
   )
 }
 

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Save, Building2, Users, Monitor, CheckCircle, AlertCircle,
-         Plus, X, Loader2, Mail, Shield, Trash2, RefreshCw } from 'lucide-react'
+         Plus, X, Loader2, Mail, Shield, Trash2, RefreshCw, Send } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
 import { useDisplayMode } from '../../contexts/DisplayModeContext'
 import { supabase } from '../../lib/supabase'
@@ -124,10 +124,70 @@ function InviteModal({ onClose, onSent, companyId }) {
   )
 }
 
+// ─── Resend Invite Modal ──────────────────────────────────────────────────────
+function ResendInviteModal({ member, onClose }) {
+  const [email, setEmail] = useState('')
+  const [sending, setSending] = useState(false)
+
+  const handleSend = async () => {
+    if (!email.trim() || !email.includes('@')) return toast.error('Valid email required')
+    setSending(true)
+    try {
+      const { data, error } = await supabase.functions.invoke('invite-user', {
+        body: { email: email.trim().toLowerCase(), full_name: member.full_name, role: member.role },
+      })
+      if (error) throw error
+      if (!data?.success) throw new Error(data?.error || 'Resend failed')
+      toast.success(`Invite resent to ${email}`)
+      onClose()
+    } catch (e) {
+      toast.error(e.message || 'Failed to resend invite')
+    } finally {
+      setSending(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
+      <div className="bg-dark-800 rounded-xl border border-dark-700 shadow-2xl w-full max-w-sm">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-dark-700">
+          <h2 className="text-base font-bold text-slate-100">Resend Invite</h2>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-100"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="p-6 space-y-4">
+          <p className="text-sm text-slate-300">
+            Resending invite for <span className="font-semibold text-slate-100">{member.full_name}</span> ({member.role})
+          </p>
+          <p className="text-xs text-slate-400">Enter their email address to resend the login invite.</p>
+          <div>
+            <label className="text-xs text-slate-400 mb-1 block">Email Address *</label>
+            <input
+              type="email"
+              autoFocus
+              className="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              placeholder="their@email.com"
+              onKeyDown={e => e.key === 'Enter' && handleSend()}
+            />
+          </div>
+          <div className="flex gap-3 pt-1">
+            <button onClick={onClose} className="btn-ghost flex-1">Cancel</button>
+            <button onClick={handleSend} disabled={sending} className="btn-primary flex-1">
+              {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <><Send className="w-4 h-4" /> Resend</>}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Team Members Section ─────────────────────────────────────────────────────
 function TeamMembers({ companyId, isAdmin }) {
   const qc = useQueryClient()
   const [showInvite, setShowInvite] = useState(false)
+  const [resendTarget, setResendTarget] = useState(null)
 
   const { data: members = [], isLoading, refetch } = useQuery({
     queryKey: ['team_members', companyId],
@@ -170,21 +230,6 @@ function TeamMembers({ companyId, isAdmin }) {
     else { toast.success('Role updated'); refetch() }
   }
 
-  const handleResendInvite = async (member) => {
-    // Re-invoke the invite function — Supabase will resend the email
-    toast.loading('Resending invite…')
-    try {
-      const { data, error } = await supabase.functions.invoke('invite-user', {
-        body: { email: member.email || '', full_name: member.full_name, role: member.role },
-      })
-      toast.dismiss()
-      if (error || !data?.success) toast.error('Could not resend — user may already be active')
-      else toast.success('Invite resent')
-    } catch {
-      toast.dismiss()
-      toast.error('Failed to resend invite')
-    }
-  }
 
   return (
     <div>
@@ -227,6 +272,13 @@ function TeamMembers({ companyId, isAdmin }) {
                         {ROLES.map(r => <option key={r.key} value={r.key}>{r.label}</option>)}
                       </select>
                       <button
+                        onClick={() => setResendTarget(m)}
+                        title="Resend invite email"
+                        className="p-1.5 rounded-lg text-slate-500 hover:text-cyan-400 hover:bg-cyan-500/10 transition-colors"
+                      >
+                        <Send className="w-3.5 h-3.5" />
+                      </button>
+                      <button
                         onClick={() => handleDeactivate(m.id, m.is_active)}
                         title={m.is_active ? 'Deactivate' : 'Reactivate'}
                         className={`p-1.5 rounded-lg transition-colors ${m.is_active ? 'text-slate-500 hover:text-red-400 hover:bg-red-500/10' : 'text-slate-500 hover:text-emerald-400 hover:bg-emerald-500/10'}`}
@@ -246,6 +298,13 @@ function TeamMembers({ companyId, isAdmin }) {
           companyId={companyId}
           onClose={() => setShowInvite(false)}
           onSent={() => { setShowInvite(false); refetch() }}
+        />
+      )}
+
+      {resendTarget && (
+        <ResendInviteModal
+          member={resendTarget}
+          onClose={() => setResendTarget(null)}
         />
       )}
     </div>
