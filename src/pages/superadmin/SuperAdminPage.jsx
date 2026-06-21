@@ -382,11 +382,11 @@ function CompanyDetail({ company: initialCompany, onClose }) {
     setGeneratingLink(true)
     try {
       const { data, error } = await supabase.functions.invoke('generate-login-link', {
-        body: { email: adm.email },
+        body: { email: adm.email, full_name: adm.full_name },
       })
       if (error) throw error
       if (!data?.success) throw new Error(data?.error || 'Failed to generate link')
-      setLinkModal({ email: adm.email, link: data.link })
+      setLinkModal({ email: adm.email, link: data.link, emailSent: data.email_sent })
     } catch (err) {
       toast.error(err.message || 'Failed to generate login link')
     } finally {
@@ -652,10 +652,15 @@ function CompanyDetail({ company: initialCompany, onClose }) {
             </button>
           </div>
           <div className="p-6 space-y-4">
-            <div className="bg-primary-900/20 border border-primary-700/30 rounded-lg p-3 text-xs text-primary-300">
-              <strong>Share this link</strong> with <span className="font-semibold">{linkModal.email}</span> via WhatsApp, SMS, or any messaging app.
-              They click it and are instantly logged into Nhance — no password needed. Link expires in 1 hour.
-            </div>
+            {linkModal.emailSent ? (
+              <div className="bg-emerald-900/20 border border-emerald-700/30 rounded-lg p-3 text-xs text-emerald-300">
+                ✅ Login link emailed to <strong>{linkModal.email}</strong> via Resend. Also copy below to share via WhatsApp/SMS as backup. Expires in 1 hour.
+              </div>
+            ) : (
+              <div className="bg-primary-900/20 border border-primary-700/30 rounded-lg p-3 text-xs text-primary-300">
+                <strong>Share this link</strong> with <span className="font-semibold">{linkModal.email}</span> via WhatsApp or SMS — they click it and are instantly logged in. Expires in 1 hour.
+              </div>
+            )}
             <div className="relative">
               <textarea
                 readOnly
