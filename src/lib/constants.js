@@ -160,13 +160,18 @@ export const NAV_ITEMS = [
   {
     section: 'Business',
     items: [
-      { key: 'projects', label: 'Projects',  icon: 'FolderOpen',   module: MODULES.CLIENTS_PROJECTS,
+      { key: 'sales',    label: 'Sales',    icon: 'TrendingUp',   module: MODULES.SALES,
+        roles: [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
+      { key: 'purchase', label: 'Purchase', icon: 'ShoppingCart', module: MODULES.PURCHASE,
+        roles: [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
+      { key: 'projects', label: 'Projects', icon: 'FolderOpen',   module: MODULES.CLIENTS_PROJECTS,
         roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
-      { key: 'accounts', label: 'Accounts',  icon: 'Wallet',       module: MODULES.ACCOUNTS,
-        roles: [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
-      { key: 'sales',    label: 'Sales',     icon: 'TrendingUp',   module: MODULES.SALES,
-        roles: [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
-      { key: 'purchase', label: 'Purchase',  icon: 'ShoppingCart', module: MODULES.PURCHASE,
+    ],
+  },
+  {
+    section: 'Finance',
+    items: [
+      { key: 'accounts', label: 'Accounts', icon: 'Wallet', module: MODULES.ACCOUNTS,
         roles: [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
     ],
   },
