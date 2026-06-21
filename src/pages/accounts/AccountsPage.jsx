@@ -120,7 +120,11 @@ function CreateInvoiceModal({ companyId, session, invoiceCount, onClose, onSaved
     if (lines.every(l => !l.description.trim())) return toast.error('Add at least one line item')
     setSaving(true)
     try {
-      const { data: inv, error: invErr } = await supabase.from('client_invoices').insert({
+      // Generate UUID client-side so we never need to read it back (avoids RLS SELECT issues)
+      const invoiceId = crypto.randomUUID()
+
+      const { error: invErr } = await supabase.from('client_invoices').insert({
+        id: invoiceId,
         company_id: companyId, invoice_number: invNum,
         invoice_date: form.invoice_date, due_date: form.due_date || null,
         client_name: form.client_name.trim(),
@@ -135,20 +139,11 @@ function CreateInvoiceModal({ companyId, session, invoiceCount, onClose, onSaved
         total_amount: total, paid_amount: 0, balance_due: total,
         status, notes: form.notes.trim() || null, terms: form.terms.trim() || null,
         created_by: session.user.id,
-      }).select('id').single()
+      })
       if (invErr) throw invErr
 
-      // If RLS blocks the returning select, fetch the invoice by number
-      let invoiceId = inv?.id
-      if (!invoiceId) {
-        const { data: fetched } = await supabase.from('client_invoices')
-          .select('id').eq('invoice_number', invNum).eq('company_id', companyId).single()
-        invoiceId = fetched?.id
-      }
-      if (!invoiceId) throw new Error('Invoice saved but could not retrieve ID — please refresh and check.')
-
       const linePayload = lines.filter(l => l.description.trim()).map((l, i) => ({
-        invoice_id: invoiceId, company_id: companyId, description: l.description.trim(),
+        invoice_id: invoiceId, description: l.description.trim(),
         quantity: parseFloat(l.quantity) || 1, unit: l.unit,
         rate: parseFloat(l.rate) || 0, amount: l.amount, sort_order: i,
       }))
@@ -401,7 +396,7 @@ function EditInvoiceModal({ invoice, companyId, session, onClose, onSaved }) {
       // Replace line items: delete old, insert new
       await supabase.from('invoice_line_items').delete().eq('invoice_id', invoice.id)
       const linePayload = lines.filter(l => l.description.trim()).map((l, i) => ({
-        invoice_id: invoice.id, company_id: companyId, description: l.description.trim(),
+        invoice_id: invoice.id, description: l.description.trim(),
         quantity: parseFloat(l.quantity) || 1, unit: l.unit,
         rate: parseFloat(l.rate) || 0, amount: l.amount, sort_order: i,
       }))
