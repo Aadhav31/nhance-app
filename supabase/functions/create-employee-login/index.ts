@@ -30,10 +30,9 @@ serve(async (req: Request) => {
 
     // ── Parse body ──────────────────────────────────────────────────────────────
     const { email, full_name, role, employee_id, company_id, password } = await req.json()
-    if (!email)       throw new Error('email is required')
-    if (!role)        throw new Error('role is required')
-    if (!employee_id) throw new Error('employee_id is required')
-    if (!company_id)  throw new Error('company_id is required')
+    if (!email)      throw new Error('email is required')
+    if (!role)       throw new Error('role is required')
+    if (!company_id) throw new Error('company_id is required')
     if (!password || password.length < 6) throw new Error('Password must be at least 6 characters')
 
     const nhanceAdminEmail = Deno.env.get('NHANCE_ADMIN_EMAIL') || ''
@@ -99,12 +98,14 @@ serve(async (req: Request) => {
     }, { onConflict: 'user_id' })
     if (roleErr) console.error('user_roles upsert error:', roleErr)
 
-    // ── Link employee record ────────────────────────────────────────────────────
-    const { error: empErr } = await admin
-      .from('hr_employees')
-      .update({ user_id: userId })
-      .eq('id', employee_id)
-    if (empErr) throw empErr
+    // ── Link employee record (optional) ────────────────────────────────────────
+    if (employee_id) {
+      const { error: empErr } = await admin
+        .from('hr_employees')
+        .update({ user_id: userId })
+        .eq('id', employee_id)
+      if (empErr) console.error('hr_employees link error:', empErr)
+    }
 
     console.log(`✅ Employee login created: ${email} → user ${userId}`)
 

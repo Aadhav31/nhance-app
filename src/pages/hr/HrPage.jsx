@@ -185,6 +185,7 @@ function EmployeeFormModal({ companyId, initialValues, onClose }) {
     daily_rate: '',
     day_shift_rate: '', night_shift_rate: '', double_shift_rate: '', ot_rate_per_hour: '',
     user_id: '',
+    login_email: '', login_password: '', login_role: 'operator', showLoginPwd: false,
   }
 
   const [form, setForm] = useState(() => ({ ...blank, ...initialValues }))
@@ -280,7 +281,30 @@ function EmployeeFormModal({ companyId, initialValues, onClose }) {
         }
       }
 
-      toast.success(isEdit ? 'Employee updated' : 'Employee added')
+      // Create login account if email + password provided
+      const loginEmail = (form.login_email || form.email || '').trim().toLowerCase()
+      const loginPwd   = (form.login_password || '').trim()
+      if (loginEmail && loginPwd.length >= 6 && !form.user_id) {
+        const { data: loginData, error: loginErr } = await supabase.functions.invoke('create-employee-login', {
+          body: {
+            email: loginEmail,
+            full_name: form.name.trim(),
+            role: form.login_role || 'operator',
+            employee_id: empId,
+            company_id: companyId,
+            password: loginPwd,
+          },
+        })
+        if (loginErr || !loginData?.success) {
+          toast.success(isEdit ? 'Employee updated' : 'Employee added')
+          toast.error(`Login setup failed: ${loginData?.error || loginErr?.message} — set password manually from employee profile`)
+        } else {
+          toast.success(`${isEdit ? 'Employee updated' : 'Employee added'} — login created!`)
+        }
+      } else {
+        toast.success(isEdit ? 'Employee updated' : 'Employee added')
+      }
+
       qc.invalidateQueries(['hr_employees', companyId])
       qc.invalidateQueries(['hr_employees_active', companyId])
       qc.invalidateQueries(['hr_emp_count', companyId])
@@ -489,31 +513,56 @@ function EmployeeFormModal({ companyId, initialValues, onClose }) {
 
       {/* ── Compliance & Bank ── */}
       {tab === 'compliance' && (<>
-        {/* Login Account Link */}
-        <SectionHeader label="App Login Account" icon={Users} />
-        <div className="bg-dark-700 rounded-xl p-3 space-y-2">
-          <p className="text-xs text-slate-400">
-            Link this employee to their login account so the system can auto-identify them when they log in as Operator.
-          </p>
-          <select
-            className="w-full bg-dark-600 border border-dark-500 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
-            value={form.user_id}
-            onChange={e => set('user_id', e.target.value)}
-          >
-            <option value="">— Not linked (no operator login) —</option>
-            {companyUsers.map(u => (
-              <option key={u.user_id} value={u.user_id}>
-                {u.full_name || u.email} {u.role ? `(${u.role})` : ''}
-              </option>
-            ))}
-          </select>
-          {form.user_id && (
-            <div className="flex items-center gap-2 text-xs text-emerald-400">
-              <CheckCircle className="w-3.5 h-3.5 shrink-0" />
-              Linked — this employee will see only their assigned equipment when they log in.
+        {/* App Login — inline creation */}
+        <SectionHeader label="App Login" icon={Users} />
+        {isEdit && form.user_id ? (
+          <div className="bg-emerald-900/20 border border-emerald-700/30 rounded-xl p-3 flex items-center gap-2 text-xs text-emerald-400">
+            <CheckCircle className="w-3.5 h-3.5 shrink-0" />
+            Login account linked. Use "Set Password" from employee detail to change password.
+          </div>
+        ) : (
+          <div className="bg-dark-700 rounded-xl p-3 space-y-3">
+            <p className="text-xs text-slate-400">
+              {isEdit ? 'Create a login account for this employee. You'll share credentials via WhatsApp.' : 'Optionally create a login account now. You can also do this later from the employee profile.'}
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Login Email">
+                <input type="email" className={inp()} value={form.login_email || form.email || ''} onChange={e => set('login_email', e.target.value)} placeholder="employee@gmail.com" />
+              </Field>
+              <Field label="App Role">
+                <select className={inp()} value={form.login_role || 'operator'} onChange={e => set('login_role', e.target.value)}>
+                  <option value="operator">Operator — daily operations only</option>
+                  <option value="supervisor">Supervisor — operations, fleet, projects</option>
+                  <option value="manager">Manager — full access</option>
+                  <option value="accounts">Accounts — invoices, expenses</option>
+                </select>
+              </Field>
             </div>
-          )}
-        </div>
+            <Field label="Password">
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <input
+                    type={form.showLoginPwd ? 'text' : 'password'} className={`${inp()} pr-14 font-mono`}
+                    value={form.login_password || ''} onChange={e => set('login_password', e.target.value)}
+                    placeholder="Min. 6 characters"
+                  />
+                  <button type="button" onClick={() => set('showLoginPwd', !form.showLoginPwd)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 text-xs">
+                    {form.showLoginPwd ? 'Hide' : 'Show'}
+                  </button>
+                </div>
+                <button type="button"
+                  onClick={() => { const d = Math.floor(1000+Math.random()*9000); set('login_password', `Nhance@${d}`); set('showLoginPwd', true) }}
+                  className="px-3 py-2 rounded-lg bg-dark-600 border border-dark-500 text-xs text-cyan-400 hover:bg-dark-500 whitespace-nowrap">
+                  Auto-gen
+                </button>
+              </div>
+            </Field>
+            {(form.login_email || form.email) && form.login_password && (
+              <p className="text-xs text-emerald-400">✓ Login will be created when you save the employee.</p>
+            )}
+          </div>
+        )}
 
         <SectionHeader label="Statutory Deductions" icon={FileText} />
         <div className="space-y-2">

@@ -5,7 +5,7 @@ import { fmtDate, fmtCurrency } from '../../lib/utils'
 import {
   Building2, Users, Package, Plus, ChevronRight,
   CheckCircle, XCircle, Loader2, X, ToggleLeft, ToggleRight,
-  Pencil, Trash2, Send, ShieldCheck, Clock, Copy, Link, RefreshCw
+  Pencil, Trash2, ShieldCheck, Clock, Copy, Link, RefreshCw
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import Modal, { FormField } from '../../components/shared/Modal'
@@ -54,11 +54,20 @@ function NewCompanyModal({ onClose }) {
   const qc = useQueryClient()
   const [form, setForm] = useState({
     name: '', industry: 'equipment_rental', contact_name: '', contact_email: '',
-    admin_name: '', admin_email: '',
+    admin_name: '', admin_email: '', admin_password: '',
     contact_phone: '', gstin: '', address: '', max_users: 10,
     modules: ['core'],
   })
-  const [saving, setSaving] = useState(false)
+  const [saving, setSaving]   = useState(false)
+  const [showPwd, setShowPwd] = useState(false)
+  const [created, setCreated] = useState(null) // { companyName, email, password }
+  const [copied,  setCopied]  = useState(false)
+
+  const generatePassword = () => {
+    const digits = Math.floor(1000 + Math.random() * 9000)
+    set('admin_password', `Nhance@${digits}`)
+    setShowPwd(true)
+  }
 
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
 
@@ -73,12 +82,14 @@ function NewCompanyModal({ onClose }) {
   }
 
   const handleSave = async () => {
-    if (!form.name.trim()) { toast.error('Company name is required'); return }
-    if (!form.admin_email.trim() || !form.admin_email.includes('@')) {
-      toast.error('Admin email is required — this person will manage the company')
-      return
-    }
+    if (!form.name.trim())    { toast.error('Company name is required'); return }
     if (!form.admin_name.trim()) { toast.error('Admin name is required'); return }
+    if (!form.admin_email.trim() || !form.admin_email.includes('@')) {
+      toast.error('Admin email is required'); return
+    }
+    if (!form.admin_password || form.admin_password.length < 6) {
+      toast.error('Password must be at least 6 characters'); return
+    }
     setSaving(true)
     try {
       // 1. Create company
@@ -95,7 +106,7 @@ function NewCompanyModal({ onClose }) {
         .single()
       if (cErr) throw cErr
 
-      // 2. Create module entries
+      // 2. Create all module entries (all enabled)
       const moduleRows = ALL_MODULES.map(mod => ({
         company_id: company.id,
         module_key: mod,
@@ -105,30 +116,72 @@ function NewCompanyModal({ onClose }) {
       const { error: mErr } = await supabase.from('company_modules').insert(moduleRows)
       if (mErr) throw mErr
 
-      // 3. Invite admin user — sends email invite, creates profile + role
-      const { data: inviteData, error: inviteErr } = await supabase.functions.invoke('invite-user', {
+      // 3. Create admin login directly — no email invite
+      const { data: loginData, error: loginErr } = await supabase.functions.invoke('create-employee-login', {
         body: {
           email: form.admin_email.trim().toLowerCase(),
           full_name: form.admin_name.trim(),
           role: 'admin',
           company_id: company.id,
+          password: form.admin_password,
+          // no employee_id — this is a company admin, not an HR employee
         },
       })
-      if (inviteErr || !inviteData?.success) {
-        // Company created but invite failed — warn but don't block
-        toast.success(`Company "${form.name}" created`)
-        toast.error(`Admin invite failed: ${inviteData?.error || inviteErr?.message} — send invite manually from Settings`)
-      } else {
-        toast.success(`Company "${form.name}" created — invite sent to ${form.admin_email}`)
-      }
+      if (loginErr || !loginData?.success) throw new Error(loginData?.error || loginErr?.message || 'Failed to create admin login')
 
       qc.invalidateQueries(['companies'])
-      onClose()
+      setCreated({ companyName: form.name, email: form.admin_email.trim().toLowerCase(), password: form.admin_password })
     } catch (err) {
       toast.error(err.message || 'Failed to create company')
     } finally {
       setSaving(false)
     }
+  }
+
+  const copyCredentials = () => {
+    if (!created) return
+    const msg = `Hi ${form.admin_name},\n\nYour Nhance Admin login for ${created.companyName}:\nEmail: ${created.email}\nPassword: ${created.password}\n\nLogin at: https://nhance-app.vercel.app`
+    navigator.clipboard.writeText(msg)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+    toast.success('Credentials copied — paste into WhatsApp')
+  }
+
+  // Show success screen after creation
+  if (created) {
+    return (
+      <Modal title="Company Created!" onClose={onClose} footer={
+        <>
+          <button onClick={copyCredentials}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600/20 border border-emerald-700/40 text-emerald-400 hover:bg-emerald-600/30 text-sm font-medium">
+            {copied ? <CheckCircle className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+            {copied ? 'Copied!' : 'Copy for WhatsApp'}
+          </button>
+          <button onClick={onClose} className="btn-primary">Done</button>
+        </>
+      }>
+        <div className="space-y-4">
+          <div className="bg-emerald-900/20 border border-emerald-700/30 rounded-xl p-4 text-center">
+            <p className="text-emerald-400 font-bold text-base mb-1">✅ {created.companyName} is live!</p>
+            <p className="text-xs text-slate-400">Admin account created. Share these credentials via WhatsApp.</p>
+          </div>
+          <div className="bg-dark-700 rounded-xl p-4 space-y-2 text-sm">
+            <div className="flex justify-between items-center">
+              <span className="text-slate-400 text-xs">Email</span>
+              <span className="text-slate-100 font-mono">{created.email}</span>
+            </div>
+            <div className="flex justify-between items-center border-t border-dark-600 pt-2">
+              <span className="text-slate-400 text-xs">Password</span>
+              <span className="text-emerald-400 font-mono font-bold text-base">{created.password}</span>
+            </div>
+            <div className="flex justify-between items-center border-t border-dark-600 pt-2">
+              <span className="text-slate-400 text-xs">App URL</span>
+              <span className="text-slate-300 text-xs">nhance-app.vercel.app</span>
+            </div>
+          </div>
+        </div>
+      </Modal>
+    )
   }
 
   return (
@@ -153,9 +206,9 @@ function NewCompanyModal({ onClose }) {
             Company Admin Login (required)
           </p>
           <p className="text-xs text-slate-400 mb-3">
-            This person will manage the company in Nhance. They'll receive an email to set their password.
+            Set the admin's login credentials here. Share via WhatsApp after creating — no email needed.
           </p>
-          <div className="form-grid-2">
+          <div className="form-grid-2 mb-3">
             <FormField label="Admin Full Name" required>
               <input className="input" value={form.admin_name} onChange={e => set('admin_name', e.target.value)} placeholder="e.g. Ravi Kumar" />
             </FormField>
@@ -163,6 +216,25 @@ function NewCompanyModal({ onClose }) {
               <input type="email" className="input" value={form.admin_email} onChange={e => set('admin_email', e.target.value)} placeholder="admin@company.com" />
             </FormField>
           </div>
+          <FormField label="Admin Password" required>
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <input
+                  type={showPwd ? 'text' : 'password'} className="input pr-14 font-mono"
+                  value={form.admin_password} onChange={e => set('admin_password', e.target.value)}
+                  placeholder="Min. 6 characters"
+                />
+                <button type="button" onClick={() => setShowPwd(p => !p)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 text-xs">
+                  {showPwd ? 'Hide' : 'Show'}
+                </button>
+              </div>
+              <button type="button" onClick={generatePassword}
+                className="px-3 py-2 rounded-lg bg-dark-600 border border-dark-500 text-xs text-cyan-400 hover:bg-dark-500 whitespace-nowrap">
+                Auto-generate
+              </button>
+            </div>
+          </FormField>
         </div>
 
         <div className="form-grid-2">
