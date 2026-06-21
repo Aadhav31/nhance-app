@@ -5,7 +5,7 @@ import { useAuth } from '../../contexts/AuthContext'
 import {
   Users, Plus, X, Loader2, Save, Trash2, Edit2,
   Phone, Calendar, CreditCard, FileText,
-  CheckCircle, Banknote, BarChart2, Search, Mail, UserPlus
+  CheckCircle, Banknote, BarChart2, Search, Mail, UserPlus, Link, Copy, Send
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format, getDaysInMonth, parseISO } from 'date-fns'
@@ -664,6 +664,93 @@ function InviteAndLinkModal({ emp, companyId, onClose, onDone }) {
   )
 }
 
+// ── Send Login Link Modal (for already-linked employees) ───────────────────────
+function SendLoginLinkModal({ emp, onClose }) {
+  const [sending, setSending] = useState(false)
+  const [result, setResult]   = useState(null) // { link, email_sent }
+  const [copied, setCopied]   = useState(false)
+
+  const handleSend = async () => {
+    if (!emp.email) return toast.error('No email on file for this employee — add it in Edit first')
+    setSending(true)
+    try {
+      const { data, error } = await supabase.functions.invoke('send-magic-link', {
+        body: { email: emp.email, full_name: emp.name },
+      })
+      if (error) throw error
+      if (!data?.success) throw new Error(data?.error || 'Failed to generate link')
+      setResult(data)
+    } catch (e) {
+      toast.error(e.message || 'Failed to generate login link')
+    } finally {
+      setSending(false)
+    }
+  }
+
+  const copyLink = () => {
+    if (!result?.link) return
+    navigator.clipboard.writeText(result.link)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  return (
+    <div className="fixed inset-0 z-[60] bg-black/70 flex items-center justify-center p-4">
+      <div className="bg-dark-800 rounded-xl border border-dark-700 shadow-2xl w-full max-w-md">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-dark-700">
+          <h2 className="text-base font-bold text-slate-100">Send Login Link — {emp.name}</h2>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-100"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="p-6 space-y-4">
+          {!result ? (
+            <>
+              <div className="bg-dark-700 rounded-xl p-3">
+                <p className="text-xs text-slate-400 mb-1">Email on file</p>
+                <p className="text-sm font-medium text-slate-200">{emp.email || <span className="text-red-400 italic">No email — add in Edit first</span>}</p>
+              </div>
+              <p className="text-xs text-slate-400">
+                A one-time login link will be generated and emailed to {emp.name}. The link is valid for <strong className="text-slate-300">1 hour</strong> — no password needed.
+              </p>
+              <div className="flex gap-3">
+                <button onClick={onClose} className="btn-ghost flex-1">Cancel</button>
+                <button onClick={handleSend} disabled={sending || !emp.email} className="btn-primary flex-1">
+                  {sending
+                    ? <><Loader2 className="w-4 h-4 animate-spin" /> Generating…</>
+                    : <><Send className="w-4 h-4" /> Send Login Link</>}
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              {result.email_sent ? (
+                <div className="bg-emerald-900/20 border border-emerald-700/30 rounded-xl p-4">
+                  <p className="text-sm font-semibold text-emerald-400 mb-1">✅ Login link emailed!</p>
+                  <p className="text-xs text-slate-400">Sent to <span className="text-slate-300">{result.email}</span> via Resend. Link expires in 1 hour.</p>
+                </div>
+              ) : (
+                <div className="bg-yellow-900/20 border border-yellow-700/30 rounded-xl p-3">
+                  <p className="text-xs text-yellow-400 font-medium mb-1">⚠ Email delivery failed — share link manually</p>
+                  <p className="text-xs text-slate-400">Copy the link below and send via WhatsApp or SMS.</p>
+                </div>
+              )}
+              <div className="bg-dark-700 rounded-xl p-3 space-y-2">
+                <p className="text-xs text-slate-400">Login link (backup — copy to share)</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-xs text-primary-400 font-mono break-all flex-1 line-clamp-2">{result.link}</p>
+                  <button onClick={copyLink} className="shrink-0 p-1.5 rounded-lg hover:bg-dark-600 text-slate-400 hover:text-slate-100">
+                    {copied ? <CheckCircle className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+              <button onClick={onClose} className="btn-primary w-full justify-center">Done</button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Employee Card ──────────────────────────────────────────────────────────────
 function EmployeeCard({ emp, onClick }) {
   const typeInfo = EMP_TYPES.find(t => t.value === emp.employment_type)
@@ -691,9 +778,10 @@ function EmployeeCard({ emp, onClick }) {
 // ── Employee Detail Modal ─────────────────────────────────────────────────────
 function EmployeeDetailModal({ emp, companyId, onClose, onEdit }) {
   const qc = useQueryClient()
-  const [delConfirm, setDelConfirm] = useState(false)
-  const [deleting, setDeleting] = useState(false)
-  const [showInvite, setShowInvite] = useState(false)
+  const [delConfirm, setDelConfirm]   = useState(false)
+  const [deleting, setDeleting]       = useState(false)
+  const [showInvite, setShowInvite]   = useState(false)
+  const [showLinkModal, setShowLinkModal] = useState(false)
 
   const { data: salary } = useQuery({
     queryKey: ['hr_salary', emp.id],
@@ -732,9 +820,13 @@ function EmployeeDetailModal({ emp, companyId, onClose, onEdit }) {
             <button onClick={() => setDelConfirm(true)} className="btn-secondary flex items-center gap-1.5 text-xs px-3">
               <Trash2 className="w-3.5 h-3.5 text-red-400" /> Remove
             </button>
-            {!emp.user_id && (
+            {!emp.user_id ? (
               <button onClick={() => setShowInvite(true)} className="btn-ghost flex items-center gap-1.5 text-xs px-3 border-primary-700/50 text-primary-400 hover:bg-primary-500/10">
                 <UserPlus className="w-3.5 h-3.5" /> Invite & Link Login
+              </button>
+            ) : (
+              <button onClick={() => setShowLinkModal(true)} className="btn-ghost flex items-center gap-1.5 text-xs px-3 border-cyan-700/50 text-cyan-400 hover:bg-cyan-500/10">
+                <Link className="w-3.5 h-3.5" /> Send Login Link
               </button>
             )}
             <button onClick={onEdit} className="flex-1 btn-primary text-sm flex items-center justify-center gap-1.5">
@@ -752,6 +844,9 @@ function EmployeeDetailModal({ emp, companyId, onClose, onEdit }) {
             onClose()
           }}
         />
+      )}
+      {showLinkModal && (
+        <SendLoginLinkModal emp={emp} onClose={() => setShowLinkModal(false)} />
       )}
       <div className="flex items-center gap-3">
         <div className="w-12 h-12 rounded-full bg-primary-900/40 border border-primary-700/40 flex items-center justify-center shrink-0">
