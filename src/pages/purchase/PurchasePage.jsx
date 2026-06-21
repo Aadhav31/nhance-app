@@ -119,6 +119,24 @@ function LineItemsEditor({ lines, setLines }) {
   )
 }
 
+// Reusable Tax/Non-Tax toggle (mirrors SalesPage)
+function TaxTypeToggle({ isTax, onToggle, label = 'Bill' }) {
+  return (
+    <div className="col-span-2">
+      <div className="flex rounded-xl border border-dark-600 overflow-hidden">
+        <button type="button" onClick={() => onToggle(true)}
+          className={`flex-1 py-2.5 text-xs font-semibold transition-colors ${isTax ? 'bg-primary-600 text-white' : 'bg-transparent text-slate-400 hover:text-slate-200'}`}>
+          Tax {label} (with GST)
+        </button>
+        <button type="button" onClick={() => onToggle(false)}
+          className={`flex-1 py-2.5 text-xs font-semibold transition-colors ${!isTax ? 'bg-dark-600 text-slate-200' : 'bg-transparent text-slate-400 hover:text-slate-200'}`}>
+          Non-Tax {label}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function TaxSummary({ subtotal, form, setF }) {
   const isTax    = form.is_tax_invoice !== false
   const discount = parseFloat(form.discount_amount) || 0
@@ -128,55 +146,43 @@ function TaxSummary({ subtotal, form, setF }) {
   const igst_amt = (isTax && form.use_igst)  ? taxable * (parseFloat(form.igst_rate) || 0) / 100 : 0
   const total    = taxable + cgst_amt + sgst_amt + igst_amt
   return (
-    <div>
-      {/* Tax type toggle */}
-      <div className="flex rounded-xl border border-dark-600 overflow-hidden mb-4">
-        <button type="button" onClick={() => setF('is_tax_invoice', true)}
-          className={`flex-1 py-2.5 text-xs font-semibold transition-colors ${isTax ? 'bg-primary-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}>
-          Tax Bill (with GST)
-        </button>
-        <button type="button" onClick={() => setF('is_tax_invoice', false)}
-          className={`flex-1 py-2.5 text-xs font-semibold transition-colors ${!isTax ? 'bg-dark-600 text-slate-200' : 'text-slate-400 hover:text-slate-200'}`}>
-          Non-Tax Bill
-        </button>
+    <div className="grid grid-cols-2 gap-4">
+      <div className="space-y-3">
+        {isTax ? (
+          <>
+            <SectionHead label="GST" />
+            <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+              <input type="checkbox" checked={form.use_igst} onChange={e => setF('use_igst', e.target.checked)} className="rounded" />
+              Use IGST (interstate)
+            </label>
+            {!form.use_igst ? (
+              <div className="grid grid-cols-2 gap-2">
+                <Field label="CGST (%)"><input type="number" className={inp()} value={form.cgst_rate} onChange={e => setF('cgst_rate', e.target.value)} /></Field>
+                <Field label="SGST (%)"><input type="number" className={inp()} value={form.sgst_rate} onChange={e => setF('sgst_rate', e.target.value)} /></Field>
+              </div>
+            ) : (
+              <Field label="IGST (%)"><input type="number" className={inp()} value={form.igst_rate} onChange={e => setF('igst_rate', e.target.value)} /></Field>
+            )}
+          </>
+        ) : (
+          <p className="text-xs text-slate-500 italic pt-1">No GST — totals are pre-tax only.</p>
+        )}
+        <Field label="Discount (₹)"><input type="number" className={inp()} value={form.discount_amount} onChange={e => setF('discount_amount', e.target.value)} /></Field>
       </div>
-      <div className="grid grid-cols-2 gap-4">
-        <div className="space-y-3">
-          {isTax && (
-            <>
-              <SectionHead label="GST" />
-              <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
-                <input type="checkbox" checked={form.use_igst} onChange={e => setF('use_igst', e.target.checked)} className="rounded" />
-                Use IGST (interstate)
-              </label>
-              {!form.use_igst ? (
-                <div className="grid grid-cols-2 gap-2">
-                  <Field label="CGST (%)"><input type="number" className={inp()} value={form.cgst_rate} onChange={e => setF('cgst_rate', e.target.value)} /></Field>
-                  <Field label="SGST (%)"><input type="number" className={inp()} value={form.sgst_rate} onChange={e => setF('sgst_rate', e.target.value)} /></Field>
-                </div>
-              ) : (
-                <Field label="IGST (%)"><input type="number" className={inp()} value={form.igst_rate} onChange={e => setF('igst_rate', e.target.value)} /></Field>
-              )}
+      <div className="bg-dark-700 rounded-xl p-4 space-y-2 self-start">
+        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Summary</p>
+        <div className="flex justify-between text-xs text-slate-400"><span>Subtotal</span><span>{fmtINR(subtotal)}</span></div>
+        {discount > 0 && <div className="flex justify-between text-xs text-slate-400"><span>Discount</span><span>-{fmtINR(discount)}</span></div>}
+        {isTax && (form.use_igst
+          ? <div className="flex justify-between text-xs text-slate-400"><span>IGST</span><span>{fmtINR(igst_amt)}</span></div>
+          : <>
+              <div className="flex justify-between text-xs text-slate-400"><span>CGST</span><span>{fmtINR(cgst_amt)}</span></div>
+              <div className="flex justify-between text-xs text-slate-400"><span>SGST</span><span>{fmtINR(sgst_amt)}</span></div>
             </>
-          )}
-          <Field label="Discount (₹)"><input type="number" className={inp()} value={form.discount_amount} onChange={e => setF('discount_amount', e.target.value)} /></Field>
-          {!isTax && <p className="text-xs text-slate-500 italic">No GST will be applied to this bill.</p>}
-        </div>
-        <div className="bg-dark-700 rounded-xl p-4 space-y-2 self-start">
-          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Summary</p>
-          <div className="flex justify-between text-xs text-slate-400"><span>Subtotal</span><span>{fmtINR(subtotal)}</span></div>
-          {discount > 0 && <div className="flex justify-between text-xs text-slate-400"><span>Discount</span><span>-{fmtINR(discount)}</span></div>}
-          {isTax && (form.use_igst
-            ? <div className="flex justify-between text-xs text-slate-400"><span>IGST</span><span>{fmtINR(igst_amt)}</span></div>
-            : <>
-                <div className="flex justify-between text-xs text-slate-400"><span>CGST</span><span>{fmtINR(cgst_amt)}</span></div>
-                <div className="flex justify-between text-xs text-slate-400"><span>SGST</span><span>{fmtINR(sgst_amt)}</span></div>
-              </>
-          )}
-          {!isTax && <div className="flex justify-between text-xs text-slate-500 italic"><span>GST</span><span>Nil</span></div>}
-          <div className="border-t border-dark-600 pt-2 flex justify-between text-sm font-bold">
-            <span className="text-slate-200">Total</span><span className="text-primary-400">{fmtINR(total)}</span>
-          </div>
+        )}
+        {!isTax && <div className="flex justify-between text-xs text-slate-500 italic"><span>GST</span><span>Nil</span></div>}
+        <div className="border-t border-dark-600 pt-2 flex justify-between text-sm font-bold">
+          <span className="text-slate-200">Total</span><span className="text-primary-400">{fmtINR(total)}</span>
         </div>
       </div>
     </div>
@@ -447,7 +453,8 @@ function BillsTab({ companyId, session }) {
   const qc = useQueryClient()
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [form, setForm] = useState({ vendor_id: '', bill_date: todayStr(), due_date: '', bill_ref: '', cgst_rate: 9, sgst_rate: 9, igst_rate: 18, use_igst: false, discount_amount: 0, notes: '', is_tax_invoice: true })
+  const blankForm = () => ({ vendor_id: '', vendor_gstin: '', bill_date: todayStr(), due_date: '', bill_ref: '', cgst_rate: 9, sgst_rate: 9, igst_rate: 18, use_igst: false, discount_amount: 0, notes: '', is_tax_invoice: true })
+  const [form, setForm] = useState(blankForm())
   const [lines, setLines] = useState([blankLine()])
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
 
@@ -463,7 +470,7 @@ function BillsTab({ companyId, session }) {
   const { data: vendors = [] } = useQuery({
     queryKey: ['vendors_list', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('vendors').select('id, vendor_name').eq('company_id', companyId).order('vendor_name')
+      const { data } = await supabase.from('vendors').select('id, vendor_name, gstin').eq('company_id', companyId).order('vendor_name')
       return data || []
     },
     enabled: !!companyId,
@@ -472,8 +479,11 @@ function BillsTab({ companyId, session }) {
   const subtotal = useMemo(() => lines.reduce((s, l) => s + (l.amount || 0), 0), [lines])
   const blNum = useMemo(() => `BL-${new Date().getFullYear()}-${String((bills.length || 0) + 1).padStart(3, '0')}`, [bills.length])
 
+  const isTax = form.is_tax_invoice !== false
+
   const save = async () => {
     if (!form.vendor_id) return toast.error('Select a vendor')
+    if (isTax && !form.vendor_gstin.trim()) return toast.error('Vendor GSTIN is required for Tax Bill')
     if (lines.every(l => !l.description.trim())) return toast.error('Add at least one line item')
     setSaving(true)
     try {
@@ -501,7 +511,7 @@ function BillsTab({ companyId, session }) {
       if (items.length > 0) { const { error: le } = await supabase.from('bill_line_items').insert(items); if (le) throw le }
       toast.success(`Bill ${blNum} created`)
       setShowCreate(false)
-      setForm({ vendor_id: '', bill_date: todayStr(), due_date: '', bill_ref: '', cgst_rate: 9, sgst_rate: 9, igst_rate: 18, use_igst: false, discount_amount: 0, notes: '', is_tax_invoice: true })
+      setForm(blankForm())
       setLines([blankLine()])
       qc.invalidateQueries(['bills', companyId])
     } catch (e) { toast.error(e.message) } finally { setSaving(false) }
@@ -556,12 +566,23 @@ function BillsTab({ companyId, session }) {
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2">
               <Field label="Vendor *">
-                <select className={inp()} value={form.vendor_id} onChange={e => setF('vendor_id', e.target.value)}>
+                <select className={inp()} value={form.vendor_id} onChange={e => {
+                  const v = vendors.find(x => x.id === e.target.value)
+                  setForm(p => ({ ...p, vendor_id: e.target.value, vendor_gstin: v?.gstin || '' }))
+                }}>
                   <option value="">-- Select vendor --</option>
                   {vendors.map(v => <option key={v.id} value={v.id}>{v.vendor_name}</option>)}
                 </select>
               </Field>
             </div>
+            <TaxTypeToggle isTax={isTax} onToggle={v => setF('is_tax_invoice', v)} label="Bill" />
+            {isTax && (
+              <div className="col-span-2">
+                <Field label="Vendor GSTIN *">
+                  <input className={inp()} value={form.vendor_gstin} onChange={e => setF('vendor_gstin', e.target.value)} placeholder="22AAAAA0000A1Z5" />
+                </Field>
+              </div>
+            )}
             <Field label="Bill Date"><input type="date" className={inp()} value={form.bill_date} onChange={e => setF('bill_date', e.target.value)} /></Field>
             <Field label="Due Date"><input type="date" className={inp()} value={form.due_date} onChange={e => setF('due_date', e.target.value)} /></Field>
             <div className="col-span-2"><Field label="Vendor Bill / Reference No."><input className={inp()} value={form.bill_ref} onChange={e => setF('bill_ref', e.target.value)} /></Field></div>
@@ -580,7 +601,8 @@ function PurchaseOrdersTab({ companyId, session }) {
   const qc = useQueryClient()
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [form, setForm] = useState({ vendor_id: '', po_date: todayStr(), expected_delivery: '', delivery_address: '', notes: '', cgst_rate: 9, sgst_rate: 9, igst_rate: 18, use_igst: false, discount_amount: 0, is_tax_invoice: true })
+  const blankForm = () => ({ vendor_id: '', vendor_gstin: '', po_date: todayStr(), expected_delivery: '', delivery_address: '', notes: '', cgst_rate: 9, sgst_rate: 9, igst_rate: 18, use_igst: false, discount_amount: 0, is_tax_invoice: true })
+  const [form, setForm] = useState(blankForm())
   const [lines, setLines] = useState([blankLine()])
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
 
@@ -596,7 +618,7 @@ function PurchaseOrdersTab({ companyId, session }) {
   const { data: vendors = [] } = useQuery({
     queryKey: ['vendors_list', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('vendors').select('id, vendor_name').eq('company_id', companyId).order('vendor_name')
+      const { data } = await supabase.from('vendors').select('id, vendor_name, gstin').eq('company_id', companyId).order('vendor_name')
       return data || []
     },
     enabled: !!companyId,
@@ -605,8 +627,11 @@ function PurchaseOrdersTab({ companyId, session }) {
   const subtotal = useMemo(() => lines.reduce((s, l) => s + (l.amount || 0), 0), [lines])
   const poNum = useMemo(() => `PO-${new Date().getFullYear()}-${String((pos.length || 0) + 1).padStart(3, '0')}`, [pos.length])
 
+  const isTax = form.is_tax_invoice !== false
+
   const save = async () => {
     if (!form.vendor_id) return toast.error('Select a vendor')
+    if (isTax && !form.vendor_gstin.trim()) return toast.error('Vendor GSTIN is required for Tax PO')
     if (lines.every(l => !l.description.trim())) return toast.error('Add at least one line item')
     setSaving(true)
     try {
@@ -633,6 +658,8 @@ function PurchaseOrdersTab({ companyId, session }) {
       if (items.length > 0) { const { error: le } = await supabase.from('po_line_items').insert(items); if (le) throw le }
       toast.success(`Purchase Order ${poNum} created`)
       setShowCreate(false)
+      setForm(blankForm())
+      setLines([blankLine()])
       qc.invalidateQueries(['purchase_orders', companyId])
     } catch (e) { toast.error(e.message) } finally { setSaving(false) }
   }
@@ -681,11 +708,22 @@ function PurchaseOrdersTab({ companyId, session }) {
           footer={<><button onClick={() => setShowCreate(false)} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Create PO'}</button></>}>
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2"><Field label="Vendor *">
-              <select className={inp()} value={form.vendor_id} onChange={e => setF('vendor_id', e.target.value)}>
+              <select className={inp()} value={form.vendor_id} onChange={e => {
+                const v = vendors.find(x => x.id === e.target.value)
+                setForm(p => ({ ...p, vendor_id: e.target.value, vendor_gstin: v?.gstin || '' }))
+              }}>
                 <option value="">-- Select vendor --</option>
                 {vendors.map(v => <option key={v.id} value={v.id}>{v.vendor_name}</option>)}
               </select>
             </Field></div>
+            <TaxTypeToggle isTax={isTax} onToggle={v => setF('is_tax_invoice', v)} label="PO" />
+            {isTax && (
+              <div className="col-span-2">
+                <Field label="Vendor GSTIN *">
+                  <input className={inp()} value={form.vendor_gstin} onChange={e => setF('vendor_gstin', e.target.value)} placeholder="22AAAAA0000A1Z5" />
+                </Field>
+              </div>
+            )}
             <Field label="PO Date"><input type="date" className={inp()} value={form.po_date} onChange={e => setF('po_date', e.target.value)} /></Field>
             <Field label="Expected Delivery"><input type="date" className={inp()} value={form.expected_delivery} onChange={e => setF('expected_delivery', e.target.value)} /></Field>
             <div className="col-span-2"><Field label="Delivery Address"><input className={inp()} value={form.delivery_address} onChange={e => setF('delivery_address', e.target.value)} /></Field></div>

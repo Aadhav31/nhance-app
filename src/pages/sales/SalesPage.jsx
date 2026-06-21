@@ -128,6 +128,24 @@ function LineItemsEditor({ lines, setLines }) {
   )
 }
 
+// Reusable Tax/Non-Tax toggle — placed right below client name in each form
+function TaxTypeToggle({ isTax, onToggle, label = 'Invoice' }) {
+  return (
+    <div className="col-span-2">
+      <div className="flex rounded-xl border border-dark-600 overflow-hidden">
+        <button type="button" onClick={() => onToggle(true)}
+          className={`flex-1 py-2.5 text-xs font-semibold transition-colors ${isTax ? 'bg-primary-600 text-white' : 'bg-transparent text-slate-400 hover:text-slate-200'}`}>
+          Tax {label} (with GST)
+        </button>
+        <button type="button" onClick={() => onToggle(false)}
+          className={`flex-1 py-2.5 text-xs font-semibold transition-colors ${!isTax ? 'bg-dark-600 text-slate-200' : 'bg-transparent text-slate-400 hover:text-slate-200'}`}>
+          Non-Tax {label}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function TaxSection({ form, setF, subtotal }) {
   const isTax    = form.is_tax_invoice !== false
   const discount = parseFloat(form.discount_amount) || 0
@@ -137,56 +155,44 @@ function TaxSection({ form, setF, subtotal }) {
   const igst_amt = (isTax && form.use_igst)  ? taxable * (parseFloat(form.igst_rate) || 0) / 100 : 0
   const total    = taxable + cgst_amt + sgst_amt + igst_amt
   return (
-    <div>
-      {/* Tax type toggle */}
-      <div className="flex rounded-xl border border-dark-600 overflow-hidden mb-4">
-        <button type="button" onClick={() => setF('is_tax_invoice', true)}
-          className={`flex-1 py-2.5 text-xs font-semibold transition-colors ${isTax ? 'bg-primary-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}>
-          Tax Invoice (with GST)
-        </button>
-        <button type="button" onClick={() => setF('is_tax_invoice', false)}
-          className={`flex-1 py-2.5 text-xs font-semibold transition-colors ${!isTax ? 'bg-dark-600 text-slate-200' : 'text-slate-400 hover:text-slate-200'}`}>
-          Non-Tax Invoice
-        </button>
+    <div className="grid grid-cols-2 gap-4">
+      <div className="space-y-3">
+        {isTax ? (
+          <>
+            <SectionHead label="GST" />
+            <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+              <input type="checkbox" checked={form.use_igst} onChange={e => setF('use_igst', e.target.checked)} className="rounded" />
+              Use IGST (interstate supply)
+            </label>
+            {!form.use_igst ? (
+              <div className="grid grid-cols-2 gap-2">
+                <Field label="CGST (%)"><input type="number" className={inp()} value={form.cgst_rate} onChange={e => setF('cgst_rate', e.target.value)} step="0.01" /></Field>
+                <Field label="SGST (%)"><input type="number" className={inp()} value={form.sgst_rate} onChange={e => setF('sgst_rate', e.target.value)} step="0.01" /></Field>
+              </div>
+            ) : (
+              <Field label="IGST (%)"><input type="number" className={inp()} value={form.igst_rate} onChange={e => setF('igst_rate', e.target.value)} step="0.01" /></Field>
+            )}
+          </>
+        ) : (
+          <p className="text-xs text-slate-500 italic pt-1">No GST — totals are pre-tax only.</p>
+        )}
+        <Field label="Discount (₹)"><input type="number" className={inp()} value={form.discount_amount} onChange={e => setF('discount_amount', e.target.value)} /></Field>
       </div>
-      <div className="grid grid-cols-2 gap-4">
-        <div className="space-y-3">
-          {isTax && (
-            <>
-              <SectionHead label="GST" />
-              <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
-                <input type="checkbox" checked={form.use_igst} onChange={e => setF('use_igst', e.target.checked)} className="rounded" />
-                Use IGST (interstate supply)
-              </label>
-              {!form.use_igst ? (
-                <div className="grid grid-cols-2 gap-2">
-                  <Field label="CGST (%)"><input type="number" className={inp()} value={form.cgst_rate} onChange={e => setF('cgst_rate', e.target.value)} step="0.01" /></Field>
-                  <Field label="SGST (%)"><input type="number" className={inp()} value={form.sgst_rate} onChange={e => setF('sgst_rate', e.target.value)} step="0.01" /></Field>
-                </div>
-              ) : (
-                <Field label="IGST (%)"><input type="number" className={inp()} value={form.igst_rate} onChange={e => setF('igst_rate', e.target.value)} step="0.01" /></Field>
-              )}
+      <div className="bg-dark-700 rounded-xl p-4 space-y-2 self-start">
+        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Summary</p>
+        <div className="flex justify-between text-xs text-slate-400"><span>Subtotal</span><span>{fmtINR(subtotal)}</span></div>
+        {discount > 0 && <div className="flex justify-between text-xs text-slate-400"><span>Discount</span><span>-{fmtINR(discount)}</span></div>}
+        {isTax && (form.use_igst
+          ? <div className="flex justify-between text-xs text-slate-400"><span>IGST</span><span>{fmtINR(igst_amt)}</span></div>
+          : <>
+              <div className="flex justify-between text-xs text-slate-400"><span>CGST</span><span>{fmtINR(cgst_amt)}</span></div>
+              <div className="flex justify-between text-xs text-slate-400"><span>SGST</span><span>{fmtINR(sgst_amt)}</span></div>
             </>
-          )}
-          <Field label="Discount (₹)"><input type="number" className={inp()} value={form.discount_amount} onChange={e => setF('discount_amount', e.target.value)} /></Field>
-          {!isTax && <p className="text-xs text-slate-500 italic">No GST will be applied to this invoice.</p>}
-        </div>
-        <div className="bg-dark-700 rounded-xl p-4 space-y-2 self-start">
-          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Summary</p>
-          <div className="flex justify-between text-xs text-slate-400"><span>Subtotal</span><span>{fmtINR(subtotal)}</span></div>
-          {discount > 0 && <div className="flex justify-between text-xs text-slate-400"><span>Discount</span><span>-{fmtINR(discount)}</span></div>}
-          {isTax && (form.use_igst
-            ? <div className="flex justify-between text-xs text-slate-400"><span>IGST</span><span>{fmtINR(igst_amt)}</span></div>
-            : <>
-                <div className="flex justify-between text-xs text-slate-400"><span>CGST</span><span>{fmtINR(cgst_amt)}</span></div>
-                <div className="flex justify-between text-xs text-slate-400"><span>SGST</span><span>{fmtINR(sgst_amt)}</span></div>
-              </>
-          )}
-          {!isTax && <div className="flex justify-between text-xs text-slate-500 italic"><span>GST</span><span>Nil</span></div>}
-          <div className="border-t border-dark-600 pt-2 flex justify-between text-sm font-bold">
-            <span className="text-slate-200">Total</span>
-            <span className="text-primary-400">{fmtINR(total)}</span>
-          </div>
+        )}
+        {!isTax && <div className="flex justify-between text-xs text-slate-500 italic"><span>GST</span><span>Nil</span></div>}
+        <div className="border-t border-dark-600 pt-2 flex justify-between text-sm font-bold">
+          <span className="text-slate-200">Total</span>
+          <span className="text-primary-400">{fmtINR(total)}</span>
         </div>
       </div>
     </div>
@@ -215,6 +221,7 @@ function CreateInvoiceModal({ companyId, session, invoiceCount, onClose, onSaved
 
   const save = async (status) => {
     if (!form.client_name.trim()) return toast.error('Client name required')
+    if (isTax && !form.client_gstin.trim()) return toast.error('Client GSTIN is required for Tax Invoice')
     if (lines.every(l => !l.description.trim())) return toast.error('Add at least one line item')
     setSaving(true)
     try {
@@ -255,7 +262,14 @@ function CreateInvoiceModal({ companyId, session, invoiceCount, onClose, onSaved
       <SectionHead label="Client Details" />
       <div className="grid grid-cols-2 gap-3">
         <div className="col-span-2"><Field label="Client / Company Name *"><input className={inp()} value={form.client_name} onChange={e => setF('client_name', e.target.value)} /></Field></div>
-        <Field label="Client GSTIN"><input className={inp()} value={form.client_gstin} onChange={e => setF('client_gstin', e.target.value)} /></Field>
+        <TaxTypeToggle isTax={isTax} onToggle={v => setF('is_tax_invoice', v)} label="Invoice" />
+        {isTax && (
+          <div className="col-span-2">
+            <Field label="Client GSTIN *">
+              <input className={inp()} value={form.client_gstin} onChange={e => setF('client_gstin', e.target.value)} placeholder="22AAAAA0000A1Z5" />
+            </Field>
+          </div>
+        )}
         <Field label="Project / Work Order"><input className={inp()} value={form.project_name} onChange={e => setF('project_name', e.target.value)} /></Field>
         <Field label="Invoice Date"><input type="date" className={inp()} value={form.invoice_date} onChange={e => setF('invoice_date', e.target.value)} /></Field>
         <Field label="Due Date"><input type="date" className={inp()} value={form.due_date} onChange={e => setF('due_date', e.target.value)} /></Field>
@@ -382,6 +396,7 @@ function CreateQuoteModal({ companyId, session, count, onClose, onSaved }) {
 
   const save = async (status) => {
     if (!form.client_name.trim()) return toast.error('Client name required')
+    if (isTax && !form.client_gstin.trim()) return toast.error('Client GSTIN is required for Tax Quote')
     if (lines.every(l => !l.description.trim())) return toast.error('Add at least one line item')
     setSaving(true)
     try {
@@ -422,7 +437,14 @@ function CreateQuoteModal({ companyId, session, count, onClose, onSaved }) {
       <SectionHead label="Client Details" />
       <div className="grid grid-cols-2 gap-3">
         <div className="col-span-2"><Field label="Client / Company Name *"><input className={inp()} value={form.client_name} onChange={e => setF('client_name', e.target.value)} /></Field></div>
-        <Field label="Client GSTIN"><input className={inp()} value={form.client_gstin} onChange={e => setF('client_gstin', e.target.value)} /></Field>
+        <TaxTypeToggle isTax={isTax} onToggle={v => setF('is_tax_invoice', v)} label="Quote" />
+        {isTax && (
+          <div className="col-span-2">
+            <Field label="Client GSTIN *">
+              <input className={inp()} value={form.client_gstin} onChange={e => setF('client_gstin', e.target.value)} placeholder="22AAAAA0000A1Z5" />
+            </Field>
+          </div>
+        )}
         <Field label="Project / Work Order"><input className={inp()} value={form.project_name} onChange={e => setF('project_name', e.target.value)} /></Field>
         <Field label="Quote Date"><input type="date" className={inp()} value={form.quote_date} onChange={e => setF('quote_date', e.target.value)} /></Field>
         <Field label="Valid Until"><input type="date" className={inp()} value={form.valid_until} onChange={e => setF('valid_until', e.target.value)} /></Field>
@@ -513,7 +535,7 @@ function SalesOrdersTab({ companyId, session }) {
   const qc = useQueryClient()
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [form, setForm] = useState({ client_name: '', project_name: '', so_date: todayStr(), expected_delivery: '', notes: '', cgst_rate: 9, sgst_rate: 9, igst_rate: 18, use_igst: false, discount_amount: 0, is_tax_invoice: true })
+  const [form, setForm] = useState({ client_name: '', client_gstin: '', project_name: '', so_date: todayStr(), expected_delivery: '', notes: '', cgst_rate: 9, sgst_rate: 9, igst_rate: 18, use_igst: false, discount_amount: 0, is_tax_invoice: true })
   const [lines, setLines] = useState([blankLine()])
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
 
@@ -531,6 +553,7 @@ function SalesOrdersTab({ companyId, session }) {
 
   const save = async () => {
     if (!form.client_name.trim()) return toast.error('Client name required')
+    if (form.is_tax_invoice !== false && !form.client_gstin?.trim()) return toast.error('Client GSTIN is required for Tax Sales Order')
     setSaving(true)
     try {
       const id = crypto.randomUUID()
@@ -559,7 +582,7 @@ function SalesOrdersTab({ companyId, session }) {
       if (items.length > 0) { const { error: le } = await supabase.from('so_line_items').insert(items); if (le) throw le }
       toast.success(`Sales Order ${soNum} created`)
       setShowCreate(false)
-      setForm({ client_name: '', project_name: '', so_date: todayStr(), expected_delivery: '', notes: '', cgst_rate: 9, sgst_rate: 9, igst_rate: 18, use_igst: false, discount_amount: 0, is_tax_invoice: true })
+      setForm({ client_name: '', client_gstin: '', project_name: '', so_date: todayStr(), expected_delivery: '', notes: '', cgst_rate: 9, sgst_rate: 9, igst_rate: 18, use_igst: false, discount_amount: 0, is_tax_invoice: true })
       setLines([blankLine()])
       qc.invalidateQueries(['sales_orders', companyId])
     } catch (e) { toast.error(e.message) } finally { setSaving(false) }
@@ -615,6 +638,14 @@ function SalesOrdersTab({ companyId, session }) {
           footer={<><button onClick={() => setShowCreate(false)} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Create Sales Order'}</button></>}>
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2"><Field label="Client Name *"><input className={inp()} value={form.client_name} onChange={e => setF('client_name', e.target.value)} /></Field></div>
+            <TaxTypeToggle isTax={form.is_tax_invoice !== false} onToggle={v => setF('is_tax_invoice', v)} label="Sales Order" />
+            {form.is_tax_invoice !== false && (
+              <div className="col-span-2">
+                <Field label="Client GSTIN *">
+                  <input className={inp()} value={form.client_gstin} onChange={e => setF('client_gstin', e.target.value)} placeholder="22AAAAA0000A1Z5" />
+                </Field>
+              </div>
+            )}
             <Field label="Project"><input className={inp()} value={form.project_name} onChange={e => setF('project_name', e.target.value)} /></Field>
             <Field label="SO Date"><input type="date" className={inp()} value={form.so_date} onChange={e => setF('so_date', e.target.value)} /></Field>
             <Field label="Expected Delivery"><input type="date" className={inp()} value={form.expected_delivery} onChange={e => setF('expected_delivery', e.target.value)} /></Field>
@@ -746,7 +777,7 @@ function CreditNotesTab({ companyId, session }) {
   const qc = useQueryClient()
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [form, setForm] = useState({ client_name: '', reason: '', cn_date: todayStr(), cgst_rate: 9, sgst_rate: 9, notes: '', use_igst: false, igst_rate: 18, is_tax_invoice: true })
+  const [form, setForm] = useState({ client_name: '', client_gstin: '', reason: '', cn_date: todayStr(), cgst_rate: 9, sgst_rate: 9, notes: '', use_igst: false, igst_rate: 18, is_tax_invoice: true })
   const [lines, setLines] = useState([blankLine()])
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
 
@@ -823,20 +854,18 @@ function CreditNotesTab({ companyId, session }) {
           footer={<><button onClick={() => setShowCreate(false)} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Issue Credit Note'}</button></>}>
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2"><Field label="Client Name *"><input className={inp()} value={form.client_name} onChange={e => setF('client_name', e.target.value)} /></Field></div>
+            <TaxTypeToggle isTax={isTaxCN} onToggle={v => setF('is_tax_invoice', v)} label="Credit Note" />
+            {isTaxCN && (
+              <div className="col-span-2">
+                <Field label="Client GSTIN *">
+                  <input className={inp()} value={form.client_gstin} onChange={e => setF('client_gstin', e.target.value)} placeholder="22AAAAA0000A1Z5" />
+                </Field>
+              </div>
+            )}
             <Field label="CN Date"><input type="date" className={inp()} value={form.cn_date} onChange={e => setF('cn_date', e.target.value)} /></Field>
             <div className="col-span-2"><Field label="Reason for Credit Note"><input className={inp()} value={form.reason} onChange={e => setF('reason', e.target.value)} placeholder="Excess billing, goods returned, etc." /></Field></div>
           </div>
           <LineItemsEditor lines={lines} setLines={setLines} />
-          <div className="flex rounded-xl border border-dark-600 overflow-hidden">
-            <button type="button" onClick={() => setF('is_tax_invoice', true)}
-              className={`flex-1 py-2.5 text-xs font-semibold transition-colors ${isTaxCN ? 'bg-primary-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}>
-              Tax Credit Note (with GST)
-            </button>
-            <button type="button" onClick={() => setF('is_tax_invoice', false)}
-              className={`flex-1 py-2.5 text-xs font-semibold transition-colors ${!isTaxCN ? 'bg-dark-600 text-slate-200' : 'text-slate-400 hover:text-slate-200'}`}>
-              Non-Tax Credit Note
-            </button>
-          </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">
               {isTaxCN && <>
