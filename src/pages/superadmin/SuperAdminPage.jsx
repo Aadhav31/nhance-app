@@ -445,48 +445,40 @@ function CompanyDetail({ company: initialCompany, onClose }) {
     },
   })
 
-  const [linkModal, setLinkModal] = useState(null) // { email, link }
-  const [generatingLink, setGeneratingLink] = useState(false)
-  const [resendingFor, setResendingFor] = useState(null)
+  const [setPwdFor, setSetPwdFor] = useState(null) // { user_id, email, full_name }
+  const [newPwd, setNewPwd]       = useState('')
+  const [settingPwd, setSettingPwd] = useState(false)
+  const [pwdDone, setPwdDone]     = useState(false)
+  const [copied, setCopied]       = useState(false)
 
-  const handleGenerateLink = async (adm) => {
-    if (!adm?.email) { toast.error('No email found for this admin'); return }
-    setGeneratingLink(true)
+  const generatePwd = () => {
+    const d = Math.floor(1000 + Math.random() * 9000)
+    setNewPwd(`Nhance@${d}`)
+  }
+
+  const handleSetPassword = async () => {
+    if (!newPwd || newPwd.length < 6) return toast.error('Password must be at least 6 characters')
+    setSettingPwd(true)
     try {
-      const { data, error } = await supabase.functions.invoke('generate-login-link', {
-        body: { email: adm.email, full_name: adm.full_name },
+      const { data, error } = await supabase.functions.invoke('set-employee-password', {
+        body: { user_id: setPwdFor.user_id, password: newPwd },
       })
       if (error) throw error
-      if (!data?.success) throw new Error(data?.error || 'Failed to generate link')
-      setLinkModal({ email: adm.email, link: data.link, emailSent: data.email_sent })
+      if (!data?.success) throw new Error(data?.error || 'Failed to set password')
+      setPwdDone(true)
     } catch (err) {
-      toast.error(err.message || 'Failed to generate login link')
+      toast.error(err.message || 'Failed to set password')
     } finally {
-      setGeneratingLink(false)
+      setSettingPwd(false)
     }
   }
 
-  const handleResendInvite = async (adm) => {
-    if (!adm?.email) { toast.error('No email found for this admin'); return }
-    setResendingFor(adm.user_id)
-    try {
-      const { data, error } = await supabase.functions.invoke('invite-user', {
-        body: {
-          email: adm.email,
-          full_name: adm.full_name || 'Company Admin',
-          role: 'admin',
-          company_id: company.id,
-        },
-      })
-      if (error) throw error
-      if (!data?.success) throw new Error(data?.error || 'Resend failed')
-      toast.success(`Invite resent to ${adm.email}`)
-      refetchAdmin()
-    } catch (err) {
-      toast.error(err.message || 'Failed to resend invite')
-    } finally {
-      setResendingFor(null)
-    }
+  const copyAdminCreds = () => {
+    const msg = `Hi ${setPwdFor?.full_name || 'Admin'},\n\nYour Nhance Admin login:\nEmail: ${setPwdFor?.email}\nPassword: ${newPwd}\n\nLogin at: https://nhance-app.vercel.app`
+    navigator.clipboard.writeText(msg)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+    toast.success('Copied — paste into WhatsApp')
   }
 
   const toggleModule = async (mod, currentState) => {
@@ -628,24 +620,12 @@ function CompanyDetail({ company: initialCompany, onClose }) {
                       </span>
                     )}
                   </div>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => handleGenerateLink(adm)}
-                      disabled={generatingLink}
-                      className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-white bg-primary-600 hover:bg-primary-500 transition-colors disabled:opacity-50"
-                    >
-                      {generatingLink ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Link className="w-3.5 h-3.5" />}
-                      Generate Login Link
-                    </button>
-                    <button
-                      onClick={() => handleResendInvite(adm)}
-                      disabled={resendingFor === adm.user_id}
-                      className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-cyan-400 bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/20 transition-colors disabled:opacity-50"
-                    >
-                      {resendingFor === adm.user_id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-                      Resend Email Invite
-                    </button>
-                  </div>
+                  <button
+                    onClick={() => { setSetPwdFor(adm); setNewPwd(''); setPwdDone(false) }}
+                    className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-cyan-400 bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/20 transition-colors w-full"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" /> Set / Reset Password
+                  </button>
                 </div>
               ))}
             </div>
@@ -714,47 +694,55 @@ function CompanyDetail({ company: initialCompany, onClose }) {
       />
     )}
 
-    {linkModal && (
+    {setPwdFor && (
       <div className="fixed inset-0 z-[60] bg-black/80 flex items-center justify-center p-4">
-        <div className="bg-dark-800 rounded-xl border border-dark-600 shadow-2xl w-full max-w-lg">
+        <div className="bg-dark-800 rounded-xl border border-dark-600 shadow-2xl w-full max-w-md">
           <div className="flex items-center justify-between px-6 py-4 border-b border-dark-700">
-            <h2 className="text-base font-bold text-slate-100">Login Link Generated</h2>
-            <button onClick={() => setLinkModal(null)} className="text-slate-400 hover:text-slate-100">
-              <X className="w-5 h-5" />
-            </button>
+            <h2 className="text-base font-bold text-slate-100">Set Password — {setPwdFor.full_name || setPwdFor.email}</h2>
+            <button onClick={() => setSetPwdFor(null)} className="text-slate-400 hover:text-slate-100"><X className="w-5 h-5" /></button>
           </div>
           <div className="p-6 space-y-4">
-            {linkModal.emailSent ? (
-              <div className="bg-emerald-900/20 border border-emerald-700/30 rounded-lg p-3 text-xs text-emerald-300">
-                ✅ Login link emailed to <strong>{linkModal.email}</strong> via Resend. Also copy below to share via WhatsApp/SMS as backup. Expires in 1 hour.
-              </div>
+            {!pwdDone ? (
+              <>
+                <div className="bg-dark-700 rounded-xl p-3 text-xs space-y-1">
+                  <div className="flex justify-between"><span className="text-slate-400">Email</span><span className="text-slate-200 font-mono">{setPwdFor.email}</span></div>
+                </div>
+                <div>
+                  <div className="flex justify-between mb-1">
+                    <label className="text-xs text-slate-400">New Password</label>
+                    <button onClick={generatePwd} className="text-xs text-cyan-400 hover:text-cyan-300 underline">Auto-generate</button>
+                  </div>
+                  <input type="text" className="input font-mono"
+                    value={newPwd} onChange={e => setNewPwd(e.target.value)} placeholder="Min. 6 characters" />
+                </div>
+                <div className="flex gap-3">
+                  <button onClick={() => setSetPwdFor(null)} className="btn-ghost flex-1">Cancel</button>
+                  <button onClick={handleSetPassword} disabled={settingPwd || newPwd.length < 6} className="btn-primary flex-1">
+                    {settingPwd ? <><Loader2 className="w-4 h-4 animate-spin" /> Setting…</> : 'Set Password'}
+                  </button>
+                </div>
+              </>
             ) : (
-              <div className="bg-primary-900/20 border border-primary-700/30 rounded-lg p-3 text-xs text-primary-300">
-                <strong>Share this link</strong> with <span className="font-semibold">{linkModal.email}</span> via WhatsApp or SMS — they click it and are instantly logged in. Expires in 1 hour.
-              </div>
+              <>
+                <div className="bg-emerald-900/20 border border-emerald-700/30 rounded-xl p-3 text-center">
+                  <p className="text-emerald-400 font-semibold text-sm">✅ Password updated!</p>
+                  <p className="text-xs text-slate-400 mt-1">Share credentials via WhatsApp.</p>
+                </div>
+                <div className="bg-dark-700 rounded-xl p-3 text-xs space-y-1.5">
+                  <div className="flex justify-between"><span className="text-slate-400">Email</span><span className="text-slate-100 font-mono">{setPwdFor.email}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-400">Password</span><span className="text-emerald-400 font-mono font-bold">{newPwd}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-400">App</span><span className="text-slate-300">nhance-app.vercel.app</span></div>
+                </div>
+                <div className="flex gap-3">
+                  <button onClick={copyAdminCreds}
+                    className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-emerald-600/20 border border-emerald-700/40 text-emerald-400 hover:bg-emerald-600/30 text-sm font-medium">
+                    {copied ? <CheckCircle className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                    {copied ? 'Copied!' : 'Copy for WhatsApp'}
+                  </button>
+                  <button onClick={() => setSetPwdFor(null)} className="btn-primary flex-1 justify-center">Done</button>
+                </div>
+              </>
             )}
-            <div className="relative">
-              <textarea
-                readOnly
-                rows={3}
-                value={linkModal.link}
-                className="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2.5 text-xs text-slate-300 font-mono resize-none focus:outline-none"
-              />
-            </div>
-            <div className="flex gap-3">
-              <button
-                onClick={() => {
-                  navigator.clipboard.writeText(linkModal.link)
-                  toast.success('Link copied to clipboard!')
-                }}
-                className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-primary-600 hover:bg-primary-500 text-white text-sm font-medium rounded-lg transition-all"
-              >
-                <Copy className="w-4 h-4" /> Copy Link
-              </button>
-              <button onClick={() => setLinkModal(null)} className="btn-secondary">
-                Close
-              </button>
-            </div>
           </div>
         </div>
       </div>
