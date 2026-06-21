@@ -6,10 +6,12 @@ import {
   Plus, X, Loader2, FileText, TrendingUp, Truck, RefreshCcw,
   ArrowDownCircle, ShoppingCart, ChevronRight, CheckCircle,
   Copy, Edit2, Trash2, Search, IndianRupee, Calendar, User,
-  FileQuestion, Send, AlertTriangle,
+  FileQuestion, Send, AlertTriangle, Building2, Phone, Mail,
+  MapPin, BadgeCheck,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format } from 'date-fns'
+import ClientsPage from '../clients/ClientsPage'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const todayStr = () => new Date().toISOString().split('T')[0]
@@ -920,15 +922,16 @@ function PaymentsReceivedTab({ companyId, session }) {
 // ── MAIN SALES PAGE ───────────────────────────────────────────────────────────
 export default function SalesPage() {
   const { companyId, session } = useAuth()
-  const [activeTab, setActiveTab] = useState('invoices')
+  const [activeTab, setActiveTab] = useState('clients')
 
   const tabs = [
-    { id: 'invoices',  label: 'Invoices',          icon: FileText },
-    { id: 'quotes',    label: 'Quotes',             icon: FileQuestion },
-    { id: 'orders',    label: 'Sales Orders',       icon: ShoppingCart },
-    { id: 'challans',  label: 'Delivery Challans',  icon: Truck },
-    { id: 'credit',    label: 'Credit Notes',       icon: RefreshCcw },
-    { id: 'payments',  label: 'Payments Received',  icon: ArrowDownCircle },
+    { id: 'clients',   label: 'Clients',            icon: Building2 },
+    { id: 'invoices',  label: 'Invoices',            icon: FileText },
+    { id: 'quotes',    label: 'Quotes',              icon: FileQuestion },
+    { id: 'orders',    label: 'Sales Orders',        icon: ShoppingCart },
+    { id: 'challans',  label: 'Delivery Challans',   icon: Truck },
+    { id: 'credit',    label: 'Credit Notes',        icon: RefreshCcw },
+    { id: 'payments',  label: 'Payments Received',   icon: ArrowDownCircle },
   ]
 
   return (
@@ -941,7 +944,7 @@ export default function SalesPage() {
           </div>
           <div>
             <h1 className="text-lg font-bold text-slate-100">Sales</h1>
-            <p className="text-xs text-slate-500">Invoices · Quotes · Orders · Collections</p>
+            <p className="text-xs text-slate-500">Clients · Invoices · Quotes · Orders · Collections</p>
           </div>
         </div>
         {/* Tabs */}
@@ -959,6 +962,7 @@ export default function SalesPage() {
 
       {/* Tab content */}
       <div className="flex-1 overflow-hidden">
+        {activeTab === 'clients'  && <ClientsPage embedded />}
         {activeTab === 'invoices' && <InvoicesTab companyId={companyId} session={session} />}
         {activeTab === 'quotes'   && <QuotesTab   companyId={companyId} session={session} />}
         {activeTab === 'orders'   && <SalesOrdersTab companyId={companyId} session={session} />}

@@ -160,8 +160,6 @@ export const NAV_ITEMS = [
   {
     section: 'Business',
     items: [
-      { key: 'clients',  label: 'Clients',   icon: 'Building2',    module: MODULES.CLIENTS_PROJECTS,
-        roles: [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
       { key: 'projects', label: 'Projects',  icon: 'FolderOpen',   module: MODULES.CLIENTS_PROJECTS,
         roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
       { key: 'accounts', label: 'Accounts',  icon: 'Wallet',       module: MODULES.ACCOUNTS,
