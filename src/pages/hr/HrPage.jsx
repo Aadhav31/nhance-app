@@ -523,7 +523,7 @@ function EmployeeFormModal({ companyId, initialValues, onClose }) {
         ) : (
           <div className="bg-dark-700 rounded-xl p-3 space-y-3">
             <p className="text-xs text-slate-400">
-              {isEdit ? 'Create a login account for this employee. You'll share credentials via WhatsApp.' : 'Optionally create a login account now. You can also do this later from the employee profile.'}
+              {isEdit ? "Create a login account for this employee. Share credentials via WhatsApp." : "Optionally create a login account now. You can also do this later from the employee profile."}
             </p>
             <div className="grid grid-cols-2 gap-3">
               <Field label="Login Email">
