@@ -87,7 +87,8 @@ export default function LoginPage() {
       toast.success('Password reset link sent to your email')
       setMode('password')
     } catch (err) {
-      setError(err.message || 'Failed to send reset email')
+      const msg = err?.message || err?.error_description || ''
+      setError(msg || 'Failed to send reset link — check your email and try again')
     } finally {
       setLoading(false)
     }
