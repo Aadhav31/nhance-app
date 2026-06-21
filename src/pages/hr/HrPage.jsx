@@ -583,8 +583,8 @@ function EmployeeFormModal({ companyId, initialValues, onClose }) {
   )
 }
 
-// ── Invite & Link Modal ────────────────────────────────────────────────────────
-const INVITE_ROLES = [
+// ── Create Login Modal (no email — admin sets password, shares via WhatsApp) ──
+const LOGIN_ROLES = [
   { key: 'operator',   label: 'Operator — daily operations only' },
   { key: 'supervisor', label: 'Supervisor — operations, fleet, projects' },
   { key: 'manager',    label: 'Manager — full operations + business' },
@@ -593,71 +593,152 @@ const INVITE_ROLES = [
 ]
 
 function InviteAndLinkModal({ emp, companyId, onClose, onDone }) {
-  const [form, setForm] = useState({ email: '', role: 'operator' })
-  const [sending, setSending] = useState(false)
-  const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
+  const [email,    setEmail]    = useState(emp.email || '')
+  const [role,     setRole]     = useState('operator')
+  const [password, setPassword] = useState('')
+  const [showPwd,  setShowPwd]  = useState(false)
+  const [saving,   setSaving]   = useState(false)
+  const [done,     setDone]     = useState(false)
+  const [copied,   setCopied]   = useState(false)
 
-  const handleSend = async () => {
-    if (!form.email.trim() || !form.email.includes('@')) return toast.error('Valid email required')
-    setSending(true)
+  const generate = () => {
+    const digits = Math.floor(1000 + Math.random() * 9000)
+    setPassword(`Nhance@${digits}`)
+    setShowPwd(true)
+  }
+
+  const handleCreate = async () => {
+    if (!email.trim() || !email.includes('@')) return toast.error('Valid email required')
+    if (password.length < 6) return toast.error('Password must be at least 6 characters')
+    setSaving(true)
     try {
-      const { data, error } = await supabase.functions.invoke('invite-user', {
+      const { data, error } = await supabase.functions.invoke('create-employee-login', {
         body: {
-          email: form.email.trim().toLowerCase(),
+          email: email.trim().toLowerCase(),
           full_name: emp.name || emp.full_name,
-          role: form.role,
+          role,
           employee_id: emp.id,
+          company_id: companyId,
+          password,
         },
       })
       if (error) throw error
-      if (!data?.success) throw new Error(data?.error || 'Invite failed')
-      toast.success(`Invite sent to ${form.email} — they'll receive an email to set their password`)
-      onDone()
+      if (!data?.success) throw new Error(data?.error || 'Failed to create login')
+      setDone(true)
     } catch (e) {
-      toast.error(e.message || 'Failed to send invite')
+      toast.error(e.message || 'Failed to create login')
     } finally {
-      setSending(false)
+      setSaving(false)
     }
+  }
+
+  const copyWhatsApp = () => {
+    const msg = `Hi ${emp.name || emp.full_name},\n\nYour Nhance login details:\nEmail: ${email}\nPassword: ${password}\n\nLogin at: https://nhance-app.vercel.app`
+    navigator.clipboard.writeText(msg)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+    toast.success('Copied! Paste into WhatsApp')
   }
 
   return (
     <div className="fixed inset-0 z-[60] bg-black/70 flex items-center justify-center p-4">
       <div className="bg-dark-800 rounded-xl border border-dark-700 shadow-2xl w-full max-w-md">
         <div className="flex items-center justify-between px-6 py-4 border-b border-dark-700">
-          <h2 className="text-base font-bold text-slate-100">Invite & Link Login — {emp.name || emp.full_name}</h2>
+          <h2 className="text-base font-bold text-slate-100">Create Login — {emp.name || emp.full_name}</h2>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-100"><X className="w-5 h-5" /></button>
         </div>
         <div className="p-6 space-y-4">
-          <div className="bg-dark-700 rounded-xl p-3 flex items-center gap-3">
-            <div className="w-9 h-9 rounded-full bg-primary-600/20 border border-primary-700/40 flex items-center justify-center text-sm font-bold text-primary-400">
-              {((emp.name || emp.full_name || 'E').split(' ').map(w => w[0]).join('').slice(0, 2)).toUpperCase()}
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-slate-200">{emp.name || emp.full_name}</p>
-              <p className="text-xs text-slate-500">{emp.designation || 'Employee'} · {emp.employee_number || ''}</p>
-            </div>
-          </div>
-          <p className="text-xs text-slate-400">
-            Enter their work email. Nhance will send an invite — they click the link and set their own password. No manual SQL needed.
-          </p>
-          <div>
-            <label className="text-xs text-slate-400 mb-1 block">Work Email *</label>
-            <input type="email" className="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
-              value={form.email} onChange={e => setF('email', e.target.value)} placeholder="employee@yourcompany.com" autoFocus />
-          </div>
-          <div>
-            <label className="text-xs text-slate-400 mb-1 block">App Role *</label>
-            <select className="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
-              value={form.role} onChange={e => setF('role', e.target.value)}>
-              {INVITE_ROLES.map(r => <option key={r.key} value={r.key}>{r.label}</option>)}
-            </select>
-          </div>
-          <div className="flex gap-3 pt-2">
-            <button onClick={onClose} className="btn-ghost flex-1">Cancel</button>
-            <button onClick={handleSend} disabled={sending} className="btn-primary flex-1">
-              {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <><Mail className="w-4 h-4" /> Send Invite</>}
-            </button>
-          </div>
+          {!done ? (
+            <>
+              <div className="bg-dark-700 rounded-xl p-3 flex items-center gap-3">
+                <div className="w-9 h-9 rounded-full bg-primary-600/20 border border-primary-700/40 flex items-center justify-center text-sm font-bold text-primary-400">
+                  {((emp.name || emp.full_name || 'E').split(' ').map(w => w[0]).join('').slice(0, 2)).toUpperCase()}
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-slate-200">{emp.name || emp.full_name}</p>
+                  <p className="text-xs text-slate-500">{emp.designation || 'Employee'} · {emp.employee_number || ''}</p>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Email Address *</label>
+                <input type="email"
+                  className="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
+                  value={email} onChange={e => setEmail(e.target.value)}
+                  placeholder="employee@gmail.com" autoFocus />
+              </div>
+
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">App Role *</label>
+                <select className="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
+                  value={role} onChange={e => setRole(e.target.value)}>
+                  {LOGIN_ROLES.map(r => <option key={r.key} value={r.key}>{r.label}</option>)}
+                </select>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs text-slate-400">Password *</label>
+                  <button onClick={generate} className="text-xs text-cyan-400 hover:text-cyan-300 underline underline-offset-2">
+                    Auto-generate
+                  </button>
+                </div>
+                <div className="relative">
+                  <input
+                    type={showPwd ? 'text' : 'password'}
+                    className="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 font-mono focus:outline-none focus:border-primary-500 pr-14"
+                    placeholder="Min. 6 characters"
+                    value={password}
+                    onChange={e => setPassword(e.target.value)}
+                  />
+                  <button type="button" onClick={() => setShowPwd(p => !p)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 text-xs">
+                    {showPwd ? 'Hide' : 'Show'}
+                  </button>
+                </div>
+                <p className="text-xs text-slate-500 mt-1">You'll share this with the employee via WhatsApp — no email needed.</p>
+              </div>
+
+              <div className="flex gap-3 pt-1">
+                <button onClick={onClose} className="btn-ghost flex-1">Cancel</button>
+                <button onClick={handleCreate} disabled={saving || !email || password.length < 6} className="btn-primary flex-1">
+                  {saving ? <><Loader2 className="w-4 h-4 animate-spin" /> Creating…</> : 'Create Login'}
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="bg-emerald-900/20 border border-emerald-700/30 rounded-xl p-4 text-center">
+                <p className="text-emerald-400 font-semibold text-sm mb-1">✅ Login created & linked!</p>
+                <p className="text-xs text-slate-400">{emp.name || emp.full_name} can now log in to Nhance.</p>
+              </div>
+
+              <div className="bg-dark-700 rounded-xl p-3 space-y-1.5 text-xs">
+                <p className="text-slate-400 font-sans mb-2">Share via WhatsApp:</p>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Email</span>
+                  <span className="text-slate-100 font-mono">{email}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Password</span>
+                  <span className="text-emerald-400 font-mono font-bold">{password}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">App</span>
+                  <span className="text-slate-300">nhance-app.vercel.app</span>
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <button onClick={copyWhatsApp}
+                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-emerald-600/20 border border-emerald-700/40 text-emerald-400 hover:bg-emerald-600/30 text-sm font-medium">
+                  {copied ? <CheckCircle className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                  {copied ? 'Copied!' : 'Copy for WhatsApp'}
+                </button>
+                <button onClick={onDone} className="btn-primary flex-1 justify-center">Done</button>
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>
