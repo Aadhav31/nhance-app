@@ -5,7 +5,7 @@ import { supabase } from '../../lib/supabase'
 import toast from 'react-hot-toast'
 
 export default function LoginPage() {
-  const { signIn, resetPassword } = useAuth()
+  const { signIn, resetPassword, authError, signOut } = useAuth()
 
   // 'password' | 'otp_email' | 'otp_verify' | 'forgot'
   const [mode, setMode] = useState('password')
@@ -112,6 +112,21 @@ export default function LoginPage() {
         </div>
 
         <div className="card p-8">
+
+          {/* ── Auth error (profile/role missing after successful login) ── */}
+          {authError && (
+            <div className="mb-5 rounded-xl border border-red-500/30 bg-red-500/10 p-4">
+              <div className="flex items-start gap-2 text-red-400 text-sm mb-2">
+                <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+                <span className="font-semibold">Account not set up correctly</span>
+              </div>
+              <p className="text-xs text-red-300/80 mb-3">{authError}</p>
+              <button onClick={signOut}
+                className="text-xs text-red-400 hover:text-red-300 underline underline-offset-2">
+                Sign out and try a different account
+              </button>
+            </div>
+          )}
 
           {/* ── Mode: Password login ── */}
           {mode === 'password' && (

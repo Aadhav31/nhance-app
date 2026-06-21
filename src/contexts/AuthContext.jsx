@@ -10,6 +10,7 @@ export function AuthProvider({ children }) {
   const [company,     setCompany]     = useState(null)
   const [modules,     setModules]     = useState([])
   const [loading,     setLoading]     = useState(true)
+  const [authError,   setAuthError]   = useState(null)  // shown on login page if profile missing
 
   // Load full profile after auth session is established
   const loadUserData = async (authUser) => {
@@ -34,6 +35,8 @@ export function AuthProvider({ children }) {
     }
 
     try {
+      setAuthError(null)
+
       // Load user profile
       const { data: profile, error: profileError } = await supabase
         .from('user_profiles')
@@ -41,7 +44,7 @@ export function AuthProvider({ children }) {
         .eq('id', authUser.id)
         .single()
 
-      if (profileError || !profile) throw new Error('Profile not found')
+      if (profileError || !profile) throw new Error('Your account profile is not set up yet. Contact your HR admin.')
 
       // Load role
       const { data: roleData, error: roleError } = await supabase
@@ -50,7 +53,7 @@ export function AuthProvider({ children }) {
         .eq('user_id', authUser.id)
         .single()
 
-      if (roleError || !roleData) throw new Error('Role not found')
+      if (roleError || !roleData) throw new Error('No role assigned to your account. Contact your HR admin.')
 
       // Load company
       const { data: companyData, error: companyError } = await supabase
@@ -59,9 +62,9 @@ export function AuthProvider({ children }) {
         .eq('id', profile.company_id)
         .single()
 
-      if (companyError || !companyData) throw new Error('Company not found')
+      if (companyError || !companyData) throw new Error('Company not found. Contact your HR admin.')
 
-      if (!companyData.is_active) throw new Error('Company account is suspended')
+      if (!companyData.is_active) throw new Error('Your company account is suspended. Contact Nhance support.')
 
       // Load active modules
       const { data: moduleData } = await supabase
@@ -70,14 +73,19 @@ export function AuthProvider({ children }) {
         .eq('company_id', profile.company_id)
         .eq('is_enabled', true)
 
+      setAuthError(null)
       setUserProfile(profile)
       setUserRole(roleData)
       setCompany(companyData)
       setModules(moduleData?.map(m => m.module_key) || [])
     } catch (err) {
       console.error('Failed to load user data:', err)
-      // Sign out on error — prevents stuck loading state
-      await supabase.auth.signOut()
+      // Don't auto-signout — show the error so user/admin knows what's wrong
+      setAuthError(err.message || 'Login failed — contact your admin.')
+      setUserProfile(null)
+      setUserRole(null)
+      setCompany(null)
+      setModules([])
     } finally {
       setLoading(false)
     }
@@ -105,10 +113,6 @@ export function AuthProvider({ children }) {
     if (error) throw error
   }
 
-  const signOut = async () => {
-    await supabase.auth.signOut()
-  }
-
   const resetPassword = async (email) => {
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
       redirectTo: `${window.location.origin}/`,
@@ -131,6 +135,11 @@ export function AuthProvider({ children }) {
   const isAdmin      = () => ['admin', 'superadmin'].includes(userRole?.role)
   const role         = userRole?.role || null
 
+  const signOut = async () => {
+    setAuthError(null)
+    await supabase.auth.signOut()
+  }
+
   const value = {
     session,
     userProfile,
@@ -140,6 +149,7 @@ export function AuthProvider({ children }) {
     modules,
     loading,
     role,
+    authError,
     signIn,
     signOut,
     resetPassword,
