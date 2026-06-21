@@ -26,6 +26,8 @@ export const MODULES = {
   INVENTORY:        'inventory',
   CLIENTS_PROJECTS: 'clients_projects',
   ACCOUNTS:         'accounts',
+  SALES:            'sales',
+  PURCHASE:         'purchase',
   REPORTS:          'reports_analytics',
   HR_PAYROLL:       'hr_payroll',
 }
@@ -38,6 +40,8 @@ export const MODULE_LABELS = {
   inventory:        'Inventory',
   clients_projects: 'Clients & Projects',
   accounts:         'Accounts',
+  sales:            'Sales',
+  purchase:         'Purchase',
   reports_analytics:'Reports & Analytics',
   hr_payroll:       'Employee Management',
 }
@@ -160,7 +164,9 @@ export const NAV_ITEMS = [
         roles: [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
       { key: 'projects', label: 'Projects',  icon: 'FolderOpen', module: MODULES.CLIENTS_PROJECTS,
         roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
-      { key: 'accounts', label: 'Accounts',  icon: 'Receipt',    module: MODULES.ACCOUNTS,
+      { key: 'sales',    label: 'Sales',     icon: 'TrendingUp', module: MODULES.SALES,
+        roles: [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
+      { key: 'purchase', label: 'Purchase',  icon: 'ShoppingCart', module: MODULES.PURCHASE,
         roles: [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
     ],
   },
