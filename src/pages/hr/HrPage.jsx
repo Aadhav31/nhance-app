@@ -5,7 +5,7 @@ import { useAuth } from '../../contexts/AuthContext'
 import {
   Users, Plus, X, Loader2, Save, Trash2, Edit2,
   Phone, Calendar, CreditCard, FileText,
-  CheckCircle, Banknote, BarChart2, Search, Mail, UserPlus, Link, Copy, Send
+  CheckCircle, Banknote, BarChart2, Search, Mail, UserPlus, Link, Copy
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format, getDaysInMonth, parseISO } from 'date-fns'
@@ -664,85 +664,121 @@ function InviteAndLinkModal({ emp, companyId, onClose, onDone }) {
   )
 }
 
-// ── Send Login Link Modal (for already-linked employees) ───────────────────────
-function SendLoginLinkModal({ emp, onClose }) {
-  const [sending, setSending] = useState(false)
-  const [result, setResult]   = useState(null) // { link, email_sent }
-  const [copied, setCopied]   = useState(false)
+// ── Set Password Modal (HR/Admin sets password, shares via WhatsApp) ───────────
+function SetPasswordModal({ emp, onClose }) {
+  const [password, setPassword] = useState('')
+  const [saving, setSaving]     = useState(false)
+  const [done, setDone]         = useState(false)
+  const [copied, setCopied]     = useState(false)
+  const [showPwd, setShowPwd]   = useState(false)
 
-  const handleSend = async () => {
-    if (!emp.email) return toast.error('No email on file for this employee — add it in Edit first')
-    setSending(true)
+  // Auto-generate a simple password: Nhance + 4 random digits
+  const generate = () => {
+    const digits = Math.floor(1000 + Math.random() * 9000)
+    setPassword(`Nhance@${digits}`)
+    setShowPwd(true)
+  }
+
+  const handleSave = async () => {
+    if (password.length < 6) return toast.error('Password must be at least 6 characters')
+    if (!emp.user_id) return toast.error('No login account linked to this employee')
+    setSaving(true)
     try {
-      const { data, error } = await supabase.functions.invoke('send-magic-link', {
-        body: { email: emp.email, full_name: emp.name },
+      const { data, error } = await supabase.functions.invoke('set-employee-password', {
+        body: { user_id: emp.user_id, password },
       })
       if (error) throw error
-      if (!data?.success) throw new Error(data?.error || 'Failed to generate link')
-      setResult(data)
+      if (!data?.success) throw new Error(data?.error || 'Failed to set password')
+      setDone(true)
     } catch (e) {
-      toast.error(e.message || 'Failed to generate login link')
+      toast.error(e.message || 'Failed to set password')
     } finally {
-      setSending(false)
+      setSaving(false)
     }
   }
 
-  const copyLink = () => {
-    if (!result?.link) return
-    navigator.clipboard.writeText(result.link)
+  const copyWhatsApp = () => {
+    const msg = `Hi ${emp.name},\n\nYour Nhance login details:\nEmail: ${emp.email || '(your email)'}\nPassword: ${password}\n\nLogin at: https://nhance-app.vercel.app`
+    navigator.clipboard.writeText(msg)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
+    toast.success('WhatsApp message copied!')
   }
 
   return (
     <div className="fixed inset-0 z-[60] bg-black/70 flex items-center justify-center p-4">
       <div className="bg-dark-800 rounded-xl border border-dark-700 shadow-2xl w-full max-w-md">
         <div className="flex items-center justify-between px-6 py-4 border-b border-dark-700">
-          <h2 className="text-base font-bold text-slate-100">Send Login Link — {emp.name}</h2>
+          <h2 className="text-base font-bold text-slate-100">Set Login Password — {emp.name}</h2>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-100"><X className="w-5 h-5" /></button>
         </div>
         <div className="p-6 space-y-4">
-          {!result ? (
+          {!done ? (
             <>
-              <div className="bg-dark-700 rounded-xl p-3">
-                <p className="text-xs text-slate-400 mb-1">Email on file</p>
-                <p className="text-sm font-medium text-slate-200">{emp.email || <span className="text-red-400 italic">No email — add in Edit first</span>}</p>
+              {/* Employee info */}
+              <div className="bg-dark-700 rounded-xl p-3 space-y-1">
+                <div className="flex justify-between text-xs">
+                  <span className="text-slate-400">Login email</span>
+                  <span className="text-slate-200 font-mono">{emp.email || '—'}</span>
+                </div>
+                <div className="flex justify-between text-xs">
+                  <span className="text-slate-400">Employee</span>
+                  <span className="text-slate-200">{emp.name} · {emp.employee_number}</span>
+                </div>
               </div>
-              <p className="text-xs text-slate-400">
-                A one-time login link will be generated and emailed to {emp.name}. The link is valid for <strong className="text-slate-300">1 hour</strong> — no password needed.
-              </p>
+
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-xs text-slate-400">New Password</label>
+                  <button onClick={generate} className="text-xs text-cyan-400 hover:text-cyan-300 underline underline-offset-2">
+                    Auto-generate
+                  </button>
+                </div>
+                <div className="relative">
+                  <input
+                    type={showPwd ? 'text' : 'password'}
+                    className="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 font-mono focus:outline-none focus:border-primary-500 pr-10"
+                    placeholder="Min. 6 characters"
+                    value={password}
+                    onChange={e => setPassword(e.target.value)}
+                  />
+                  <button type="button" onClick={() => setShowPwd(p => !p)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 text-xs">
+                    {showPwd ? 'Hide' : 'Show'}
+                  </button>
+                </div>
+                <p className="text-xs text-slate-500 mt-1">You'll share this with the employee via WhatsApp or phone call — no email needed.</p>
+              </div>
+
               <div className="flex gap-3">
                 <button onClick={onClose} className="btn-ghost flex-1">Cancel</button>
-                <button onClick={handleSend} disabled={sending || !emp.email} className="btn-primary flex-1">
-                  {sending
-                    ? <><Loader2 className="w-4 h-4 animate-spin" /> Generating…</>
-                    : <><Send className="w-4 h-4" /> Send Login Link</>}
+                <button onClick={handleSave} disabled={saving || password.length < 6} className="btn-primary flex-1">
+                  {saving ? <><Loader2 className="w-4 h-4 animate-spin" /> Setting…</> : 'Set Password'}
                 </button>
               </div>
             </>
           ) : (
             <>
-              {result.email_sent ? (
-                <div className="bg-emerald-900/20 border border-emerald-700/30 rounded-xl p-4">
-                  <p className="text-sm font-semibold text-emerald-400 mb-1">✅ Login link emailed!</p>
-                  <p className="text-xs text-slate-400">Sent to <span className="text-slate-300">{result.email}</span> via Resend. Link expires in 1 hour.</p>
-                </div>
-              ) : (
-                <div className="bg-yellow-900/20 border border-yellow-700/30 rounded-xl p-3">
-                  <p className="text-xs text-yellow-400 font-medium mb-1">⚠ Email delivery failed — share link manually</p>
-                  <p className="text-xs text-slate-400">Copy the link below and send via WhatsApp or SMS.</p>
-                </div>
-              )}
-              <div className="bg-dark-700 rounded-xl p-3 space-y-2">
-                <p className="text-xs text-slate-400">Login link (backup — copy to share)</p>
-                <div className="flex items-center gap-2">
-                  <p className="text-xs text-primary-400 font-mono break-all flex-1 line-clamp-2">{result.link}</p>
-                  <button onClick={copyLink} className="shrink-0 p-1.5 rounded-lg hover:bg-dark-600 text-slate-400 hover:text-slate-100">
-                    {copied ? <CheckCircle className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
-                  </button>
-                </div>
+              <div className="bg-emerald-900/20 border border-emerald-700/30 rounded-xl p-4 text-center">
+                <p className="text-emerald-400 font-semibold text-sm mb-1">✅ Password set successfully!</p>
+                <p className="text-xs text-slate-400">Share the login details with {emp.name} via WhatsApp.</p>
               </div>
-              <button onClick={onClose} className="btn-primary w-full justify-center">Done</button>
+
+              <div className="bg-dark-700 rounded-xl p-3 space-y-2 font-mono text-xs text-slate-300">
+                <p className="text-slate-400 text-xs font-sans mb-1">WhatsApp message to send:</p>
+                <p>Email: <span className="text-slate-100">{emp.email}</span></p>
+                <p>Password: <span className="text-emerald-400 font-bold">{password}</span></p>
+                <p className="text-slate-500 text-xs font-sans">nhance-app.vercel.app</p>
+              </div>
+
+              <div className="flex gap-3">
+                <button onClick={copyWhatsApp}
+                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-emerald-600/20 border border-emerald-700/40 text-emerald-400 hover:bg-emerald-600/30 text-sm font-medium">
+                  {copied ? <CheckCircle className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                  {copied ? 'Copied!' : 'Copy for WhatsApp'}
+                </button>
+                <button onClick={onClose} className="btn-primary flex-1 justify-center">Done</button>
+              </div>
             </>
           )}
         </div>
@@ -826,7 +862,7 @@ function EmployeeDetailModal({ emp, companyId, onClose, onEdit }) {
               </button>
             ) : (
               <button onClick={() => setShowLinkModal(true)} className="btn-ghost flex items-center gap-1.5 text-xs px-3 border-cyan-700/50 text-cyan-400 hover:bg-cyan-500/10">
-                <Link className="w-3.5 h-3.5" /> Send Login Link
+                <Link className="w-3.5 h-3.5" /> Set Password
               </button>
             )}
             <button onClick={onEdit} className="flex-1 btn-primary text-sm flex items-center justify-center gap-1.5">
@@ -846,7 +882,7 @@ function EmployeeDetailModal({ emp, companyId, onClose, onEdit }) {
         />
       )}
       {showLinkModal && (
-        <SendLoginLinkModal emp={emp} onClose={() => setShowLinkModal(false)} />
+        <SetPasswordModal emp={emp} onClose={() => setShowLinkModal(false)} />
       )}
       <div className="flex items-center gap-3">
         <div className="w-12 h-12 rounded-full bg-primary-900/40 border border-primary-700/40 flex items-center justify-center shrink-0">
