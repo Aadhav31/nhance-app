@@ -63,8 +63,9 @@ function AppShell() {
 
   const handleNavigate = (page) => setActivePage(page)
 
-  // If super-admin and not on a company page, go to super-admin panel
-  const effectivePage = isSuperAdmin() && activePage === 'dashboard' ? 'superadmin' : activePage
+  // Default landing page by role
+  const defaultPage = isSuperAdmin() ? 'superadmin' : role === 'operator' ? 'operations' : 'dashboard'
+  const effectivePage = activePage === 'dashboard' ? defaultPage : activePage
 
   const renderPage = () => {
     // Super-admin panel
