@@ -120,40 +120,63 @@ function LineItemsEditor({ lines, setLines }) {
 }
 
 function TaxSummary({ subtotal, form, setF }) {
-  const taxable  = subtotal - (parseFloat(form.discount_amount) || 0)
-  const cgst_amt = form.use_igst ? 0 : taxable * (parseFloat(form.cgst_rate) || 0) / 100
-  const sgst_amt = form.use_igst ? 0 : taxable * (parseFloat(form.sgst_rate) || 0) / 100
-  const igst_amt = form.use_igst ? taxable * (parseFloat(form.igst_rate) || 0) / 100 : 0
+  const isTax    = form.is_tax_invoice !== false
+  const discount = parseFloat(form.discount_amount) || 0
+  const taxable  = subtotal - discount
+  const cgst_amt = (isTax && !form.use_igst) ? taxable * (parseFloat(form.cgst_rate) || 0) / 100 : 0
+  const sgst_amt = (isTax && !form.use_igst) ? taxable * (parseFloat(form.sgst_rate) || 0) / 100 : 0
+  const igst_amt = (isTax && form.use_igst)  ? taxable * (parseFloat(form.igst_rate) || 0) / 100 : 0
   const total    = taxable + cgst_amt + sgst_amt + igst_amt
   return (
-    <div className="grid grid-cols-2 gap-4">
-      <div className="space-y-3">
-        <SectionHead label="Tax" />
-        <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
-          <input type="checkbox" checked={form.use_igst} onChange={e => setF('use_igst', e.target.checked)} className="rounded" />
-          Use IGST (interstate)
-        </label>
-        {!form.use_igst ? (
-          <div className="grid grid-cols-2 gap-2">
-            <Field label="CGST (%)"><input type="number" className={inp()} value={form.cgst_rate} onChange={e => setF('cgst_rate', e.target.value)} /></Field>
-            <Field label="SGST (%)"><input type="number" className={inp()} value={form.sgst_rate} onChange={e => setF('sgst_rate', e.target.value)} /></Field>
-          </div>
-        ) : (
-          <Field label="IGST (%)"><input type="number" className={inp()} value={form.igst_rate} onChange={e => setF('igst_rate', e.target.value)} /></Field>
-        )}
-        <Field label="Discount (₹)"><input type="number" className={inp()} value={form.discount_amount} onChange={e => setF('discount_amount', e.target.value)} /></Field>
+    <div>
+      {/* Tax type toggle */}
+      <div className="flex rounded-xl border border-dark-600 overflow-hidden mb-4">
+        <button type="button" onClick={() => setF('is_tax_invoice', true)}
+          className={`flex-1 py-2.5 text-xs font-semibold transition-colors ${isTax ? 'bg-primary-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}>
+          Tax Bill (with GST)
+        </button>
+        <button type="button" onClick={() => setF('is_tax_invoice', false)}
+          className={`flex-1 py-2.5 text-xs font-semibold transition-colors ${!isTax ? 'bg-dark-600 text-slate-200' : 'text-slate-400 hover:text-slate-200'}`}>
+          Non-Tax Bill
+        </button>
       </div>
-      <div className="bg-dark-700 rounded-xl p-4 space-y-2 self-start mt-4">
-        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Summary</p>
-        {[
-          ['Subtotal', subtotal],
-          ['Taxable',  taxable],
-          ...(form.use_igst ? [['IGST', igst_amt]] : [['CGST', cgst_amt], ['SGST', sgst_amt]]),
-        ].map(([l, v]) => (
-          <div key={l} className="flex justify-between text-xs text-slate-400"><span>{l}</span><span>{fmtINR(v)}</span></div>
-        ))}
-        <div className="border-t border-dark-600 pt-2 flex justify-between text-sm font-bold">
-          <span className="text-slate-200">Total</span><span className="text-primary-400">{fmtINR(total)}</span>
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-3">
+          {isTax && (
+            <>
+              <SectionHead label="GST" />
+              <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+                <input type="checkbox" checked={form.use_igst} onChange={e => setF('use_igst', e.target.checked)} className="rounded" />
+                Use IGST (interstate)
+              </label>
+              {!form.use_igst ? (
+                <div className="grid grid-cols-2 gap-2">
+                  <Field label="CGST (%)"><input type="number" className={inp()} value={form.cgst_rate} onChange={e => setF('cgst_rate', e.target.value)} /></Field>
+                  <Field label="SGST (%)"><input type="number" className={inp()} value={form.sgst_rate} onChange={e => setF('sgst_rate', e.target.value)} /></Field>
+                </div>
+              ) : (
+                <Field label="IGST (%)"><input type="number" className={inp()} value={form.igst_rate} onChange={e => setF('igst_rate', e.target.value)} /></Field>
+              )}
+            </>
+          )}
+          <Field label="Discount (₹)"><input type="number" className={inp()} value={form.discount_amount} onChange={e => setF('discount_amount', e.target.value)} /></Field>
+          {!isTax && <p className="text-xs text-slate-500 italic">No GST will be applied to this bill.</p>}
+        </div>
+        <div className="bg-dark-700 rounded-xl p-4 space-y-2 self-start">
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Summary</p>
+          <div className="flex justify-between text-xs text-slate-400"><span>Subtotal</span><span>{fmtINR(subtotal)}</span></div>
+          {discount > 0 && <div className="flex justify-between text-xs text-slate-400"><span>Discount</span><span>-{fmtINR(discount)}</span></div>}
+          {isTax && (form.use_igst
+            ? <div className="flex justify-between text-xs text-slate-400"><span>IGST</span><span>{fmtINR(igst_amt)}</span></div>
+            : <>
+                <div className="flex justify-between text-xs text-slate-400"><span>CGST</span><span>{fmtINR(cgst_amt)}</span></div>
+                <div className="flex justify-between text-xs text-slate-400"><span>SGST</span><span>{fmtINR(sgst_amt)}</span></div>
+              </>
+          )}
+          {!isTax && <div className="flex justify-between text-xs text-slate-500 italic"><span>GST</span><span>Nil</span></div>}
+          <div className="border-t border-dark-600 pt-2 flex justify-between text-sm font-bold">
+            <span className="text-slate-200">Total</span><span className="text-primary-400">{fmtINR(total)}</span>
+          </div>
         </div>
       </div>
     </div>
@@ -162,10 +185,11 @@ function TaxSummary({ subtotal, form, setF }) {
 
 // ── Helper: compute bill total from form ──────────────────────────────────────
 function calcTotal(form, subtotal) {
+  const isTax    = form.is_tax_invoice !== false
   const taxable  = subtotal - (parseFloat(form.discount_amount) || 0)
-  const cgst_amt = form.use_igst ? 0 : taxable * (parseFloat(form.cgst_rate) || 0) / 100
-  const sgst_amt = form.use_igst ? 0 : taxable * (parseFloat(form.sgst_rate) || 0) / 100
-  const igst_amt = form.use_igst ? taxable * (parseFloat(form.igst_rate) || 0) / 100 : 0
+  const cgst_amt = (isTax && !form.use_igst) ? taxable * (parseFloat(form.cgst_rate) || 0) / 100 : 0
+  const sgst_amt = (isTax && !form.use_igst) ? taxable * (parseFloat(form.sgst_rate) || 0) / 100 : 0
+  const igst_amt = (isTax && form.use_igst)  ? taxable * (parseFloat(form.igst_rate) || 0) / 100 : 0
   return { taxable, cgst_amt, sgst_amt, igst_amt, total: taxable + cgst_amt + sgst_amt + igst_amt }
 }
 
@@ -423,7 +447,7 @@ function BillsTab({ companyId, session }) {
   const qc = useQueryClient()
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [form, setForm] = useState({ vendor_id: '', bill_date: todayStr(), due_date: '', bill_ref: '', cgst_rate: 9, sgst_rate: 9, igst_rate: 18, use_igst: false, discount_amount: 0, notes: '' })
+  const [form, setForm] = useState({ vendor_id: '', bill_date: todayStr(), due_date: '', bill_ref: '', cgst_rate: 9, sgst_rate: 9, igst_rate: 18, use_igst: false, discount_amount: 0, notes: '', is_tax_invoice: true })
   const [lines, setLines] = useState([blankLine()])
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
 
@@ -477,7 +501,7 @@ function BillsTab({ companyId, session }) {
       if (items.length > 0) { const { error: le } = await supabase.from('bill_line_items').insert(items); if (le) throw le }
       toast.success(`Bill ${blNum} created`)
       setShowCreate(false)
-      setForm({ vendor_id: '', bill_date: todayStr(), due_date: '', bill_ref: '', cgst_rate: 9, sgst_rate: 9, igst_rate: 18, use_igst: false, discount_amount: 0, notes: '' })
+      setForm({ vendor_id: '', bill_date: todayStr(), due_date: '', bill_ref: '', cgst_rate: 9, sgst_rate: 9, igst_rate: 18, use_igst: false, discount_amount: 0, notes: '', is_tax_invoice: true })
       setLines([blankLine()])
       qc.invalidateQueries(['bills', companyId])
     } catch (e) { toast.error(e.message) } finally { setSaving(false) }
@@ -556,7 +580,7 @@ function PurchaseOrdersTab({ companyId, session }) {
   const qc = useQueryClient()
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [form, setForm] = useState({ vendor_id: '', po_date: todayStr(), expected_delivery: '', delivery_address: '', notes: '', cgst_rate: 9, sgst_rate: 9, igst_rate: 18, use_igst: false, discount_amount: 0 })
+  const [form, setForm] = useState({ vendor_id: '', po_date: todayStr(), expected_delivery: '', delivery_address: '', notes: '', cgst_rate: 9, sgst_rate: 9, igst_rate: 18, use_igst: false, discount_amount: 0, is_tax_invoice: true })
   const [lines, setLines] = useState([blankLine()])
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
 
