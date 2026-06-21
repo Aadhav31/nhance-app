@@ -7,6 +7,7 @@ import {
   Truck, Plus, Fuel, AlertTriangle, X, Loader2, CheckCircle,
   Gauge, User, Mic, MicOff, MapPin, Camera,
   Clock, Activity, PlayCircle, StopCircle, ChevronRight, Lock, Bell,
+  ExternalLink, ZoomIn,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format } from 'date-fns'
@@ -1332,9 +1333,510 @@ function TodayTab({ companyId }) {
   )
 }
 
+// ── Photo Lightbox ─────────────────────────────────────────────────────────────
+function PhotoLightbox({ url, onClose }) {
+  return (
+    <div className="fixed inset-0 z-[70] bg-black/95 flex items-center justify-center p-4" onClick={onClose}>
+      <button className="absolute top-4 right-4 text-white/60 hover:text-white z-10" onClick={onClose}>
+        <X className="w-7 h-7" />
+      </button>
+      <img src={url} alt="Full size" className="max-w-full max-h-full object-contain rounded-xl shadow-2xl" onClick={e => e.stopPropagation()} />
+    </div>
+  )
+}
+
+// ── Photo Thumbnail ─────────────────────────────────────────────────────────────
+function PhotoThumb({ url, label, onView }) {
+  if (!url) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-1 p-3 bg-dark-700 rounded-xl border border-dashed border-dark-500 aspect-video">
+        <Camera className="w-5 h-5 text-slate-600" />
+        <p className="text-[10px] text-slate-600 text-center leading-tight">{label}</p>
+      </div>
+    )
+  }
+  return (
+    <button onClick={() => onView(url)} className="relative group rounded-xl overflow-hidden border border-dark-600 aspect-video w-full">
+      <img src={url} alt={label} className="w-full h-full object-cover" />
+      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/50 transition-all flex items-center justify-center">
+        <ZoomIn className="w-6 h-6 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-lg" />
+      </div>
+      <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent px-2 py-1.5">
+        <p className="text-[10px] text-white/80 font-medium">{label}</p>
+      </div>
+    </button>
+  )
+}
+
+// ── Shift Detail Modal ─────────────────────────────────────────────────────────
+function ShiftDetailModal({ shift, onClose }) {
+  const [lightboxUrl, setLightboxUrl] = useState(null)
+  const mt = shift.equipment?.meter_type
+
+  const { data: fuelEntries = [] } = useQuery({
+    queryKey: ['shift_fuel_detail', shift.id],
+    queryFn: async () => {
+      const { data } = await supabase.from('shift_fuel_entries')
+        .select('*').eq('shift_id', shift.id).order('created_at')
+      return data || []
+    },
+  })
+
+  const { data: incidents = [] } = useQuery({
+    queryKey: ['shift_incidents_detail', shift.id],
+    queryFn: async () => {
+      const { data } = await supabase.from('shift_incidents')
+        .select('*').eq('shift_id', shift.id).order('created_at')
+      return data || []
+    },
+  })
+
+  const totalFuel    = fuelEntries.reduce((s, e) => s + Number(e.quantity_liters || 0), 0)
+  const totalFuelAmt = fuelEntries.reduce((s, e) => s + Number(e.total_amount    || 0), 0)
+  const meterDiff    = shift.end_meter && shift.start_meter
+    ? (Number(shift.end_meter) - Number(shift.start_meter)).toFixed(1) : null
+
+  const shiftBadge = ({
+    day:    { label: '☀️ Day',    cls: 'bg-yellow-500/10 text-yellow-400 border-yellow-700/40' },
+    night:  { label: '🌙 Night',  cls: 'bg-blue-500/10   text-blue-400   border-blue-700/40'   },
+    double: { label: '🔄 Double', cls: 'bg-purple-500/10 text-purple-400 border-purple-700/40' },
+  }[shift.shift_type]) || { label: shift.shift_type, cls: 'bg-dark-700 text-slate-400 border-dark-600' }
+
+  const mapsUrl    = shift.location_lat      ? `https://maps.google.com/?q=${shift.location_lat},${shift.location_lng}`            : null
+  const endMapsUrl = shift.end_location_lat  ? `https://maps.google.com/?q=${shift.end_location_lat},${shift.end_location_lng}`    : null
+
+  return (
+    <>
+      <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+        <div className="w-full max-w-lg bg-dark-900 sm:rounded-2xl border-t sm:border border-dark-600 shadow-2xl flex flex-col max-h-[92vh] sm:max-h-[90vh]">
+          {/* Header */}
+          <div className="flex items-start justify-between px-4 py-3 border-b border-dark-700 shrink-0 bg-dark-800 sm:rounded-t-2xl">
+            <div className="flex-1 min-w-0 pr-2">
+              <p className="font-bold text-slate-100 truncate">{shift.equipment?.name || 'Shift Detail'}</p>
+              <div className="flex items-center gap-2 mt-1 flex-wrap">
+                <span className="text-xs text-slate-400">{format(new Date(shift.shift_date), 'dd MMM yyyy')}</span>
+                <span className={`text-xs px-2 py-0.5 rounded-full border ${shiftBadge.cls}`}>{shiftBadge.label}</span>
+                <span className={`text-xs px-2 py-0.5 rounded-full border ${shift.status === 'open' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-700/40' : 'bg-dark-700 text-slate-400 border-dark-600'}`}>
+                  {shift.status === 'open' ? '🟢 Active' : '✓ Closed'}
+                </span>
+              </div>
+            </div>
+            <button onClick={onClose} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-dark-700 shrink-0">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
+          {/* Body */}
+          <div className="overflow-y-auto flex-1 px-4 py-3 space-y-3">
+
+            {/* People */}
+            <div className="grid grid-cols-2 gap-2">
+              <div className="bg-dark-800 rounded-xl p-3 border border-dark-700">
+                <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-1.5">Operator</p>
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-full bg-primary-500/20 flex items-center justify-center shrink-0">
+                    <User className="w-3.5 h-3.5 text-primary-400" />
+                  </div>
+                  <p className="text-sm font-semibold text-slate-100 leading-tight">{shift.operator_name || '—'}</p>
+                </div>
+              </div>
+              <div className="bg-dark-800 rounded-xl p-3 border border-dark-700">
+                <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-1.5">Site Incharge</p>
+                <p className="text-sm font-semibold text-slate-100 mt-1">{shift.site_incharge_name || '—'}</p>
+              </div>
+            </div>
+
+            {/* Timings */}
+            <div className="bg-dark-800 rounded-xl p-3 border border-dark-700">
+              <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-2">Timings</p>
+              <div className="flex items-center gap-3">
+                <div className="flex-1 text-center">
+                  <p className="text-[10px] text-slate-500">Start</p>
+                  <p className="text-2xl font-mono font-black text-emerald-400">{shift.start_time || '—'}</p>
+                </div>
+                <div className="text-slate-600 text-xl font-bold">→</div>
+                <div className="flex-1 text-center">
+                  <p className="text-[10px] text-slate-500">End</p>
+                  <p className="text-2xl font-mono font-black text-red-400">
+                    {shift.end_time || (shift.status === 'open' ? '...' : '—')}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Hours */}
+            <div className="grid grid-cols-3 gap-2">
+              <div className="bg-emerald-900/20 border border-emerald-700/30 rounded-xl p-2.5 text-center">
+                <p className="text-[10px] text-emerald-500 uppercase">Working</p>
+                <p className="text-2xl font-black text-emerald-400">{shift.working_hours || 0}</p>
+                <p className="text-[10px] text-slate-500">hrs</p>
+              </div>
+              <div className="bg-yellow-900/20 border border-yellow-700/30 rounded-xl p-2.5 text-center">
+                <p className="text-[10px] text-yellow-500 uppercase">Idle</p>
+                <p className="text-2xl font-black text-yellow-400">{shift.idle_hours || 0}</p>
+                <p className="text-[10px] text-slate-500">hrs</p>
+              </div>
+              <div className="bg-red-900/20 border border-red-700/30 rounded-xl p-2.5 text-center">
+                <p className="text-[10px] text-red-500 uppercase">Breakdown</p>
+                <p className="text-2xl font-black text-red-400">{shift.breakdown_hours || 0}</p>
+                <p className="text-[10px] text-slate-500">hrs</p>
+              </div>
+            </div>
+
+            {/* Meter readings */}
+            {(shift.start_meter != null || shift.end_meter != null || shift.start_km != null) && (
+              <div className="bg-dark-800 rounded-xl p-3 border border-dark-700">
+                <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-2">Meter Readings</p>
+                <div className="flex items-center gap-3">
+                  <div>
+                    <p className="text-[10px] text-slate-500">Opening</p>
+                    <p className="text-base font-bold text-slate-100">
+                      {shift.start_meter ?? shift.start_km ?? '—'} <span className="text-xs font-normal text-slate-500">{mt === 'kilometers' ? 'km' : 'hrs'}</span>
+                    </p>
+                  </div>
+                  {meterDiff && <>
+                    <div className="text-slate-600 text-lg font-bold">→</div>
+                    <div>
+                      <p className="text-[10px] text-slate-500">Closing</p>
+                      <p className="text-base font-bold text-slate-100">
+                        {shift.end_meter ?? shift.end_km ?? '—'} <span className="text-xs font-normal text-slate-500">{mt === 'kilometers' ? 'km' : 'hrs'}</span>
+                      </p>
+                    </div>
+                    <div className="ml-auto bg-primary-900/30 border border-primary-700/30 rounded-lg px-3 py-1.5 text-center shrink-0">
+                      <p className="text-[10px] text-primary-400">Diff</p>
+                      <p className="text-sm font-bold text-primary-300">+{meterDiff}</p>
+                    </div>
+                  </>}
+                </div>
+                {shift.meter_discrepancy && (
+                  <div className="mt-2 bg-orange-900/20 border border-orange-700/30 rounded-lg px-2.5 py-1.5">
+                    <p className="text-[10px] text-orange-400 font-semibold">⚠ Meter was corrected</p>
+                    {shift.meter_previous_closing && <p className="text-xs text-slate-400 mt-0.5">Previous closing: {shift.meter_previous_closing}</p>}
+                    {shift.meter_discrepancy_reason && <p className="text-xs text-slate-400 mt-0.5">Reason: {shift.meter_discrepancy_reason}</p>}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Photos */}
+            <div>
+              <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-2">Photos</p>
+              <div className="grid grid-cols-3 gap-2">
+                <PhotoThumb url={shift.meter_photo_url}     label="Opening Meter" onView={setLightboxUrl} />
+                <PhotoThumb url={shift.meter_photo_url_end} label="Closing Meter" onView={setLightboxUrl} />
+                <PhotoThumb url={shift.logsheet_photo_url}  label="Log Sheet"     onView={setLightboxUrl} />
+              </div>
+            </div>
+
+            {/* Work done */}
+            {shift.work_done && (
+              <div className="bg-dark-800 rounded-xl p-3 border border-dark-700">
+                <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-1.5">Work Done</p>
+                <p className="text-sm text-slate-200 leading-relaxed">{shift.work_done}</p>
+              </div>
+            )}
+
+            {/* Handover */}
+            {shift.handover_notes && (
+              <div className="bg-yellow-900/20 border border-yellow-700/30 rounded-xl p-3">
+                <p className="text-[10px] text-yellow-500 uppercase tracking-wide mb-1.5">Handover to Next Shift</p>
+                <p className="text-sm text-yellow-200/90 leading-relaxed">{shift.handover_notes}</p>
+              </div>
+            )}
+
+            {/* Notes */}
+            {shift.notes && (
+              <div className="bg-dark-800 rounded-xl p-3 border border-dark-700">
+                <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-1">Notes</p>
+                <p className="text-sm text-slate-300 italic">{shift.notes}</p>
+              </div>
+            )}
+
+            {/* Locations */}
+            {(shift.location_address || shift.end_location_address) && (
+              <div className="bg-dark-800 rounded-xl p-3 border border-dark-700 space-y-2">
+                <p className="text-[10px] text-slate-500 uppercase tracking-wide">GPS Locations</p>
+                {shift.location_address && (
+                  <div className="flex items-start gap-2">
+                    <MapPin className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[10px] text-slate-500">Shift Start</p>
+                      <p className="text-xs text-slate-300">{shift.location_address}</p>
+                    </div>
+                    {mapsUrl && <a href={mapsUrl} target="_blank" rel="noreferrer" className="shrink-0 text-primary-400 hover:text-primary-300"><ExternalLink className="w-3.5 h-3.5" /></a>}
+                  </div>
+                )}
+                {shift.end_location_address && (
+                  <div className="flex items-start gap-2">
+                    <MapPin className="w-3.5 h-3.5 text-red-400 shrink-0 mt-0.5" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[10px] text-slate-500">Shift End</p>
+                      <p className="text-xs text-slate-300">{shift.end_location_address}</p>
+                    </div>
+                    {endMapsUrl && <a href={endMapsUrl} target="_blank" rel="noreferrer" className="shrink-0 text-primary-400 hover:text-primary-300"><ExternalLink className="w-3.5 h-3.5" /></a>}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Fuel entries for this shift */}
+            {fuelEntries.length > 0 && (
+              <div>
+                <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-2">
+                  Fuel This Shift · <span className="text-yellow-400 font-bold">{totalFuel.toFixed(0)} L</span>
+                  {totalFuelAmt > 0 && <span className="text-slate-500"> · ₹{totalFuelAmt.toLocaleString('en-IN')}</span>}
+                </p>
+                <div className="space-y-2">
+                  {fuelEntries.map(fe => (
+                    <div key={fe.id} className="bg-dark-800 border border-dark-700 rounded-xl p-3 flex items-center gap-3">
+                      {fe.fuel_photo_url
+                        ? <button onClick={() => setLightboxUrl(fe.fuel_photo_url)} className="w-12 h-12 rounded-lg overflow-hidden shrink-0 border border-dark-600">
+                            <img src={fe.fuel_photo_url} alt="Fuel" className="w-full h-full object-cover" />
+                          </button>
+                        : <div className="w-12 h-12 rounded-lg bg-dark-700 border border-dark-600 flex items-center justify-center shrink-0">
+                            <Fuel className="w-5 h-5 text-yellow-400" />
+                          </div>
+                      }
+                      <div className="flex-1 min-w-0">
+                        <p className="font-semibold text-yellow-400 text-sm">{fe.quantity_liters} L {fe.total_amount ? `· ₹${Number(fe.total_amount).toLocaleString('en-IN')}` : ''}</p>
+                        <p className="text-xs text-slate-400">{[fe.delivered_by_name, fe.vendor_name].filter(Boolean).join(' · ')}{fe.invoice_number ? ` · #${fe.invoice_number}` : ''}</p>
+                        <p className="text-[10px] text-slate-600">{format(new Date(fe.created_at), 'HH:mm')}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Incidents for this shift */}
+            {incidents.length > 0 && (
+              <div>
+                <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-2">Incidents This Shift</p>
+                <div className="space-y-2">
+                  {incidents.map(inc => {
+                    const opt = INCIDENT_OPTIONS.find(o => o.value === inc.incident_type)
+                    return (
+                      <div key={inc.id} className="bg-dark-800 border border-orange-700/30 rounded-xl p-3">
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <p className="text-sm font-semibold text-orange-300">{opt?.icon} {opt?.label || inc.incident_type}</p>
+                            {inc.description && <p className="text-xs text-slate-300 mt-1">{inc.description}</p>}
+                            {inc.breakdown_cause && <p className="text-xs text-slate-400 mt-0.5">Cause: {inc.breakdown_cause}</p>}
+                          </div>
+                          <span className={`shrink-0 text-[10px] px-2 py-0.5 rounded-full ${inc.resolved ? 'bg-emerald-900/30 text-emerald-400' : 'bg-red-900/30 text-red-400'}`}>
+                            {inc.resolved ? '✓ Resolved' : 'Open'}
+                          </span>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
+            <p className="text-[10px] text-slate-700 text-center pb-2">ID: {shift.id}</p>
+          </div>
+        </div>
+      </div>
+      {lightboxUrl && <PhotoLightbox url={lightboxUrl} onClose={() => setLightboxUrl(null)} />}
+    </>
+  )
+}
+
+// ── Fuel Detail Modal ──────────────────────────────────────────────────────────
+function FuelDetailModal({ entry, onClose }) {
+  const [lightboxUrl, setLightboxUrl] = useState(null)
+  const mt = entry.equipment?.meter_type
+  const mapsUrl = entry.location_lat ? `https://maps.google.com/?q=${entry.location_lat},${entry.location_lng}` : null
+
+  return (
+    <>
+      <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+        <div className="w-full max-w-md bg-dark-900 sm:rounded-2xl border-t sm:border border-dark-600 shadow-2xl flex flex-col max-h-[92vh] sm:max-h-[85vh]">
+          <div className="flex items-start justify-between px-4 py-3 border-b border-dark-700 shrink-0 bg-dark-800 sm:rounded-t-2xl">
+            <div>
+              <p className="font-bold text-slate-100">{entry.equipment?.name || 'Fuel Entry'}</p>
+              <p className="text-xs text-slate-400">{format(new Date(entry.created_at), 'dd MMM yyyy, HH:mm')}</p>
+            </div>
+            <button onClick={onClose} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-dark-700 shrink-0"><X className="w-5 h-5" /></button>
+          </div>
+          <div className="overflow-y-auto flex-1 px-4 py-3 space-y-3">
+            {/* Big fuel stat */}
+            <div className="bg-yellow-900/20 border border-yellow-700/30 rounded-2xl p-4 flex items-center gap-4">
+              <Fuel className="w-10 h-10 text-yellow-400 shrink-0" />
+              <div>
+                <p className="text-3xl font-black text-yellow-400">{entry.quantity_liters} L</p>
+                {entry.total_amount && <p className="text-base text-slate-200 font-bold">₹{Number(entry.total_amount).toLocaleString('en-IN')}</p>}
+                {entry.rate_per_liter && <p className="text-xs text-slate-500">@ ₹{entry.rate_per_liter} / litre</p>}
+              </div>
+            </div>
+
+            {/* Photo */}
+            <PhotoThumb url={entry.fuel_photo_url} label="Fuel Delivery Photo" onView={setLightboxUrl} />
+
+            {/* Detail grid */}
+            <div className="grid grid-cols-2 gap-2">
+              {entry.delivered_by_name && (
+                <div className="bg-dark-800 rounded-xl p-2.5 border border-dark-700">
+                  <p className="text-[10px] text-slate-500">Delivered By</p>
+                  <p className="text-sm text-slate-200 font-medium mt-0.5">{entry.delivered_by_name}</p>
+                </div>
+              )}
+              {entry.vendor_name && (
+                <div className="bg-dark-800 rounded-xl p-2.5 border border-dark-700">
+                  <p className="text-[10px] text-slate-500">Vendor</p>
+                  <p className="text-sm text-slate-200 font-medium mt-0.5">{entry.vendor_name}</p>
+                </div>
+              )}
+              {entry.invoice_number && (
+                <div className="bg-dark-800 rounded-xl p-2.5 border border-dark-700">
+                  <p className="text-[10px] text-slate-500">Invoice No.</p>
+                  <p className="text-sm text-slate-200 font-medium mt-0.5">#{entry.invoice_number}</p>
+                </div>
+              )}
+              {entry.meter_at_filling != null && (
+                <div className="bg-dark-800 rounded-xl p-2.5 border border-dark-700">
+                  <p className="text-[10px] text-slate-500">Meter at Filling</p>
+                  <p className="text-sm text-slate-200 font-medium mt-0.5">{entry.meter_at_filling} {mt === 'kilometers' ? 'km' : 'hrs'}</p>
+                </div>
+              )}
+              {entry.km_at_filling != null && (
+                <div className="bg-dark-800 rounded-xl p-2.5 border border-dark-700">
+                  <p className="text-[10px] text-slate-500">Odometer</p>
+                  <p className="text-sm text-slate-200 font-medium mt-0.5">{entry.km_at_filling} km</p>
+                </div>
+              )}
+            </div>
+
+            {entry.notes && (
+              <div className="bg-dark-800 rounded-xl p-3 border border-dark-700">
+                <p className="text-[10px] text-slate-500 mb-1">Notes</p>
+                <p className="text-sm text-slate-300">{entry.notes}</p>
+              </div>
+            )}
+
+            {entry.location_address && (
+              <div className="bg-dark-800 rounded-xl p-3 border border-dark-700 flex items-start gap-2">
+                <MapPin className="w-3.5 h-3.5 text-primary-400 shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-[10px] text-slate-500">Filling Location</p>
+                  <p className="text-xs text-slate-300">{entry.location_address}</p>
+                </div>
+                {mapsUrl && <a href={mapsUrl} target="_blank" rel="noreferrer" className="shrink-0 text-primary-400 hover:text-primary-300"><ExternalLink className="w-3.5 h-3.5" /></a>}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+      {lightboxUrl && <PhotoLightbox url={lightboxUrl} onClose={() => setLightboxUrl(null)} />}
+    </>
+  )
+}
+
+// ── Incident Detail Modal ──────────────────────────────────────────────────────
+function IncidentDetailModal({ incident, onClose, onResolve }) {
+  const opt = INCIDENT_OPTIONS.find(o => o.value === incident.incident_type)
+  const mapsUrl = incident.location_lat ? `https://maps.google.com/?q=${incident.location_lat},${incident.location_lng}` : null
+  const severityColor = { high: 'text-red-400', medium: 'text-orange-400', low: 'text-yellow-400' }[incident.severity] || 'text-slate-400'
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div className="w-full max-w-md bg-dark-900 sm:rounded-2xl border-t sm:border border-dark-600 shadow-2xl flex flex-col max-h-[92vh] sm:max-h-[85vh]">
+        <div className="flex items-start justify-between px-4 py-3 border-b border-dark-700 shrink-0 bg-dark-800 sm:rounded-t-2xl">
+          <div>
+            <p className="font-bold text-slate-100">{incident.equipment?.name || 'Incident'}</p>
+            <p className="text-xs text-slate-400">{format(new Date(incident.created_at), 'dd MMM yyyy, HH:mm')}</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-dark-700 shrink-0"><X className="w-5 h-5" /></button>
+        </div>
+
+        <div className="overflow-y-auto flex-1 px-4 py-3 space-y-3">
+          {/* Type banner */}
+          <div className="bg-orange-900/20 border border-orange-700/30 rounded-2xl p-4 flex items-center justify-between gap-3">
+            <div>
+              <p className="text-3xl mb-1">{opt?.icon}</p>
+              <p className="text-lg font-bold text-orange-300">{opt?.label || incident.incident_type}</p>
+              {incident.severity && <p className={`text-xs font-bold mt-0.5 ${severityColor}`}>{incident.severity.toUpperCase()} SEVERITY</p>}
+            </div>
+            <span className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-bold border ${incident.resolved ? 'bg-emerald-900/30 text-emerald-400 border-emerald-700/40' : 'bg-red-900/30 text-red-400 border-red-700/40'}`}>
+              {incident.resolved ? '✓ Resolved' : '● Open'}
+            </span>
+          </div>
+
+          {incident.description && (
+            <div className="bg-dark-800 rounded-xl p-3 border border-dark-700">
+              <p className="text-[10px] text-slate-500 mb-1 uppercase">Description</p>
+              <p className="text-sm text-slate-200 leading-relaxed">{incident.description}</p>
+            </div>
+          )}
+          {incident.breakdown_cause && (
+            <div className="bg-dark-800 rounded-xl p-3 border border-dark-700">
+              <p className="text-[10px] text-slate-500 mb-1 uppercase">Cause</p>
+              <p className="text-sm text-slate-200">{incident.breakdown_cause}</p>
+            </div>
+          )}
+          {incident.rectification_needed && (
+            <div className="bg-dark-800 rounded-xl p-3 border border-dark-700">
+              <p className="text-[10px] text-slate-500 mb-1 uppercase">Rectification Needed</p>
+              <p className="text-sm text-slate-200">{incident.rectification_needed}</p>
+            </div>
+          )}
+          {incident.parts_status && incident.incident_type === 'breakdown' && (
+            <div className="bg-dark-800 rounded-xl p-3 border border-dark-700">
+              <p className="text-[10px] text-slate-500 mb-1 uppercase">Parts Status</p>
+              <p className="text-sm text-slate-200 capitalize">{incident.parts_status.replace(/_/g, ' ')}</p>
+            </div>
+          )}
+          {incident.damage_cause && (
+            <div className="bg-dark-800 rounded-xl p-3 border border-dark-700">
+              <p className="text-[10px] text-slate-500 mb-1 uppercase">How it Happened</p>
+              <p className="text-sm text-slate-200">{incident.damage_cause}</p>
+            </div>
+          )}
+          {incident.what_needs_to_be_done && (
+            <div className="bg-dark-800 rounded-xl p-3 border border-dark-700">
+              <p className="text-[10px] text-slate-500 mb-1 uppercase">Action Required</p>
+              <p className="text-sm text-slate-200">{incident.what_needs_to_be_done}</p>
+            </div>
+          )}
+          {incident.action_taken && (
+            <div className="bg-emerald-900/20 border border-emerald-700/30 rounded-xl p-3">
+              <p className="text-[10px] text-emerald-500 mb-1 uppercase">Action Taken</p>
+              <p className="text-sm text-emerald-200">{incident.action_taken}</p>
+            </div>
+          )}
+          {incident.location_address && (
+            <div className="bg-dark-800 rounded-xl p-3 border border-dark-700 flex items-start gap-2">
+              <MapPin className="w-3.5 h-3.5 text-primary-400 shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0">
+                <p className="text-[10px] text-slate-500">Location</p>
+                <p className="text-xs text-slate-300">{incident.location_address}</p>
+              </div>
+              {mapsUrl && <a href={mapsUrl} target="_blank" rel="noreferrer" className="shrink-0 text-primary-400"><ExternalLink className="w-3.5 h-3.5" /></a>}
+            </div>
+          )}
+          {incident.resolved && incident.resolved_at && (
+            <p className="text-xs text-emerald-600 text-center">Resolved {format(new Date(incident.resolved_at), 'dd MMM yyyy, HH:mm')}</p>
+          )}
+        </div>
+
+        {!incident.resolved && onResolve && (
+          <div className="px-4 py-3 border-t border-dark-700 shrink-0">
+            <button onClick={() => { onResolve(incident.id); onClose() }}
+              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold transition-colors">
+              <CheckCircle className="w-4 h-4" /> Mark as Resolved
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ── Shifts Tab ─────────────────────────────────────────────────────────────────
 function ShiftsTab({ companyId }) {
-  const [filterDate, setFilterDate] = useState(today())
+  const [filterDate,    setFilterDate]    = useState(today())
+  const [selectedShift, setSelectedShift] = useState(null)
 
   const { data: shifts = [], isLoading } = useQuery({
     queryKey: ['all_shifts', companyId, filterDate],
@@ -1375,15 +1877,19 @@ function ShiftsTab({ companyId }) {
         ) : (
           <div className="space-y-2">
             {shifts.map(s => (
-              <div key={s.id} className="bg-dark-800 border border-dark-700 rounded-xl p-3">
+              <button key={s.id} onClick={() => setSelectedShift(s)}
+                className="w-full text-left bg-dark-800 border border-dark-700 hover:border-primary-700/50 rounded-xl p-3 transition-colors group">
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex-1 min-w-0">
                     <p className="font-semibold text-slate-100 text-sm truncate">{s.equipment?.name}</p>
                     <p className="text-xs text-slate-500">{s.equipment?.category}</p>
                   </div>
-                  <span className={`shrink-0 text-xs px-2 py-0.5 rounded-full ${s.status === 'open' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-700/40' : 'bg-dark-700 text-slate-400'}`}>
-                    {s.status}
-                  </span>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <span className={`text-xs px-2 py-0.5 rounded-full ${s.status === 'open' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-700/40' : 'bg-dark-700 text-slate-400'}`}>
+                      {s.status}
+                    </span>
+                    <ChevronRight className="w-4 h-4 text-slate-600 group-hover:text-slate-400 transition-colors" />
+                  </div>
                 </div>
                 <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-slate-400">
                   <span className="flex items-center gap-1"><User className="w-3 h-3" />{s.operator_name || '—'}</span>
@@ -1393,47 +1899,29 @@ function ShiftsTab({ companyId }) {
                   {s.idle_hours > 0      && <span>Idle: {s.idle_hours} hrs</span>}
                   {s.breakdown_hours > 0 && <span className="text-red-400">Breakdown: {s.breakdown_hours} hrs</span>}
                 </div>
-                {s.meter_discrepancy && (
-                  <p className="text-xs text-orange-400 mt-1">⚠ Meter corrected · {s.meter_discrepancy_reason}</p>
-                )}
-                {s.site_incharge_name && (
-                  <p className="text-xs text-slate-500 mt-1">Incharge: {s.site_incharge_name}</p>
-                )}
-                {s.location_address && (
-                  <p className="text-xs text-slate-500 mt-1 flex items-center gap-1">
-                    <MapPin className="w-3 h-3" />{s.location_address.slice(0, 70)}
-                  </p>
-                )}
-                {s.notes && <p className="text-xs text-slate-400 mt-1 italic">📝 {s.notes}</p>}
-                {s.work_done && (
-                  <div className="mt-2 bg-dark-700 rounded-lg px-2.5 py-1.5">
-                    <p className="text-[10px] font-medium text-slate-500 mb-0.5">Work Done</p>
-                    <p className="text-xs text-slate-300">{s.work_done}</p>
+                {s.meter_discrepancy && <p className="text-xs text-orange-400 mt-1">⚠ Meter corrected</p>}
+                {(s.work_done || s.handover_notes || s.meter_photo_url || s.logsheet_photo_url) && (
+                  <div className="mt-2 flex gap-1.5 flex-wrap">
+                    {s.work_done        && <span className="text-[10px] px-1.5 py-0.5 rounded bg-dark-700 text-slate-500">📋 Work logged</span>}
+                    {s.handover_notes   && <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-900/30 text-yellow-600">📨 Handover</span>}
+                    {s.meter_photo_url  && <span className="text-[10px] px-1.5 py-0.5 rounded bg-dark-700 text-slate-500">📷 Meter photo</span>}
+                    {s.logsheet_photo_url && <span className="text-[10px] px-1.5 py-0.5 rounded bg-dark-700 text-slate-500">📄 Log sheet</span>}
                   </div>
                 )}
-                {s.handover_notes && (
-                  <div className="mt-1.5 bg-yellow-900/20 border border-yellow-700/20 rounded-lg px-2.5 py-1.5">
-                    <p className="text-[10px] font-medium text-yellow-500 mb-0.5">Handover to Next Shift</p>
-                    <p className="text-xs text-yellow-200/80">{s.handover_notes}</p>
-                  </div>
-                )}
-                {s.end_location_address && (
-                  <p className="text-xs text-slate-500 mt-1 flex items-center gap-1">
-                    <MapPin className="w-3 h-3 text-red-400 shrink-0" />End: {s.end_location_address.slice(0, 60)}
-                  </p>
-                )}
-              </div>
+              </button>
             ))}
           </div>
         )}
       </div>
+      {selectedShift && <ShiftDetailModal shift={selectedShift} onClose={() => setSelectedShift(null)} />}
     </div>
   )
 }
 
 // ── Fuel Tab ──────────────────────────────────────────────────────────────────
 function FuelTab({ companyId }) {
-  const [filterDate, setFilterDate] = useState('')
+  const [filterDate,   setFilterDate]   = useState('')
+  const [selectedFuel, setSelectedFuel] = useState(null)
 
   const { data: entries = [], isLoading } = useQuery({
     queryKey: ['all_fuel', companyId, filterDate],
@@ -1487,36 +1975,37 @@ function FuelTab({ companyId }) {
         ) : (
           <div className="space-y-2">
             {entries.map(e => (
-              <div key={e.id} className="bg-dark-800 border border-dark-700 rounded-xl p-3">
+              <button key={e.id} onClick={() => setSelectedFuel(e)}
+                className="w-full text-left bg-dark-800 border border-dark-700 hover:border-yellow-700/50 rounded-xl p-3 transition-colors group">
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex-1 min-w-0">
                     <p className="font-semibold text-slate-100 text-sm truncate">{e.equipment?.name}</p>
                     <p className="text-xs text-slate-500">{e.equipment?.category}</p>
                   </div>
-                  <div className="text-right shrink-0">
-                    <p className="font-bold text-yellow-400">{e.quantity_liters} L</p>
-                    {e.total_amount && <p className="text-xs text-slate-400">₹{Number(e.total_amount).toLocaleString('en-IN')}</p>}
+                  <div className="text-right shrink-0 flex items-center gap-1.5">
+                    <div>
+                      <p className="font-bold text-yellow-400">{e.quantity_liters} L</p>
+                      {e.total_amount && <p className="text-xs text-slate-400">₹{Number(e.total_amount).toLocaleString('en-IN')}</p>}
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-slate-600 group-hover:text-slate-400 transition-colors" />
                   </div>
                 </div>
                 <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-400">
-                  {e.meter_at_filling  && <span>Meter: {e.meter_at_filling} hrs</span>}
-                  {e.km_at_filling     && <span>KM: {e.km_at_filling}</span>}
                   {e.delivered_by_name && <span>By: {e.delivered_by_name}</span>}
                   {e.vendor_name       && <span>Vendor: {e.vendor_name}</span>}
                   {e.invoice_number    && <span>Invoice: #{e.invoice_number}</span>}
                   {e.rate_per_liter    && <span>Rate: ₹{e.rate_per_liter}/L</span>}
                 </div>
-                {e.location_address && (
-                  <p className="text-xs text-slate-500 mt-1 flex items-center gap-1">
-                    <MapPin className="w-3 h-3" />{e.location_address.slice(0, 70)}
-                  </p>
-                )}
-                <p className="text-xs text-slate-600 mt-1">{format(new Date(e.created_at), 'dd MMM yyyy, HH:mm')}</p>
-              </div>
+                <div className="mt-1.5 flex items-center justify-between">
+                  <p className="text-xs text-slate-600">{format(new Date(e.created_at), 'dd MMM yyyy, HH:mm')}</p>
+                  {e.fuel_photo_url && <span className="text-[10px] px-1.5 py-0.5 rounded bg-dark-700 text-slate-500">📷 Photo</span>}
+                </div>
+              </button>
             ))}
           </div>
         )}
       </div>
+      {selectedFuel && <FuelDetailModal entry={selectedFuel} onClose={() => setSelectedFuel(null)} />}
     </div>
   )
 }
@@ -1524,6 +2013,7 @@ function FuelTab({ companyId }) {
 // ── Incidents Tab ─────────────────────────────────────────────────────────────
 function IncidentsTab({ companyId }) {
   const qc = useQueryClient()
+  const [selectedIncident, setSelectedIncident] = useState(null)
   const [showResolved, setShowResolved] = useState(false)
 
   const { data: incidents = [], isLoading } = useQuery({
@@ -1571,37 +2061,37 @@ function IncidentsTab({ companyId }) {
             {displayed.map(i => {
               const opt = INCIDENT_OPTIONS.find(t => t.value === i.incident_type)
               return (
-                <div key={i.id} className={`bg-dark-800 border rounded-xl p-3 ${i.resolved ? 'border-dark-700 opacity-60' : 'border-orange-700/30'}`}>
+                <button key={i.id} onClick={() => setSelectedIncident(i)}
+                  className={`w-full text-left bg-dark-800 border rounded-xl p-3 transition-colors group
+                    ${i.resolved ? 'border-dark-700 opacity-70 hover:opacity-100' : 'border-orange-700/30 hover:border-orange-600/60'}`}>
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex-1 min-w-0">
                       <p className="font-semibold text-slate-100 text-sm truncate">{i.equipment?.name}</p>
-                      <p className="text-xs text-slate-400">{opt?.icon} {opt?.label || i.incident_type}{i.severity ? ` · ${i.severity}` : ''}</p>
+                      <p className="text-xs text-slate-400 mt-0.5">{opt?.icon} {opt?.label || i.incident_type}{i.severity ? ` · ${i.severity}` : ''}</p>
                     </div>
-                    {!i.resolved && (
-                      <button onClick={() => resolveIncident(i.id)}
-                        className="shrink-0 flex items-center gap-1 text-xs text-emerald-400 hover:text-emerald-300 border border-emerald-700/40 rounded-lg px-2 py-1">
-                        <CheckCircle className="w-3 h-3" /> Resolve
-                      </button>
-                    )}
-                    {i.resolved && <span className="shrink-0 text-xs text-slate-500">✓ Resolved</span>}
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {i.resolved
+                        ? <span className="text-xs text-slate-500">✓ Resolved</span>
+                        : <span className="text-xs text-red-400 font-medium">● Open</span>
+                      }
+                      <ChevronRight className="w-4 h-4 text-slate-600 group-hover:text-slate-400 transition-colors" />
+                    </div>
                   </div>
-                  {i.description && <p className="text-xs text-slate-300 mt-1">{i.description}</p>}
-                  {i.breakdown_cause      && <p className="text-xs text-slate-400 mt-0.5">Cause: {i.breakdown_cause}</p>}
-                  {i.rectification_needed && <p className="text-xs text-slate-400 mt-0.5">Fix needed: {i.rectification_needed}</p>}
-                  {i.damage_cause         && <p className="text-xs text-slate-400 mt-0.5">How: {i.damage_cause}</p>}
-                  {i.what_needs_to_be_done && <p className="text-xs text-slate-400 mt-0.5">Action: {i.what_needs_to_be_done}</p>}
-                  {i.location_address && (
-                    <p className="text-xs text-slate-500 mt-1 flex items-center gap-1">
-                      <MapPin className="w-2.5 h-2.5" />{i.location_address.slice(0, 60)}
-                    </p>
-                  )}
-                  <p className="text-xs text-slate-600 mt-1">{format(new Date(i.created_at), 'dd MMM yyyy, HH:mm')}</p>
-                </div>
+                  {i.description && <p className="text-xs text-slate-300 mt-1 line-clamp-2">{i.description}</p>}
+                  <p className="text-xs text-slate-600 mt-1.5">{format(new Date(i.created_at), 'dd MMM yyyy, HH:mm')}</p>
+                </button>
               )
             })}
           </div>
         )}
       </div>
+      {selectedIncident && (
+        <IncidentDetailModal
+          incident={selectedIncident}
+          onClose={() => setSelectedIncident(null)}
+          onResolve={resolveIncident}
+        />
+      )}
     </div>
   )
 }
