@@ -114,7 +114,7 @@ function LineItemsEditor({ lines, setLines, onGstRate, isTax }) {
       <div className="space-y-1.5">
         {/* Column headers */}
         <div className="flex gap-1.5 text-[9px] text-slate-500 uppercase tracking-wide px-1">
-          <span className="flex-1">Description</span>
+          <span className="w-2/5 min-w-0">Description</span>
           <span className="w-12 text-center shrink-0">Qty</span>
           <span className="w-16 shrink-0">Unit</span>
           <span className="w-20 text-right shrink-0">Rate (₹)</span>
@@ -128,7 +128,7 @@ function LineItemsEditor({ lines, setLines, onGstRate, isTax }) {
             <div key={l._id} className="bg-dark-700/40 rounded-xl px-2 py-1.5">
               <div className="flex gap-1.5 items-start">
                 {/* Description + HSN link stacked */}
-                <div className="flex-1 min-w-0">
+                <div className="w-2/5 min-w-0 shrink-0">
                   <textarea
                     rows={1}
                     className={`${inp()} text-xs resize-none leading-snug w-full`}
