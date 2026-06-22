@@ -5,7 +5,8 @@ import { useAuth } from '../../contexts/AuthContext'
 import {
   Users, Plus, X, Loader2, Save, Trash2, Edit2,
   Phone, Calendar, CreditCard, FileText,
-  CheckCircle, Banknote, BarChart2, Search, Mail, UserPlus, Link, Copy
+  CheckCircle, Banknote, BarChart2, Search, Mail, UserPlus, Link, Copy,
+  ChevronLeft, ChevronRight
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format, getDaysInMonth, parseISO } from 'date-fns'
@@ -947,6 +948,7 @@ function EmployeeCard({ emp, onClick }) {
 
 // ── Employee Detail Modal ─────────────────────────────────────────────────────
 function EmployeeDetailModal({ emp, companyId, onClose, onEdit }) {
+  const { role } = useAuth()
   const qc = useQueryClient()
   const [delConfirm, setDelConfirm]   = useState(false)
   const [deleting, setDeleting]       = useState(false)
@@ -1127,7 +1129,225 @@ function EmployeeDetailModal({ emp, companyId, onClose, onEdit }) {
           </div>
         )}
       </>)}
+
+      {/* Attendance Calendar */}
+      <div className="h-px bg-dark-600" />
+      <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Attendance</p>
+      <EmployeeAttendanceCalendar empId={emp.id} companyId={companyId} role={role} />
+      {['admin','manager'].includes(role) && (
+        <p className="text-[10px] text-slate-600 italic">Tap a day to edit its attendance record.</p>
+      )}
     </Modal>
+  )
+}
+
+// ── Monthly Calendar (shared) ─────────────────────────────────────────────────
+const STATUS_DOT = {
+  present:  'bg-emerald-400',
+  absent:   'bg-red-400',
+  half_day: 'bg-yellow-400',
+  leave:    'bg-blue-400',
+  week_off: 'bg-slate-500',
+  holiday:  'bg-purple-400',
+}
+const STATUS_CELL = {
+  present:  'bg-emerald-500/20 text-emerald-300',
+  absent:   'bg-red-500/20 text-red-300',
+  half_day: 'bg-yellow-500/20 text-yellow-300',
+  leave:    'bg-blue-500/20 text-blue-300',
+  week_off: 'bg-slate-700 text-slate-400',
+  holiday:  'bg-purple-500/20 text-purple-300',
+}
+const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December']
+
+function MonthlyCalendar({ year, month, dotMap = {}, selectedDate, onDateClick, compact = false }) {
+  const firstDay    = new Date(year, month - 1, 1).getDay()
+  const daysInMonth = new Date(year, month, 0).getDate()
+  const today       = new Date().toISOString().split('T')[0]
+
+  const cells = []
+  for (let i = 0; i < firstDay; i++) cells.push(null)
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d)
+
+  return (
+    <div>
+      <div className="grid grid-cols-7 text-center mb-1">
+        {['Su','Mo','Tu','We','Th','Fr','Sa'].map(d => (
+          <span key={d} className="text-[9px] text-slate-500 font-semibold">{d}</span>
+        ))}
+      </div>
+      <div className="grid grid-cols-7 gap-0.5">
+        {cells.map((d, i) => {
+          if (!d) return <div key={i} />
+          const ds  = `${year}-${String(month).padStart(2,'0')}-${String(d).padStart(2,'0')}`
+          const att = dotMap[ds]
+          const isSel    = selectedDate === ds
+          const isToday  = ds === today
+          const isFuture = ds > today
+          return (
+            <button key={ds} onClick={() => !isFuture && onDateClick && onDateClick(ds)} disabled={isFuture}
+              title={att ? att.status?.replace('_',' ') : ''}
+              className={`relative flex flex-col items-center justify-center rounded transition-colors
+                ${compact ? 'py-0.5' : 'py-1'}
+                ${isSel  ? 'bg-primary-600 text-white ring-1 ring-primary-400' : ''}
+                ${!isSel && att ? STATUS_CELL[att.status] || 'bg-dark-700 text-slate-400' : ''}
+                ${!isSel && !att && isToday ? 'ring-1 ring-primary-500/60 text-slate-200' : ''}
+                ${!isSel && !att && !isToday ? 'text-slate-500 hover:bg-dark-700' : ''}
+                ${isFuture ? 'opacity-25 cursor-default' : 'cursor-pointer'}`}>
+              <span className={`${compact ? 'text-[9px]' : 'text-xs'} font-medium`}>{d}</span>
+              {!compact && att?.ot_hours > 0 && (
+                <span className="text-[7px] text-orange-400 leading-none">+OT</span>
+              )}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+// ── Edit Attendance Modal ─────────────────────────────────────────────────────
+function EditAttendanceModal({ record, empName, companyId, onClose, onSaved }) {
+  const [status, setStatus] = useState(record?.status || 'present')
+  const [startTime, setStart] = useState(record?.shift_start_time || '')
+  const [endTime,   setEnd]   = useState(record?.shift_end_time   || '')
+  const [saving, setSaving]   = useState(false)
+
+  const hrs    = (startTime && endTime) ? calcShiftHours(startTime, endTime) : 0
+  const autoSt = hrs > 0 ? calcShiftStatus(hrs) : null
+
+  const handleSave = async () => {
+    setSaving(true)
+    const payload = {
+      status,
+      shift_start_time: startTime || null,
+      shift_end_time:   endTime   || null,
+      source: 'manual',
+    }
+    const { error } = await supabase.from('hr_attendance').update(payload).eq('id', record.id)
+    if (error) { toast.error(error.message); setSaving(false); return }
+    toast.success('Attendance updated')
+    onSaved()
+    onClose()
+  }
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4">
+      <div className="bg-dark-800 border border-dark-600 rounded-2xl w-full max-w-sm shadow-xl">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-dark-700">
+          <p className="text-sm font-semibold text-slate-100">Edit Attendance — {empName}</p>
+          <button onClick={onClose}><X className="w-4 h-4 text-slate-500" /></button>
+        </div>
+        <div className="p-4 space-y-4">
+          <div>
+            <p className="text-xs text-slate-400 mb-2">Status</p>
+            <div className="flex flex-wrap gap-1.5">
+              {ATTENDANCE_STATUS.map(s => (
+                <button key={s.value} onClick={() => setStatus(s.value)}
+                  className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-all
+                    ${status === s.value ? s.cls : 'border-dark-600 bg-dark-700 text-slate-500 hover:border-dark-500'}`}>
+                  {s.full}
+                </button>
+              ))}
+            </div>
+          </div>
+          {(status === 'present' || status === 'half_day') && (
+            <div className="flex gap-3">
+              <div className="flex-1">
+                <p className="text-xs text-slate-400 mb-1">Start Time</p>
+                <input type="time" value={startTime} onChange={e => setStart(e.target.value)}
+                  className="w-full bg-dark-700 border border-dark-600 rounded-lg px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:border-primary-500" />
+              </div>
+              <div className="flex-1">
+                <p className="text-xs text-slate-400 mb-1">End Time</p>
+                <input type="time" value={endTime} onChange={e => setEnd(e.target.value)}
+                  className="w-full bg-dark-700 border border-dark-600 rounded-lg px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:border-primary-500" />
+              </div>
+            </div>
+          )}
+          {hrs > 0 && (
+            <p className="text-xs text-slate-500">Duration: {hrs}h → {autoSt === 'half_day' ? 'Half Day' : 'Full Day'}</p>
+          )}
+        </div>
+        <div className="flex gap-2 px-4 pb-4">
+          <button onClick={onClose} className="flex-1 btn-secondary text-xs">Cancel</button>
+          <button onClick={handleSave} disabled={saving}
+            className="flex-1 btn-primary text-xs flex items-center justify-center gap-1.5">
+            {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />} Save
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Employee Attendance Calendar (inside employee detail) ─────────────────────
+function EmployeeAttendanceCalendar({ empId, companyId, role }) {
+  const now = new Date()
+  const [year,  setYear]  = useState(now.getFullYear())
+  const [month, setMonth] = useState(now.getMonth() + 1)
+  const [editRec, setEditRec] = useState(null)
+  const qc = useQueryClient()
+
+  const startDate = `${year}-${String(month).padStart(2,'0')}-01`
+  const endDate   = `${year}-${String(month).padStart(2,'0')}-${String(new Date(year, month, 0).getDate()).padStart(2,'0')}`
+
+  const { data: records = [], refetch } = useQuery({
+    queryKey: ['emp_att_cal', empId, year, month],
+    queryFn: async () => {
+      const { data } = await supabase.from('hr_attendance').select('*')
+        .eq('employee_id', empId).gte('attendance_date', startDate).lte('attendance_date', endDate)
+      return data || []
+    },
+    enabled: !!empId,
+  })
+
+  const dotMap = useMemo(() => {
+    const m = {}
+    records.forEach(r => { m[r.attendance_date] = r })
+    return m
+  }, [records])
+
+  const counts = useMemo(() => {
+    const s = { present: 0, absent: 0, half_day: 0, leave: 0 }
+    records.forEach(r => { if (s[r.status] !== undefined) s[r.status]++ })
+    return s
+  }, [records])
+
+  const prevMonth = () => { if (month === 1) { setYear(y => y - 1); setMonth(12) } else setMonth(m => m - 1) }
+  const nextMonth = () => { if (month === 12) { setYear(y => y + 1); setMonth(1) } else setMonth(m => m + 1) }
+  const canNext = !(year === now.getFullYear() && month === now.getMonth() + 1)
+
+  return (
+    <div className="space-y-3">
+      {/* Month navigator */}
+      <div className="flex items-center justify-between">
+        <button onClick={prevMonth} className="p-1 text-slate-400 hover:text-slate-200"><ChevronLeft className="w-4 h-4" /></button>
+        <p className="text-xs font-semibold text-slate-300">{MONTH_NAMES[month-1]} {year}</p>
+        <button onClick={nextMonth} disabled={!canNext} className="p-1 text-slate-400 hover:text-slate-200 disabled:opacity-30"><ChevronRight className="w-4 h-4" /></button>
+      </div>
+
+      <MonthlyCalendar year={year} month={month} dotMap={dotMap}
+        onDateClick={ds => {
+          const rec = dotMap[ds]
+          if (rec && ['admin','manager'].includes(role)) setEditRec(rec)
+        }}
+        compact />
+
+      {/* Summary pills */}
+      <div className="flex gap-2 flex-wrap text-xs">
+        <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-700/30">{counts.present}P</span>
+        <span className="px-2 py-0.5 rounded-full bg-red-500/10 text-red-400 border border-red-700/30">{counts.absent}A</span>
+        <span className="px-2 py-0.5 rounded-full bg-yellow-500/10 text-yellow-400 border border-yellow-700/30">{counts.half_day}H</span>
+        <span className="px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-700/30">{counts.leave}L</span>
+      </div>
+
+      {editRec && (
+        <EditAttendanceModal record={editRec} empName="" companyId={companyId}
+          onClose={() => setEditRec(null)}
+          onSaved={() => { refetch(); qc.invalidateQueries(['hr_attendance', companyId]) }} />
+      )}
+    </div>
   )
 }
 
@@ -1232,14 +1452,39 @@ function EmployeesTab({ companyId }) {
 }
 
 // ── Attendance Tab ────────────────────────────────────────────────────────────
+const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December']
+
 function AttendanceTab({ companyId }) {
   const { role } = useAuth()
   const qc = useQueryClient()
-  const [date, setDate]             = useState(new Date().toISOString().split('T')[0])
-  const [saving, setSaving]         = useState(false)
-  const [shiftTimes, setShiftTimes] = useState({})
-  const [editOt, setEditOt]         = useState(false)
-  const [otInput, setOtInput]       = useState('')
+  const _now = new Date()
+  const [year,        setYear]        = useState(_now.getFullYear())
+  const [month,       setMonth]       = useState(_now.getMonth() + 1)
+  const [selectedDay, setSelectedDay] = useState(_now.getDate())
+  const [saving, setSaving]           = useState(false)
+  const [shiftTimes, setShiftTimes]   = useState({})
+  const [editOt, setEditOt]           = useState(false)
+  const [otInput, setOtInput]         = useState('')
+  const [editRec, setEditRec]         = useState(null) // { record, empName }
+
+  // Derived date string
+  const date = `${year}-${String(month).padStart(2,'0')}-${String(selectedDay).padStart(2,'0')}`
+  const daysInMonth = new Date(year, month, 0).getDate()
+  const monthStart  = `${year}-${String(month).padStart(2,'0')}-01`
+  const monthEnd    = `${year}-${String(month).padStart(2,'0')}-${String(daysInMonth).padStart(2,'0')}`
+
+  const prevMonth = () => {
+    if (month === 1) { setYear(y => y - 1); setMonth(12) }
+    else setMonth(m => m - 1)
+  }
+  const nextMonth = () => {
+    if (month === 12) { setYear(y => y + 1); setMonth(1) }
+    else setMonth(m => m + 1)
+  }
+  const goToday = () => {
+    const n = new Date()
+    setYear(n.getFullYear()); setMonth(n.getMonth() + 1); setSelectedDay(n.getDate())
+  }
 
   // Fetch company OT threshold (editable by admin/manager)
   const { data: company, refetch: refetchCompany } = useQuery({
@@ -1282,6 +1527,26 @@ function AttendanceTab({ companyId }) {
     enabled: !!companyId,
   })
 
+  // Fetch entire month's attendance to power the calendar dots
+  const { data: monthAttendance = [], refetch: refetchMonth } = useQuery({
+    queryKey: ['hr_attendance_month', companyId, year, month],
+    queryFn: async () => {
+      const { data } = await supabase.from('hr_attendance').select('*')
+        .eq('company_id', companyId).gte('attendance_date', monthStart).lte('attendance_date', monthEnd)
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+
+  // Build a date→first-record map for calendar coloring (keyed by 'YYYY-MM-DD')
+  const monthDotMap = useMemo(() => {
+    const m = {}
+    monthAttendance.forEach(a => {
+      if (!m[a.attendance_date]) m[a.attendance_date] = a
+    })
+    return m
+  }, [monthAttendance])
+
   useEffect(() => {
     const times = {}
     attendance.forEach(a => {
@@ -1313,6 +1578,7 @@ function AttendanceTab({ companyId }) {
       })
     }
     refetch()
+    refetchMonth()
   }
 
   // Manual shift time entry in HR tab
@@ -1350,6 +1616,7 @@ function AttendanceTab({ companyId }) {
       }
     }
     refetch()
+    refetchMonth()
     setSaving(false)
     toast.success(`Non-shift employees marked ${status}`)
   }
@@ -1367,12 +1634,37 @@ function AttendanceTab({ companyId }) {
   return (
     <div className="flex flex-col h-full">
       <div className="px-4 py-2 shrink-0 space-y-2">
-        <div className="flex items-center gap-2 flex-wrap">
-          <input type="date"
-            className="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
-            value={date} onChange={e => setDate(e.target.value)} />
-          <button onClick={() => setDate(new Date().toISOString().split('T')[0])}
-            className="text-xs text-primary-400 hover:text-primary-300">Today</button>
+
+        {/* Month navigator */}
+        <div className="flex items-center gap-1">
+          <button onClick={prevMonth} className="p-1 rounded-lg hover:bg-dark-700 text-slate-400 hover:text-slate-200">
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+          <span className="flex-1 text-center text-sm font-semibold text-slate-100">
+            {MONTH_NAMES[month - 1]} {year}
+          </span>
+          <button onClick={nextMonth} className="p-1 rounded-lg hover:bg-dark-700 text-slate-400 hover:text-slate-200">
+            <ChevronRight className="w-4 h-4" />
+          </button>
+          <button onClick={goToday} className="text-xs text-primary-400 hover:text-primary-300 ml-1 px-2 py-1 rounded-lg hover:bg-dark-700">
+            Today
+          </button>
+        </div>
+
+        {/* Monthly calendar — click a date to view/edit that day's attendance */}
+        <MonthlyCalendar
+          year={year} month={month}
+          dotMap={monthDotMap}
+          selectedDate={date}
+          onDateClick={d => setSelectedDay(parseInt(d.split('-')[2], 10))}
+          compact={true}
+        />
+
+        {/* Selected day header + bulk actions */}
+        <div className="flex items-center gap-2 pt-1 border-t border-dark-700">
+          <span className="text-xs font-semibold text-slate-300">
+            {new Date(date + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })}
+          </span>
           <div className="ml-auto flex gap-1.5">
             <button onClick={() => markAll('present')} disabled={saving}
               className="text-xs px-2.5 py-1.5 rounded-lg bg-emerald-600/20 border border-emerald-700/40 text-emerald-400 hover:bg-emerald-600/30">
@@ -1385,6 +1677,7 @@ function AttendanceTab({ companyId }) {
           </div>
         </div>
 
+        {/* Summary pills */}
         <div className="flex gap-2 overflow-x-auto pb-0.5 text-xs">
           {[
             { label: `${summary.present} Present`,   cls: 'text-emerald-400 bg-emerald-500/10 border-emerald-700/40' },
@@ -1431,7 +1724,7 @@ function AttendanceTab({ companyId }) {
             <p className="text-slate-400">No active employees</p>
           </div>
         ) : (
-          <div className="space-y-2">
+          <div className="space-y-2 pt-1">
             {employees.map(emp => {
               const att      = attMap[emp.id]
               const status   = att?.status || null
@@ -1455,13 +1748,23 @@ function AttendanceTab({ companyId }) {
                         {isAutoFill && <span className="ml-1.5 text-sky-400/60">· auto from shift</span>}
                       </p>
                     </div>
-                    {status && (
-                      <span className={`shrink-0 text-xs px-2 py-0.5 rounded-full border font-medium
-                        ${ATTENDANCE_STATUS.find(s => s.value === status)?.cls || 'border-dark-600 text-slate-400'}`}>
-                        {ATTENDANCE_STATUS.find(s => s.value === status)?.full}
-                        {att?.ot_hours > 0 && <span className="ml-1 text-orange-400">+{att.ot_hours}h OT</span>}
-                      </span>
-                    )}
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {status && (
+                        <span className={`text-xs px-2 py-0.5 rounded-full border font-medium
+                          ${ATTENDANCE_STATUS.find(s => s.value === status)?.cls || 'border-dark-600 text-slate-400'}`}>
+                          {ATTENDANCE_STATUS.find(s => s.value === status)?.full}
+                          {att?.ot_hours > 0 && <span className="ml-1 text-orange-400">+{att.ot_hours}h OT</span>}
+                        </span>
+                      )}
+                      {['admin','manager'].includes(role) && att && (
+                        <button
+                          onClick={() => setEditRec({ record: att, empName: emp.name })}
+                          className="p-1.5 rounded-lg text-slate-500 hover:text-slate-200 hover:bg-dark-700"
+                          title="Edit attendance">
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
                   </div>
 
                   {isShift ? (
@@ -1541,6 +1844,20 @@ function AttendanceTab({ companyId }) {
           </div>
         )}
       </div>
+
+      {editRec && (
+        <EditAttendanceModal
+          record={editRec.record}
+          empName={editRec.empName}
+          companyId={companyId}
+          onClose={() => setEditRec(null)}
+          onSaved={() => {
+            setEditRec(null)
+            refetch()
+            refetchMonth()
+          }}
+        />
+      )}
     </div>
   )
 }
