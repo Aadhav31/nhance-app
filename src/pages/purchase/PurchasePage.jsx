@@ -72,11 +72,11 @@ function Field({ label, children, required }) {
   )
 }
 
-const blankLine = () => ({ _id: Math.random().toString(36).slice(2), description: '', hsn_sac: '', quantity: 1, unit: 'nos', rate: '', amount: 0, _gst_rate: null, _gst_desc: null, _hsn_open: false })
+const blankLine = () => ({ _id: Math.random().toString(36).slice(2), description: '', hsn_sac: '', quantity: 1, unit: 'nos', rate: '', amount: 0, _gst_rate: null, _gst_desc: null, _hsn_open: false, inventory_item_id: '', store_id: '', inward_type: 'to_stock', _inv_open: false })
 
 const LINE_UNITS = ['unit','nos','hrs','days','kg','ton','m3','km','ls','set','mtr','sqm','sqft','cum','rmt','ltr']
 
-function LineItemsEditor({ lines, setLines, onGstRate, isTax }) {
+function LineItemsEditor({ lines, setLines, onGstRate, isTax, invItems = [], stores = [] }) {
   const update = (id, key, val) => setLines(p => p.map(l => {
     if (l._id !== id) return l
     const u = { ...l, [key]: val }
@@ -87,11 +87,19 @@ function LineItemsEditor({ lines, setLines, onGstRate, isTax }) {
       u._gst_desc = found ? found.desc : null
       if (found && onGstRate) onGstRate(found)
     }
+    // When an inventory item is selected, auto-fill unit from item master
+    if (key === 'inventory_item_id' && val) {
+      const item = invItems.find(i => i.id === val)
+      if (item) { u.unit = item.unit || u.unit; if (!u.description.trim()) u.description = item.item_name }
+    }
     return u
   }))
   const toggleHsn = (id) => setLines(p => p.map(l => l._id === id ? { ...l, _hsn_open: !l._hsn_open } : l))
   const clearHsn  = (id) => setLines(p => p.map(l => l._id === id ? { ...l, hsn_sac: '', _gst_rate: null, _gst_desc: null, _hsn_open: false } : l))
+  const toggleInv = (id) => setLines(p => p.map(l => l._id === id ? { ...l, _inv_open: !l._inv_open } : l))
+  const clearInv  = (id) => setLines(p => p.map(l => l._id === id ? { ...l, inventory_item_id: '', store_id: '', inward_type: 'to_stock', _inv_open: false } : l))
   const total = lines.reduce((s, l) => s + (l.amount || 0), 0)
+  const hasInvModule = invItems.length > 0 || stores.length > 0
 
   return (
     <div>
@@ -113,11 +121,14 @@ function LineItemsEditor({ lines, setLines, onGstRate, isTax }) {
       </div>
       <div className="space-y-1.5">
         {lines.map(l => {
-          const hsnFilled = l.hsn_sac.trim().length > 0
-          const showInput = isTax && (l._hsn_open || hsnFilled)
+          const hsnFilled  = l.hsn_sac.trim().length > 0
+          const showHsn    = isTax && (l._hsn_open || hsnFilled)
+          const invFilled  = !!l.inventory_item_id
+          const showInv    = l._inv_open || invFilled
+          const selItem    = invItems.find(i => i.id === l.inventory_item_id)
           return (
             <div key={l._id} className="flex gap-2 items-start bg-dark-700/40 rounded-xl p-2">
-              {/* Description col with HSN below */}
+              {/* Description col */}
               <div className="flex-1 min-w-0">
                 <textarea
                   rows={1}
@@ -131,10 +142,11 @@ function LineItemsEditor({ lines, setLines, onGstRate, isTax }) {
                     update(l._id, 'description', e.target.value)
                   }}
                 />
-                {/* HSN/SAC collapsible — only on tax docs */}
+
+                {/* HSN/SAC row */}
                 {isTax && (
                   <div className="mt-1">
-                    {!showInput ? (
+                    {!showHsn ? (
                       <button type="button" onClick={() => toggleHsn(l._id)}
                         className="text-[10px] text-primary-400/70 hover:text-primary-300 transition-colors">
                         + Add HSN / SAC code
@@ -159,14 +171,87 @@ function LineItemsEditor({ lines, setLines, onGstRate, isTax }) {
                             <X className="w-3 h-3" />
                           </button>
                         </div>
-                        {l._gst_desc && (
-                          <span className="text-[9px] text-slate-500 truncate flex-1">{l._gst_desc}</span>
+                        {l._gst_desc && <span className="text-[9px] text-slate-500 truncate flex-1">{l._gst_desc}</span>}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Inventory linking row */}
+                {hasInvModule && (
+                  <div className="mt-1">
+                    {!showInv ? (
+                      <button type="button" onClick={() => toggleInv(l._id)}
+                        className="text-[10px] text-emerald-500/70 hover:text-emerald-400 transition-colors">
+                        + Link to Inventory
+                      </button>
+                    ) : (
+                      <div className="mt-1 p-2 bg-emerald-500/5 border border-emerald-700/30 rounded-lg space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-semibold text-emerald-600 uppercase tracking-wide">Inventory Link</span>
+                          <button type="button" onClick={() => clearInv(l._id)} className="text-slate-500 hover:text-red-400">
+                            <X className="w-3 h-3" />
+                          </button>
+                        </div>
+                        {/* Inventory Item */}
+                        <select
+                          className={`${inp('text-xs py-1')} w-full`}
+                          value={l.inventory_item_id}
+                          onChange={e => update(l._id, 'inventory_item_id', e.target.value)}>
+                          <option value="">-- Select inventory item --</option>
+                          {invItems.map(i => (
+                            <option key={i.id} value={i.id}>{i.item_name}{i.item_code ? ` (${i.item_code})` : ''}</option>
+                          ))}
+                        </select>
+                        {invFilled && (
+                          <div className="flex gap-2">
+                            {/* Inward Type */}
+                            <div className="flex-1">
+                              <p className="text-[10px] text-slate-500 mb-0.5">Inward Type</p>
+                              <div className="flex gap-1">
+                                {[{ v: 'to_stock', label: 'To Stock' }, { v: 'direct_issue', label: 'Direct Issue' }].map(opt => (
+                                  <button key={opt.v} type="button"
+                                    onClick={() => update(l._id, 'inward_type', opt.v)}
+                                    className={`flex-1 text-[10px] py-1 rounded-lg border font-medium transition-all
+                                      ${l.inward_type === opt.v
+                                        ? opt.v === 'to_stock'
+                                          ? 'bg-emerald-600/20 border-emerald-600/50 text-emerald-600'
+                                          : 'bg-orange-500/20 border-orange-600/50 text-orange-600'
+                                        : 'border-dark-600 text-slate-500 hover:border-dark-500'}`}>
+                                    {opt.label}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                            {/* Store — only for To Stock */}
+                            {l.inward_type === 'to_stock' && (
+                              <div className="flex-1">
+                                <p className="text-[10px] text-slate-500 mb-0.5">Store *</p>
+                                <select
+                                  className={`${inp('text-xs py-1')} w-full`}
+                                  value={l.store_id}
+                                  onChange={e => update(l._id, 'store_id', e.target.value)}>
+                                  <option value="">-- Select store --</option>
+                                  {stores.map(s => <option key={s.id} value={s.id}>{s.store_name}</option>)}
+                                </select>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        {/* Preview tag */}
+                        {invFilled && (
+                          <p className="text-[10px] text-slate-500 italic">
+                            {l.inward_type === 'to_stock'
+                              ? `✓ ${parseFloat(l.quantity) || 0} ${selItem?.unit || ''} will be added to inventory on save`
+                              : `✓ Direct issue — no inventory entry will be created`}
+                          </p>
                         )}
                       </div>
                     )}
                   </div>
                 )}
               </div>
+
               {/* Qty */}
               <div className="w-16 shrink-0">
                 <input className={`${inp()} text-xs text-center px-2`} type="number" value={l.quantity} onChange={e => update(l._id, 'quantity', e.target.value)} min="0" step="0.01" />
@@ -556,6 +641,24 @@ function BillsTab({ companyId, session }) {
     enabled: !!companyId,
   })
 
+  // Inventory items + stores for the inward-type link
+  const { data: invItems = [] } = useQuery({
+    queryKey: ['inv_items_active', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('inventory_items').select('id, item_name, item_code, unit, category').eq('company_id', companyId).eq('is_active', true).order('item_name')
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+  const { data: stores = [] } = useQuery({
+    queryKey: ['stores_list', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('stores').select('id, store_name').eq('company_id', companyId).eq('is_active', true).order('store_name')
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+
   const subtotal = useMemo(() => lines.reduce((s, l) => s + (l.amount || 0), 0), [lines])
   const blNum = useMemo(() => `BL-${new Date().getFullYear()}-${String((bills.length || 0) + 1).padStart(3, '0')}`, [bills.length])
 
@@ -565,6 +668,9 @@ function BillsTab({ companyId, session }) {
     if (!form.vendor_id) return toast.error('Select a vendor')
     if (isTax && !form.vendor_gstin.trim()) return toast.error('Vendor GSTIN is required for Tax Bill')
     if (lines.every(l => !l.description.trim())) return toast.error('Add at least one line item')
+    // Validate: To Stock lines must have a store selected
+    const missingStore = lines.find(l => l.inventory_item_id && l.inward_type === 'to_stock' && !l.store_id)
+    if (missingStore) return toast.error(`Select a store for "${missingStore.description || 'a line item'}" linked to inventory`)
     setSaving(true)
     try {
       const id = crypto.randomUUID()
@@ -583,17 +689,55 @@ function BillsTab({ companyId, session }) {
         status: 'pending', notes: form.notes || null, created_by: session.user.id,
       })
       if (error) throw error
-      const items = lines.filter(l => l.description.trim()).map((l, i) => ({
-        bill_id: id, description: l.description.trim(), hsn_sac: l.hsn_sac.trim() || null,
-        quantity: parseFloat(l.quantity) || 1, unit: l.unit,
-        rate: parseFloat(l.rate) || 0, amount: l.amount, sort_order: i,
+
+      // Save line items (with inventory link columns)
+      const validLines = lines.filter(l => l.description.trim())
+      const items = validLines.map((l, i) => ({
+        bill_id: id,
+        description: l.description.trim(),
+        hsn_sac: l.hsn_sac.trim() || null,
+        quantity: parseFloat(l.quantity) || 1,
+        unit: l.unit,
+        rate: parseFloat(l.rate) || 0,
+        amount: l.amount,
+        sort_order: i,
+        inventory_item_id: l.inventory_item_id || null,
+        store_id: (l.inventory_item_id && l.inward_type === 'to_stock') ? l.store_id || null : null,
+        inward_type: l.inventory_item_id ? l.inward_type : null,
       }))
       if (items.length > 0) { const { error: le } = await supabase.from('bill_line_items').insert(items); if (le) throw le }
-      toast.success(`Bill ${blNum} created`)
+
+      // Auto-create stock inward transactions for "To Stock" lines
+      const stockLines = validLines.filter(l => l.inventory_item_id && l.inward_type === 'to_stock' && l.store_id)
+      if (stockLines.length > 0) {
+        const txns = stockLines.map((l, i) => ({
+          company_id: companyId,
+          txn_number: `BILL-${blNum}-${String(i + 1).padStart(2, '0')}`,
+          txn_type: 'in',
+          txn_date: form.bill_date,
+          item_id: l.inventory_item_id,
+          store_id: l.store_id,
+          quantity: parseFloat(l.quantity) || 0,
+          unit_cost: parseFloat(l.rate) || 0,
+          total_cost: l.amount,
+          vendor_id: form.vendor_id,
+          bill_id: id,
+          notes: `Auto-inward from Bill ${blNum}`,
+          created_by: session.user.id,
+        }))
+        const { error: te } = await supabase.from('stock_transactions').insert(txns)
+        if (te) { toast.error(`Bill saved but stock update failed: ${te.message}`); }
+        else { toast.success(`Bill ${blNum} created · ${stockLines.length} item(s) added to inventory`) }
+      } else {
+        toast.success(`Bill ${blNum} created`)
+      }
+
       setShowCreate(false)
       setForm(blankForm())
       setLines([blankLine()])
       qc.invalidateQueries(['bills', companyId])
+      qc.invalidateQueries(['inv_stock', companyId])
+      qc.invalidateQueries(['stock_transactions', companyId])
     } catch (e) { toast.error(e.message) } finally { setSaving(false) }
   }
 
@@ -668,6 +812,7 @@ function BillsTab({ companyId, session }) {
             <div className="col-span-2"><Field label="Vendor Bill / Reference No."><input className={inp()} value={form.bill_ref} onChange={e => setF('bill_ref', e.target.value)} /></Field></div>
           </div>
           <LineItemsEditor lines={lines} setLines={setLines} isTax={isTax}
+            invItems={invItems} stores={stores}
             onGstRate={r => { setF('cgst_rate', r.cgst); setF('sgst_rate', r.sgst); setF('igst_rate', r.igst) }} />
           <TaxSummary subtotal={subtotal} form={form} setF={setF} />
           <Field label="Notes"><textarea className={inp()} rows={2} value={form.notes} onChange={e => setF('notes', e.target.value)} /></Field>
