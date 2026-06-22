@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
+import { lookupHsnSac } from '../../utils/hsnSacLookup'
 import {
   Plus, X, Loader2, ShoppingCart, FileText, Building, CreditCard,
   ArrowUpCircle, RefreshCcw, Wallet, Search, ChevronRight,
@@ -71,15 +72,24 @@ function Field({ label, children, required }) {
   )
 }
 
-const blankLine = () => ({ _id: Math.random().toString(36).slice(2), description: '', quantity: 1, unit: 'nos', rate: '', amount: 0 })
+const blankLine = () => ({ _id: Math.random().toString(36).slice(2), description: '', hsn_sac: '', quantity: 1, unit: 'nos', rate: '', amount: 0, _gst_rate: null, _gst_desc: null })
 
-function LineItemsEditor({ lines, setLines }) {
+const LINE_UNITS = ['unit','nos','hrs','days','kg','ton','m3','km','ls','set','mtr','sqm','sqft','cum','rmt','ltr']
+
+function LineItemsEditor({ lines, setLines, onGstRate, isTax }) {
   const update = (id, key, val) => setLines(p => p.map(l => {
     if (l._id !== id) return l
     const u = { ...l, [key]: val }
     if (key === 'quantity' || key === 'rate') u.amount = (parseFloat(u.quantity) || 0) * (parseFloat(u.rate) || 0)
+    if (key === 'hsn_sac') {
+      const found = lookupHsnSac(val)
+      u._gst_rate = found ? found.gst : null
+      u._gst_desc = found ? found.desc : null
+      if (found && onGstRate) onGstRate(found)
+    }
     return u
   }))
+  const total = lines.reduce((s, l) => s + (l.amount || 0), 0)
   return (
     <div>
       <div className="flex items-center justify-between mb-2">
@@ -90,31 +100,62 @@ function LineItemsEditor({ lines, setLines }) {
         </button>
       </div>
       <div className="space-y-2">
-        <div className="grid grid-cols-12 gap-1 text-[10px] text-slate-500 uppercase px-1">
-          <span className="col-span-5">Description</span>
-          <span className="col-span-2">Qty</span>
-          <span className="col-span-2">Unit</span>
-          <span className="col-span-2">Rate (₹)</span>
-          <span className="col-span-1"></span>
-        </div>
         {lines.map(l => (
-          <div key={l._id} className="grid grid-cols-12 gap-1 items-center">
-            <input className={`${inp()} col-span-5 text-xs`} placeholder="Description" value={l.description} onChange={e => update(l._id, 'description', e.target.value)} />
-            <input className={`${inp()} col-span-2 text-xs text-center`} type="number" value={l.quantity} onChange={e => update(l._id, 'quantity', e.target.value)} min="0" step="0.01" />
-            <select className={`${inp()} col-span-2 text-xs`} value={l.unit} onChange={e => update(l._id, 'unit', e.target.value)}>
-              {['nos','hrs','days','kg','ton','m3','km','ls','set'].map(u => <option key={u}>{u}</option>)}
-            </select>
-            <input className={`${inp()} col-span-2 text-xs text-right`} type="number" value={l.rate} onChange={e => update(l._id, 'rate', e.target.value)} placeholder="0" step="0.01" />
-            <button type="button" onClick={() => setLines(p => p.length > 1 ? p.filter(x => x._id !== l._id) : p)}
-              className="col-span-1 flex justify-center text-slate-600 hover:text-red-400"><X className="w-3.5 h-3.5" /></button>
+          <div key={l._id} className="bg-dark-700/40 rounded-xl p-2 space-y-1.5">
+            {/* Row 1: HSN/SAC + Description + Delete */}
+            <div className="flex gap-1.5 items-center">
+              <div className="relative w-28 shrink-0">
+                <input
+                  className={`${inp()} text-xs font-mono uppercase pr-8`}
+                  placeholder="HSN/SAC"
+                  value={l.hsn_sac}
+                  onChange={e => update(l._id, 'hsn_sac', e.target.value)}
+                />
+                {l._gst_rate != null && (
+                  <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[9px] font-bold bg-emerald-900/50 text-emerald-400 px-1.5 py-0.5 rounded-full whitespace-nowrap">
+                    {l._gst_rate}%
+                  </span>
+                )}
+                {isTax && !l.hsn_sac.trim() && (
+                  <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[9px] font-bold text-orange-500/80">*</span>
+                )}
+              </div>
+              <input
+                className={`${inp()} flex-1 text-xs`}
+                placeholder="Description of goods / services"
+                value={l.description}
+                onChange={e => update(l._id, 'description', e.target.value)}
+              />
+              <button type="button" onClick={() => setLines(p => p.length > 1 ? p.filter(x => x._id !== l._id) : p)}
+                className="shrink-0 text-slate-600 hover:text-red-400"><X className="w-3.5 h-3.5" /></button>
+            </div>
+            {/* Row 2: Qty | Unit | Rate | Amount */}
+            <div className="flex gap-1.5 items-center pl-0.5">
+              <div className="w-16 shrink-0">
+                <input className={`${inp()} text-xs text-center`} type="number" value={l.quantity} onChange={e => update(l._id, 'quantity', e.target.value)} min="0" step="0.01" />
+              </div>
+              <div className="w-20 shrink-0">
+                <select className={`${inp()} text-xs`} value={l.unit} onChange={e => update(l._id, 'unit', e.target.value)}>
+                  {LINE_UNITS.map(u => <option key={u}>{u}</option>)}
+                </select>
+              </div>
+              <div className="flex-1">
+                <input className={`${inp()} text-xs text-right`} type="number" value={l.rate} onChange={e => update(l._id, 'rate', e.target.value)} placeholder="Rate (₹)" step="0.01" />
+              </div>
+              <div className="w-24 text-right shrink-0">
+                <span className="text-xs font-semibold text-slate-200">{fmtINR(l.amount)}</span>
+              </div>
+            </div>
+            {/* HSN/SAC description hint */}
+            {l._gst_desc && (
+              <p className="text-[9px] text-slate-500 px-0.5 truncate">{l._gst_desc}</p>
+            )}
           </div>
         ))}
       </div>
-      {lines.length > 0 && (
-        <div className="flex justify-end mt-2 text-xs text-slate-400">
-          Subtotal: <span className="font-bold text-slate-200 ml-1">{fmtINR(lines.reduce((s, l) => s + (l.amount || 0), 0))}</span>
-        </div>
-      )}
+      <div className="flex justify-end mt-2 text-xs text-slate-400">
+        Subtotal: <span className="font-bold text-slate-200 ml-1">{fmtINR(total)}</span>
+      </div>
     </div>
   )
 }
@@ -504,7 +545,7 @@ function BillsTab({ companyId, session }) {
       })
       if (error) throw error
       const items = lines.filter(l => l.description.trim()).map((l, i) => ({
-        bill_id: id, description: l.description.trim(),
+        bill_id: id, description: l.description.trim(), hsn_sac: l.hsn_sac.trim() || null,
         quantity: parseFloat(l.quantity) || 1, unit: l.unit,
         rate: parseFloat(l.rate) || 0, amount: l.amount, sort_order: i,
       }))
@@ -587,7 +628,8 @@ function BillsTab({ companyId, session }) {
             <Field label="Due Date"><input type="date" className={inp()} value={form.due_date} onChange={e => setF('due_date', e.target.value)} /></Field>
             <div className="col-span-2"><Field label="Vendor Bill / Reference No."><input className={inp()} value={form.bill_ref} onChange={e => setF('bill_ref', e.target.value)} /></Field></div>
           </div>
-          <LineItemsEditor lines={lines} setLines={setLines} />
+          <LineItemsEditor lines={lines} setLines={setLines} isTax={isTax}
+            onGstRate={r => { setF('cgst_rate', r.cgst); setF('sgst_rate', r.sgst); setF('igst_rate', r.igst) }} />
           <TaxSummary subtotal={subtotal} form={form} setF={setF} />
           <Field label="Notes"><textarea className={inp()} rows={2} value={form.notes} onChange={e => setF('notes', e.target.value)} /></Field>
         </Modal>
@@ -651,7 +693,7 @@ function PurchaseOrdersTab({ companyId, session }) {
       })
       if (error) throw error
       const items = lines.filter(l => l.description.trim()).map((l, i) => ({
-        po_id: id, description: l.description.trim(),
+        po_id: id, description: l.description.trim(), hsn_sac: l.hsn_sac.trim() || null,
         quantity: parseFloat(l.quantity) || 1, unit: l.unit,
         rate: parseFloat(l.rate) || 0, amount: l.amount, sort_order: i,
       }))
@@ -728,7 +770,8 @@ function PurchaseOrdersTab({ companyId, session }) {
             <Field label="Expected Delivery"><input type="date" className={inp()} value={form.expected_delivery} onChange={e => setF('expected_delivery', e.target.value)} /></Field>
             <div className="col-span-2"><Field label="Delivery Address"><input className={inp()} value={form.delivery_address} onChange={e => setF('delivery_address', e.target.value)} /></Field></div>
           </div>
-          <LineItemsEditor lines={lines} setLines={setLines} />
+          <LineItemsEditor lines={lines} setLines={setLines} isTax={isTax}
+            onGstRate={r => { setF('cgst_rate', r.cgst); setF('sgst_rate', r.sgst); setF('igst_rate', r.igst) }} />
           <TaxSummary subtotal={subtotal} form={form} setF={setF} />
           <Field label="Notes"><textarea className={inp()} rows={2} value={form.notes} onChange={e => setF('notes', e.target.value)} /></Field>
         </Modal>
