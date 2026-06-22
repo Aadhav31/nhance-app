@@ -6,7 +6,7 @@ import { lookupHsnSac } from '../../utils/hsnSacLookup'
 import {
   Plus, X, Loader2, ShoppingCart, FileText, Building, CreditCard,
   ArrowUpCircle, RefreshCcw, Wallet, Search, ChevronRight,
-  CheckCircle, User, Phone, Mail, MapPin, Hash,
+  CheckCircle, User, Phone, Mail, MapPin, Hash, Upload, ExternalLink,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format } from 'date-fns'
@@ -364,6 +364,61 @@ function calcTotal(form, subtotal) {
   return { taxable, cgst_amt, sgst_amt, igst_amt, total: taxable + cgst_amt + sgst_amt + igst_amt }
 }
 
+// ── Indian banks with account number digit hints ──────────────────────────────
+const INDIAN_BANKS = [
+  { name: 'State Bank of India', digits: 11 },
+  { name: 'Bank of Baroda', digits: 14 },
+  { name: 'Bank of India', digits: 15 },
+  { name: 'Punjab National Bank', digits: 16 },
+  { name: 'Canara Bank', digits: 13 },
+  { name: 'Union Bank of India', digits: 15 },
+  { name: 'Indian Bank', digits: 15 },
+  { name: 'Central Bank of India', digits: 10 },
+  { name: 'Indian Overseas Bank', digits: 15 },
+  { name: 'Bank of Maharashtra', digits: 16 },
+  { name: 'UCO Bank', digits: 16 },
+  { name: 'Punjab & Sind Bank', digits: 12 },
+  { name: 'HDFC Bank', digits: 14 },
+  { name: 'ICICI Bank', digits: 12 },
+  { name: 'Axis Bank', digits: 15 },
+  { name: 'Kotak Mahindra Bank', digits: 16 },
+  { name: 'Yes Bank', digits: 16 },
+  { name: 'IndusInd Bank', digits: 15 },
+  { name: 'IDBI Bank', digits: 16 },
+  { name: 'IDFC First Bank', digits: 14 },
+  { name: 'Federal Bank', digits: 14 },
+  { name: 'South Indian Bank', digits: 16 },
+  { name: 'Karnataka Bank', digits: 16 },
+  { name: 'City Union Bank', digits: 14 },
+  { name: 'Karur Vysya Bank', digits: 16 },
+  { name: 'RBL Bank', digits: 12 },
+  { name: 'Bandhan Bank', digits: 17 },
+  { name: 'AU Small Finance Bank', digits: 14 },
+  { name: 'Ujjivan Small Finance Bank', digits: 14 },
+  { name: 'Tamilnad Mercantile Bank', digits: 15 },
+  { name: 'DCB Bank', digits: 14 },
+  { name: 'Catholic Syrian Bank', digits: 14 },
+  { name: 'Dhanlaxmi Bank', digits: 16 },
+  { name: 'Nainital Bank', digits: 11 },
+  { name: 'Saraswat Bank', digits: 15 },
+  { name: 'Equitas Small Finance Bank', digits: 14 },
+  { name: 'Jana Small Finance Bank', digits: 14 },
+  { name: 'Other', digits: null },
+]
+
+const BLANK_VENDOR = {
+  vendor_name: '', vendor_code: '', category: 'general', gstin: '',
+  contact_name: '', contact_phone: '', contact_email: '',
+  address: '', bank_name: '', bank_account_name: '', bank_account: '', bank_ifsc: '', notes: '',
+}
+
+const VENDOR_DOCS = [
+  { key: 'aadhar',   label: 'Aadhaar Card',       urlKey: 'aadhar_url',   accept: '.pdf,.jpg,.jpeg,.png' },
+  { key: 'pan',      label: 'PAN Card',            urlKey: 'pan_url',      accept: '.pdf,.jpg,.jpeg,.png' },
+  { key: 'cheque',   label: 'Cancelled Cheque',    urlKey: 'cheque_url',   accept: '.pdf,.jpg,.jpeg,.png' },
+  { key: 'gst_cert', label: 'GST Certificate',     urlKey: 'gst_cert_url', accept: '.pdf,.jpg,.jpeg,.png' },
+]
+
 // ── VENDORS TAB ───────────────────────────────────────────────────────────────
 function VendorsTab({ companyId, session }) {
   const qc = useQueryClient()
@@ -371,11 +426,8 @@ function VendorsTab({ companyId, session }) {
   const [saving, setSaving] = useState(false)
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState(null)
-  const [form, setForm] = useState({
-    vendor_name: '', vendor_code: '', category: 'general', gstin: '',
-    contact_name: '', contact_phone: '', contact_email: '',
-    address: '', bank_name: '', bank_account: '', bank_ifsc: '', notes: '',
-  })
+  const [form, setForm] = useState(BLANK_VENDOR)
+  const [docs, setDocs] = useState({ aadhar: null, pan: null, cheque: null, gst_cert: null })
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
 
   const { data: vendors = [], isLoading } = useQuery({
@@ -387,23 +439,58 @@ function VendorsTab({ companyId, session }) {
     enabled: !!companyId,
   })
 
+  const openCreate = () => {
+    const nextNum = vendors.length + 1
+    const code = `V-${String(nextNum).padStart(3, '0')}`
+    setForm({ ...BLANK_VENDOR, vendor_code: code })
+    setDocs({ aadhar: null, pan: null, cheque: null, gst_cert: null })
+    setShowCreate(true)
+  }
+
+  const selectedBank = INDIAN_BANKS.find(b => b.name === form.bank_name)
+
+  const uploadVendorDoc = async (file, docKey, vendorCode) => {
+    const ext = file.name.split('.').pop()
+    const path = `vendor-docs/${companyId}/${vendorCode}/${docKey}.${ext}`
+    const { error } = await supabase.storage.from('nhance-photos').upload(path, file, { upsert: true })
+    if (error) throw error
+    const { data: { publicUrl } } = supabase.storage.from('nhance-photos').getPublicUrl(path)
+    return publicUrl
+  }
+
   const save = async () => {
     if (!form.vendor_name.trim()) return toast.error('Vendor name required')
+    if (form.bank_account.trim() && selectedBank?.digits) {
+      const len = form.bank_account.trim().length
+      if (len !== selectedBank.digits) {
+        return toast.error(`${form.bank_name} account numbers are ${selectedBank.digits} digits (you entered ${len})`)
+      }
+    }
     setSaving(true)
     try {
+      // Upload documents first
+      const docUrls = {}
+      for (const d of VENDOR_DOCS) {
+        if (docs[d.key]) {
+          docUrls[d.urlKey] = await uploadVendorDoc(docs[d.key], d.key, form.vendor_code)
+        }
+      }
       const { error } = await supabase.from('vendors').insert({
         company_id: companyId, vendor_name: form.vendor_name.trim(),
         vendor_code: form.vendor_code.trim() || null, category: form.category,
         gstin: form.gstin.trim() || null, contact_name: form.contact_name.trim() || null,
         contact_phone: form.contact_phone.trim() || null, contact_email: form.contact_email.trim() || null,
-        address: form.address.trim() || null, bank_name: form.bank_name.trim() || null,
-        bank_account: form.bank_account.trim() || null, bank_ifsc: form.bank_ifsc.trim() || null,
+        address: form.address.trim() || null, bank_name: form.bank_name || null,
+        bank_account_name: form.bank_account_name.trim() || null,
+        bank_account: form.bank_account.trim() || null, bank_ifsc: form.bank_ifsc.trim().toUpperCase() || null,
         notes: form.notes.trim() || null, created_by: session.user.id,
+        ...docUrls,
       })
       if (error) throw error
       toast.success('Vendor added')
       setShowCreate(false)
-      setForm({ vendor_name: '', vendor_code: '', category: 'general', gstin: '', contact_name: '', contact_phone: '', contact_email: '', address: '', bank_name: '', bank_account: '', bank_ifsc: '', notes: '' })
+      setForm(BLANK_VENDOR)
+      setDocs({ aadhar: null, pan: null, cheque: null, gst_cert: null })
       qc.invalidateQueries(['vendors', companyId])
     } catch (e) { toast.error(e.message) } finally { setSaving(false) }
   }
@@ -423,7 +510,7 @@ function VendorsTab({ companyId, session }) {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" />
           <input className={inp('pl-8 text-xs')} placeholder="Search vendors…" value={search} onChange={e => setSearch(e.target.value)} />
         </div>
-        <button onClick={() => setShowCreate(true)} className="btn-primary shrink-0"><Plus className="w-4 h-4" /> Add Vendor</button>
+        <button onClick={openCreate} className="btn-primary shrink-0"><Plus className="w-4 h-4" /> Add Vendor</button>
       </div>
       <div className="flex-1 overflow-y-auto px-4 pb-4 pt-3">
         {isLoading ? <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-primary-400" /></div>
@@ -461,13 +548,29 @@ function VendorsTab({ companyId, session }) {
             <>
               <div className="border-t border-dark-700 pt-4"><SectionHead label="Bank Details" /></div>
               <div className="grid grid-cols-2 gap-3">
-                {selected.bank_name && <div><p className="text-xs text-slate-500">Bank</p><p className="text-sm text-slate-100">{selected.bank_name}</p></div>}
-                {selected.bank_account && <div><p className="text-xs text-slate-500">Account</p><p className="text-sm font-mono text-slate-100">{selected.bank_account}</p></div>}
+                {selected.bank_name && <div className="col-span-2"><p className="text-xs text-slate-500">Bank</p><p className="text-sm text-slate-100">{selected.bank_name}</p></div>}
+                {selected.bank_account_name && <div className="col-span-2"><p className="text-xs text-slate-500">Account Holder</p><p className="text-sm text-slate-100">{selected.bank_account_name}</p></div>}
+                {selected.bank_account && <div><p className="text-xs text-slate-500">Account No.</p><p className="text-sm font-mono text-slate-100">{selected.bank_account}</p></div>}
                 {selected.bank_ifsc && <div><p className="text-xs text-slate-500">IFSC</p><p className="text-sm font-mono text-slate-100">{selected.bank_ifsc}</p></div>}
               </div>
             </>
           )}
           {selected.notes && <div className="bg-dark-700 rounded-xl p-3"><p className="text-xs text-slate-500 mb-1">Notes</p><p className="text-sm text-slate-300">{selected.notes}</p></div>}
+          {VENDOR_DOCS.some(d => selected[d.urlKey]) && (
+            <>
+              <div className="border-t border-dark-700 pt-4"><SectionHead label="Documents" /></div>
+              <div className="grid grid-cols-2 gap-2">
+                {VENDOR_DOCS.filter(d => selected[d.urlKey]).map(d => (
+                  <a key={d.key} href={selected[d.urlKey]} target="_blank" rel="noreferrer"
+                    className="flex items-center gap-2 bg-dark-700 hover:bg-dark-600 border border-dark-600 rounded-lg px-3 py-2 transition-colors group">
+                    <FileText className="w-4 h-4 text-primary-400 shrink-0" />
+                    <span className="text-xs text-slate-300 group-hover:text-slate-100 truncate">{d.label}</span>
+                    <ExternalLink className="w-3 h-3 text-slate-500 group-hover:text-slate-400 shrink-0 ml-auto" />
+                  </a>
+                ))}
+              </div>
+            </>
+          )}
         </Modal>
       )}
 
@@ -476,28 +579,81 @@ function VendorsTab({ companyId, session }) {
           footer={<><button onClick={() => setShowCreate(false)} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Add Vendor'}</button></>}>
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2"><Field label="Vendor Name *"><input className={inp()} value={form.vendor_name} onChange={e => setF('vendor_name', e.target.value)} /></Field></div>
-            <Field label="Vendor Code"><input className={inp()} value={form.vendor_code} onChange={e => setF('vendor_code', e.target.value)} placeholder="V-001" /></Field>
+            <Field label="Vendor Code (auto)">
+              <input className={inp('font-mono bg-dark-700 text-slate-400 cursor-not-allowed')} value={form.vendor_code} readOnly />
+            </Field>
             <Field label="Category">
               <select className={inp()} value={form.category} onChange={e => setF('category', e.target.value)}>
                 {CATEGORIES.map(c => <option key={c} value={c}>{c.replace(/_/g,' ')}</option>)}
               </select>
             </Field>
-            <div className="col-span-2"><Field label="GSTIN"><input className={inp()} value={form.gstin} onChange={e => setF('gstin', e.target.value)} placeholder="22AAAAA0000A1Z5" /></Field></div>
+            <div className="col-span-2"><Field label="GSTIN"><input className={inp()} value={form.gstin} onChange={e => setF('gstin', e.target.value.toUpperCase())} placeholder="22AAAAA0000A1Z5" maxLength={15} /></Field></div>
           </div>
           <SectionHead label="Contact" />
           <div className="grid grid-cols-2 gap-3">
             <Field label="Contact Name"><input className={inp()} value={form.contact_name} onChange={e => setF('contact_name', e.target.value)} /></Field>
-            <Field label="Phone"><input className={inp()} value={form.contact_phone} onChange={e => setF('contact_phone', e.target.value)} /></Field>
+            <Field label="Phone"><input className={inp()} value={form.contact_phone} onChange={e => setF('contact_phone', e.target.value)} maxLength={10} /></Field>
             <div className="col-span-2"><Field label="Email"><input type="email" className={inp()} value={form.contact_email} onChange={e => setF('contact_email', e.target.value)} /></Field></div>
             <div className="col-span-2"><Field label="Address"><textarea className={inp()} rows={2} value={form.address} onChange={e => setF('address', e.target.value)} /></Field></div>
           </div>
           <SectionHead label="Bank Details (optional)" />
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Bank Name"><input className={inp()} value={form.bank_name} onChange={e => setF('bank_name', e.target.value)} /></Field>
-            <Field label="Account Number"><input className={inp()} value={form.bank_account} onChange={e => setF('bank_account', e.target.value)} /></Field>
-            <Field label="IFSC Code"><input className={inp()} value={form.bank_ifsc} onChange={e => setF('bank_ifsc', e.target.value)} /></Field>
+            <div className="col-span-2">
+              <Field label="Bank Name">
+                <select className={inp()} value={form.bank_name} onChange={e => { setF('bank_name', e.target.value); setF('bank_account', '') }}>
+                  <option value="">Select bank…</option>
+                  {INDIAN_BANKS.map(b => <option key={b.name} value={b.name}>{b.name}</option>)}
+                </select>
+              </Field>
+            </div>
+            <div className="col-span-2">
+              <Field label="Account Holder Name">
+                <input className={inp()} value={form.bank_account_name} onChange={e => setF('bank_account_name', e.target.value)} placeholder="Name as per bank records" />
+              </Field>
+            </div>
+            <Field label={selectedBank?.digits ? `Account Number (${selectedBank.digits} digits)` : 'Account Number'}>
+              <input className={inp('font-mono')} value={form.bank_account}
+                onChange={e => setF('bank_account', e.target.value.replace(/\D/g, ''))}
+                placeholder={selectedBank?.digits ? `${selectedBank.digits}-digit number` : 'Account number'}
+                maxLength={selectedBank?.digits || 18}
+              />
+            </Field>
+            <Field label="IFSC Code">
+              <input className={inp('font-mono')} value={form.bank_ifsc}
+                onChange={e => setF('bank_ifsc', e.target.value.toUpperCase())}
+                placeholder="HDFC0001234" maxLength={11}
+              />
+            </Field>
           </div>
           <Field label="Notes"><textarea className={inp()} rows={2} value={form.notes} onChange={e => setF('notes', e.target.value)} /></Field>
+          <SectionHead label="Documents" />
+          <div className="grid grid-cols-2 gap-3">
+            {VENDOR_DOCS.map(d => {
+              const file = docs[d.key]
+              return (
+                <div key={d.key}>
+                  <p className="text-xs text-slate-400 mb-1">{d.label}</p>
+                  {file ? (
+                    <div className="flex items-center gap-2 bg-dark-700 border border-emerald-700/40 rounded-lg px-3 py-2">
+                      <FileText className="w-4 h-4 text-emerald-400 shrink-0" />
+                      <span className="text-xs text-slate-300 truncate flex-1">{file.name}</span>
+                      <button type="button" onClick={() => setDocs(p => ({ ...p, [d.key]: null }))}
+                        className="text-slate-500 hover:text-red-400 shrink-0">
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ) : (
+                    <label className="flex items-center gap-2 bg-dark-700 border border-dashed border-dark-600 hover:border-primary-600 rounded-lg px-3 py-2 cursor-pointer transition-colors group">
+                      <Upload className="w-4 h-4 text-slate-500 group-hover:text-primary-400 shrink-0" />
+                      <span className="text-xs text-slate-500 group-hover:text-slate-300">Upload file</span>
+                      <input type="file" accept={d.accept} className="hidden"
+                        onChange={e => { const f = e.target.files?.[0]; if (f) setDocs(p => ({ ...p, [d.key]: f })) }} />
+                    </label>
+                  )}
+                </div>
+              )
+            })}
+          </div>
         </Modal>
       )}
     </div>
