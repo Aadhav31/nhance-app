@@ -24,7 +24,7 @@ const CATEGORIES = [
   { value: 'lubricant',     label: 'Lubricant',       icon: Droplets, color: 'text-cyan-400',    bg: 'bg-cyan-500/10 border-cyan-700/40' },
   { value: 'consumable',    label: 'Consumable',      icon: Package,  color: 'text-violet-400',  bg: 'bg-violet-500/10 border-violet-700/40' },
   { value: 'tool',          label: 'Tool',            icon: Wrench,   color: 'text-orange-400',  bg: 'bg-orange-500/10 border-orange-700/40' },
-  { value: 'finished_good', label: 'Finished Good',   icon: Box,      color: 'text-emerald-400', bg: 'bg-emerald-500/10 border-emerald-700/40' },
+  { value: 'finished_good', label: 'Finished Goods/Products', icon: Box, color: 'text-emerald-400', bg: 'bg-emerald-500/10 border-emerald-700/40' },
 ]
 
 const CAT_MAP = Object.fromEntries(CATEGORIES.map(c => [c.value, c]))
