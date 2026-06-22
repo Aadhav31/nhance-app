@@ -1173,10 +1173,10 @@ function MonthlyCalendar({ year, month, dotMap = {}, selectedDate, onDateClick, 
     <div>
       <div className="grid grid-cols-7 text-center mb-1">
         {['Su','Mo','Tu','We','Th','Fr','Sa'].map(d => (
-          <span key={d} className="text-[9px] text-slate-500 font-semibold">{d}</span>
+          <span key={d} className="text-xs text-slate-400 font-semibold">{d}</span>
         ))}
       </div>
-      <div className="grid grid-cols-7 gap-0.5">
+      <div className="grid grid-cols-7 gap-1">
         {cells.map((d, i) => {
           if (!d) return <div key={i} />
           const ds  = `${year}-${String(month).padStart(2,'0')}-${String(d).padStart(2,'0')}`
@@ -1187,16 +1187,15 @@ function MonthlyCalendar({ year, month, dotMap = {}, selectedDate, onDateClick, 
           return (
             <button key={ds} onClick={() => !isFuture && onDateClick && onDateClick(ds)} disabled={isFuture}
               title={att ? att.status?.replace('_',' ') : ''}
-              className={`relative flex flex-col items-center justify-center rounded transition-colors
-                ${compact ? 'py-0.5' : 'py-1'}
+              className={`relative flex flex-col items-center justify-center rounded transition-colors py-1.5
                 ${isSel  ? 'bg-primary-600 text-white ring-1 ring-primary-400' : ''}
                 ${!isSel && att ? STATUS_CELL[att.status] || 'bg-dark-700 text-slate-400' : ''}
                 ${!isSel && !att && isToday ? 'ring-1 ring-primary-500/60 text-slate-200' : ''}
                 ${!isSel && !att && !isToday ? 'text-slate-500 hover:bg-dark-700' : ''}
                 ${isFuture ? 'opacity-25 cursor-default' : 'cursor-pointer'}`}>
-              <span className={`${compact ? 'text-[9px]' : 'text-xs'} font-medium`}>{d}</span>
-              {!compact && att?.ot_hours > 0 && (
-                <span className="text-[7px] text-orange-400 leading-none">+OT</span>
+              <span className="text-xs font-semibold">{d}</span>
+              {att?.ot_hours > 0 && (
+                <span className="text-[9px] text-orange-400 leading-none">OT</span>
               )}
             </button>
           )
@@ -1770,14 +1769,14 @@ function AttendanceTab({ companyId }) {
                     <div className="space-y-2">
                       <div className="flex gap-2 items-end">
                         <div className="flex-1">
-                          <p className="text-[10px] text-slate-500 mb-1">Start Time</p>
+                          <p className="text-xs text-slate-500 mb-1">Start Time</p>
                           <input type="time"
                             className="w-full bg-dark-700 border border-dark-600 rounded-lg px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
                             value={st.start || ''}
                             onChange={e => setShiftTime(emp.id, 'start', e.target.value)} />
                         </div>
                         <div className="flex-1">
-                          <p className="text-[10px] text-slate-500 mb-1">End Time</p>
+                          <p className="text-xs text-slate-500 mb-1">End Time</p>
                           <input type="time"
                             className="w-full bg-dark-700 border border-dark-600 rounded-lg px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
                             value={st.end || ''}
@@ -1806,7 +1805,7 @@ function AttendanceTab({ companyId }) {
                           </span>
                         </div>
                       ) : (
-                        !status && <p className="text-[10px] text-slate-500 italic px-1">Enter start & end time to log attendance</p>
+                        !status && <p className="text-xs text-slate-500 italic px-1">Enter start & end time to log attendance</p>
                       )}
 
                       {/* Override for absent / leave / week_off / holiday */}
