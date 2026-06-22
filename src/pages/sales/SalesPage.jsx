@@ -173,14 +173,22 @@ function LineItemsEditor({ lines, setLines, onGstRate, isTax }) {
                     </div>
                   )}
                 </div>
-                <input className={`${inp()} w-12 text-xs text-center shrink-0 px-1`} type="number" value={l.quantity} onChange={e => update(l._id, 'quantity', e.target.value)} min="0" step="0.01" />
-                <select className={`${inp()} w-16 text-xs shrink-0 px-1`} value={l.unit} onChange={e => update(l._id, 'unit', e.target.value)}>
-                  {LINE_UNITS.map(u => <option key={u}>{u}</option>)}
-                </select>
-                <input className={`${inp()} w-20 text-xs text-right shrink-0 px-1`} type="number" value={l.rate} onChange={e => update(l._id, 'rate', e.target.value)} placeholder="0" step="0.01" />
-                <span className="w-16 text-right text-xs font-semibold text-slate-200 shrink-0 pt-2">{fmtINR(l.amount)}</span>
+                <div className="w-12 shrink-0">
+                  <input className={`${inp('text-xs text-center px-1')}`} type="number" value={l.quantity} onChange={e => update(l._id, 'quantity', e.target.value)} min="0" step="0.01" />
+                </div>
+                <div className="w-16 shrink-0">
+                  <select className={`${inp('text-xs px-1')}`} value={l.unit} onChange={e => update(l._id, 'unit', e.target.value)}>
+                    {LINE_UNITS.map(u => <option key={u}>{u}</option>)}
+                  </select>
+                </div>
+                <div className="w-20 shrink-0">
+                  <input className={`${inp('text-xs text-right px-1')}`} type="number" value={l.rate} onChange={e => update(l._id, 'rate', e.target.value)} placeholder="0" step="0.01" />
+                </div>
+                <div className="w-16 shrink-0 text-right pt-1.5">
+                  <span className="text-xs font-semibold text-slate-200">{fmtINR(l.amount)}</span>
+                </div>
                 <button type="button" onClick={() => setLines(p => p.length > 1 ? p.filter(x => x._id !== l._id) : p)}
-                  className="shrink-0 text-slate-600 hover:text-red-400 pt-2"><X className="w-3.5 h-3.5" /></button>
+                  className="shrink-0 text-slate-600 hover:text-red-400 pt-1.5"><X className="w-3.5 h-3.5" /></button>
               </div>
             </div>
           )
