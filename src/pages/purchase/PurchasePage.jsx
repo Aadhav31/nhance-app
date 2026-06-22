@@ -407,7 +407,7 @@ const INDIAN_BANKS = [
 ]
 
 const BLANK_VENDOR = {
-  vendor_name: '', vendor_code: '', category: 'general', gstin: '',
+  name: '', vendor_code: '', category: 'general', gstin: '',
   contact_name: '', contact_phone: '', contact_email: '',
   address: '', bank_name: '', bank_account_name: '', bank_account: '', bank_ifsc: '', notes: '',
 }
@@ -459,7 +459,7 @@ function VendorsTab({ companyId, session }) {
   }
 
   const save = async () => {
-    if (!form.vendor_name.trim()) return toast.error('Vendor name required')
+    if (!form.name.trim()) return toast.error('Vendor name required')
     if (form.bank_account.trim() && selectedBank?.digits) {
       const len = form.bank_account.trim().length
       if (len !== selectedBank.digits) {
@@ -476,7 +476,7 @@ function VendorsTab({ companyId, session }) {
         }
       }
       const { error } = await supabase.from('vendors').insert({
-        company_id: companyId, vendor_name: form.vendor_name.trim(),
+        company_id: companyId, name: form.name.trim(),
         vendor_code: form.vendor_code.trim() || null, category: form.category,
         gstin: form.gstin.trim() || null, contact_name: form.contact_name.trim() || null,
         contact_phone: form.contact_phone.trim() || null, contact_email: form.contact_email.trim() || null,
@@ -498,7 +498,7 @@ function VendorsTab({ companyId, session }) {
   const CATEGORIES = ['general','fuel_supplier','spare_parts','tyres','lubricants','civil','electrical','subcontractor','transport','misc']
 
   const displayed = vendors.filter(v =>
-    !search || v.vendor_name?.toLowerCase().includes(search.toLowerCase()) ||
+    !search || v.name?.toLowerCase().includes(search.toLowerCase()) ||
     v.category?.toLowerCase().includes(search.toLowerCase()) ||
     v.contact_phone?.includes(search)
   )
@@ -521,7 +521,7 @@ function VendorsTab({ companyId, session }) {
               className="bg-dark-800 border border-dark-700 hover:border-primary-700/50 rounded-xl p-4 text-left transition-colors group">
               <div className="flex items-start justify-between">
                 <div className="flex-1 min-w-0">
-                  <p className="font-semibold text-slate-100 truncate">{v.vendor_name}</p>
+                  <p className="font-semibold text-slate-100 truncate">{v.name}</p>
                   {v.vendor_code && <p className="text-xs font-mono text-slate-500">{v.vendor_code}</p>}
                   <span className="text-[10px] px-2 py-0.5 rounded-full bg-dark-700 text-slate-400 mt-1 inline-block capitalize">{v.category?.replace(/_/g, ' ')}</span>
                 </div>
@@ -536,7 +536,7 @@ function VendorsTab({ companyId, session }) {
 
       {/* Vendor Detail Modal */}
       {selected && (
-        <Modal title={selected.vendor_name} subtitle={selected.category?.replace(/_/g,' ')} onClose={() => setSelected(null)}>
+        <Modal title={selected.name} subtitle={selected.category?.replace(/_/g,' ')} onClose={() => setSelected(null)}>
           <div className="grid grid-cols-2 gap-4">
             {selected.contact_name && <div><p className="text-xs text-slate-500 mb-0.5">Contact</p><p className="text-sm text-slate-100 flex items-center gap-1"><User className="w-3.5 h-3.5" />{selected.contact_name}</p></div>}
             {selected.contact_phone && <div><p className="text-xs text-slate-500 mb-0.5">Phone</p><p className="text-sm text-slate-100 flex items-center gap-1"><Phone className="w-3.5 h-3.5" />{selected.contact_phone}</p></div>}
@@ -578,7 +578,7 @@ function VendorsTab({ companyId, session }) {
         <Modal title="Add Vendor" onClose={() => setShowCreate(false)}
           footer={<><button onClick={() => setShowCreate(false)} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Add Vendor'}</button></>}>
           <div className="grid grid-cols-2 gap-3">
-            <div className="col-span-2"><Field label="Vendor Name *"><input className={inp()} value={form.vendor_name} onChange={e => setF('vendor_name', e.target.value)} /></Field></div>
+            <div className="col-span-2"><Field label="Vendor Name *"><input className={inp()} value={form.name} onChange={e => setF('name', e.target.value)} /></Field></div>
             <Field label="Vendor Code (auto)">
               <input className={inp('font-mono bg-dark-700 text-slate-400 cursor-not-allowed')} value={form.vendor_code} readOnly />
             </Field>
