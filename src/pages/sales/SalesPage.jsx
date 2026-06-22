@@ -113,12 +113,12 @@ function LineItemsEditor({ lines, setLines, onGstRate, isTax }) {
       </div>
       <div className="space-y-1.5">
         {/* Column headers */}
-        <div className="flex gap-1.5 text-[9px] text-slate-500 uppercase tracking-wide px-1">
-          <span className="w-2/5 min-w-0">Description</span>
-          <span className="w-12 text-center shrink-0">Qty</span>
-          <span className="w-16 shrink-0">Unit</span>
-          <span className="w-20 text-right shrink-0">Rate (₹)</span>
-          <span className="w-16 text-right shrink-0">Amt</span>
+        <div className="flex gap-2 text-[9px] text-slate-500 uppercase tracking-wide px-1">
+          <span className="flex-1 min-w-0">Description</span>
+          <span className="w-16 text-center shrink-0">Qty</span>
+          <span className="w-20 shrink-0">Unit</span>
+          <span className="w-24 text-right shrink-0">Rate (₹)</span>
+          <span className="w-20 text-right shrink-0">Amt</span>
           <span className="w-5 shrink-0" />
         </div>
         {lines.map(l => {
@@ -126,18 +126,19 @@ function LineItemsEditor({ lines, setLines, onGstRate, isTax }) {
           const showInput = isTax && (l._hsn_open || hsnFilled)
           return (
             <div key={l._id} className="bg-dark-700/40 rounded-xl px-2 py-1.5">
-              <div className="flex gap-1.5 items-start">
+              <div className="flex gap-2 items-center">
                 {/* Description + HSN link stacked */}
-                <div className="w-2/5 min-w-0 shrink-0">
+                <div className="flex-1 min-w-0 self-start">
                   <textarea
                     rows={1}
                     className={`${inp()} text-xs resize-none leading-snug w-full`}
+                    style={{ overflow: 'hidden' }}
                     placeholder="Description of goods / services"
                     value={l.description}
                     onChange={e => {
-                      update(l._id, 'description', e.target.value)
                       e.target.style.height = 'auto'
                       e.target.style.height = e.target.scrollHeight + 'px'
+                      update(l._id, 'description', e.target.value)
                     }}
                   />
                   {isTax && (
@@ -173,18 +174,18 @@ function LineItemsEditor({ lines, setLines, onGstRate, isTax }) {
                     </div>
                   )}
                 </div>
-                <div className="w-12 shrink-0">
-                  <input className={`${inp('text-xs text-center px-1')}`} type="number" value={l.quantity} onChange={e => update(l._id, 'quantity', e.target.value)} min="0" step="0.01" />
-                </div>
                 <div className="w-16 shrink-0">
-                  <select className={`${inp('text-xs px-1')}`} value={l.unit} onChange={e => update(l._id, 'unit', e.target.value)}>
+                  <input className={`${inp('text-xs text-center px-2')}`} type="number" value={l.quantity} onChange={e => update(l._id, 'quantity', e.target.value)} min="0" step="0.01" />
+                </div>
+                <div className="w-20 shrink-0">
+                  <select className={`${inp('text-xs px-2')}`} value={l.unit} onChange={e => update(l._id, 'unit', e.target.value)}>
                     {LINE_UNITS.map(u => <option key={u}>{u}</option>)}
                   </select>
                 </div>
-                <div className="w-20 shrink-0">
-                  <input className={`${inp('text-xs text-right px-1')}`} type="number" value={l.rate} onChange={e => update(l._id, 'rate', e.target.value)} placeholder="0" step="0.01" />
+                <div className="w-24 shrink-0">
+                  <input className={`${inp('text-xs text-right px-2')}`} type="number" value={l.rate} onChange={e => update(l._id, 'rate', e.target.value)} placeholder="0.00" step="0.01" />
                 </div>
-                <div className="w-16 shrink-0 text-right pt-1.5">
+                <div className="w-20 shrink-0 text-right">
                   <span className="text-xs font-semibold text-slate-200">{fmtINR(l.amount)}</span>
                 </div>
                 <button type="button" onClick={() => setLines(p => p.length > 1 ? p.filter(x => x._id !== l._id) : p)}
