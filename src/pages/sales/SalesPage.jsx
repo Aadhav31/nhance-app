@@ -126,9 +126,9 @@ function LineItemsEditor({ lines, setLines, onGstRate, isTax }) {
           const showInput = isTax && (l._hsn_open || hsnFilled)
           return (
             <div key={l._id} className="bg-dark-700/40 rounded-xl px-2 py-1.5">
-              <div className="flex gap-2 items-center">
+              <div className="flex gap-2 items-start">
                 {/* Description + HSN link stacked */}
-                <div className="flex-1 min-w-0 self-start">
+                <div className="flex-1 min-w-0">
                   <textarea
                     rows={1}
                     className={`${inp()} text-xs resize-none leading-snug w-full`}

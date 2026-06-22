@@ -116,9 +116,9 @@ function LineItemsEditor({ lines, setLines, onGstRate, isTax }) {
           const hsnFilled = l.hsn_sac.trim().length > 0
           const showInput = isTax && (l._hsn_open || hsnFilled)
           return (
-            <div key={l._id} className="flex gap-2 items-center bg-dark-700/40 rounded-xl p-2">
+            <div key={l._id} className="flex gap-2 items-start bg-dark-700/40 rounded-xl p-2">
               {/* Description col with HSN below */}
-              <div className="flex-1 min-w-0 self-start">
+              <div className="flex-1 min-w-0">
                 <textarea
                   rows={1}
                   className={`${inp()} text-xs w-full resize-none leading-snug`}
