@@ -111,78 +111,76 @@ function LineItemsEditor({ lines, setLines, onGstRate, isTax }) {
           <Plus className="w-3.5 h-3.5" /> Add Row
         </button>
       </div>
-      <div className="space-y-2">
+      <div className="space-y-1.5">
+        {/* Column headers */}
+        <div className="flex gap-1.5 text-[9px] text-slate-500 uppercase tracking-wide px-1">
+          <span className="flex-1">Description</span>
+          <span className="w-12 text-center shrink-0">Qty</span>
+          <span className="w-16 shrink-0">Unit</span>
+          <span className="w-20 text-right shrink-0">Rate (₹)</span>
+          <span className="w-16 text-right shrink-0">Amt</span>
+          <span className="w-5 shrink-0" />
+        </div>
         {lines.map(l => {
           const hsnFilled = l.hsn_sac.trim().length > 0
           const showInput = isTax && (l._hsn_open || hsnFilled)
           return (
-            <div key={l._id} className="bg-dark-700/40 rounded-xl p-2 space-y-1.5">
-              {/* Row 1: Description + Delete */}
-              <div className="flex gap-1.5 items-center">
-                <input
-                  className={`${inp()} flex-1 text-xs`}
-                  placeholder="Description of goods / services"
-                  value={l.description}
-                  onChange={e => update(l._id, 'description', e.target.value)}
-                />
-                <button type="button" onClick={() => setLines(p => p.length > 1 ? p.filter(x => x._id !== l._id) : p)}
-                  className="shrink-0 text-slate-600 hover:text-red-400"><X className="w-3.5 h-3.5" /></button>
-              </div>
-
-              {/* HSN/SAC — only on tax docs */}
-              {isTax && (
-                <div className="pl-0.5">
-                  {!showInput ? (
-                    /* Collapsed: show text link */
-                    <button type="button" onClick={() => toggleHsn(l._id)}
-                      className="text-[10px] text-primary-400/70 hover:text-primary-300 transition-colors">
-                      + Add HSN / SAC code
-                    </button>
-                  ) : (
-                    /* Expanded: show input */
-                    <div className="flex items-center gap-1.5">
-                      <div className="relative w-36 shrink-0">
-                        <input
-                          autoFocus={l._hsn_open && !hsnFilled}
-                          className={`${inp()} text-xs font-mono uppercase py-1.5 pr-10`}
-                          placeholder="e.g. 997313"
-                          value={l.hsn_sac}
-                          onChange={e => update(l._id, 'hsn_sac', e.target.value)}
-                        />
-                        {l._gst_rate != null && (
-                          <span className="absolute right-6 top-1/2 -translate-y-1/2 text-[9px] font-bold bg-emerald-900/60 text-emerald-400 px-1.5 py-0.5 rounded-full">
-                            {l._gst_rate}%
-                          </span>
-                        )}
-                        <button type="button" onClick={() => clearHsn(l._id)}
-                          className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">
-                          <X className="w-3 h-3" />
+            <div key={l._id} className="bg-dark-700/40 rounded-xl px-2 py-1.5">
+              <div className="flex gap-1.5 items-start">
+                {/* Description + HSN link stacked */}
+                <div className="flex-1 min-w-0">
+                  <textarea
+                    rows={1}
+                    className={`${inp()} text-xs resize-none leading-snug w-full`}
+                    placeholder="Description of goods / services"
+                    value={l.description}
+                    onChange={e => {
+                      update(l._id, 'description', e.target.value)
+                      e.target.style.height = 'auto'
+                      e.target.style.height = e.target.scrollHeight + 'px'
+                    }}
+                  />
+                  {isTax && (
+                    <div className="mt-0.5">
+                      {!showInput ? (
+                        <button type="button" onClick={() => toggleHsn(l._id)}
+                          className="text-[10px] text-primary-400/60 hover:text-primary-300 transition-colors">
+                          + Add HSN / SAC code
                         </button>
-                      </div>
-                      {l._gst_desc && (
-                        <span className="text-[9px] text-slate-500 truncate flex-1">{l._gst_desc}</span>
+                      ) : (
+                        <div className="flex items-center gap-1.5">
+                          <div className="relative w-32 shrink-0">
+                            <input
+                              autoFocus={l._hsn_open && !hsnFilled}
+                              className={`${inp()} text-xs font-mono uppercase py-1 pr-10`}
+                              placeholder="e.g. 997313"
+                              value={l.hsn_sac}
+                              onChange={e => update(l._id, 'hsn_sac', e.target.value)}
+                            />
+                            {l._gst_rate != null && (
+                              <span className="absolute right-6 top-1/2 -translate-y-1/2 text-[9px] font-bold bg-emerald-900/60 text-emerald-400 px-1 py-0.5 rounded-full">
+                                {l._gst_rate}%
+                              </span>
+                            )}
+                            <button type="button" onClick={() => clearHsn(l._id)}
+                              className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">
+                              <X className="w-3 h-3" />
+                            </button>
+                          </div>
+                          {l._gst_desc && <span className="text-[9px] text-slate-500 truncate">{l._gst_desc}</span>}
+                        </div>
                       )}
                     </div>
                   )}
                 </div>
-              )}
-
-              {/* Row 2: Qty | Unit | Rate | Amount */}
-              <div className="flex gap-1.5 items-center pl-0.5">
-                <div className="w-16 shrink-0">
-                  <input className={`${inp()} text-xs text-center`} type="number" value={l.quantity} onChange={e => update(l._id, 'quantity', e.target.value)} min="0" step="0.01" />
-                </div>
-                <div className="w-20 shrink-0">
-                  <select className={`${inp()} text-xs`} value={l.unit} onChange={e => update(l._id, 'unit', e.target.value)}>
-                    {LINE_UNITS.map(u => <option key={u}>{u}</option>)}
-                  </select>
-                </div>
-                <div className="flex-1">
-                  <input className={`${inp()} text-xs text-right`} type="number" value={l.rate} onChange={e => update(l._id, 'rate', e.target.value)} placeholder="Rate (₹)" step="0.01" />
-                </div>
-                <div className="w-24 text-right shrink-0">
-                  <span className="text-xs font-semibold text-slate-200">{fmtINR(l.amount)}</span>
-                </div>
+                <input className={`${inp()} w-12 text-xs text-center shrink-0 px-1`} type="number" value={l.quantity} onChange={e => update(l._id, 'quantity', e.target.value)} min="0" step="0.01" />
+                <select className={`${inp()} w-16 text-xs shrink-0 px-1`} value={l.unit} onChange={e => update(l._id, 'unit', e.target.value)}>
+                  {LINE_UNITS.map(u => <option key={u}>{u}</option>)}
+                </select>
+                <input className={`${inp()} w-20 text-xs text-right shrink-0 px-1`} type="number" value={l.rate} onChange={e => update(l._id, 'rate', e.target.value)} placeholder="0" step="0.01" />
+                <span className="w-16 text-right text-xs font-semibold text-slate-200 shrink-0 pt-2">{fmtINR(l.amount)}</span>
+                <button type="button" onClick={() => setLines(p => p.length > 1 ? p.filter(x => x._id !== l._id) : p)}
+                  className="shrink-0 text-slate-600 hover:text-red-400 pt-2"><X className="w-3.5 h-3.5" /></button>
               </div>
             </div>
           )
