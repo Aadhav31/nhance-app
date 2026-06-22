@@ -34,7 +34,7 @@ export const MODULES = {
 
 export const MODULE_LABELS = {
   core:             'Core',
-  fleet_management: 'Fleet Management',
+  fleet_management: 'Equipments & Machineries',
   daily_operations: 'Daily Operations',
   maintenance:      'Maintenance',
   inventory:        'Inventory',
@@ -149,7 +149,7 @@ export const NAV_ITEMS = [
     items: [
       { key: 'operations', label: 'Daily Operations', icon: 'ClipboardList', module: MODULES.OPERATIONS,
         roles: [ROLES.OPERATOR, ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ADMIN] },
-      { key: 'fleet',      label: 'Fleet',            icon: 'Truck',         module: MODULES.FLEET,
+      { key: 'fleet',      label: 'Equipments & Machineries', icon: 'Truck', module: MODULES.FLEET,
         roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
       { key: 'maintenance',label: 'Maintenance',       icon: 'Wrench',        module: MODULES.MAINTENANCE,
         roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ADMIN] },

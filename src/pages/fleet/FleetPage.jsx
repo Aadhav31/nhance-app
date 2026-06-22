@@ -2442,7 +2442,7 @@ export default function FleetPage() {
     <div className="relative flex flex-col h-full bg-dark-900">
       <div className="px-4 pt-4 pb-2 shrink-0 flex items-center justify-between">
         <div>
-          <h1 className="text-lg font-bold text-slate-100">Equipment Fleet</h1>
+          <h1 className="text-lg font-bold text-slate-100">Equipments &amp; Machineries</h1>
           <p className="text-xs text-slate-400">Registry · Documents · Service · Deployment</p>
         </div>
         {activeTab === 'fleet' && (

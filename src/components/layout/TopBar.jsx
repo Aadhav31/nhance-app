@@ -5,7 +5,7 @@ import { fmtDate } from '../../lib/utils'
 
 const PAGE_TITLES = {
   dashboard:   { title: 'Dashboard',        subtitle: 'Overview of your operations' },
-  fleet:       { title: 'Fleet',            subtitle: 'Equipment registry & status' },
+  fleet:       { title: 'Equipments & Machineries', subtitle: 'Equipment registry & status' },
   operations:  { title: 'Daily Operations', subtitle: 'Shifts, fuel & incidents' },
   maintenance: { title: 'Maintenance',      subtitle: 'Preventive & breakdown tracking' },
   inventory:   { title: 'Inventory',        subtitle: 'Spare parts & consumables' },
