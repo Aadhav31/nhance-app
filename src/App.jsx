@@ -1,6 +1,7 @@
 import { useState, lazy, Suspense } from 'react'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { DisplayModeProvider } from './contexts/DisplayModeContext'
+import { ThemeProvider } from './contexts/ThemeContext'
 import LoadingScreen from './components/shared/LoadingScreen'
 import LoginPage from './pages/auth/LoginPage'
 import Sidebar from './components/layout/Sidebar'
@@ -117,8 +118,10 @@ function AppShell() {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <AppShell />
-    </AuthProvider>
+    <ThemeProvider>
+      <AuthProvider>
+        <AppShell />
+      </AuthProvider>
+    </ThemeProvider>
   )
 }

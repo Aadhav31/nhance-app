@@ -1,4 +1,13 @@
 /** @type {import('tailwindcss').Config} */
+
+// Helper: generates a color that works with Tailwind's bg-opacity / bg-*/opacity modifiers
+function v(varName) {
+  return ({ opacityValue }) =>
+    opacityValue !== undefined
+      ? `rgb(var(${varName}) / ${opacityValue})`
+      : `rgb(var(${varName}))`
+}
+
 export default {
   content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
   theme: {
@@ -16,11 +25,15 @@ export default {
           800: '#1e40af',
           900: '#1e3a8a',
         },
+        // Surface palette — driven by CSS variables so theme switch is instant
         dark: {
-          900: '#0f172a',
-          800: '#1e293b',
-          700: '#334155',
-          600: '#475569',
+          900: v('--s0'),   // page background
+          800: v('--s1'),   // cards / panels
+          750: v('--s2'),   // slightly elevated cards
+          700: v('--s2'),   // inputs / elevated surfaces
+          600: v('--s3'),   // borders
+          500: v('--s4'),   // strong borders / dividers
+          400: v('--s4'),   // strong borders (alias)
         },
       },
       fontFamily: {

@@ -1,32 +1,34 @@
-import { Bell, Menu } from 'lucide-react'
+import { Bell, Menu, Sun, Moon } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
 import { useDisplayMode } from '../../contexts/DisplayModeContext'
+import { useTheme } from '../../contexts/ThemeContext'
 import { fmtDate } from '../../lib/utils'
 
 const PAGE_TITLES = {
-  dashboard:   { title: 'Dashboard',        subtitle: 'Overview of your operations' },
+  dashboard:   { title: 'Dashboard',               subtitle: 'Overview of your operations' },
   fleet:       { title: 'Equipments & Machineries', subtitle: 'Equipment registry & status' },
-  operations:  { title: 'Daily Operations', subtitle: 'Shifts, fuel & incidents' },
-  maintenance: { title: 'Maintenance',      subtitle: 'Preventive & breakdown tracking' },
-  inventory:   { title: 'Inventory',        subtitle: 'Spare parts & consumables' },
-  clients:     { title: 'Clients',          subtitle: 'Client profiles & history' },
-  projects:    { title: 'Projects',         subtitle: 'Active & completed projects' },
-  accounts:    { title: 'Accounts',         subtitle: 'Invoices, expenses & payments' },
-  reports:     { title: 'Reports',          subtitle: 'Analytics & insights' },
-  hr:          { title: 'HR & Payroll',     subtitle: 'Operators, attendance & salary' },
-  settings:    { title: 'Settings',         subtitle: 'Company configuration' },
-  profile:     { title: 'My Profile',       subtitle: 'Personal details & preferences' },
-  superadmin:  { title: 'Nhance Admin',     subtitle: 'Platform management' },
+  operations:  { title: 'Daily Operations',         subtitle: 'Shifts, fuel & incidents' },
+  maintenance: { title: 'Maintenance',              subtitle: 'Preventive & breakdown tracking' },
+  inventory:   { title: 'Inventory',                subtitle: 'Spare parts & consumables' },
+  clients:     { title: 'Clients',                  subtitle: 'Client profiles & history' },
+  projects:    { title: 'Projects',                 subtitle: 'Active & completed projects' },
+  accounts:    { title: 'Accounts',                 subtitle: 'Invoices, expenses & payments' },
+  reports:     { title: 'Reports',                  subtitle: 'Analytics & insights' },
+  hr:          { title: 'HR & Payroll',             subtitle: 'Operators, attendance & salary' },
+  settings:    { title: 'Settings',                 subtitle: 'Company configuration' },
+  profile:     { title: 'My Profile',               subtitle: 'Personal details & preferences' },
+  superadmin:  { title: 'Nhance Admin',             subtitle: 'Platform management' },
 }
 
 export default function TopBar({ activePage, onMenuToggle }) {
   const { company, session } = useAuth()
-  const { mode, setMode } = useDisplayMode()
+  const { mode, setMode }    = useDisplayMode()
+  const { theme, toggle }    = useTheme()
   const info  = PAGE_TITLES[activePage] || { title: activePage, subtitle: '' }
   const today = fmtDate(new Date())
 
   return (
-    <header className="h-16 bg-dark-800 border-b border-dark-700 flex items-center px-6 gap-4 flex-shrink-0">
+    <header className="h-16 bg-dark-800 border-b border-dark-600 flex items-center px-6 gap-4 flex-shrink-0">
       {/* Mobile menu toggle */}
       <button onClick={onMenuToggle} className="lg:hidden btn-ghost p-2">
         <Menu className="w-5 h-5" />
@@ -70,6 +72,15 @@ export default function TopBar({ activePage, onMenuToggle }) {
           </div>
         )}
 
+        {/* Light / Dark mode toggle */}
+        <button
+          onClick={toggle}
+          title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          className="w-9 h-9 flex items-center justify-center rounded-lg text-slate-400 hover:text-slate-100 hover:bg-dark-700 transition-all"
+        >
+          {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+        </button>
+
         {/* Notifications */}
         <button className="relative w-9 h-9 flex items-center justify-center rounded-lg text-slate-400 hover:text-slate-100 hover:bg-dark-700 transition-all">
           <Bell className="w-4 h-4" />
@@ -79,8 +90,8 @@ export default function TopBar({ activePage, onMenuToggle }) {
         {/* Company badge */}
         {company && (
           <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-dark-700 rounded-lg border border-dark-600">
-            <div className="w-2 h-2 bg-emerald-400 rounded-full" />
-            <span className="text-xs font-medium text-slate-300 truncate max-w-[120px]">
+            <div className="w-2 h-2 bg-emerald-500 rounded-full" />
+            <span className="text-xs font-medium text-slate-100 truncate max-w-[120px]">
               {company.name}
             </span>
           </div>

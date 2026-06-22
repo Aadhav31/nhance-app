@@ -37,12 +37,12 @@ const LEAVE_TYPES = [
 ]
 
 const ATTENDANCE_STATUS = [
-  { value: 'present',  full: 'Present',   cls: 'bg-emerald-500/20 text-emerald-400 border-emerald-700/40' },
-  { value: 'absent',   full: 'Absent',    cls: 'bg-red-500/20 text-red-400 border-red-700/40' },
-  { value: 'half_day', full: 'Half Day',  cls: 'bg-yellow-500/20 text-yellow-400 border-yellow-700/40' },
-  { value: 'leave',    full: 'Leave',     cls: 'bg-blue-500/20 text-blue-400 border-blue-700/40' },
-  { value: 'week_off', full: 'Week Off',  cls: 'bg-slate-500/20 text-slate-400 border-slate-600' },
-  { value: 'holiday',  full: 'Holiday',   cls: 'bg-purple-500/20 text-purple-400 border-purple-700/40' },
+  { value: 'present',  full: 'Present',   cls: 'bg-emerald-500/15 text-emerald-700 border-emerald-600/40' },
+  { value: 'absent',   full: 'Absent',    cls: 'bg-red-500/15 text-red-700 border-red-600/40' },
+  { value: 'half_day', full: 'Half Day',  cls: 'bg-yellow-500/15 text-yellow-700 border-yellow-600/40' },
+  { value: 'leave',    full: 'Leave',     cls: 'bg-blue-500/15 text-blue-700 border-blue-600/40' },
+  { value: 'week_off', full: 'Week Off',  cls: 'bg-slate-500/10 text-slate-600 border-slate-400/40' },
+  { value: 'holiday',  full: 'Holiday',   cls: 'bg-purple-500/15 text-purple-700 border-purple-600/40' },
 ]
 
 const WAGE_CATEGORIES = [
@@ -1151,12 +1151,12 @@ const STATUS_DOT = {
   holiday:  'bg-purple-400',
 }
 const STATUS_CELL = {
-  present:  'bg-emerald-500/20 text-emerald-300',
-  absent:   'bg-red-500/20 text-red-300',
-  half_day: 'bg-yellow-500/20 text-yellow-300',
-  leave:    'bg-blue-500/20 text-blue-300',
-  week_off: 'bg-slate-700 text-slate-400',
-  holiday:  'bg-purple-500/20 text-purple-300',
+  present:  'bg-emerald-500/20 text-emerald-700',
+  absent:   'bg-red-500/20 text-red-700',
+  half_day: 'bg-yellow-500/20 text-yellow-700',
+  leave:    'bg-blue-500/20 text-blue-700',
+  week_off: 'bg-slate-200 text-slate-600',
+  holiday:  'bg-purple-500/20 text-purple-700',
 }
 const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December']
 
