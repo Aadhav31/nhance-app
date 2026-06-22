@@ -1452,8 +1452,6 @@ function EmployeesTab({ companyId }) {
 }
 
 // ── Attendance Tab ────────────────────────────────────────────────────────────
-const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December']
-
 function AttendanceTab({ companyId }) {
   const { role } = useAuth()
   const qc = useQueryClient()
@@ -1864,7 +1862,6 @@ function AttendanceTab({ companyId }) {
 
 // ── Payslip Modal ─────────────────────────────────────────────────────────────
 function PayslipModal({ item, month, year, onClose }) {
-  const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December']
   const emp    = item.hr_employees
   const basic  = Number(item.basic_earned || 0)
   const hra    = Number(item.hra_earned || 0)
