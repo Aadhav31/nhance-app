@@ -433,7 +433,7 @@ function VendorsTab({ companyId, session }) {
   const { data: vendors = [], isLoading } = useQuery({
     queryKey: ['vendors', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('vendors').select('*').eq('company_id', companyId).order('vendor_name')
+      const { data } = await supabase.from('vendors').select('*').eq('company_id', companyId).order('name')
       return data || []
     },
     enabled: !!companyId,
@@ -681,7 +681,7 @@ function ExpensesTab({ companyId, session }) {
   const { data: vendors = [] } = useQuery({
     queryKey: ['vendors_list', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('vendors').select('id, vendor_name').eq('company_id', companyId).order('vendor_name')
+      const { data } = await supabase.from('vendors').select('id, name').eq('company_id', companyId).order('name')
       return data || []
     },
     enabled: !!companyId && showCreate,
@@ -757,7 +757,7 @@ function ExpensesTab({ companyId, session }) {
             {vendors.length > 0 && <div className="col-span-2"><Field label="Vendor (optional)">
               <select className={inp()} value={form.vendor_id} onChange={e => setF('vendor_id', e.target.value)}>
                 <option value="">-- Select vendor --</option>
-                {vendors.map(v => <option key={v.id} value={v.id}>{v.vendor_name}</option>)}
+                {vendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
               </select>
             </Field></div>}
             <div className="col-span-2"><Field label="Reference No."><input className={inp()} value={form.reference} onChange={e => setF('reference', e.target.value)} placeholder="Bill / receipt no." /></Field></div>
@@ -791,7 +791,7 @@ function BillsTab({ companyId, session }) {
   const { data: vendors = [] } = useQuery({
     queryKey: ['vendors_list', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('vendors').select('id, vendor_name, gstin').eq('company_id', companyId).order('vendor_name')
+      const { data } = await supabase.from('vendors').select('id, name, gstin').eq('company_id', companyId).order('name')
       return data || []
     },
     enabled: !!companyId,
@@ -834,7 +834,7 @@ function BillsTab({ companyId, session }) {
       const vendor = vendors.find(v => v.id === form.vendor_id)
       const { error } = await supabase.from('bills').insert({
         id, company_id: companyId, bill_number: blNum,
-        vendor_id: form.vendor_id, vendor_name: vendor?.vendor_name || '',
+        vendor_id: form.vendor_id, vendor_name: vendor?.name || '',
         bill_date: form.bill_date, due_date: form.due_date || null,
         bill_ref: form.bill_ref || null,
         subtotal, discount_amount: parseFloat(form.discount_amount) || 0, taxable_amount: taxable,
@@ -951,7 +951,7 @@ function BillsTab({ companyId, session }) {
                   setForm(p => ({ ...p, vendor_id: e.target.value, vendor_gstin: v?.gstin || '' }))
                 }}>
                   <option value="">-- Select vendor --</option>
-                  {vendors.map(v => <option key={v.id} value={v.id}>{v.vendor_name}</option>)}
+                  {vendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
                 </select>
               </Field>
             </div>
@@ -1000,7 +1000,7 @@ function PurchaseOrdersTab({ companyId, session }) {
   const { data: vendors = [] } = useQuery({
     queryKey: ['vendors_list', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('vendors').select('id, vendor_name, gstin').eq('company_id', companyId).order('vendor_name')
+      const { data } = await supabase.from('vendors').select('id, name, gstin').eq('company_id', companyId).order('name')
       return data || []
     },
     enabled: !!companyId,
@@ -1022,7 +1022,7 @@ function PurchaseOrdersTab({ companyId, session }) {
       const vendor = vendors.find(v => v.id === form.vendor_id)
       const { error } = await supabase.from('purchase_orders').insert({
         id, company_id: companyId, po_number: poNum,
-        vendor_id: form.vendor_id, vendor_name: vendor?.vendor_name || '',
+        vendor_id: form.vendor_id, vendor_name: vendor?.name || '',
         po_date: form.po_date, expected_delivery: form.expected_delivery || null,
         delivery_address: form.delivery_address || null,
         subtotal, discount_amount: parseFloat(form.discount_amount) || 0, taxable_amount: taxable,
@@ -1095,7 +1095,7 @@ function PurchaseOrdersTab({ companyId, session }) {
                 setForm(p => ({ ...p, vendor_id: e.target.value, vendor_gstin: v?.gstin || '' }))
               }}>
                 <option value="">-- Select vendor --</option>
-                {vendors.map(v => <option key={v.id} value={v.id}>{v.vendor_name}</option>)}
+                {vendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
               </select>
             </Field></div>
             <TaxTypeToggle isTax={isTax} onToggle={v => setF('is_tax_invoice', v)} label="PO" />
@@ -1140,7 +1140,7 @@ function VendorCreditsTab({ companyId, session }) {
   const { data: vendors = [] } = useQuery({
     queryKey: ['vendors_list', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('vendors').select('id, vendor_name').eq('company_id', companyId).order('vendor_name')
+      const { data } = await supabase.from('vendors').select('id, name').eq('company_id', companyId).order('name')
       return data || []
     },
     enabled: !!companyId && showCreate,
@@ -1156,7 +1156,7 @@ function VendorCreditsTab({ companyId, session }) {
       const vendor = vendors.find(v => v.id === form.vendor_id)
       const { error } = await supabase.from('vendor_credits').insert({
         company_id: companyId, vc_number: vcNum, vendor_id: form.vendor_id,
-        vendor_name: vendor?.vendor_name || '', cn_date: form.cn_date,
+        vendor_name: vendor?.name || '', cn_date: form.cn_date,
         reason: form.reason || null, total_amount: parseFloat(form.amount),
         status: 'issued', notes: form.notes || null, created_by: session.user.id,
       })
@@ -1196,7 +1196,7 @@ function VendorCreditsTab({ companyId, session }) {
           <Field label="Vendor *">
             <select className={inp()} value={form.vendor_id} onChange={e => setF('vendor_id', e.target.value)}>
               <option value="">-- Select vendor --</option>
-              {vendors.map(v => <option key={v.id} value={v.id}>{v.vendor_name}</option>)}
+              {vendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
             </select>
           </Field>
           <div className="grid grid-cols-2 gap-3">
@@ -1232,7 +1232,7 @@ function PaymentsMadeTab({ companyId, session }) {
   const { data: vendors = [] } = useQuery({
     queryKey: ['vendors_list', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('vendors').select('id, vendor_name').eq('company_id', companyId).order('vendor_name')
+      const { data } = await supabase.from('vendors').select('id, name').eq('company_id', companyId).order('name')
       return data || []
     },
     enabled: !!companyId && showCreate,
@@ -1260,7 +1260,7 @@ function PaymentsMadeTab({ companyId, session }) {
       const { error } = await supabase.from('payments_made').insert({
         company_id: companyId, payment_number: pmNum,
         payment_date: form.payment_date, vendor_id: form.vendor_id,
-        vendor_name: vendor?.vendor_name || '', bill_id: billId || null,
+        vendor_name: vendor?.name || '', bill_id: billId || null,
         amount: parseFloat(form.amount), payment_mode: form.payment_mode,
         bank_reference: form.bank_reference || null, notes: form.notes || null,
         created_by: session.user.id,
@@ -1303,7 +1303,7 @@ function PaymentsMadeTab({ companyId, session }) {
           <Field label="Vendor *">
             <select className={inp()} value={form.vendor_id} onChange={e => { setF('vendor_id', e.target.value); setBillId('') }}>
               <option value="">-- Select vendor --</option>
-              {vendors.map(v => <option key={v.id} value={v.id}>{v.vendor_name}</option>)}
+              {vendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
             </select>
           </Field>
           {openBills.length > 0 && <Field label="Link to Bill (optional)">
