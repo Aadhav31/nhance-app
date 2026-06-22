@@ -487,9 +487,81 @@ function StartShiftModal({ equipment, companyId, onClose }) {
 }
 
 // ── End Shift Modal ───────────────────────────────────────────────────────────
+// ── Auto-attendance helper ─────────────────────────────────────────────────────
+async function autoMarkAttendance({ companyId, shiftId, shiftDate, startTime, endTime, operatorName, siteInchargeName, otThreshold }) {
+  // Derive hours (cross-midnight safe)
+  const calcHrs = (s, e) => {
+    if (!s || !e) return 0
+    const [sh, sm] = s.split(':').map(Number)
+    const [eh, em] = e.split(':').map(Number)
+    let mins = (eh * 60 + em) - (sh * 60 + sm)
+    if (mins < 0) mins += 24 * 60
+    return Math.round(mins / 60 * 10) / 10
+  }
+  const deriveStatus = (hrs) => hrs <= 0 ? null : hrs < 4 ? 'half_day' : 'present'
+
+  const threshold = otThreshold || 12
+  const hours     = calcHrs(startTime, endTime)
+  const status    = deriveStatus(hours)
+  if (!status) return
+
+  const otHours = hours > threshold ? Math.round((hours - threshold) * 10) / 10 : 0
+
+  // Look up employees by name (case-insensitive)
+  const names = [operatorName, siteInchargeName].filter(Boolean)
+  if (names.length === 0) return
+
+  const { data: employees } = await supabase.from('hr_employees')
+    .select('id, name')
+    .eq('company_id', companyId)
+    .eq('status', 'active')
+    .in('name', names)
+
+  for (const emp of (employees || [])) {
+    const { data: existing } = await supabase.from('hr_attendance')
+      .select('id, source')
+      .eq('employee_id', emp.id)
+      .eq('attendance_date', shiftDate)
+      .single()
+
+    // Never overwrite a manual entry
+    if (existing && existing.source !== 'shift_auto') continue
+
+    const payload = {
+      status,
+      shift_start_time: startTime,
+      shift_end_time:   endTime,
+      ot_hours:         otHours,
+      source:           'shift_auto',
+      shift_id:         shiftId,
+    }
+
+    if (existing) {
+      await supabase.from('hr_attendance').update(payload).eq('id', existing.id)
+    } else {
+      await supabase.from('hr_attendance').insert({
+        company_id:      companyId,
+        employee_id:     emp.id,
+        attendance_date: shiftDate,
+        ...payload,
+      })
+    }
+  }
+}
+
 function EndShiftModal({ equipment, shift, companyId, onClose }) {
   const qc = useQueryClient()
   const { location, loading: gpsLoading } = useGPS()   // auto-fires on mount
+
+  // Fetch company OT threshold
+  const { data: company } = useQuery({
+    queryKey: ['company_settings', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('companies').select('ot_threshold_hours').eq('id', companyId).single()
+      return data
+    },
+    staleTime: 60000,
+  })
   const [form, setForm] = useState({
     end_time: nowTime(),
     end_meter: '', end_km: '',
@@ -573,10 +645,24 @@ function EndShiftModal({ equipment, shift, companyId, onClose }) {
       if (form.end_meter) {
         await supabase.from('equipment').update({ current_meter_reading: endMeter, status: 'idle' }).eq('id', equipment.id)
       }
-      toast.success('Shift ended')
+
+      // Auto-mark attendance for operator + site incharge
+      await autoMarkAttendance({
+        companyId,
+        shiftId:           shift.id,
+        shiftDate:         shift.shift_date,
+        startTime:         shift.start_time,
+        endTime:           form.end_time,
+        operatorName:      shift.operator_name,
+        siteInchargeName:  shift.site_incharge_name,
+        otThreshold:       company?.ot_threshold_hours ?? 12,
+      }).catch(() => {})   // non-blocking — shift save is primary
+
+      toast.success('Shift ended — attendance auto-marked')
       qc.invalidateQueries(['equipment', companyId])
       qc.invalidateQueries(['active_shift', equipment.id])
       qc.invalidateQueries(['today_ops', companyId])
+      qc.invalidateQueries(['hr_attendance', companyId])
       onClose()
     } catch (err) {
       toast.error(err.message || 'Failed to end shift')

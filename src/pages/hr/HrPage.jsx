@@ -104,10 +104,14 @@ function calcShiftHours(startTime, endTime) {
   return Math.round((endMins - startMins) / 60 * 10) / 10
 }
 
-// < 4 hrs → half_day, ≥ 4 hrs → present (per user rule)
+// < 4 hrs → half_day, ≥ 4 hrs → present
 function calcShiftStatus(hours) {
   if (hours <= 0) return null
   return hours < 4 ? 'half_day' : 'present'
+}
+// OT = hours beyond threshold (default 12; configurable per company)
+function calcOtHours(hours, threshold = 12) {
+  return hours > threshold ? Math.round((hours - threshold) * 10) / 10 : 0
 }
 
 // Designations that must use clock-in / clock-out (regardless of pay type)
@@ -1229,9 +1233,33 @@ function EmployeesTab({ companyId }) {
 
 // ── Attendance Tab ────────────────────────────────────────────────────────────
 function AttendanceTab({ companyId }) {
-  const [date, setDate]           = useState(new Date().toISOString().split('T')[0])
-  const [saving, setSaving]       = useState(false)
-  const [shiftTimes, setShiftTimes] = useState({})  // { [empId]: { start, end } }
+  const { role } = useAuth()
+  const qc = useQueryClient()
+  const [date, setDate]             = useState(new Date().toISOString().split('T')[0])
+  const [saving, setSaving]         = useState(false)
+  const [shiftTimes, setShiftTimes] = useState({})
+  const [editOt, setEditOt]         = useState(false)
+  const [otInput, setOtInput]       = useState('')
+
+  // Fetch company OT threshold (editable by admin/manager)
+  const { data: company, refetch: refetchCompany } = useQuery({
+    queryKey: ['company_ot', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('companies').select('ot_threshold_hours').eq('id', companyId).single()
+      return data
+    },
+    enabled: !!companyId,
+  })
+  const otThreshold = company?.ot_threshold_hours ?? 12
+
+  const saveOtThreshold = async () => {
+    const v = parseFloat(otInput)
+    if (isNaN(v) || v < 1 || v > 24) { toast.error('Enter a valid hour (1–24)'); return }
+    await supabase.from('companies').update({ ot_threshold_hours: v }).eq('id', companyId)
+    refetchCompany()
+    setEditOt(false)
+    toast.success(`OT threshold updated to ${v}h`)
+  }
 
   const { data: employees = [] } = useQuery({
     queryKey: ['hr_employees_active', companyId],
@@ -1254,15 +1282,11 @@ function AttendanceTab({ companyId }) {
     enabled: !!companyId,
   })
 
-  // Pre-populate shift time inputs from existing DB records when date changes
   useEffect(() => {
     const times = {}
     attendance.forEach(a => {
       if (a.shift_start_time || a.shift_end_time) {
-        times[a.employee_id] = {
-          start: a.shift_start_time || '',
-          end:   a.shift_end_time   || '',
-        }
+        times[a.employee_id] = { start: a.shift_start_time || '', end: a.shift_end_time || '' }
       }
     })
     setShiftTimes(prev => ({ ...prev, ...times }))
@@ -1277,10 +1301,10 @@ function AttendanceTab({ companyId }) {
   const setShiftTime = (empId, field, value) =>
     setShiftTimes(prev => ({ ...prev, [empId]: { ...prev[empId], [field]: value } }))
 
-  // Core upsert — accepts optional shift time & OT fields
+  // Core upsert — manual overrides always win; source='manual'
   const markAttendance = async (empId, status, extraFields = {}) => {
     const existing = attMap[empId]
-    const payload  = { status, shift_start_time: null, shift_end_time: null, ot_hours: 0, ...extraFields }
+    const payload  = { status, shift_start_time: null, shift_end_time: null, ot_hours: 0, source: 'manual', ...extraFields }
     if (existing) {
       await supabase.from('hr_attendance').update(payload).eq('id', existing.id)
     } else {
@@ -1291,23 +1315,22 @@ function AttendanceTab({ companyId }) {
     refetch()
   }
 
-  // Save shift-based attendance: auto-derives status and OT from times
+  // Manual shift time entry in HR tab
   const saveShiftAttendance = async (emp) => {
     const st = shiftTimes[emp.id] || {}
     if (!st.start) { toast.error('Enter shift start time'); return }
     if (!st.end)   { toast.error('Enter shift end time');   return }
-    const hours  = calcShiftHours(st.start, st.end)
-    const status = calcShiftStatus(hours)
+    const hours   = calcShiftHours(st.start, st.end)
+    const status  = calcShiftStatus(hours)
     if (!status)  { toast.error('Duration is 0 — check times'); return }
-    // OT = hours beyond 8 (Factories Act standard working day)
-    const otHours = hours > 8 ? Math.round((hours - 8) * 10) / 10 : 0
+    const otHours = calcOtHours(hours, otThreshold)
     await markAttendance(emp.id, status, {
       shift_start_time: st.start,
       shift_end_time:   st.end,
       ot_hours:         otHours,
     })
     const label = status === 'half_day'
-      ? `Half Day (${hours}h — under 4 hrs)`
+      ? `Half Day (${hours}h)`
       : otHours > 0 ? `Present + ${otHours}h OT` : `Present (${hours}h)`
     toast.success(`${emp.name} — ${label}`)
   }
@@ -1373,6 +1396,32 @@ function AttendanceTab({ companyId }) {
             <span key={c.label} className={`shrink-0 px-2.5 py-1 rounded-full border font-medium ${c.cls}`}>{c.label}</span>
           ))}
         </div>
+
+        {/* OT threshold setting */}
+        <div className="flex items-center gap-2 text-xs text-slate-400 border-t border-dark-700 pt-2">
+          <span className="text-slate-500">OT after</span>
+          {editOt ? (
+            <>
+              <input type="number" min="1" max="24" step="0.5"
+                className="w-14 bg-dark-700 border border-primary-500 rounded px-2 py-0.5 text-slate-100 text-xs focus:outline-none"
+                value={otInput}
+                onChange={e => setOtInput(e.target.value)}
+                autoFocus />
+              <span className="text-slate-500">hrs</span>
+              <button onClick={saveOtThreshold} className="text-primary-400 hover:text-primary-300">Save</button>
+              <button onClick={() => setEditOt(false)} className="text-slate-500 hover:text-slate-300">Cancel</button>
+            </>
+          ) : (
+            <>
+              <span className="font-semibold text-slate-200">{otThreshold}h</span>
+              {['admin','manager'].includes(role) && (
+                <button onClick={() => { setOtInput(String(otThreshold)); setEditOt(true) }}
+                  className="text-primary-400/60 hover:text-primary-300 underline underline-offset-2">Edit</button>
+              )}
+            </>
+          )}
+          <span className="ml-1 text-slate-600">· Auto-filled from shift on operators/supervisors</span>
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 pb-4">
@@ -1388,9 +1437,10 @@ function AttendanceTab({ companyId }) {
               const status   = att?.status || null
               const isShift  = isShiftWorker(emp)
               const st       = shiftTimes[emp.id] || {}
-              const shiftHrs = (st.start && st.end) ? calcShiftHours(st.start, st.end) : 0
+              const shiftHrs   = (st.start && st.end) ? calcShiftHours(st.start, st.end) : 0
               const autoStatus = (st.start && st.end) ? calcShiftStatus(shiftHrs) : null
-              const autoOT   = shiftHrs > 8 ? Math.round((shiftHrs - 8) * 10) / 10 : 0
+              const autoOT     = calcOtHours(shiftHrs, otThreshold)
+              const isAutoFill = att?.source === 'shift_auto'
 
               return (
                 <div key={emp.id} className="bg-dark-800 border border-dark-700 rounded-xl p-3">
@@ -1402,6 +1452,7 @@ function AttendanceTab({ companyId }) {
                         {emp.employee_number}
                         {emp.designation ? ` · ${emp.designation}` : ''}
                         {isShift && <span className="ml-1.5 text-orange-400/60">· shift</span>}
+                        {isAutoFill && <span className="ml-1.5 text-sky-400/60">· auto from shift</span>}
                       </p>
                     </div>
                     {status && (
