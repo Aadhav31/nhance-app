@@ -102,24 +102,26 @@ function LineItemsEditor({ lines, setLines, onGstRate, isTax }) {
       <div className="space-y-2">
         {lines.map(l => (
           <div key={l._id} className="bg-dark-700/40 rounded-xl p-2 space-y-1.5">
-            {/* Row 1: HSN/SAC + Description + Delete */}
+            {/* Row 1: HSN/SAC (tax only) + Description + Delete */}
             <div className="flex gap-1.5 items-center">
-              <div className="relative w-28 shrink-0">
-                <input
-                  className={`${inp()} text-xs font-mono uppercase pr-8`}
-                  placeholder="HSN/SAC"
-                  value={l.hsn_sac}
-                  onChange={e => update(l._id, 'hsn_sac', e.target.value)}
-                />
-                {l._gst_rate != null && (
-                  <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[9px] font-bold bg-emerald-900/50 text-emerald-400 px-1.5 py-0.5 rounded-full whitespace-nowrap">
-                    {l._gst_rate}%
-                  </span>
-                )}
-                {isTax && !l.hsn_sac.trim() && (
-                  <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[9px] font-bold text-orange-500/80">*</span>
-                )}
-              </div>
+              {isTax && (
+                <div className="relative w-28 shrink-0">
+                  <input
+                    className={`${inp()} text-xs font-mono uppercase pr-8`}
+                    placeholder="HSN/SAC"
+                    value={l.hsn_sac}
+                    onChange={e => update(l._id, 'hsn_sac', e.target.value)}
+                  />
+                  {l._gst_rate != null && (
+                    <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[9px] font-bold bg-emerald-900/50 text-emerald-400 px-1.5 py-0.5 rounded-full whitespace-nowrap">
+                      {l._gst_rate}%
+                    </span>
+                  )}
+                  {!l.hsn_sac.trim() && (
+                    <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[9px] font-bold text-orange-500/80">*</span>
+                  )}
+                </div>
+              )}
               <input
                 className={`${inp()} flex-1 text-xs`}
                 placeholder="Description of goods / services"
@@ -146,8 +148,8 @@ function LineItemsEditor({ lines, setLines, onGstRate, isTax }) {
                 <span className="text-xs font-semibold text-slate-200">{fmtINR(l.amount)}</span>
               </div>
             </div>
-            {/* HSN/SAC description hint */}
-            {l._gst_desc && (
+            {/* HSN/SAC description hint — only on tax docs */}
+            {isTax && l._gst_desc && (
               <p className="text-[9px] text-slate-500 px-0.5 truncate">{l._gst_desc}</p>
             )}
           </div>
