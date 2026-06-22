@@ -72,7 +72,7 @@ function Field({ label, children, required }) {
   )
 }
 
-const blankLine = () => ({ _id: Math.random().toString(36).slice(2), description: '', hsn_sac: '', quantity: 1, unit: 'nos', rate: '', amount: 0, _gst_rate: null, _gst_desc: null })
+const blankLine = () => ({ _id: Math.random().toString(36).slice(2), description: '', hsn_sac: '', quantity: 1, unit: 'nos', rate: '', amount: 0, _gst_rate: null, _gst_desc: null, _hsn_open: false })
 
 const LINE_UNITS = ['unit','nos','hrs','days','kg','ton','m3','km','ls','set','mtr','sqm','sqft','cum','rmt','ltr']
 
@@ -89,7 +89,10 @@ function LineItemsEditor({ lines, setLines, onGstRate, isTax }) {
     }
     return u
   }))
+  const toggleHsn = (id) => setLines(p => p.map(l => l._id === id ? { ...l, _hsn_open: !l._hsn_open } : l))
+  const clearHsn  = (id) => setLines(p => p.map(l => l._id === id ? { ...l, hsn_sac: '', _gst_rate: null, _gst_desc: null, _hsn_open: false } : l))
   const total = lines.reduce((s, l) => s + (l.amount || 0), 0)
+
   return (
     <div>
       <div className="flex items-center justify-between mb-2">
@@ -100,60 +103,79 @@ function LineItemsEditor({ lines, setLines, onGstRate, isTax }) {
         </button>
       </div>
       <div className="space-y-2">
-        {lines.map(l => (
-          <div key={l._id} className="bg-dark-700/40 rounded-xl p-2 space-y-1.5">
-            {/* Row 1: HSN/SAC (tax only) + Description + Delete */}
-            <div className="flex gap-1.5 items-center">
+        {lines.map(l => {
+          const hsnFilled = l.hsn_sac.trim().length > 0
+          const showInput = isTax && (l._hsn_open || hsnFilled)
+          return (
+            <div key={l._id} className="bg-dark-700/40 rounded-xl p-2 space-y-1.5">
+              {/* Row 1: Description + Delete */}
+              <div className="flex gap-1.5 items-center">
+                <input
+                  className={`${inp()} flex-1 text-xs`}
+                  placeholder="Description of goods / services"
+                  value={l.description}
+                  onChange={e => update(l._id, 'description', e.target.value)}
+                />
+                <button type="button" onClick={() => setLines(p => p.length > 1 ? p.filter(x => x._id !== l._id) : p)}
+                  className="shrink-0 text-slate-600 hover:text-red-400"><X className="w-3.5 h-3.5" /></button>
+              </div>
+
+              {/* HSN/SAC — only on tax docs */}
               {isTax && (
-                <div className="relative w-28 shrink-0">
-                  <input
-                    className={`${inp()} text-xs font-mono uppercase pr-8`}
-                    placeholder="HSN/SAC"
-                    value={l.hsn_sac}
-                    onChange={e => update(l._id, 'hsn_sac', e.target.value)}
-                  />
-                  {l._gst_rate != null && (
-                    <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[9px] font-bold bg-emerald-900/50 text-emerald-400 px-1.5 py-0.5 rounded-full whitespace-nowrap">
-                      {l._gst_rate}%
-                    </span>
-                  )}
-                  {!l.hsn_sac.trim() && (
-                    <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[9px] font-bold text-orange-500/80">*</span>
+                <div className="pl-0.5">
+                  {!showInput ? (
+                    <button type="button" onClick={() => toggleHsn(l._id)}
+                      className="text-[10px] text-primary-400/70 hover:text-primary-300 transition-colors">
+                      + Add HSN / SAC code
+                    </button>
+                  ) : (
+                    <div className="flex items-center gap-1.5">
+                      <div className="relative w-36 shrink-0">
+                        <input
+                          autoFocus={l._hsn_open && !hsnFilled}
+                          className={`${inp()} text-xs font-mono uppercase py-1.5 pr-10`}
+                          placeholder="e.g. 997313"
+                          value={l.hsn_sac}
+                          onChange={e => update(l._id, 'hsn_sac', e.target.value)}
+                        />
+                        {l._gst_rate != null && (
+                          <span className="absolute right-6 top-1/2 -translate-y-1/2 text-[9px] font-bold bg-emerald-900/60 text-emerald-400 px-1.5 py-0.5 rounded-full">
+                            {l._gst_rate}%
+                          </span>
+                        )}
+                        <button type="button" onClick={() => clearHsn(l._id)}
+                          className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                      {l._gst_desc && (
+                        <span className="text-[9px] text-slate-500 truncate flex-1">{l._gst_desc}</span>
+                      )}
+                    </div>
                   )}
                 </div>
               )}
-              <input
-                className={`${inp()} flex-1 text-xs`}
-                placeholder="Description of goods / services"
-                value={l.description}
-                onChange={e => update(l._id, 'description', e.target.value)}
-              />
-              <button type="button" onClick={() => setLines(p => p.length > 1 ? p.filter(x => x._id !== l._id) : p)}
-                className="shrink-0 text-slate-600 hover:text-red-400"><X className="w-3.5 h-3.5" /></button>
-            </div>
-            {/* Row 2: Qty | Unit | Rate | Amount */}
-            <div className="flex gap-1.5 items-center pl-0.5">
-              <div className="w-16 shrink-0">
-                <input className={`${inp()} text-xs text-center`} type="number" value={l.quantity} onChange={e => update(l._id, 'quantity', e.target.value)} min="0" step="0.01" />
-              </div>
-              <div className="w-20 shrink-0">
-                <select className={`${inp()} text-xs`} value={l.unit} onChange={e => update(l._id, 'unit', e.target.value)}>
-                  {LINE_UNITS.map(u => <option key={u}>{u}</option>)}
-                </select>
-              </div>
-              <div className="flex-1">
-                <input className={`${inp()} text-xs text-right`} type="number" value={l.rate} onChange={e => update(l._id, 'rate', e.target.value)} placeholder="Rate (₹)" step="0.01" />
-              </div>
-              <div className="w-24 text-right shrink-0">
-                <span className="text-xs font-semibold text-slate-200">{fmtINR(l.amount)}</span>
+
+              {/* Row 2: Qty | Unit | Rate | Amount */}
+              <div className="flex gap-1.5 items-center pl-0.5">
+                <div className="w-16 shrink-0">
+                  <input className={`${inp()} text-xs text-center`} type="number" value={l.quantity} onChange={e => update(l._id, 'quantity', e.target.value)} min="0" step="0.01" />
+                </div>
+                <div className="w-20 shrink-0">
+                  <select className={`${inp()} text-xs`} value={l.unit} onChange={e => update(l._id, 'unit', e.target.value)}>
+                    {LINE_UNITS.map(u => <option key={u}>{u}</option>)}
+                  </select>
+                </div>
+                <div className="flex-1">
+                  <input className={`${inp()} text-xs text-right`} type="number" value={l.rate} onChange={e => update(l._id, 'rate', e.target.value)} placeholder="Rate (₹)" step="0.01" />
+                </div>
+                <div className="w-24 text-right shrink-0">
+                  <span className="text-xs font-semibold text-slate-200">{fmtINR(l.amount)}</span>
+                </div>
               </div>
             </div>
-            {/* HSN/SAC description hint — only on tax docs */}
-            {isTax && l._gst_desc && (
-              <p className="text-[9px] text-slate-500 px-0.5 truncate">{l._gst_desc}</p>
-            )}
-          </div>
-        ))}
+          )
+        })}
       </div>
       <div className="flex justify-end mt-2 text-xs text-slate-400">
         Subtotal: <span className="font-bold text-slate-200 ml-1">{fmtINR(total)}</span>
