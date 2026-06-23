@@ -1961,7 +1961,7 @@ function ShiftsTab({ companyId }) {
     queryKey: ['all_shifts', companyId, dateFrom, dateTo, equipFilter],
     queryFn: async () => {
       let q = supabase.from('shifts')
-        .select('*, equipment(id, name, equipment_number, category, meter_type), projects(id, name, project_code)')
+        .select('*, equipment(id, name, equipment_number, category, meter_type)')
         .eq('company_id', companyId)
         .gte('shift_date', dateFrom)
         .lte('shift_date', dateTo)
@@ -1970,7 +1970,19 @@ function ShiftsTab({ companyId }) {
       if (equipFilter !== 'all') q = q.eq('equipment_id', equipFilter)
       const { data, error } = await q.limit(200)
       if (error) throw error
-      return data || []
+
+      // Fetch project names separately for shifts that have a project_id
+      const shifts = data || []
+      const projectIds = [...new Set(shifts.map(s => s.project_id).filter(Boolean))]
+      if (projectIds.length > 0) {
+        const { data: projects } = await supabase.from('projects')
+          .select('id, name, project_code').in('id', projectIds)
+        if (projects) {
+          const pMap = Object.fromEntries(projects.map(p => [p.id, p]))
+          shifts.forEach(s => { s._project = s.project_id ? pMap[s.project_id] : null })
+        }
+      }
+      return shifts
     },
     enabled: !!companyId,
   })
@@ -2153,10 +2165,10 @@ function ShiftsTab({ companyId }) {
                     {/* Project */}
                     <div className="min-w-0">
                       <p className="text-xs text-slate-300 truncate leading-tight">
-                        {s.projects?.name || '—'}
+                        {s._project?.name || '—'}
                       </p>
-                      {s.projects?.project_code && (
-                        <p className="text-[10px] text-slate-600 truncate">{s.projects.project_code}</p>
+                      {s._project?.project_code && (
+                        <p className="text-[10px] text-slate-600 truncate">{s._project.project_code}</p>
                       )}
                     </div>
 
