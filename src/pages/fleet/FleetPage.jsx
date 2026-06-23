@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
+import { nextEquipmentNumber } from '../../utils/docNumbers'
 import {
   EQUIPMENT_TYPES, EQUIPMENT_CATEGORIES, getMeterType, getPrefix, getSubCategories, getAttachments,
   STATUS_COLORS, INCIDENT_SEVERITY
@@ -257,17 +258,22 @@ function EquipmentFormModal({ companyId, initialValues, onClose, onSaved }) {
   const [saving, setSaving] = useState(false)
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
 
-  const handleCategoryChange = (cat) => {
-    const prefix   = getPrefix(cat)
-    const subCats  = getSubCategories(cat)
-    const curNum   = form.equipment_number
-    // Auto-update prefix in equipment_number if it's still at default / matches old prefix
+  const handleCategoryChange = async (cat) => {
+    const prefix    = getPrefix(cat)
+    const subCats   = getSubCategories(cat)
+    const curNum    = form.equipment_number
     const oldPrefix = getPrefix(form.category)
     const shouldUpdateNum = !curNum || curNum === `${oldPrefix}-` || curNum.startsWith(`${oldPrefix}-`)
-    set('category',      cat)
-    set('sub_category',  subCats.length > 0 ? subCats[0] : '')
-    set('meter_type',    getMeterType(cat))
-    if (shouldUpdateNum) set('equipment_number', `${prefix}-`)
+    set('category',     cat)
+    set('sub_category', subCats.length > 0 ? subCats[0] : '')
+    set('meter_type',   getMeterType(cat))
+    // For new equipment, auto-generate the number from DB sequence
+    if (!isEdit && shouldUpdateNum) {
+      const autoNum = await nextEquipmentNumber(companyId, prefix).catch(() => `${prefix}-`)
+      set('equipment_number', autoNum)
+    } else if (shouldUpdateNum) {
+      set('equipment_number', `${prefix}-`)
+    }
   }
 
   const handleSave = async () => {

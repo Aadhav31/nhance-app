@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
+import { nextDocNumber } from '../../utils/docNumbers'
 import {
   Package, Plus, X, Loader2, Search, ChevronRight, AlertTriangle,
   ArrowDownCircle, ArrowUpCircle, RefreshCcw, Shuffle, Store,
@@ -207,6 +208,13 @@ function ItemsTab({ companyId, session }) {
   const [form, setForm] = useState(blank)
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
 
+  const openCreate = async () => {
+    const code = await nextDocNumber(companyId, 'inventory_item').catch(() => '')
+    setEditing(null)
+    setForm({ ...blank, item_code: code })
+    setShowCreate(true)
+  }
+
   const { data: items = [], isLoading } = useQuery({
     queryKey: ['inv_items', companyId],
     queryFn: async () => {
@@ -285,7 +293,7 @@ function ItemsTab({ companyId, session }) {
           <option value="all">All Categories</option>
           {CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
         </select>
-        <button onClick={() => { setEditing(null); setForm(blank); setShowCreate(true) }} className="btn-primary shrink-0">
+        <button onClick={openCreate} className="btn-primary shrink-0">
           <Plus className="w-4 h-4" /> Add Item
         </button>
       </div>
@@ -522,8 +530,15 @@ function StockInTab({ companyId, session }) {
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving]         = useState(false)
   const [form, setForm] = useState({ item_id:'', store_id:'', quantity:'', unit_cost:'', txn_date: todayStr(), vendor_id:'', po_id:'', notes:'' })
+  const [txnNum, setTxnNum] = useState('')
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
   const { items, stores, vendors } = useInventoryData(companyId)
+
+  const openCreate = async () => {
+    const num = await nextDocNumber(companyId, 'stock_in').catch(() => `GRN-${Date.now()}`)
+    setTxnNum(num)
+    setShowCreate(true)
+  }
 
   const { data: txns = [], isLoading } = useQuery({
     queryKey: ['stxn_in', companyId],
@@ -534,7 +549,6 @@ function StockInTab({ companyId, session }) {
     enabled: !!companyId,
   })
 
-  const txnNum = `GRN-${new Date().getFullYear()}-${String((txns.length || 0) + 1).padStart(4, '0')}`
   const total  = (parseFloat(form.quantity) || 0) * (parseFloat(form.unit_cost) || 0)
 
   const save = async () => {
@@ -573,7 +587,7 @@ function StockInTab({ companyId, session }) {
           <span className="text-slate-500">Total Receipts </span>
           <span className="font-bold text-emerald-400">{txns.length}</span>
         </div>
-        <button onClick={() => setShowCreate(true)} className="btn-primary"><Plus className="w-4 h-4" /> Receive Stock</button>
+        <button onClick={openCreate} className="btn-primary"><Plus className="w-4 h-4" /> Receive Stock</button>
       </div>
       <div className="flex-1 overflow-y-auto px-4 pb-4 pt-3">
         {isLoading ? <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-primary-400" /></div>
@@ -638,8 +652,15 @@ function StockOutTab({ companyId, session }) {
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving]         = useState(false)
   const [form, setForm] = useState({ item_id:'', store_id:'', quantity:'', txn_date: todayStr(), project_id:'', equipment_id:'', issued_to:'', notes:'' })
+  const [issNum, setIssNum] = useState('')
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
   const { items, stores, projects, equipment } = useInventoryData(companyId)
+
+  const openCreate = async () => {
+    const num = await nextDocNumber(companyId, 'stock_out').catch(() => `ISS-${Date.now()}`)
+    setIssNum(num)
+    setShowCreate(true)
+  }
 
   const { data: txns = [], isLoading } = useQuery({
     queryKey: ['stxn_out', companyId],
@@ -659,8 +680,6 @@ function StockOutTab({ companyId, session }) {
     },
     enabled: !!form.item_id && !!form.store_id,
   })
-
-  const issNum = `ISS-${new Date().getFullYear()}-${String((txns.length || 0) + 1).padStart(4, '0')}`
 
   const save = async () => {
     if (!form.item_id)  return toast.error('Select an item')
@@ -694,7 +713,7 @@ function StockOutTab({ companyId, session }) {
           <span className="text-slate-500">Total Issues </span>
           <span className="font-bold text-red-400">{txns.length}</span>
         </div>
-        <button onClick={() => setShowCreate(true)} className="btn-primary"><Plus className="w-4 h-4" /> Issue Stock</button>
+        <button onClick={openCreate} className="btn-primary"><Plus className="w-4 h-4" /> Issue Stock</button>
       </div>
       <div className="flex-1 overflow-y-auto px-4 pb-4 pt-3">
         {isLoading ? <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-primary-400" /></div>
@@ -765,8 +784,15 @@ function TransfersTab({ companyId, session }) {
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving]         = useState(false)
   const [form, setForm] = useState({ item_id:'', store_id:'', to_store_id:'', quantity:'', txn_date: todayStr(), notes:'' })
+  const [trfNum, setTrfNum] = useState('')
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
   const { items, stores } = useInventoryData(companyId)
+
+  const openCreate = async () => {
+    const num = await nextDocNumber(companyId, 'stock_transfer').catch(() => `TRF-${Date.now()}`)
+    setTrfNum(num)
+    setShowCreate(true)
+  }
 
   const { data: txns = [], isLoading } = useQuery({
     queryKey: ['stxn_transfer', companyId],
@@ -776,8 +802,6 @@ function TransfersTab({ companyId, session }) {
     },
     enabled: !!companyId,
   })
-
-  const trfNum = `TRF-${new Date().getFullYear()}-${String((txns.length || 0) + 1).padStart(4, '0')}`
 
   const save = async () => {
     if (!form.item_id)     return toast.error('Select an item')
@@ -807,7 +831,7 @@ function TransfersTab({ companyId, session }) {
     <div className="flex flex-col h-full">
       <div className="px-4 py-3 border-b border-dark-800 shrink-0 flex items-center justify-between">
         <span className="text-xs bg-dark-800 rounded-xl px-3 py-2 text-slate-500">{txns.length} transfers</span>
-        <button onClick={() => setShowCreate(true)} className="btn-primary"><Plus className="w-4 h-4" /> Transfer Stock</button>
+        <button onClick={openCreate} className="btn-primary"><Plus className="w-4 h-4" /> Transfer Stock</button>
       </div>
       <div className="flex-1 overflow-y-auto px-4 pb-4 pt-3">
         {isLoading ? <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-primary-400" /></div>
@@ -866,8 +890,15 @@ function AdjustmentsTab({ companyId, session }) {
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving]         = useState(false)
   const [form, setForm] = useState({ item_id:'', store_id:'', quantity:'', adj_type:'+', txn_date: todayStr(), reason:'', notes:'' })
+  const [adjNum, setAdjNum] = useState('')
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
   const { items, stores } = useInventoryData(companyId)
+
+  const openCreate = async () => {
+    const num = await nextDocNumber(companyId, 'stock_adjustment').catch(() => `ADJ-${Date.now()}`)
+    setAdjNum(num)
+    setShowCreate(true)
+  }
 
   const { data: txns = [], isLoading } = useQuery({
     queryKey: ['stxn_adj', companyId],
@@ -877,8 +908,6 @@ function AdjustmentsTab({ companyId, session }) {
     },
     enabled: !!companyId,
   })
-
-  const adjNum = `ADJ-${new Date().getFullYear()}-${String((txns.length || 0) + 1).padStart(4, '0')}`
 
   const REASONS = ['Physical audit correction','Damage / Breakage','Expired / Obsolete','Theft / Loss','System correction','Opening balance','Other']
 
@@ -908,7 +937,7 @@ function AdjustmentsTab({ companyId, session }) {
     <div className="flex flex-col h-full">
       <div className="px-4 py-3 border-b border-dark-800 shrink-0 flex items-center justify-between">
         <span className="text-xs bg-dark-800 rounded-xl px-3 py-2 text-slate-500">{txns.length} adjustments</span>
-        <button onClick={() => setShowCreate(true)} className="btn-primary"><Plus className="w-4 h-4" /> Adjust Stock</button>
+        <button onClick={openCreate} className="btn-primary"><Plus className="w-4 h-4" /> Adjust Stock</button>
       </div>
       <div className="flex-1 overflow-y-auto px-4 pb-4 pt-3">
         {isLoading ? <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-primary-400" /></div>
