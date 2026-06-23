@@ -308,7 +308,7 @@ function EquipPLReport({ companyId, from, to }) {
       // ── 7. Spare parts (inventory_transactions type='issue'/'out') ─────────
       const { data: spares } = await supabase.from('inventory_transactions')
         .select('equipment_id,total_cost').eq('company_id', companyId)
-        .in('transaction_type', ['issue','out','usage'])
+        .in('transaction_type', ['issue'])
         .gte('transaction_date', from).lte('transaction_date', to)
         .in('equipment_id', eqIds)
 

@@ -29,15 +29,18 @@ ALTER TABLE equipment_deployments
   ADD COLUMN IF NOT EXISTS fuel_by_client      BOOLEAN       DEFAULT false,  -- per-deployment override
   ADD COLUMN IF NOT EXISTS item_name           TEXT;                         -- rate item description (denormalized for reporting)
 
--- Update rate_unit on existing rows to text if needed (it's an enum but we're adding text aliases)
--- rate_unit enum values: per_hour, per_day, per_month, per_shift — already consistent
+-- ─── 3. Relax NOT NULL constraints (original schema was stricter than needed) ─
+-- client_id was NOT NULL — equipment can be deployed internally without a client
+ALTER TABLE equipment_deployments ALTER COLUMN client_id  DROP NOT NULL;
+-- rental_rate was NOT NULL — rate card model makes it optional (rate_per_hour/day/month used instead)
+ALTER TABLE equipment_deployments ALTER COLUMN rental_rate DROP NOT NULL;
 
--- ─── 3. Indexes ──────────────────────────────────────────────────────────────
+-- ─── 5. Indexes ──────────────────────────────────────────────────────────────
 CREATE INDEX IF NOT EXISTS idx_eq_deployments_equipment ON equipment_deployments(equipment_id);
 CREATE INDEX IF NOT EXISTS idx_eq_deployments_project   ON equipment_deployments(project_id);
 CREATE INDEX IF NOT EXISTS idx_eq_deployments_status    ON equipment_deployments(status);
 
--- ─── 4. Verify ───────────────────────────────────────────────────────────────
+-- ─── 6. Verify ───────────────────────────────────────────────────────────────
 SELECT
   COUNT(*)                                             AS total_equipment,
   COUNT(*) FILTER (WHERE specific_consumption_lph IS NOT NULL) AS with_consumption_rate,
