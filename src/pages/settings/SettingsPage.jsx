@@ -447,7 +447,7 @@ function RazorpaySettings({ companyId, isAdmin }) {
       return toast.error('Key ID must start with rzp_live_ or rzp_test_')
     setSaving(true)
     try {
-      const update: Record<string, string | null> = { razorpay_key_id: keyId.trim() }
+      const update = { razorpay_key_id: keyId.trim() }
       if (keySecret.trim()) update.razorpay_key_secret = keySecret.trim()
       if (webhookSecret.trim()) update.razorpay_webhook_secret = webhookSecret.trim()
       const { error } = await supabase.from('companies').update(update).eq('id', companyId)
@@ -456,7 +456,7 @@ function RazorpaySettings({ companyId, isAdmin }) {
       setKeySecret('')       // clear secrets from UI after save
       setWebhookSecret('')
       toast.success('Razorpay connected successfully')
-    } catch (e: any) { toast.error(e.message) } finally { setSaving(false) }
+    } catch (e) { toast.error(e.message) } finally { setSaving(false) }
   }
 
   const handleRemove = async () => {
@@ -471,7 +471,7 @@ function RazorpaySettings({ companyId, isAdmin }) {
       setKeyId(''); setKeySecret(''); setWebhookSecret('')
       setConnected(false)
       toast.success('Razorpay disconnected')
-    } catch (e: any) { toast.error(e.message) } finally { setRemoving(false) }
+    } catch (e) { toast.error(e.message) } finally { setRemoving(false) }
   }
 
   const copyWebhookUrl = () => {
