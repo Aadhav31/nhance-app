@@ -7,6 +7,7 @@ import LoginPage from './pages/auth/LoginPage'
 import Sidebar from './components/layout/Sidebar'
 import TopBar from './components/layout/TopBar'
 import { MODULES } from './lib/constants'
+import OperatorPortal from './pages/operator/OperatorPortal'
 
 // Lazy-load all pages for performance
 const DashboardPage   = lazy(() => import('./pages/dashboard/DashboardPage'))
@@ -44,10 +45,13 @@ function AppShell() {
 
   if (!session) return <LoginPage />
 
+  // Operators get their own dedicated mobile portal — not the admin shell
+  if (role === 'operator') return <OperatorPortal />
+
   const handleNavigate = (page) => setActivePage(page)
 
   // Default landing page by role
-  const defaultPage = isSuperAdmin() ? 'superadmin' : role === 'operator' ? 'operations' : 'dashboard'
+  const defaultPage = isSuperAdmin() ? 'superadmin' : 'dashboard'
   const effectivePage = activePage === 'dashboard' ? defaultPage : activePage
 
   const renderPage = () => {
