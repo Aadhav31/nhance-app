@@ -247,6 +247,7 @@ function EquipmentFormModal({ companyId, initialValues, onClose, onSaved }) {
     year_of_manufacture: '', registration_number: '', chassis_number: '',
     capacity: '', fuel_type: 'diesel', meter_type: 'hours',
     current_meter_reading: '0', status: 'active', notes: '',
+    specific_consumption_lph: '',
     // Ownership
     ownership_type: 'own', owner_name: '', owner_contact: '',
     hire_start_date: '', hire_end_date: '',
@@ -298,6 +299,7 @@ function EquipmentFormModal({ companyId, initialValues, onClose, onSaved }) {
         current_meter_reading: Number(form.current_meter_reading) || 0,
         status:                form.status,
         notes:                 form.notes      || null,
+        specific_consumption_lph: form.specific_consumption_lph ? Number(form.specific_consumption_lph) : null,
         // Ownership
         ownership_type:   form.ownership_type,
         owner_name:       form.ownership_type !== 'own' ? (form.owner_name || null) : null,
@@ -420,6 +422,10 @@ function EquipmentFormModal({ companyId, initialValues, onClose, onSaved }) {
           <input className={inp()} value={form.capacity} onChange={e => set('capacity', e.target.value)} placeholder="20T, 1.2m³…" />
         </Field>
       </div>
+      <Field label="Specific Fuel Consumption (L/hr)" hint="Standard expected consumption — used for P&L fuel over-consumption alerts">
+        <input type="number" className={inp()} value={form.specific_consumption_lph || ''} onChange={e => set('specific_consumption_lph', e.target.value)}
+          placeholder="e.g. 12.5" step="0.1" min="0" />
+      </Field>
       <Field label="Notes">
         <VoiceTextarea value={form.notes} onChange={v => set('notes', v)} placeholder="Any additional details…" />
       </Field>
@@ -1295,13 +1301,15 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
   }
 
   // ── Admin deploy state ───────────────────────────────────────────────────────
-  const [deployClientId,  setDeployClientId]  = useState(equipment.current_client_id  || '')
-  const [deployProjectId, setDeployProjectId] = useState(equipment.current_project_id || '')
-  const [deploySiteName,  setDeploySiteName]  = useState(equipment.current_site_name  || '')
-  const [deploySaving,    setDeploySaving]    = useState(false)
-  const [newOperator,     setNewOperator]     = useState('')
-  const [newShiftType,    setNewShiftType]    = useState('day')
-  const [operatorSaving,  setOperatorSaving]  = useState(false)
+  const [deployClientId,   setDeployClientId]   = useState(equipment.current_client_id  || '')
+  const [deployProjectId,  setDeployProjectId]  = useState(equipment.current_project_id || '')
+  const [deploySiteName,   setDeploySiteName]   = useState(equipment.current_site_name  || '')
+  const [deployRateItemId, setDeployRateItemId] = useState('')
+  const [deployFuelByClient, setDeployFuelByClient] = useState(equipment.fuel_by_client || false)
+  const [deploySaving,     setDeploySaving]     = useState(false)
+  const [newOperator,      setNewOperator]      = useState('')
+  const [newShiftType,     setNewShiftType]     = useState('day')
+  const [operatorSaving,   setOperatorSaving]   = useState(false)
 
   // ── Shift Schedule state ─────────────────────────────────────────────────────
   const SHIFT_DEFAULTS = [
@@ -1500,16 +1508,57 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
     if (!deployProjectId) { toast.error('Select a project to deploy'); return }
     setDeploySaving(true)
     try {
+      // 1. Resolve the selected rate item (if any)
+      const selectedRate = rateItems.find(r => r.id === deployRateItemId) || null
+      const effectiveRate = selectedRate || (matchedRates.length === 1 ? matchedRates[0] : null)
+
+      // 2. Update equipment current deployment fields
       const { error } = await supabase.from('equipment').update({
         current_client_id:  deployClientId  || null,
         current_project_id: deployProjectId || null,
         current_site_name:  deploySiteName  || null,
+        fuel_by_client:     deployFuelByClient,
       }).eq('id', equipment.id)
       if (error) throw error
-      setEquipment(e => ({ ...e, current_client_id: deployClientId, current_project_id: deployProjectId, current_site_name: deploySiteName }))
+
+      // 3. Close any active deployment for this equipment
+      await supabase.from('equipment_deployments')
+        .update({ status: 'withdrawn', withdrawn_date: new Date().toISOString().slice(0, 10) })
+        .eq('equipment_id', equipment.id).eq('status', 'active')
+
+      // 4. Insert new deployment record with full rate details
+      const legacyRate = effectiveRate
+        ? (Number(effectiveRate.rate_per_hour) || Number(effectiveRate.rate_per_day) || Number(effectiveRate.rate_per_month) || 0)
+        : 0
+      const legacyUnit = effectiveRate?.billing_basis === 'hourly' ? 'per_hour'
+        : effectiveRate?.billing_basis === 'monthly' ? 'per_month' : 'per_day'
+
+      await supabase.from('equipment_deployments').insert({
+        company_id:          companyId,
+        equipment_id:        equipment.id,
+        project_id:          deployProjectId,
+        client_id:           deployClientId || null,
+        deployed_date:       new Date().toISOString().slice(0, 10),
+        status:              'active',
+        rental_rate:         legacyRate,
+        rate_unit:           legacyUnit,
+        // Rate card details
+        rate_item_id:        effectiveRate?.id        || null,
+        item_name:           effectiveRate?.item_name || null,
+        billing_basis:       effectiveRate?.billing_basis    || null,
+        rate_per_hour:       effectiveRate?.rate_per_hour    || null,
+        rate_per_day:        effectiveRate?.rate_per_day     || null,
+        rate_per_month:      effectiveRate?.rate_per_month   || null,
+        max_hours_per_day:   effectiveRate?.max_hours_per_day   || 8,
+        max_hours_per_month: effectiveRate?.max_hours_per_month || 200,
+        ot_percentage:       effectiveRate?.ot_percentage    || 125,
+        fuel_by_client:      deployFuelByClient,
+      })
+
+      setEquipment(e => ({ ...e, current_client_id: deployClientId, current_project_id: deployProjectId, current_site_name: deploySiteName, fuel_by_client: deployFuelByClient }))
       qc.invalidateQueries(['equipment', companyId])
       qc.invalidateQueries(['project_detail', deployProjectId])
-      toast.success('Equipment deployed to project')
+      toast.success('Equipment deployed — rate card saved')
     } catch (err) { toast.error(err.message || 'Failed to deploy')
     } finally { setDeploySaving(false) }
   }
@@ -1832,24 +1881,50 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
               <input className={inp('text-xs')} value={deploySiteName} onChange={e => setDeploySiteName(e.target.value)}
                 placeholder="Site name (optional, e.g. Phase 2 — North Block)" />
 
-              {/* Rate card match */}
+              {/* Rate card selector */}
               {deployProjectId && rateItems.length > 0 && (
-                <div className="bg-dark-750 border border-dark-500 rounded-lg p-2.5 space-y-1">
+                <div className="bg-dark-750 border border-dark-500 rounded-lg p-2.5 space-y-2">
                   <p className="text-xs text-slate-400 font-medium">
-                    {matchedRates.length > 0 ? `${matchedRates.length} matching rate item(s) in project:` : 'Rate items in this project:'}
+                    Select applicable rate item for this equipment:
                   </p>
-                  {(matchedRates.length > 0 ? matchedRates : rateItems.slice(0, 3)).map((r, i) => (
-                    <div key={i} className="text-xs text-slate-300 flex justify-between">
-                      <span className={matchedRates.includes(r) ? 'text-primary-300 font-medium' : ''}>{r.item_name}</span>
-                      <span className="text-slate-400">
-                        {r.billing_basis === 'monthly' ? `₹${r.rate_per_month}/mo` : r.billing_basis === 'hourly' ? `₹${r.rate_per_hour}/hr` : `₹${r.rate_per_day}/day`}
-                      </span>
-                    </div>
-                  ))}
-                  {matchedRates.length === 0 && rateItems.length > 3 && (
-                    <p className="text-xs text-slate-500">+ {rateItems.length - 3} more items</p>
-                  )}
+                  <select
+                    className="w-full bg-dark-700 border border-dark-500 rounded-lg px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-primary-500"
+                    value={deployRateItemId}
+                    onChange={e => setDeployRateItemId(e.target.value)}
+                  >
+                    <option value="">— None / Enter manually later —</option>
+                    {(matchedRates.length > 0 ? matchedRates : rateItems).map(r => (
+                      <option key={r.id} value={r.id}>
+                        {r.item_name}
+                        {r.billing_basis === 'monthly' ? ` — ₹${r.rate_per_month}/mo` : r.billing_basis === 'hourly' ? ` — ₹${r.rate_per_hour}/hr` : ` — ₹${r.rate_per_day}/day`}
+                        {matchedRates.includes(r) ? ' ✓' : ''}
+                      </option>
+                    ))}
+                  </select>
+                  {deployRateItemId && (() => {
+                    const r = rateItems.find(x => x.id === deployRateItemId)
+                    if (!r) return null
+                    return (
+                      <div className="text-[10px] text-slate-400 space-y-0.5">
+                        <p>Billing: <span className="text-slate-200 capitalize">{r.billing_basis}</span>
+                          {r.billing_basis==='daily' && r.max_hours_per_day && ` · Max ${r.max_hours_per_day} hrs/day`}
+                          {r.billing_basis==='monthly' && r.max_hours_per_month && ` · Max ${r.max_hours_per_month} hrs/mo`}
+                        </p>
+                        {r.ot_percentage && <p>OT: <span className="text-primary-300">{r.ot_percentage}% of pro-rata rate</span></p>}
+                      </div>
+                    )
+                  })()}
                 </div>
+              )}
+              {deployProjectId && (
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <div className={`w-8 h-4 rounded-full transition-colors relative ${deployFuelByClient ? 'bg-primary-500' : 'bg-dark-600'}`}
+                    onClick={() => setDeployFuelByClient(v => !v)}>
+                    <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full shadow transition-transform ${deployFuelByClient ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                  </div>
+                  <span className="text-xs text-slate-300">Fuel supplied by client</span>
+                  {deployFuelByClient && <span className="text-[10px] text-amber-400 bg-amber-900/20 border border-amber-700/30 rounded px-1.5 py-0.5">Fuel costs excluded from our P&L</span>}
+                </label>
               )}
 
               <button onClick={handleDeploy} disabled={deploySaving || !deployProjectId}

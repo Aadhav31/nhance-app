@@ -208,78 +208,366 @@ function EquipUtilizationReport({ companyId, from, to }) {
   )
 }
 
-// ─── Equipment P&L ────────────────────────────────────────────────────────────
+// ─── Equipment P&L (Full Model) ───────────────────────────────────────────────
+// Revenue = rate-card × actual hours/days/months worked
+// Expenses = fuel (excl. client-supplied) + operator salary + maintenance + spares + tagged expenses
+// Alert   = actual fuel consumption vs standard L/hr (if configured)
+
+function calcRevenue(deployment, workingHrs, shiftDays, monthsWorked) {
+  const basis = deployment.billing_basis || (deployment.rate_unit === 'per_hour' ? 'hourly' : deployment.rate_unit === 'per_month' ? 'monthly' : 'daily')
+  const maxHrDay  = Number(deployment.max_hours_per_day)   || 8
+  const maxHrMo   = Number(deployment.max_hours_per_month) || 200
+  const otPct     = Number(deployment.ot_percentage)        || 125
+
+  if (basis === 'hourly' || basis === 'short_term_hourly') {
+    const rate    = Number(deployment.rate_per_hour) || Number(deployment.rental_rate) || 0
+    return rate * workingHrs
+  }
+  if (basis === 'daily') {
+    const rateDay = Number(deployment.rate_per_day)  || Number(deployment.rental_rate) || 0
+    const rateHr  = rateDay / maxHrDay
+    const baseRev = shiftDays * rateDay
+    // OT: hours worked beyond maxHrDay × shiftDays
+    const stdHrs  = shiftDays * maxHrDay
+    const otHrs   = Math.max(0, workingHrs - stdHrs)
+    const otRev   = otHrs * rateHr * (otPct / 100)
+    return baseRev + otRev
+  }
+  if (basis === 'monthly') {
+    const rateMo  = Number(deployment.rate_per_month) || Number(deployment.rental_rate) || 0
+    const rateHr  = maxHrMo > 0 ? rateMo / maxHrMo : 0
+    const baseRev = monthsWorked * rateMo
+    const stdHrs  = monthsWorked * maxHrMo
+    const otHrs   = Math.max(0, workingHrs - stdHrs)
+    const otRev   = otHrs * rateHr * (otPct / 100)
+    return baseRev + otRev
+  }
+  return 0
+}
 
 function EquipPLReport({ companyId, from, to }) {
+  const [expandedId, setExpandedId] = useState(null)
+
   const { data=[], isLoading } = useQuery({
-    queryKey: ['rpt_equip_pl', companyId, from, to],
+    queryKey: ['rpt_equip_pl_full', companyId, from, to],
     queryFn: async () => {
-      const { data: eqs } = await supabase.from('equipment').select('id,name,equipment_number,category').eq('company_id', companyId)
+      // ── 1. Equipment master (with fuel config) ──────────────────────────────
+      const { data: eqs } = await supabase.from('equipment')
+        .select('id,name,equipment_number,category,specific_consumption_lph,fuel_by_client,current_project_id')
+        .eq('company_id', companyId)
       if (!eqs?.length) return []
-      const { data: lineItems } = await supabase.from('invoice_line_items').select('equipment_id,amount,invoice_id').in('equipment_id', eqs.map(e=>e.id))
-      const { data: invoices } = await supabase.from('client_invoices').select('id,invoice_date').eq('company_id', companyId).gte('invoice_date', from).lte('invoice_date', to)
-      const invoiceSet = new Set((invoices||[]).map(i=>i.id))
-      const { data: shifts } = await supabase.from('shifts').select('id,equipment_id').eq('company_id', companyId).gte('shift_date', from).lte('shift_date', to)
+      const eqIds = eqs.map(e=>e.id)
+
+      // ── 2. Active deployments in period (with rate card) ────────────────────
+      const { data: deployments } = await supabase.from('equipment_deployments')
+        .select('equipment_id,project_id,client_id,billing_basis,rate_per_hour,rate_per_day,rate_per_month,max_hours_per_day,max_hours_per_month,ot_percentage,fuel_by_client,rate_unit,rental_rate,item_name,deployed_date,withdrawn_date')
+        .eq('company_id', companyId).in('equipment_id', eqIds)
+        .or(`withdrawn_date.is.null,withdrawn_date.gte.${from}`)
+        .order('deployed_date', { ascending: false })
+
+      // ── 3. Shifts in period ─────────────────────────────────────────────────
+      const { data: shifts } = await supabase.from('shifts')
+        .select('id,equipment_id,shift_date,working_hours,operator_id,operator_name')
+        .eq('company_id', companyId).gte('shift_date', from).lte('shift_date', to)
       const shiftIds = (shifts||[]).map(s=>s.id)
-      let fuelMap = {}
+
+      // ── 4. Fuel entries in period ──────────────────────────────────────────
+      let fuelByEq = {}
       if (shiftIds.length) {
-        const { data: fuel } = await supabase.from('shift_fuel_entries').select('shift_id,total_amount').in('shift_id', shiftIds)
+        const { data: fuel } = await supabase.from('shift_fuel_entries')
+          .select('shift_id,equipment_id,quantity_liters,total_amount,fuel_source')
+          .in('shift_id', shiftIds)
         for (const f of fuel||[]) {
-          const sh = (shifts||[]).find(s=>s.id===f.shift_id)
-          if (sh?.equipment_id) fuelMap[sh.equipment_id] = (fuelMap[sh.equipment_id]||0) + (Number(f.total_amount)||0)
+          if (!fuelByEq[f.equipment_id]) fuelByEq[f.equipment_id] = { qty:0, amt:0, clientQty:0 }
+          const isClientFuel = (f.fuel_source||'').toLowerCase() === 'client'
+          fuelByEq[f.equipment_id].qty        += Number(f.quantity_liters)||0
+          fuelByEq[f.equipment_id].clientQty  += isClientFuel ? Number(f.quantity_liters)||0 : 0
+          fuelByEq[f.equipment_id].amt        += isClientFuel ? 0 : (Number(f.total_amount)||0)
         }
       }
-      const { data: maint } = await supabase.from('maintenance_records').select('equipment_id,total_cost').eq('company_id', companyId).gte('service_date', from).lte('service_date', to)
-      const maintMap = {}
-      for (const m of maint||[]) maintMap[m.equipment_id] = (maintMap[m.equipment_id]||0) + (Number(m.total_cost)||0)
+
+      // ── 5. Operator salary (from hr_salary_structure) ──────────────────────
+      const operatorIds = [...new Set((shifts||[]).map(s=>s.operator_id).filter(Boolean))]
+      let salByOperator = {}
+      if (operatorIds.length) {
+        const { data: sal } = await supabase.from('hr_salary_structure')
+          .select('employee_id,basic_salary,hra,special_allowance,other_allowance,daily_rate,day_shift_rate')
+          .in('employee_id', operatorIds)
+        for (const s of sal||[]) {
+          const gross     = (Number(s.basic_salary)||0)+(Number(s.hra)||0)+(Number(s.special_allowance)||0)+(Number(s.other_allowance)||0)
+          const dailyRate = Number(s.daily_rate)||Number(s.day_shift_rate)||(gross>0?gross/26:0)
+          salByOperator[s.employee_id] = dailyRate
+        }
+      }
+
+      // ── 6. Maintenance cost ────────────────────────────────────────────────
+      const { data: maint } = await supabase.from('maintenance_records')
+        .select('equipment_id,total_cost').eq('company_id', companyId)
+        .gte('service_date', from).lte('service_date', to).in('equipment_id', eqIds)
+
+      // ── 7. Spare parts (inventory_transactions type='issue'/'out') ─────────
+      const { data: spares } = await supabase.from('inventory_transactions')
+        .select('equipment_id,total_cost').eq('company_id', companyId)
+        .in('transaction_type', ['issue','out','usage'])
+        .gte('transaction_date', from).lte('transaction_date', to)
+        .in('equipment_id', eqIds)
+
+      // ── 8. Direct expenses tagged to equipment ─────────────────────────────
+      const { data: exps } = await supabase.from('expenses')
+        .select('equipment_id,total_amount').eq('company_id', companyId)
+        .gte('expense_date', from).lte('expense_date', to)
+        .in('equipment_id', eqIds)
+
+      // ── 9. Build P&L per equipment ─────────────────────────────────────────
+      const fromDate = new Date(from); const toDate = new Date(to)
+      const periodDays   = Math.max(Math.round((toDate-fromDate)/86400000)+1, 1)
+      const periodMonths = Math.max(periodDays/30.44, 0.1)
+
       return eqs.map(eq => {
-        const revenue  = (lineItems||[]).filter(l=>l.equipment_id===eq.id && invoiceSet.has(l.invoice_id)).reduce((s,l)=>s+(Number(l.amount)||0),0)
-        const fuelCost = fuelMap[eq.id]  || 0
-        const maintCost= maintMap[eq.id] || 0
-        return { id:eq.id, eq, revenue, fuelCost, maintCost, pl:revenue-fuelCost-maintCost }
-      }).filter(r=>r.revenue+r.fuelCost+r.maintCost>0).sort((a,b)=>b.pl-a.pl)
+        const eqShifts  = (shifts||[]).filter(s=>s.equipment_id===eq.id)
+        const workingHrs= eqShifts.reduce((s,sh)=>s+(Number(sh.working_hours)||0),0)
+        const shiftDays = new Set(eqShifts.map(s=>s.shift_date)).size
+
+        // Revenue — use best deployment (most recent active one)
+        const deploy = (deployments||[]).find(d=>d.equipment_id===eq.id)
+        let calcRevenue_ = 0
+        let revenueSource = 'no_deployment'
+        if (deploy && (deploy.rate_per_hour||deploy.rate_per_day||deploy.rate_per_month||deploy.rental_rate)) {
+          calcRevenue_ = calcRevenue(deploy, workingHrs, shiftDays, periodMonths)
+          revenueSource = deploy.billing_basis || deploy.rate_unit || 'rate_card'
+        }
+
+        // Fuel cost (exclude client-supplied at equipment OR deployment level)
+        const fuelInfo     = fuelByEq[eq.id] || { qty:0, amt:0, clientQty:0 }
+        const fuelByClient = eq.fuel_by_client || deploy?.fuel_by_client || false
+        const fuelCost     = fuelByClient ? 0 : fuelInfo.amt
+        const fuelQtyOwn   = fuelByClient ? 0 : (fuelInfo.qty - fuelInfo.clientQty)
+
+        // Operator salary
+        const operatorCost = eqShifts.reduce((sum, sh) => {
+          if (!sh.operator_id) return sum
+          const dailyRate = salByOperator[sh.operator_id] || 0
+          return sum + dailyRate
+        }, 0)
+
+        // Maintenance cost
+        const maintCost = (maint||[]).filter(m=>m.equipment_id===eq.id).reduce((s,m)=>s+(Number(m.total_cost)||0),0)
+
+        // Spare parts cost
+        const sparesCost = (spares||[]).filter(sp=>sp.equipment_id===eq.id).reduce((s,sp)=>s+(Number(sp.total_cost)||0),0)
+
+        // Direct expense cost
+        const directCost = (exps||[]).filter(e=>e.equipment_id===eq.id).reduce((s,e)=>s+(Number(e.total_amount)||0),0)
+
+        const totalExpense = fuelCost + operatorCost + maintCost + sparesCost + directCost
+        const netPL        = calcRevenue_ - totalExpense
+
+        // Fuel consumption alert
+        let fuelAlert = null
+        if (eq.specific_consumption_lph && workingHrs > 0 && fuelQtyOwn > 0) {
+          const expectedLitres = workingHrs * Number(eq.specific_consumption_lph)
+          const actualLitres   = fuelQtyOwn
+          const excessPct      = ((actualLitres - expectedLitres) / expectedLitres) * 100
+          if (excessPct > 10) {
+            const excessLtrs = actualLitres - expectedLitres
+            const avgRate    = fuelInfo.amt > 0 && fuelInfo.qty > 0 ? fuelInfo.amt / fuelInfo.qty : 0
+            fuelAlert = {
+              expected: expectedLitres,
+              actual:   actualLitres,
+              excess:   excessLtrs,
+              excessPct: excessPct.toFixed(1),
+              excessCost: avgRate > 0 ? excessLtrs * avgRate : null,
+            }
+          }
+        }
+
+        if (workingHrs === 0 && totalExpense === 0 && calcRevenue_ === 0) return null
+        return {
+          id: eq.id, eq, deploy,
+          workingHrs, shiftDays,
+          calcRevenue: calcRevenue_, revenueSource,
+          fuelCost, fuelQtyOwn, fuelByClient,
+          operatorCost, maintCost, sparesCost, directCost,
+          totalExpense, netPL, fuelAlert,
+        }
+      }).filter(Boolean).sort((a,b)=>b.netPL-a.netPL)
     },
     enabled: !!companyId,
   })
-  const totRevenue = data.reduce((s,r)=>s+r.revenue,0)
-  const totFuel    = data.reduce((s,r)=>s+r.fuelCost,0)
-  const totMaint   = data.reduce((s,r)=>s+r.maintCost,0)
-  const totPL      = data.reduce((s,r)=>s+r.pl,0)
+
+  const totRev  = data.reduce((s,r)=>s+r.calcRevenue,0)
+  const totExp  = data.reduce((s,r)=>s+r.totalExpense,0)
+  const totPL   = data.reduce((s,r)=>s+r.netPL,0)
+  const alerts  = data.filter(r=>r.fuelAlert)
+
   if (isLoading) return <Spinner />
-  if (!data.length) return <Empty msg="No linked invoice line items or costs for this period" />
+  if (!data.length) return <Empty msg="No shift activity in this period. Start a shift and add a deployment rate card to see P&L." />
+
   return (
     <div>
+      {/* Fuel over-consumption alerts */}
+      {alerts.length > 0 && (
+        <div className="mb-5 space-y-2">
+          {alerts.map(r => (
+            <div key={r.id} className="flex items-start gap-3 bg-red-950/30 border border-red-700/40 rounded-xl px-4 py-3">
+              <span className="text-lg mt-0.5">⛽</span>
+              <div className="flex-1">
+                <p className="text-xs font-semibold text-red-300">Fuel Over-Consumption — {r.eq.name}</p>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  Expected <span className="text-slate-200">{fmtN(r.fuelAlert.expected,1)} L</span> ({fmtN(r.eq.specific_consumption_lph,2)} L/hr × {fmtN(r.workingHrs,1)} hrs) · Actual <span className="text-red-300 font-semibold">{fmtN(r.fuelAlert.actual,1)} L</span> · Excess <span className="text-red-400 font-bold">{fmtN(r.fuelAlert.excess,1)} L ({r.fuelAlert.excessPct}%)</span>
+                  {r.fuelAlert.excessCost && <span className="text-red-400"> · Extra cost {fmt(r.fuelAlert.excessCost)}</span>}
+                </p>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
-        <StatCard label="Total Revenue" value={fmt(totRevenue)} />
-        <StatCard label="Fuel Cost" value={fmt(totFuel)} accent="text-yellow-400" />
-        <StatCard label="Maint. Cost" value={fmt(totMaint)} accent="text-orange-400" />
+        <StatCard label="Calculated Revenue" value={fmt(totRev)} />
+        <StatCard label="Total Expenses" value={fmt(totExp)} accent="text-red-400" />
         <StatCard label="Net P&L" value={fmt(totPL)} accent={totPL>=0?'text-green-400':'text-red-400'} />
+        <StatCard label="Fuel Alerts" value={alerts.length} accent={alerts.length>0?'text-red-400':'text-green-400'} sub={alerts.length>0?'Over-consumption':'All within limits'} />
       </div>
+
+      {/* P&L bar */}
       <div className="bg-dark-800 border border-dark-600 rounded-xl p-4 mb-5">
-        <p className="text-[11px] text-slate-500 uppercase tracking-wide mb-3">P&L by Equipment</p>
-        <BarChart data={data.slice(0,10).map(r=>({ l:r.eq?.equipment_number||r.eq?.name?.slice(0,6)||'?', v:Math.max(r.pl,0), color:r.pl>=0?'#22c55e':'#ef4444', tip:fmt(r.pl) }))} />
+        <p className="text-[11px] text-slate-500 uppercase tracking-wide mb-3">Net P&L by Equipment</p>
+        <BarChart data={data.slice(0,12).map(r=>({ l:r.eq?.equipment_number||r.eq?.name?.slice(0,6)||'?', v:Math.abs(r.netPL), color:r.netPL>=0?'#22c55e':'#ef4444', tip:`${r.netPL>=0?'+':''}${fmt(r.netPL)}` }))} />
       </div>
-      <div className="bg-dark-800 border border-dark-600 rounded-xl overflow-hidden">
-        <table className="w-full text-sm">
-          <THead cols={['Equipment','Revenue','Fuel Cost','Maint. Cost','Net P&L']} />
-          <tbody>
-            {data.map(r => (
-              <tr key={r.id} className="border-b border-dark-700 hover:bg-dark-700/40 transition-colors">
-                <td className="py-2.5 px-3"><p className="text-xs text-slate-200 font-medium">{r.eq?.name}</p><p className="text-[10px] text-slate-500">{r.eq?.equipment_number}</p></td>
-                <td className="py-2.5 px-3 text-xs text-slate-200 font-mono">{fmt(r.revenue)}</td>
-                <td className="py-2.5 px-3 text-xs text-yellow-400 font-mono">{fmt(r.fuelCost)}</td>
-                <td className="py-2.5 px-3 text-xs text-orange-400 font-mono">{fmt(r.maintCost)}</td>
-                <td className={`py-2.5 px-3 text-xs font-bold font-mono ${r.pl>=0?'text-green-400':'text-red-400'}`}>{fmt(r.pl)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+
+      {/* Per-equipment rows — click to expand */}
+      <div className="space-y-2">
+        {data.map(r => {
+          const isOpen = expandedId === r.id
+          const basis = r.deploy?.billing_basis || r.deploy?.rate_unit || null
+          const rateLabel = !r.deploy ? 'No rate card' :
+            basis === 'hourly' ? `₹${fmtN(r.deploy.rate_per_hour||0,0)}/hr` :
+            basis === 'monthly' ? `₹${fmtN(r.deploy.rate_per_month||0,0)}/mo` :
+            `₹${fmtN(r.deploy.rate_per_day||0,0)}/day`
+
+          return (
+            <div key={r.id} className="bg-dark-800 border border-dark-600 rounded-xl overflow-hidden">
+              {/* Summary row */}
+              <button className="w-full text-left px-4 py-3 flex items-center gap-4 hover:bg-dark-700/40 transition-colors"
+                onClick={() => setExpandedId(isOpen ? null : r.id)}>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-semibold text-slate-100 truncate">{r.eq.name}</p>
+                    <span className="text-[10px] text-slate-500 font-mono shrink-0">{r.eq.equipment_number}</span>
+                    {r.fuelAlert && <span className="text-[9px] px-1.5 py-0.5 bg-red-900/40 text-red-400 border border-red-700/30 rounded-full shrink-0">⛽ Alert</span>}
+                    {r.fuelByClient && <span className="text-[9px] px-1.5 py-0.5 bg-amber-900/20 text-amber-400 border border-amber-700/30 rounded-full shrink-0">Client Fuel</span>}
+                  </div>
+                  <p className="text-[10px] text-slate-500 mt-0.5">
+                    {fmtN(r.workingHrs,1)} hrs · {r.shiftDays} shift days · {rateLabel}
+                    {r.deploy?.item_name && <span className="text-slate-600"> · {r.deploy.item_name}</span>}
+                  </p>
+                </div>
+                <div className="flex items-center gap-6 shrink-0 text-right">
+                  <div>
+                    <p className="text-[10px] text-slate-500">Revenue</p>
+                    <p className="text-xs font-mono text-slate-200">{fmt(r.calcRevenue)}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-slate-500">Expenses</p>
+                    <p className="text-xs font-mono text-red-400">{fmt(r.totalExpense)}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-slate-500">Net P&L</p>
+                    <p className={`text-sm font-bold font-mono ${r.netPL>=0?'text-green-400':'text-red-400'}`}>{fmt(r.netPL)}</p>
+                  </div>
+                  <span className={`text-slate-500 transition-transform ${isOpen?'rotate-180':''}`}>▾</span>
+                </div>
+              </button>
+
+              {/* Expanded breakdown */}
+              {isOpen && (
+                <div className="border-t border-dark-700 px-4 py-3 grid grid-cols-2 sm:grid-cols-3 gap-4 bg-dark-900/40">
+                  {/* Revenue breakdown */}
+                  <div>
+                    <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-2">Revenue</p>
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-xs"><span className="text-slate-400">Billing basis</span><span className="text-slate-200 capitalize">{r.deploy?.billing_basis||r.deploy?.rate_unit||'—'}</span></div>
+                      <div className="flex justify-between text-xs"><span className="text-slate-400">Working hours</span><span className="text-slate-200">{fmtN(r.workingHrs,1)} hrs</span></div>
+                      <div className="flex justify-between text-xs"><span className="text-slate-400">Shift days</span><span className="text-slate-200">{r.shiftDays}</span></div>
+                      <div className="flex justify-between text-xs font-semibold border-t border-dark-600 pt-1 mt-1"><span className="text-slate-300">Calculated Revenue</span><span className="text-primary-300">{fmt(r.calcRevenue)}</span></div>
+                    </div>
+                  </div>
+
+                  {/* Expense breakdown */}
+                  <div>
+                    <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-2">Expenses</p>
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-xs">
+                        <span className="text-slate-400">Fuel {r.fuelByClient?'(client-supplied)':''}</span>
+                        <span className={r.fuelByClient?'text-slate-500 line-through':r.fuelAlert?'text-red-400':'text-yellow-400'}>{fmt(r.fuelCost)}</span>
+                      </div>
+                      {r.fuelAlert && (
+                        <div className="flex justify-between text-[10px]"><span className="text-red-500">⚠ Excess fuel</span><span className="text-red-400">{fmtN(r.fuelAlert.excess,1)} L over</span></div>
+                      )}
+                      <div className="flex justify-between text-xs"><span className="text-slate-400">Operator salary</span><span className="text-orange-300">{fmt(r.operatorCost)}</span></div>
+                      <div className="flex justify-between text-xs"><span className="text-slate-400">Maintenance</span><span className="text-orange-400">{fmt(r.maintCost)}</span></div>
+                      <div className="flex justify-between text-xs"><span className="text-slate-400">Spare parts</span><span className="text-orange-400">{fmt(r.sparesCost)}</span></div>
+                      <div className="flex justify-between text-xs"><span className="text-slate-400">Other expenses</span><span className="text-orange-400">{fmt(r.directCost)}</span></div>
+                      <div className="flex justify-between text-xs font-semibold border-t border-dark-600 pt-1 mt-1"><span className="text-slate-300">Total Expenses</span><span className="text-red-400">{fmt(r.totalExpense)}</span></div>
+                    </div>
+                  </div>
+
+                  {/* Fuel consumption */}
+                  <div>
+                    <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-2">Fuel Analysis</p>
+                    {r.eq.specific_consumption_lph ? (
+                      <div className="space-y-1">
+                        <div className="flex justify-between text-xs"><span className="text-slate-400">Std. consumption</span><span className="text-slate-200">{fmtN(r.eq.specific_consumption_lph,2)} L/hr</span></div>
+                        <div className="flex justify-between text-xs"><span className="text-slate-400">Expected for period</span><span className="text-slate-200">{fmtN(r.workingHrs * r.eq.specific_consumption_lph,1)} L</span></div>
+                        <div className="flex justify-between text-xs"><span className="text-slate-400">Actual consumed</span><span className={r.fuelAlert?'text-red-400':'text-green-400'}>{fmtN(r.fuelQtyOwn,1)} L</span></div>
+                        {r.fuelAlert && (
+                          <>
+                            <div className="flex justify-between text-xs"><span className="text-red-400 font-semibold">Excess</span><span className="text-red-400 font-semibold">{fmtN(r.fuelAlert.excess,1)} L ({r.fuelAlert.excessPct}%)</span></div>
+                            {r.fuelAlert.excessCost && <div className="flex justify-between text-xs"><span className="text-red-400">Extra cost</span><span className="text-red-400 font-bold">{fmt(r.fuelAlert.excessCost)}</span></div>}
+                          </>
+                        )}
+                        {!r.fuelAlert && r.fuelQtyOwn>0 && <p className="text-[10px] text-green-500 mt-1">✓ Within expected range</p>}
+                      </div>
+                    ) : (
+                      <p className="text-[10px] text-slate-500 italic">Set standard consumption (L/hr) in Fleet → Equipment to enable alerts</p>
+                    )}
+                    <div className="mt-3 pt-2 border-t border-dark-600">
+                      <div className="flex justify-between text-sm font-bold">
+                        <span className="text-slate-300">Net P&L</span>
+                        <span className={r.netPL>=0?'text-green-400':'text-red-400'}>{fmt(r.netPL)}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )
+        })}
       </div>
+
       <ExportBar onPrint={() => {
-        const rows = data.map(r=>`<tr><td>${r.eq?.equipment_number||'—'}</td><td>${r.eq?.name}</td><td>${fmt(r.revenue)}</td><td>${fmt(r.fuelCost)}</td><td>${fmt(r.maintCost)}</td><td style="color:${r.pl>=0?'green':'red'}">${fmt(r.pl)}</td></tr>`).join('')
-        printSection('Equipment P&L',`<h1>Equipment P&L</h1><p class="sub">${fmtDate(from)} — ${fmtDate(to)}</p><table><tr><th>Eq No.</th><th>Name</th><th>Revenue</th><th>Fuel Cost</th><th>Maint Cost</th><th>Net P&L</th></tr>${rows}</table>`)
-      }} onCSV={() => exportCSV(data.map(r=>({ eq_no:r.eq?.equipment_number, name:r.eq?.name, revenue:r.revenue, fuel_cost:r.fuelCost, maint_cost:r.maintCost, net_pl:r.pl })),
-        [{key:'eq_no',label:'Eq No.'},{key:'name',label:'Equipment'},{key:'revenue',label:'Revenue'},{key:'fuel_cost',label:'Fuel Cost'},{key:'maint_cost',label:'Maint Cost'},{key:'net_pl',label:'Net P&L'}],'equipment_pl')} />
+        const rows = data.map(r=>`<tr><td>${r.eq.equipment_number||'—'}</td><td>${r.eq.name}</td><td>${fmtN(r.workingHrs,1)}</td><td>${r.shiftDays}</td><td>${fmt(r.calcRevenue)}</td><td>${fmt(r.fuelCost)}</td><td>${fmt(r.operatorCost)}</td><td>${fmt(r.maintCost)}</td><td>${fmt(r.sparesCost)}</td><td>${fmt(r.directCost)}</td><td style="color:${r.netPL>=0?'green':'red'};font-weight:bold">${fmt(r.netPL)}</td>${r.fuelAlert?`<td style="color:red">⚠ ${fmtN(r.fuelAlert.excess,1)}L excess</td>`:'<td>OK</td>'}</tr>`).join('')
+        printSection('Equipment P&L',`<h1>Equipment P&L — Full Model</h1><p class="sub">${fmtDate(from)} — ${fmtDate(to)}</p>
+          <div><span class="stat"><span class="stat-v">${fmt(totRev)}</span><br/><span class="stat-l">Revenue</span></span><span class="stat"><span class="stat-v">${fmt(totExp)}</span><br/><span class="stat-l">Expenses</span></span><span class="stat"><span class="stat-v" style="color:${totPL>=0?'green':'red'}">${fmt(totPL)}</span><br/><span class="stat-l">Net P&L</span></span></div>
+          <table><tr><th>Eq No.</th><th>Name</th><th>Hrs</th><th>Days</th><th>Revenue</th><th>Fuel</th><th>Operator</th><th>Maint.</th><th>Spares</th><th>Other</th><th>Net P&L</th><th>Fuel Alert</th></tr>${rows}</table>`)
+      }} onCSV={() => exportCSV(data.map(r=>({
+        eq_no:r.eq.equipment_number, name:r.eq.name, category:r.eq.category,
+        working_hrs:fmtN(r.workingHrs,1), shift_days:r.shiftDays,
+        billing_basis:r.deploy?.billing_basis||r.deploy?.rate_unit||'—',
+        calc_revenue:r.calcRevenue, fuel_cost:r.fuelCost, operator_cost:r.operatorCost,
+        maint_cost:r.maintCost, spares_cost:r.sparesCost, other_expenses:r.directCost,
+        total_expenses:r.totalExpense, net_pl:r.netPL,
+        fuel_alert:r.fuelAlert?`${fmtN(r.fuelAlert.excess,1)}L excess (${r.fuelAlert.excessPct}%)`:''
+      })),[
+        {key:'eq_no',label:'Eq No.'},{key:'name',label:'Equipment'},{key:'category',label:'Category'},
+        {key:'working_hrs',label:'Working Hrs'},{key:'shift_days',label:'Shift Days'},
+        {key:'billing_basis',label:'Billing Basis'},{key:'calc_revenue',label:'Revenue'},
+        {key:'fuel_cost',label:'Fuel Cost'},{key:'operator_cost',label:'Operator Salary'},
+        {key:'maint_cost',label:'Maint. Cost'},{key:'spares_cost',label:'Spares Cost'},
+        {key:'other_expenses',label:'Other Expenses'},{key:'total_expenses',label:'Total Expenses'},
+        {key:'net_pl',label:'Net P&L'},{key:'fuel_alert',label:'Fuel Alert'},
+      ],'equipment_pl_full')} />
     </div>
   )
 }
