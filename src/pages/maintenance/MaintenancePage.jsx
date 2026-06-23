@@ -76,7 +76,7 @@ function MaintenanceFormModal({ record, companyId, session, onClose, onSaved }) 
     queryKey: ['projects_list_maint', companyId],
     queryFn: async () => {
       const { data } = await supabase.from('projects')
-        .select('id, name, project_code').eq('company_id', companyId).order('name')
+        .select('id, project_name, project_code').eq('company_id', companyId).order('project_name')
       return data || []
     },
     enabled: !!companyId,
@@ -245,7 +245,7 @@ function MaintenanceFormModal({ record, companyId, session, onClose, onSaved }) 
             <label className="text-xs text-slate-400 mb-1 block">Project (auto-filled from equipment)</label>
             <select className={inp()} value={form.project_id} onChange={e => setF('project_id', e.target.value)}>
               <option value="">No project linked</option>
-              {projects.map(p => <option key={p.id} value={p.id}>{p.project_code ? `${p.project_code} — ` : ''}{p.name}</option>)}
+              {projects.map(p => <option key={p.id} value={p.id}>{p.project_code ? `${p.project_code} — ` : ''}{p.project_name}</option>)}
             </select>
           </div>
 
@@ -359,7 +359,7 @@ function RecordDetailModal({ record, companyId, onClose, onEdit }) {
           {record._project && (
             <div className="bg-dark-800 rounded-xl p-3 border border-dark-700">
               <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-1">Project</p>
-              <p className="text-sm font-semibold text-slate-100">{record._project.name}</p>
+              <p className="text-sm font-semibold text-slate-100">{record._project.project_name}</p>
               {record._project.project_code && <p className="text-[10px] text-slate-500">{record._project.project_code}</p>}
             </div>
           )}
@@ -425,7 +425,7 @@ export default function MaintenancePage() {
       const projectIds = [...new Set(rows.map(r => r.project_id).filter(Boolean))]
       if (projectIds.length > 0) {
         const { data: projs } = await supabase.from('projects')
-          .select('id, name, project_code').in('id', projectIds)
+          .select('id, project_name, project_code').in('id', projectIds)
         if (projs) {
           const pMap = Object.fromEntries(projs.map(p => [p.id, p]))
           rows.forEach(r => { r._project = r.project_id ? (pMap[r.project_id] || null) : null })
@@ -444,7 +444,7 @@ export default function MaintenancePage() {
       r.equipment?.equipment_number?.toLowerCase().includes(q) ||
       r.description?.toLowerCase().includes(q) ||
       r.technician_name?.toLowerCase().includes(q) ||
-      r._project?.name?.toLowerCase().includes(q)
+      r._project?.project_name?.toLowerCase().includes(q)
     )
   }, [records, search])
 
@@ -582,7 +582,7 @@ export default function MaintenancePage() {
                         {mtype && <span className="text-[11px] text-slate-500">{mtype.label}</span>}
                         {r._project && (
                           <span className="text-[11px] text-primary-400/70 truncate max-w-[140px]">
-                            📋 {r._project.name}
+                            📋 {r._project.project_name}
                           </span>
                         )}
                         {Number(r.total_cost) > 0 && (

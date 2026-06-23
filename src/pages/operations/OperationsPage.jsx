@@ -265,7 +265,7 @@ function StartShiftModal({ equipment, companyId, onClose }) {
     const cid = equipment.current_client_id
     if (!pid) return
     Promise.all([
-      supabase.from('projects').select('id, name, project_code').eq('id', pid).single(),
+      supabase.from('projects').select('id, project_name, project_code').eq('id', pid).single(),
       cid ? supabase.from('clients').select('id, name').eq('id', cid).single() : Promise.resolve({ data: null }),
     ]).then(([{ data: proj }, { data: client }]) => {
       if (proj) setActiveDeployment({ project_id: pid, client_id: cid, projects: proj, clients: client })
@@ -395,7 +395,7 @@ function StartShiftModal({ equipment, companyId, onClose }) {
           <div className="bg-primary-900/20 border border-primary-700/30 rounded-lg px-3 py-2 flex items-center gap-2">
             <div className="flex-1 min-w-0">
               <p className="text-[10px] text-primary-500 uppercase font-bold tracking-wide">Project</p>
-              <p className="text-xs font-semibold text-primary-300 truncate">{activeDeployment.projects?.name || '—'}</p>
+              <p className="text-xs font-semibold text-primary-300 truncate">{activeDeployment.projects?.project_name || '—'}</p>
               {activeDeployment.clients?.name && <p className="text-[10px] text-slate-500 truncate">{activeDeployment.clients.name}</p>}
             </div>
             <CheckCircle className="w-4 h-4 text-primary-500 shrink-0" />
@@ -2017,7 +2017,7 @@ function ShiftsTab({ companyId }) {
       )]
       if (allProjectIds.length > 0) {
         const { data: projects } = await supabase.from('projects')
-          .select('id, name, project_code').in('id', allProjectIds)
+          .select('id, project_name, project_code').in('id', allProjectIds)
         if (projects) {
           const pMap = Object.fromEntries(projects.map(p => [p.id, p]))
           shifts.forEach(s => {
@@ -2227,7 +2227,7 @@ function ShiftsTab({ companyId }) {
                     {/* Project */}
                     <div className="min-w-0">
                       <p className="text-xs text-slate-300 truncate leading-tight">
-                        {s._project?.name || '—'}
+                        {s._project?.project_name || '—'}
                       </p>
                       {s._project?.project_code && (
                         <p className="text-[10px] text-slate-600 truncate">{s._project.project_code}</p>

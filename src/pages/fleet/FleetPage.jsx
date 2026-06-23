@@ -1826,7 +1826,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
               {deployClientId && (
                 <select className={inp('text-xs')} value={deployProjectId} onChange={e => setDeployProjectId(e.target.value)}>
                   <option value="">Select project…</option>
-                  {projects.map(p => <option key={p.id} value={p.id}>{p.project_code ? `${p.project_code} — ` : ''}{p.project_name}</option>)}
+                  {projects.map(p => <option key={p.id} value={p.id}>{p.project_code ? `${p.project_code} — ` : ''}{p.name}</option>)}
                 </select>
               )}
               <input className={inp('text-xs')} value={deploySiteName} onChange={e => setDeploySiteName(e.target.value)}
