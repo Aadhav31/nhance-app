@@ -258,6 +258,18 @@ function StartShiftModal({ equipment, companyId, onClose }) {
     }
   }, [myEmployee, assignments, isOperator])
 
+  // Auto-resolve project & client from active deployment for this equipment
+  const [activeDeployment, setActiveDeployment] = useState(null)
+  useEffect(() => {
+    supabase.from('equipment_deployments')
+      .select('id, project_id, client_id, projects(id, name, project_code), clients(id, name)')
+      .eq('equipment_id', equipment.id)
+      .eq('status', 'active')
+      .order('deployed_date', { ascending: false })
+      .limit(1).maybeSingle()
+      .then(({ data }) => { if (data) setActiveDeployment(data) })
+  }, [equipment.id])
+
   // When operator is selected manually (non-operator roles), auto-fill shift type
   const handleOperatorChange = (name) => {
     set('operator_name', name)
@@ -292,6 +304,9 @@ function StartShiftModal({ equipment, companyId, onClose }) {
       const { data: shift, error } = await supabase.from('shifts').insert({
         company_id: companyId,
         equipment_id: equipment.id,
+        // Auto-mapped from active deployment
+        project_id: activeDeployment?.project_id || null,
+        client_id:  activeDeployment?.client_id  || null,
         shift_date: form.shift_date,
         shift_type: form.shift_type,
         operator_name: form.operator_name,
@@ -372,11 +387,21 @@ function StartShiftModal({ equipment, companyId, onClose }) {
         </div>
       )}
       {!isBlocked && (<>
-        {equipment.current_site_name && (
+        {/* Active deployment info — shows which project this shift will be logged against */}
+        {activeDeployment ? (
+          <div className="bg-primary-900/20 border border-primary-700/30 rounded-lg px-3 py-2 flex items-center gap-2">
+            <div className="flex-1 min-w-0">
+              <p className="text-[10px] text-primary-500 uppercase font-bold tracking-wide">Project</p>
+              <p className="text-xs font-semibold text-primary-300 truncate">{activeDeployment.projects?.name || '—'}</p>
+              {activeDeployment.clients?.name && <p className="text-[10px] text-slate-500 truncate">{activeDeployment.clients.name}</p>}
+            </div>
+            <CheckCircle className="w-4 h-4 text-primary-500 shrink-0" />
+          </div>
+        ) : equipment.current_site_name ? (
           <div className="bg-dark-700 rounded-lg px-3 py-2 text-xs text-slate-400">
             📍 {equipment.current_site_name}
           </div>
-        )}
+        ) : null}
         {/* Date (admin can change, everyone else locked to today) */}
         <Field label="Date">
           {isAdmin
@@ -1971,17 +1996,49 @@ function ShiftsTab({ companyId }) {
       const { data, error } = await q.limit(200)
       if (error) throw error
 
-      // Fetch project names separately for shifts that have a project_id
       const shifts = data || []
-      const projectIds = [...new Set(shifts.map(s => s.project_id).filter(Boolean))]
-      if (projectIds.length > 0) {
-        const { data: projects } = await supabase.from('projects')
-          .select('id, name, project_code').in('id', projectIds)
-        if (projects) {
-          const pMap = Object.fromEntries(projects.map(p => [p.id, p]))
-          shifts.forEach(s => { s._project = s.project_id ? pMap[s.project_id] : null })
+
+      // ── Resolve project for each shift ────────────────────────────────────────
+      // Priority 1: shift.project_id (directly stored)
+      // Priority 2: active equipment_deployment for that equipment on that shift date
+      const equipIds = [...new Set(shifts.map(s => s.equipment_id).filter(Boolean))]
+      let deploymentMap = {}   // equipment_id → { project_id, client_id }
+      if (equipIds.length > 0) {
+        const { data: deps } = await supabase.from('equipment_deployments')
+          .select('equipment_id, project_id, client_id, deployed_date, withdrawn_date, status')
+          .eq('company_id', companyId)
+          .in('equipment_id', equipIds)
+        if (deps) {
+          // For each shift, find the deployment active on shift_date
+          shifts.forEach(s => {
+            if (s.project_id) return // already has project
+            const match = deps.find(d =>
+              d.equipment_id === s.equipment_id &&
+              d.deployed_date <= s.shift_date &&
+              (!d.withdrawn_date || d.withdrawn_date >= s.shift_date)
+            )
+            if (match) {
+              s._resolved_project_id = match.project_id
+              s._resolved_client_id  = match.client_id
+            }
+          })
         }
       }
+
+      // Collect all project IDs (from shift or from deployment)
+      const allProjectIds = [...new Set(shifts.map(s => s.project_id || s._resolved_project_id).filter(Boolean))]
+      if (allProjectIds.length > 0) {
+        const { data: projects } = await supabase.from('projects')
+          .select('id, name, project_code').in('id', allProjectIds)
+        if (projects) {
+          const pMap = Object.fromEntries(projects.map(p => [p.id, p]))
+          shifts.forEach(s => {
+            const pid = s.project_id || s._resolved_project_id
+            s._project = pid ? (pMap[pid] || null) : null
+          })
+        }
+      }
+
       return shifts
     },
     enabled: !!companyId,
