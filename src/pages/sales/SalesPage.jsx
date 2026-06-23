@@ -859,7 +859,7 @@ function DeliveryChallansTab({ companyId, session }) {
                   <input className={`${inp()} col-span-6 text-xs`} placeholder="Description" value={l.description} onChange={e => updateLine(l._id, 'description', e.target.value)} />
                   <input className={`${inp()} col-span-2 text-xs text-center`} type="number" value={l.quantity} onChange={e => updateLine(l._id, 'quantity', e.target.value)} min="0" />
                   <select className={`${inp()} col-span-3 text-xs`} value={l.unit} onChange={e => updateLine(l._id, 'unit', e.target.value)}>
-                    {['nos','kg','ton','m3','ls','set'].map(u => <option key={u}>{u}</option>)}
+                    {['unit','nos','kg','ton','m3','ls','set'].map(u => <option key={u}>{u}</option>)}
                   </select>
                   <button type="button" onClick={() => setLines(p => p.length > 1 ? p.filter(x => x._id !== l._id) : p)} className="col-span-1 flex justify-center text-slate-600 hover:text-red-400"><X className="w-3.5 h-3.5" /></button>
                 </div>

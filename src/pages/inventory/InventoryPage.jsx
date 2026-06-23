@@ -30,7 +30,7 @@ const CATEGORIES = [
 
 const CAT_MAP = Object.fromEntries(CATEGORIES.map(c => [c.value, c]))
 
-const UNITS = ['nos','kg','g','ton','litre','ml','m','m2','m3','ft','inch','set','box','bag','pair','roll','sheet','length']
+const UNITS = ['unit','nos','kg','g','ton','litre','ml','m','m2','m3','ft','inch','set','box','bag','pair','roll','sheet','length']
 
 function CategoryBadge({ cat }) {
   const c = CAT_MAP[cat] || { label: cat, bg: 'bg-slate-700/50 border-slate-600', color: 'text-slate-300' }
