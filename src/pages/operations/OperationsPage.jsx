@@ -1956,12 +1956,12 @@ function ShiftsTab({ companyId }) {
     enabled: !!companyId,
   })
 
-  // Shifts with equipment info
+  // Shifts with equipment info + project name
   const { data: shifts = [], isLoading } = useQuery({
     queryKey: ['all_shifts', companyId, dateFrom, dateTo, equipFilter],
     queryFn: async () => {
       let q = supabase.from('shifts')
-        .select('*, equipment(id, name, category, meter_type)')
+        .select('*, equipment(id, name, equipment_number, category, meter_type), projects(id, name, project_code)')
         .eq('company_id', companyId)
         .gte('shift_date', dateFrom)
         .lte('shift_date', dateTo)
@@ -2084,9 +2084,11 @@ function ShiftsTab({ companyId }) {
       {!isLoading && shifts.length > 0 && (
         <div className="shrink-0 px-4 pt-2 pb-1">
           <div className="grid w-full text-[10px] font-bold text-slate-600 uppercase tracking-wider"
-            style={{ gridTemplateColumns: '0.7fr 2fr 0.9fr 0.9fr 1fr 1fr 0.8fr 0.8fr 0.8fr 26px' }}>
+            style={{ gridTemplateColumns: '0.7fr 1fr 1fr 1.2fr 0.8fr 0.8fr 0.9fr 0.9fr 0.7fr 0.7fr 0.7fr 26px' }}>
             <span>Date</span>
-            <span>Equipment</span>
+            <span>Equip No.</span>
+            <span>Operator</span>
+            <span>Project</span>
             <span className="text-center">Start Hr</span>
             <span className="text-center">End Hr</span>
             <span className="text-center">Clock In</span>
@@ -2124,8 +2126,8 @@ function ShiftsTab({ companyId }) {
                     ${isOpen
                       ? 'bg-emerald-900/10 border-emerald-700/20 hover:border-emerald-600/40'
                       : 'bg-dark-800 border-dark-700 hover:border-primary-700/40'}`}>
-                  <div className="grid w-full items-center gap-x-1"
-                    style={{ gridTemplateColumns: '0.7fr 2fr 0.9fr 0.9fr 1fr 1fr 0.8fr 0.8fr 0.8fr 26px' }}>
+                  <div className="grid w-full items-center gap-x-2"
+                    style={{ gridTemplateColumns: '0.7fr 1fr 1fr 1.2fr 0.8fr 0.8fr 0.9fr 0.9fr 0.7fr 0.7fr 0.7fr 26px' }}>
 
                     {/* Date */}
                     <div>
@@ -2135,10 +2137,27 @@ function ShiftsTab({ companyId }) {
                       <p className="text-[10px] text-slate-500">{format(new Date(s.shift_date + 'T00:00:00'), 'EEE')}</p>
                     </div>
 
-                    {/* Equipment */}
+                    {/* Equipment Number */}
                     <div className="min-w-0">
-                      <p className="text-xs font-medium text-slate-200 truncate leading-tight">{s.equipment?.name || '—'}</p>
-                      <p className="text-[10px] text-slate-500 truncate">{s.operator_name || '—'}</p>
+                      <p className="text-xs font-mono font-semibold text-primary-400 truncate leading-tight">
+                        {s.equipment?.equipment_number || '—'}
+                      </p>
+                      <p className="text-[10px] text-slate-500 truncate">{s.equipment?.category || ''}</p>
+                    </div>
+
+                    {/* Operator */}
+                    <div className="min-w-0">
+                      <p className="text-xs text-slate-200 truncate leading-tight">{s.operator_name || '—'}</p>
+                    </div>
+
+                    {/* Project */}
+                    <div className="min-w-0">
+                      <p className="text-xs text-slate-300 truncate leading-tight">
+                        {s.projects?.name || '—'}
+                      </p>
+                      {s.projects?.project_code && (
+                        <p className="text-[10px] text-slate-600 truncate">{s.projects.project_code}</p>
+                      )}
                     </div>
 
                     {/* Start Hour (meter) */}
@@ -2174,7 +2193,7 @@ function ShiftsTab({ companyId }) {
                       </p>
                     </div>
 
-                    {/* Clock Hours (wall time) */}
+                    {/* Clock Hours */}
                     <div className="text-center">
                       <p className={`text-xs font-mono ${clockHr ? 'text-slate-300' : 'text-slate-600'}`}>
                         {clockHr ? `${clockHr}h` : '—'}
@@ -2188,8 +2207,8 @@ function ShiftsTab({ companyId }) {
                       </p>
                     </div>
 
-                    {/* Incidents icon + chevron */}
-                    <div className="flex items-center justify-center gap-0.5">
+                    {/* Incident icon */}
+                    <div className="flex items-center justify-center">
                       {incidents ? (
                         <span title={`${incidents.count} incident${incidents.count > 1 ? 's' : ''}`}>
                           <AlertTriangle className={`w-3.5 h-3.5 ${incidents.hasCritical ? 'text-red-400' : 'text-orange-400'}`} />
