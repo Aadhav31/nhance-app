@@ -2,12 +2,31 @@
 // Receives Razorpay payment webhooks and auto-reconciles invoices in Nhance
 // Deployed via: supabase functions deploy razorpay-webhook
 //
-// Set this URL in Razorpay Dashboard → Settings → Webhooks:
-//   https://<your-project-ref>.supabase.co/functions/v1/razorpay-webhook
-// Events to enable: payment_link.paid
+// MULTI-COMPANY SETUP:
+//   Each company gets their own webhook URL with their company_id embedded:
+//   https://<project-ref>.supabase.co/functions/v1/razorpay-webhook?cid=<company_uuid>
+//
+//   In the company's Razorpay Dashboard → Settings → Webhooks:
+//     URL: above URL with their cid
+//     Events: payment_link.paid
+//     Secret: their unique webhook secret (stored in companies.razorpay_webhook_secret)
 
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+
+async function verifySignature(rawBody: string, receivedSig: string, secret: string): Promise<boolean> {
+  const encoder = new TextEncoder()
+  const key = await crypto.subtle.importKey(
+    'raw', encoder.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false, ['sign']
+  )
+  const sigBuffer = await crypto.subtle.sign('HMAC', key, encoder.encode(rawBody))
+  const expectedSig = Array.from(new Uint8Array(sigBuffer))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('')
+  return expectedSig === receivedSig
+}
 
 serve(async (req: Request) => {
   // Razorpay sends POST only — reject anything else
@@ -15,35 +34,45 @@ serve(async (req: Request) => {
     return new Response('Method not allowed', { status: 405 })
   }
 
-  const rawBody = await req.text()
+  // ── Extract company_id from URL query param (?cid=xxx) ────────────────────
+  const url = new URL(req.url)
+  const companyId = url.searchParams.get('cid')
 
-  // ── 1. Verify Razorpay webhook signature ─────────────────────────────────
-  // This is critical — it proves the request genuinely came from Razorpay
+  const rawBody    = await req.text()
   const receivedSig = req.headers.get('x-razorpay-signature') || ''
-  const webhookSecret = Deno.env.get('RAZORPAY_WEBHOOK_SECRET') || ''
 
-  try {
-    const encoder = new TextEncoder()
-    const keyData = encoder.encode(webhookSecret)
-    const msgData = encoder.encode(rawBody)
+  const supabase = createClient(
+    Deno.env.get('SUPABASE_URL')!,
+    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+  )
 
-    const key = await crypto.subtle.importKey(
-      'raw', keyData,
-      { name: 'HMAC', hash: 'SHA-256' },
-      false, ['sign']
-    )
-    const sigBuffer = await crypto.subtle.sign('HMAC', key, msgData)
-    const expectedSig = Array.from(new Uint8Array(sigBuffer))
-      .map(b => b.toString(16).padStart(2, '0'))
-      .join('')
+  // ── 1. Determine webhook secret to use ────────────────────────────────────
+  // Per-company secret preferred; falls back to global env var
+  let webhookSecret = Deno.env.get('RAZORPAY_WEBHOOK_SECRET') || ''
 
-    if (expectedSig !== receivedSig) {
-      console.error('Webhook signature mismatch — request rejected')
-      return new Response('Invalid signature', { status: 401 })
+  if (companyId) {
+    const { data: co } = await supabase
+      .from('companies')
+      .select('razorpay_webhook_secret')
+      .eq('id', companyId)
+      .single()
+    if (co?.razorpay_webhook_secret) webhookSecret = co.razorpay_webhook_secret
+  }
+
+  // ── 2. Verify Razorpay webhook signature ─────────────────────────────────
+  if (webhookSecret) {
+    try {
+      const valid = await verifySignature(rawBody, receivedSig, webhookSecret)
+      if (!valid) {
+        console.error('Webhook signature mismatch — request rejected')
+        return new Response('Invalid signature', { status: 401 })
+      }
+    } catch (sigErr) {
+      console.error('Signature verification failed:', sigErr)
+      return new Response('Signature error', { status: 400 })
     }
-  } catch (sigErr) {
-    console.error('Signature verification failed:', sigErr)
-    return new Response('Signature error', { status: 400 })
+  } else {
+    console.warn('No webhook secret configured — skipping signature check')
   }
 
   // ── 2. Parse the event ────────────────────────────────────────────────────
@@ -59,11 +88,6 @@ serve(async (req: Request) => {
   // ── 3. Handle payment_link.paid ───────────────────────────────────────────
   // This fires when a client completes payment on a payment link
   if (event.event === 'payment_link.paid') {
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL')!,
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!  // service role needed to bypass RLS
-    )
-
     try {
       const pl      = event.payload.payment_link?.entity
       const payment = event.payload.payment?.entity

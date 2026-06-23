@@ -43,10 +43,27 @@ serve(async (req: Request) => {
       )
     }
 
-    // ── Razorpay credentials ──────────────────────────────────────────────────
-    const keyId     = Deno.env.get('RAZORPAY_KEY_ID')
-    const keySecret = Deno.env.get('RAZORPAY_KEY_SECRET')
-    if (!keyId || !keySecret) throw new Error('Razorpay credentials not configured')
+    // ── Razorpay credentials — per company (falls back to global env vars) ────
+    let keyId     = Deno.env.get('RAZORPAY_KEY_ID')
+    let keySecret = Deno.env.get('RAZORPAY_KEY_SECRET')
+
+    // Prefer the company's own Razorpay keys (set in Settings → Payment Gateway)
+    const { data: co, error: coErr } = await supabase
+      .from('companies')
+      .select('razorpay_key_id, razorpay_key_secret')
+      .eq('id', invoice.company_id)
+      .single()
+
+    if (!coErr && co?.razorpay_key_id && co?.razorpay_key_secret) {
+      keyId     = co.razorpay_key_id
+      keySecret = co.razorpay_key_secret
+    }
+
+    if (!keyId || !keySecret) {
+      throw new Error(
+        'Razorpay not configured for this company. Go to Settings → Payment Gateway and connect your Razorpay account.'
+      )
+    }
     const auth = btoa(`${keyId}:${keySecret}`)
 
     // ── Create Payment Link via Razorpay API ─────────────────────────────────

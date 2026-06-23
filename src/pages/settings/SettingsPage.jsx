@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Save, Building2, Users, Monitor, CheckCircle, AlertCircle,
-         Plus, X, Loader2, Mail, Shield, Trash2, RefreshCw, Send } from 'lucide-react'
+         Plus, X, Loader2, Mail, Shield, Trash2, RefreshCw, Send,
+         CreditCard, Eye, EyeOff, Link } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
 import { useDisplayMode } from '../../contexts/DisplayModeContext'
 import { supabase } from '../../lib/supabase'
@@ -406,6 +407,201 @@ function CompanyProfile({ company }) {
   )
 }
 
+// ─── Razorpay Settings ───────────────────────────────────────────────────────
+function RazorpaySettings({ companyId, isAdmin }) {
+  const [keyId,          setKeyId]          = useState('')
+  const [keySecret,      setKeySecret]      = useState('')
+  const [webhookSecret,  setWebhookSecret]  = useState('')
+  const [showSecret,     setShowSecret]     = useState(false)
+  const [showWHSecret,   setShowWHSecret]   = useState(false)
+  const [connected,      setConnected]      = useState(false)
+  const [loading,        setLoading]        = useState(true)
+  const [saving,         setSaving]         = useState(false)
+  const [removing,       setRemoving]       = useState(false)
+
+  // Webhook URL for this company — tell them to paste this in Razorpay Dashboard
+  const supabaseProjectRef = import.meta.env.VITE_SUPABASE_URL?.split('//')[1]?.split('.')[0] || '<your-project-ref>'
+  const webhookUrl = `https://${supabaseProjectRef}.supabase.co/functions/v1/razorpay-webhook?cid=${companyId}`
+
+  // Load current key_id (secrets are never fetched — write-only from frontend)
+  useEffect(() => {
+    if (!companyId) return
+    supabase
+      .from('companies')
+      .select('razorpay_key_id')
+      .eq('id', companyId)
+      .single()
+      .then(({ data }) => {
+        if (data?.razorpay_key_id) {
+          setKeyId(data.razorpay_key_id)
+          setConnected(true)
+        }
+        setLoading(false)
+      })
+  }, [companyId])
+
+  const handleSave = async () => {
+    if (!keyId.trim())     return toast.error('Key ID is required')
+    if (!keySecret.trim() && !connected) return toast.error('Key Secret is required')
+    if (!keyId.startsWith('rzp_'))
+      return toast.error('Key ID must start with rzp_live_ or rzp_test_')
+    setSaving(true)
+    try {
+      const update: Record<string, string | null> = { razorpay_key_id: keyId.trim() }
+      if (keySecret.trim()) update.razorpay_key_secret = keySecret.trim()
+      if (webhookSecret.trim()) update.razorpay_webhook_secret = webhookSecret.trim()
+      const { error } = await supabase.from('companies').update(update).eq('id', companyId)
+      if (error) throw error
+      setConnected(true)
+      setKeySecret('')       // clear secrets from UI after save
+      setWebhookSecret('')
+      toast.success('Razorpay connected successfully')
+    } catch (e: any) { toast.error(e.message) } finally { setSaving(false) }
+  }
+
+  const handleRemove = async () => {
+    if (!window.confirm('Remove Razorpay integration? Payment links will no longer work for this company.')) return
+    setRemoving(true)
+    try {
+      const { error } = await supabase
+        .from('companies')
+        .update({ razorpay_key_id: null, razorpay_key_secret: null, razorpay_webhook_secret: null })
+        .eq('id', companyId)
+      if (error) throw error
+      setKeyId(''); setKeySecret(''); setWebhookSecret('')
+      setConnected(false)
+      toast.success('Razorpay disconnected')
+    } catch (e: any) { toast.error(e.message) } finally { setRemoving(false) }
+  }
+
+  const copyWebhookUrl = () => {
+    navigator.clipboard.writeText(webhookUrl)
+    toast.success('Webhook URL copied!')
+  }
+
+  if (loading) return <div className="flex justify-center py-6"><Loader2 className="w-5 h-5 animate-spin text-primary-400" /></div>
+
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-slate-400 leading-relaxed">
+        Connect your company's Razorpay account so your clients can pay invoices online.
+        Each company needs their own Razorpay account — money goes directly into your account.
+      </p>
+
+      {/* Status badge */}
+      <div className="flex items-center gap-2">
+        {connected
+          ? <><CheckCircle className="w-4 h-4 text-emerald-400" /><span className="text-sm text-emerald-400 font-medium">Connected</span><span className="text-xs text-slate-500">— Key ID: {keyId}</span></>
+          : <><AlertCircle className="w-4 h-4 text-amber-400" /><span className="text-sm text-amber-400 font-medium">Not connected</span></>
+        }
+      </div>
+
+      {isAdmin && (
+        <div className="space-y-3 pt-1">
+          <div>
+            <label className="text-xs text-slate-400 mb-1 block">Razorpay Key ID</label>
+            <input
+              className={inp()}
+              value={keyId}
+              onChange={e => setKeyId(e.target.value)}
+              placeholder="rzp_live_xxxxxxxxxxxx"
+            />
+            <p className="text-[11px] text-slate-600 mt-1">
+              Dashboard → Settings → API Keys → Key ID
+            </p>
+          </div>
+          <div>
+            <label className="text-xs text-slate-400 mb-1 block">
+              Razorpay Key Secret {connected && <span className="text-slate-600">(enter new to update)</span>}
+            </label>
+            <div className="relative">
+              <input
+                type={showSecret ? 'text' : 'password'}
+                className={inp('pr-10')}
+                value={keySecret}
+                onChange={e => setKeySecret(e.target.value)}
+                placeholder={connected ? '••••••••••••••••' : 'Your Razorpay secret key'}
+                autoComplete="off"
+              />
+              <button type="button" onClick={() => setShowSecret(v => !v)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">
+                {showSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+            <p className="text-[11px] text-slate-600 mt-1">Never shared — stored securely, used server-side only.</p>
+          </div>
+
+          {/* Webhook URL — show this to the company so they configure it in Razorpay */}
+          <div className="bg-dark-700/60 border border-dark-600 rounded-lg p-3 space-y-2">
+            <p className="text-xs font-medium text-slate-300">Your Webhook URL</p>
+            <p className="text-[11px] text-slate-400">
+              In your Razorpay Dashboard → Settings → Webhooks, add this URL and enable the <code className="text-primary-400">payment_link.paid</code> event.
+            </p>
+            <div className="flex items-center gap-2">
+              <code className="flex-1 text-[11px] text-emerald-400 bg-dark-800 rounded px-2 py-1.5 break-all">{webhookUrl}</code>
+              <button onClick={copyWebhookUrl} className="shrink-0 text-xs px-2 py-1.5 rounded bg-dark-600 hover:bg-dark-500 text-slate-300 border border-dark-500">Copy</button>
+            </div>
+          </div>
+
+          <div>
+            <label className="text-xs text-slate-400 mb-1 block">
+              Razorpay Webhook Secret {connected && <span className="text-slate-600">(enter new to update)</span>}
+            </label>
+            <div className="relative">
+              <input
+                type={showWHSecret ? 'text' : 'password'}
+                className={inp('pr-10')}
+                value={webhookSecret}
+                onChange={e => setWebhookSecret(e.target.value)}
+                placeholder={connected ? '••••••••••••••••' : 'Webhook secret from Razorpay Dashboard'}
+                autoComplete="off"
+              />
+              <button type="button" onClick={() => setShowWHSecret(v => !v)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">
+                {showWHSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+            <p className="text-[11px] text-slate-600 mt-1">Found in Razorpay Dashboard when you create the webhook.</p>
+          </div>
+
+          <div className="flex items-center gap-3 pt-1">
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-500 text-white text-sm font-medium rounded-lg transition-all disabled:opacity-50"
+            >
+              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+              {saving ? 'Saving…' : (connected ? 'Update Keys' : 'Connect Razorpay')}
+            </button>
+            {connected && (
+              <button
+                onClick={handleRemove}
+                disabled={removing}
+                className="flex items-center gap-2 px-3 py-2 text-red-400 hover:bg-red-900/20 border border-red-700/30 text-sm rounded-lg transition-all disabled:opacity-50"
+              >
+                {removing ? <Loader2 className="w-4 h-4 animate-spin" /> : <X className="w-4 h-4" />}
+                Disconnect
+              </button>
+            )}
+            <a
+              href="https://dashboard.razorpay.com/app/keys"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1 text-xs text-primary-400 hover:text-primary-300 ml-auto"
+            >
+              <Link className="w-3.5 h-3.5" /> Razorpay Dashboard
+            </a>
+          </div>
+        </div>
+      )}
+
+      {!isAdmin && connected && (
+        <p className="text-xs text-slate-500 italic">Contact your admin to update payment gateway settings.</p>
+      )}
+    </div>
+  )
+}
+
 // ─── Main ────────────────────────────────────────────────────────────────────
 export default function SettingsPage() {
   const { company, companyId, role, isAdmin } = useAuth()
@@ -429,6 +625,10 @@ export default function SettingsPage() {
 
         <SectionCard icon={Shield} title="Display Mode Defaults by Role">
           <DisplayModeSettings company={company} isAdmin={adminAccess} />
+        </SectionCard>
+
+        <SectionCard icon={CreditCard} title="Payment Gateway — Razorpay">
+          <RazorpaySettings companyId={companyId} isAdmin={adminAccess} />
         </SectionCard>
 
       </div>
