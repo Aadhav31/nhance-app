@@ -910,17 +910,24 @@ function IncidentModal({ equipment, shift, companyId, onClose }) {
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
 
   const handleSave = async () => {
-    if (!incidentType)           { toast.error('Select incident type'); return }
-    if (!form.description.trim()) { toast.error('Description is required'); return }
+    if (!incidentType) { toast.error('Select incident type'); return }
+    // Validate the primary description field for each incident type
+    const primaryField = incidentType === 'breakdown' ? form.breakdown_cause
+      : incidentType === 'damage' ? form.damage_cause
+      : form.description
+    if (!primaryField?.trim()) { toast.error('Please fill in the required description'); return }
     setSaving(true)
     try {
+      // Use primary field as description if form.description is empty
+      const descriptionValue = form.description?.trim() || primaryField?.trim() || ''
+
       const { error } = await supabase.from('shift_incidents').insert({
         company_id: companyId,
         shift_id: shift?.id || null,
         equipment_id: equipment.id,
         incident_type: incidentType,
         severity: ['safety_issue', 'accident', 'near_miss'].includes(incidentType) ? form.severity : null,
-        description: form.description,
+        description: descriptionValue,
         action_taken: form.action_taken || null,
         breakdown_cause: form.breakdown_cause || null,
         rectification_needed: form.rectification_needed || null,
@@ -933,20 +940,31 @@ function IncidentModal({ equipment, shift, companyId, onClose }) {
         resolved: false,
       })
       if (error) throw error
+
+      // Equipment status update
       if (incidentType === 'breakdown') {
         await supabase.from('equipment').update({ status: 'breakdown' }).eq('id', equipment.id)
       } else if (['regular_maintenance', 'unscheduled_maintenance'].includes(incidentType)) {
         await supabase.from('equipment').update({ status: 'maintenance' }).eq('id', equipment.id)
       }
-      if (['damage', 'safety_issue', 'theft', 'accident', 'breakdown'].includes(incidentType)) {
-        await supabase.from('notifications').insert({
-          company_id: companyId,
-          type: `incident_${incidentType}`,
-          title: `${INCIDENT_OPTIONS.find(i => i.value === incidentType)?.label} — ${equipment.name}`,
-          body: form.description,
-          metadata: { equipment_id: equipment.id, equipment_name: equipment.name, incident_type: incidentType }
-        }).catch(() => {})
+
+      // Notification insert — fire and forget, completely non-blocking
+      // Using an IIFE so errors never surface to the outer try/catch
+      if (companyId && ['damage', 'safety_issue', 'theft', 'accident', 'breakdown'].includes(incidentType)) {
+        ;(async () => {
+          try {
+            const label = INCIDENT_OPTIONS.find(i => i.value === incidentType)?.label ?? incidentType
+            await supabase.from('notifications').insert({
+              company_id: companyId,
+              type: `incident_${incidentType}`,
+              title: `${label} — ${equipment.name}`,
+              body: descriptionValue,
+              metadata: { equipment_id: equipment.id, equipment_name: equipment.name, incident_type: incidentType },
+            })
+          } catch (_) { /* Notification failure never blocks incident save */ }
+        })()
       }
+
       toast.success('Incident reported')
       qc.invalidateQueries(['all_incidents', companyId])
       qc.invalidateQueries(['today_ops', companyId])
@@ -1919,86 +1937,286 @@ function IncidentDetailModal({ incident, onClose, onResolve }) {
   )
 }
 
-// ── Shifts Tab ─────────────────────────────────────────────────────────────────
+// ── Shifts Tab — Daily Operations Log ─────────────────────────────────────────
 function ShiftsTab({ companyId }) {
-  const [filterDate,    setFilterDate]    = useState(today())
+  const [dateFrom,      setDateFrom]      = useState(today())
+  const [dateTo,        setDateTo]        = useState(today())
+  const [equipFilter,   setEquipFilter]   = useState('all')
   const [selectedShift, setSelectedShift] = useState(null)
 
-  const { data: shifts = [], isLoading } = useQuery({
-    queryKey: ['all_shifts', companyId, filterDate],
+  // Equipment list for filter dropdown
+  const { data: equipList = [] } = useQuery({
+    queryKey: ['equip_list_ops', companyId],
     queryFn: async () => {
-      let q = supabase.from('shifts').select('*, equipment(name, category, meter_type)')
-        .eq('company_id', companyId).order('shift_date', { ascending: false }).order('start_time', { ascending: false })
-      if (filterDate) q = q.eq('shift_date', filterDate)
-      const { data, error } = await q.limit(100)
+      const { data } = await supabase.from('equipment')
+        .select('id, name, category, meter_type').eq('company_id', companyId)
+        .order('name')
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+
+  // Shifts with equipment info
+  const { data: shifts = [], isLoading } = useQuery({
+    queryKey: ['all_shifts', companyId, dateFrom, dateTo, equipFilter],
+    queryFn: async () => {
+      let q = supabase.from('shifts')
+        .select('*, equipment(id, name, category, meter_type)')
+        .eq('company_id', companyId)
+        .gte('shift_date', dateFrom)
+        .lte('shift_date', dateTo)
+        .order('shift_date', { ascending: false })
+        .order('start_time', { ascending: false })
+      if (equipFilter !== 'all') q = q.eq('equipment_id', equipFilter)
+      const { data, error } = await q.limit(200)
       if (error) throw error
       return data || []
     },
     enabled: !!companyId,
   })
 
-  const totalHours = shifts.reduce((sum, s) => sum + Number(s.working_hours || 0), 0)
-  const openCount  = shifts.filter(s => s.status === 'open').length
+  // Fuel summaries for all fetched shifts (one batch query)
+  const shiftIds = shifts.map(s => s.id)
+  const { data: fuelSummary = [] } = useQuery({
+    queryKey: ['shifts_fuel_summary', shiftIds.join(',')],
+    queryFn: async () => {
+      if (!shiftIds.length) return []
+      const { data } = await supabase.from('shift_fuel_entries')
+        .select('shift_id, quantity_liters').in('shift_id', shiftIds)
+      return data || []
+    },
+    enabled: shiftIds.length > 0,
+  })
+
+  // Incident counts for all fetched shifts (one batch query)
+  const { data: incidentSummary = [] } = useQuery({
+    queryKey: ['shifts_incident_summary', shiftIds.join(',')],
+    queryFn: async () => {
+      if (!shiftIds.length) return []
+      const { data } = await supabase.from('shift_incidents')
+        .select('shift_id, severity').in('shift_id', shiftIds)
+      return data || []
+    },
+    enabled: shiftIds.length > 0,
+  })
+
+  // Build lookup maps
+  const fuelByShift = useMemo(() => {
+    const m = {}
+    fuelSummary.forEach(f => { m[f.shift_id] = (m[f.shift_id] || 0) + Number(f.quantity_liters || 0) })
+    return m
+  }, [fuelSummary])
+
+  const incidentsByShift = useMemo(() => {
+    const m = {}
+    incidentSummary.forEach(i => {
+      if (!m[i.shift_id]) m[i.shift_id] = { count: 0, hasCritical: false }
+      m[i.shift_id].count++
+      if (i.severity === 'critical' || i.severity === 'high') m[i.shift_id].hasCritical = true
+    })
+    return m
+  }, [incidentSummary])
+
+  // Totals for summary bar
+  const totalWorkHrs  = shifts.reduce((s, r) => s + Number(r.working_hours || 0), 0)
+  const totalFuelL    = Object.values(fuelByShift).reduce((s, v) => s + v, 0)
+  const totalIncidents = incidentSummary.length
+  const openCount     = shifts.filter(s => s.status === 'open').length
+
+  // Clock time = difference between start_time and end_time in hours
+  function clockHours(start, end) {
+    if (!start || !end) return null
+    const [sh, sm] = start.split(':').map(Number)
+    const [eh, em] = end.split(':').map(Number)
+    let mins = (eh * 60 + em) - (sh * 60 + sm)
+    if (mins < 0) mins += 24 * 60 // overnight
+    return (mins / 60).toFixed(1)
+  }
+
+  const meterUnit = (s) => s.equipment?.meter_type === 'kilometers' ? 'km' : 'h'
 
   return (
     <div className="flex flex-col h-full">
-      <div className="px-4 py-2 shrink-0 flex items-center gap-3 flex-wrap">
-        <input type="date" className="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
-          value={filterDate} onChange={e => setFilterDate(e.target.value)} />
-        <button onClick={() => setFilterDate(today())} className="text-xs text-primary-400 hover:text-primary-300">Today</button>
-        {shifts.length > 0 && (
-          <span className="text-xs text-slate-400 ml-auto">
-            {shifts.length} shifts · {totalHours.toFixed(1)} hrs{openCount > 0 ? ` · ${openCount} open` : ''}
-          </span>
-        )}
+      {/* ── Filters ── */}
+      <div className="px-4 py-2 shrink-0 border-b border-dark-800 space-y-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-1.5">
+            <label className="text-[11px] text-slate-500">From</label>
+            <input type="date" className="bg-dark-700 border border-dark-600 rounded-lg px-2 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-primary-500"
+              value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
+          </div>
+          <div className="flex items-center gap-1.5">
+            <label className="text-[11px] text-slate-500">To</label>
+            <input type="date" className="bg-dark-700 border border-dark-600 rounded-lg px-2 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-primary-500"
+              value={dateTo} onChange={e => setDateTo(e.target.value)} />
+          </div>
+          <button onClick={() => { setDateFrom(today()); setDateTo(today()) }}
+            className="text-[11px] text-primary-400 hover:text-primary-300 px-2 py-1.5 rounded-lg hover:bg-primary-500/10 border border-primary-700/30">
+            Today
+          </button>
+          <button onClick={() => {
+            const d = new Date(); const y = d.getFullYear(); const m = String(d.getMonth() + 1).padStart(2, '0')
+            setDateFrom(`${y}-${m}-01`)
+            setDateTo(`${y}-${m}-${String(new Date(y, d.getMonth()+1, 0).getDate()).padStart(2, '0')}`)
+          }} className="text-[11px] text-slate-400 hover:text-slate-200 px-2 py-1.5 rounded-lg hover:bg-dark-700 border border-dark-600">
+            This Month
+          </button>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <select className="flex-1 min-w-[140px] bg-dark-700 border border-dark-600 rounded-lg px-2 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-primary-500"
+            value={equipFilter} onChange={e => setEquipFilter(e.target.value)}>
+            <option value="all">All Equipment</option>
+            {equipList.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+          </select>
+          {shifts.length > 0 && (
+            <div className="flex gap-2 ml-auto">
+              <span className="text-[11px] bg-dark-700 rounded-lg px-2 py-1.5 text-slate-400">{shifts.length} shifts</span>
+              <span className="text-[11px] bg-dark-700 rounded-lg px-2 py-1.5"><span className="text-emerald-400 font-bold">{totalWorkHrs.toFixed(1)}</span><span className="text-slate-500"> hrs</span></span>
+              {totalFuelL > 0 && <span className="text-[11px] bg-dark-700 rounded-lg px-2 py-1.5"><span className="text-yellow-400 font-bold">{totalFuelL.toFixed(0)}</span><span className="text-slate-500"> L fuel</span></span>}
+              {totalIncidents > 0 && <span className="text-[11px] bg-red-900/30 border border-red-700/40 rounded-lg px-2 py-1.5 text-red-400 font-bold">{totalIncidents} incidents</span>}
+              {openCount > 0 && <span className="text-[11px] bg-emerald-900/20 border border-emerald-700/30 rounded-lg px-2 py-1.5 text-emerald-400">{openCount} active</span>}
+            </div>
+          )}
+        </div>
       </div>
+
+      {/* ── Table Header ── */}
+      {!isLoading && shifts.length > 0 && (
+        <div className="shrink-0 px-4 pt-2 pb-1">
+          <div className="grid text-[10px] font-bold text-slate-600 uppercase tracking-wider"
+            style={{ gridTemplateColumns: '90px 80px 70px 70px 65px 65px 60px 60px 50px 24px' }}>
+            <span>Date</span>
+            <span>Equipment</span>
+            <span className="text-center">Start Hr</span>
+            <span className="text-center">End Hr</span>
+            <span className="text-center">Clock In</span>
+            <span className="text-center">Clock Out</span>
+            <span className="text-center">Work Hrs</span>
+            <span className="text-center">Clock Hrs</span>
+            <span className="text-center">Fuel (L)</span>
+            <span className="text-center"></span>
+          </div>
+        </div>
+      )}
+
+      {/* ── Rows ── */}
       <div className="flex-1 overflow-y-auto px-4 pb-4">
         {isLoading ? (
           <div className="flex items-center justify-center py-16"><Loader2 className="w-6 h-6 text-primary-400 animate-spin" /></div>
         ) : shifts.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 gap-2">
             <Clock className="w-10 h-10 text-slate-600" />
-            <p className="text-slate-400">No shifts for this date</p>
+            <p className="text-slate-400">No shifts found for selected filters</p>
           </div>
         ) : (
-          <div className="space-y-2">
-            {shifts.map(s => (
-              <button key={s.id} onClick={() => setSelectedShift(s)}
-                className="w-full text-left bg-dark-800 border border-dark-700 hover:border-primary-700/50 rounded-xl p-3 transition-colors group">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-slate-100 text-sm truncate">{s.equipment?.name}</p>
-                    <p className="text-xs text-slate-500">{s.equipment?.category}</p>
+          <div className="space-y-0.5 mt-1">
+            {shifts.map(s => {
+              const fuel      = fuelByShift[s.id] || 0
+              const incidents = incidentsByShift[s.id]
+              const clockHr   = clockHours(s.start_time, s.end_time)
+              const startMeter = s.start_meter ?? s.start_km
+              const endMeter   = s.end_meter   ?? s.end_km
+              const isOpen     = s.status === 'open'
+
+              return (
+                <button key={s.id} onClick={() => setSelectedShift(s)}
+                  className={`w-full text-left rounded-xl px-3 py-2.5 transition-all group border
+                    ${isOpen
+                      ? 'bg-emerald-900/10 border-emerald-700/20 hover:border-emerald-600/40'
+                      : 'bg-dark-800 border-dark-700 hover:border-primary-700/40'}`}>
+                  <div className="grid items-center gap-x-1"
+                    style={{ gridTemplateColumns: '90px 80px 70px 70px 65px 65px 60px 60px 50px 24px' }}>
+
+                    {/* Date */}
+                    <div>
+                      <p className="text-xs font-semibold text-slate-200 leading-tight">
+                        {format(new Date(s.shift_date + 'T00:00:00'), 'dd MMM')}
+                      </p>
+                      <p className="text-[10px] text-slate-500">{format(new Date(s.shift_date + 'T00:00:00'), 'EEE')}</p>
+                    </div>
+
+                    {/* Equipment */}
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium text-slate-200 truncate leading-tight">{s.equipment?.name || '—'}</p>
+                      <p className="text-[10px] text-slate-500 truncate">{s.operator_name || '—'}</p>
+                    </div>
+
+                    {/* Start Hour (meter) */}
+                    <div className="text-center">
+                      <p className="text-xs font-mono text-slate-300">{startMeter != null ? startMeter : '—'}</p>
+                      <p className="text-[10px] text-slate-600">{meterUnit(s)}</p>
+                    </div>
+
+                    {/* End Hour (meter) */}
+                    <div className="text-center">
+                      <p className={`text-xs font-mono ${endMeter != null ? 'text-slate-300' : 'text-slate-600'}`}>
+                        {endMeter != null ? endMeter : isOpen ? '…' : '—'}
+                      </p>
+                      <p className="text-[10px] text-slate-600">{meterUnit(s)}</p>
+                    </div>
+
+                    {/* Clock In */}
+                    <div className="text-center">
+                      <p className="text-xs font-mono text-emerald-400">{s.start_time || '—'}</p>
+                    </div>
+
+                    {/* Clock Out */}
+                    <div className="text-center">
+                      <p className={`text-xs font-mono ${s.end_time ? 'text-red-400' : isOpen ? 'text-emerald-500 animate-pulse' : 'text-slate-600'}`}>
+                        {s.end_time || (isOpen ? 'Live' : '—')}
+                      </p>
+                    </div>
+
+                    {/* Working Hours */}
+                    <div className="text-center">
+                      <p className={`text-sm font-black ${Number(s.working_hours) > 0 ? 'text-emerald-400' : 'text-slate-600'}`}>
+                        {s.working_hours || '—'}
+                      </p>
+                    </div>
+
+                    {/* Clock Hours (wall time) */}
+                    <div className="text-center">
+                      <p className={`text-xs font-mono ${clockHr ? 'text-slate-300' : 'text-slate-600'}`}>
+                        {clockHr ? `${clockHr}h` : '—'}
+                      </p>
+                    </div>
+
+                    {/* Fuel */}
+                    <div className="text-center">
+                      <p className={`text-xs font-semibold ${fuel > 0 ? 'text-yellow-400' : 'text-slate-700'}`}>
+                        {fuel > 0 ? `${fuel.toFixed(0)}L` : '—'}
+                      </p>
+                    </div>
+
+                    {/* Incidents icon + chevron */}
+                    <div className="flex items-center justify-center gap-0.5">
+                      {incidents ? (
+                        <span title={`${incidents.count} incident${incidents.count > 1 ? 's' : ''}`}>
+                          <AlertTriangle className={`w-3.5 h-3.5 ${incidents.hasCritical ? 'text-red-400' : 'text-orange-400'}`} />
+                        </span>
+                      ) : (
+                        <ChevronRight className="w-3.5 h-3.5 text-slate-700 group-hover:text-slate-400 transition-colors" />
+                      )}
+                    </div>
                   </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <span className={`text-xs px-2 py-0.5 rounded-full ${s.status === 'open' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-700/40' : 'bg-dark-700 text-slate-400'}`}>
-                      {s.status}
-                    </span>
-                    <ChevronRight className="w-4 h-4 text-slate-600 group-hover:text-slate-400 transition-colors" />
-                  </div>
-                </div>
-                <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-slate-400">
-                  <span className="flex items-center gap-1"><User className="w-3 h-3" />{s.operator_name || '—'}</span>
-                  <span className="flex items-center gap-1"><Clock className="w-3 h-3" />{s.start_time}{s.end_time ? ` → ${s.end_time}` : ' (ongoing)'}</span>
-                  <span>Opening: {s.start_meter ?? s.start_km ?? '—'} {s.equipment?.meter_type === 'kilometers' ? 'km' : 'hrs'}</span>
-                  <span>Worked: <strong className="text-slate-200">{s.working_hours || 0} hrs</strong></span>
-                  {s.idle_hours > 0      && <span>Idle: {s.idle_hours} hrs</span>}
-                  {s.breakdown_hours > 0 && <span className="text-red-400">Breakdown: {s.breakdown_hours} hrs</span>}
-                </div>
-                {s.meter_discrepancy && <p className="text-xs text-orange-400 mt-1">⚠ Meter corrected</p>}
-                {(s.work_done || s.handover_notes || s.meter_photo_url || s.logsheet_photo_url) && (
-                  <div className="mt-2 flex gap-1.5 flex-wrap">
-                    {s.work_done        && <span className="text-[10px] px-1.5 py-0.5 rounded bg-dark-700 text-slate-500">📋 Work logged</span>}
-                    {s.handover_notes   && <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-900/30 text-yellow-600">📨 Handover</span>}
-                    {s.meter_photo_url  && <span className="text-[10px] px-1.5 py-0.5 rounded bg-dark-700 text-slate-500">📷 Meter photo</span>}
-                    {s.logsheet_photo_url && <span className="text-[10px] px-1.5 py-0.5 rounded bg-dark-700 text-slate-500">📄 Log sheet</span>}
-                  </div>
-                )}
-              </button>
-            ))}
+
+                  {/* Extra badges row — only if noteworthy */}
+                  {(s.breakdown_hours > 0 || s.meter_discrepancy || s.handover_notes || s.work_done) && (
+                    <div className="flex gap-1.5 mt-1.5 pl-0 flex-wrap">
+                      {s.breakdown_hours > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-900/30 border border-red-700/30 text-red-400">⚡ Breakdown {s.breakdown_hours}h</span>}
+                      {s.idle_hours > 0       && <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-900/20 border border-yellow-700/20 text-yellow-600">Idle {s.idle_hours}h</span>}
+                      {s.meter_discrepancy    && <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-900/20 border border-orange-700/20 text-orange-400">⚠ Meter corrected</span>}
+                      {s.handover_notes       && <span className="text-[10px] px-1.5 py-0.5 rounded bg-dark-700 text-slate-500">📨 Handover note</span>}
+                      {s.work_done            && <span className="text-[10px] px-1.5 py-0.5 rounded bg-dark-700 text-slate-500">📋 Work logged</span>}
+                    </div>
+                  )}
+                </button>
+              )
+            })}
           </div>
         )}
       </div>
+
       {selectedShift && <ShiftDetailModal shift={selectedShift} onClose={() => setSelectedShift(null)} />}
     </div>
   )
