@@ -312,6 +312,7 @@ function StartShiftModal({ equipment, companyId, onClose }) {
         shift_date: form.shift_date,
         shift_type: form.shift_type,
         operator_name: form.operator_name,
+        operator_id: myEmployee?.id || null,
         site_incharge_name: form.site_incharge_name || null,
         start_time: form.start_time,
         start_meter: form.start_meter ? Number(form.start_meter) : null,
@@ -1568,7 +1569,15 @@ function ShiftDetailModal({ shift, onClose }) {
                   <div className="w-7 h-7 rounded-full bg-primary-500/20 flex items-center justify-center shrink-0">
                     <User className="w-3.5 h-3.5 text-primary-400" />
                   </div>
-                  <p className="text-sm font-semibold text-slate-100 leading-tight">{shift.operator_name || '—'}</p>
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-slate-100 leading-tight truncate">{shift.operator_name || '—'}</p>
+                    {shift._operator?.designation && (
+                      <p className="text-[10px] text-slate-500 truncate">{shift._operator.designation}</p>
+                    )}
+                    {shift._operator?.employee_number && (
+                      <p className="text-[10px] text-primary-400 font-mono">{shift._operator.employee_number}</p>
+                    )}
+                  </div>
                 </div>
               </div>
               <div className="bg-dark-800 rounded-xl p-3 border border-dark-700">
@@ -2018,6 +2027,20 @@ function ShiftsTab({ companyId }) {
         }
       }
 
+      // ── Resolve HR operator for each shift ───────────────────────────────────
+      // operator_id links shifts → hr_employees (added by operator_fk_schema.sql)
+      const allOperatorIds = [...new Set(shifts.map(s => s.operator_id).filter(Boolean))]
+      if (allOperatorIds.length > 0) {
+        const { data: employees } = await supabase.from('hr_employees')
+          .select('id, name, designation, employee_number').in('id', allOperatorIds)
+        if (employees) {
+          const eMap = Object.fromEntries(employees.map(e => [e.id, e]))
+          shifts.forEach(s => {
+            s._operator = s.operator_id ? (eMap[s.operator_id] || null) : null
+          })
+        }
+      }
+
       return shifts
     },
     enabled: !!companyId,
@@ -2196,6 +2219,9 @@ function ShiftsTab({ companyId }) {
                     {/* Operator */}
                     <div className="min-w-0">
                       <p className="text-xs text-slate-200 truncate leading-tight">{s.operator_name || '—'}</p>
+                      {s._operator?.designation && (
+                        <p className="text-[10px] text-slate-500 truncate">{s._operator.designation}</p>
+                      )}
                     </div>
 
                     {/* Project */}

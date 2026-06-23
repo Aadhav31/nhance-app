@@ -82,7 +82,7 @@ function Modal({ title, onClose, children, wide = false }) {
 // ─────────────────────────────────────────────────────────────────────────────
 const blankLine = () => ({
   _id: Math.random().toString(36).slice(2),
-  description: '', quantity: 1, unit: 'hrs', rate: '', amount: 0,
+  description: '', quantity: 1, unit: 'hrs', rate: '', amount: 0, equipment_id: '',
 })
 
 function CreateInvoiceModal({ companyId, session, invoiceCount, onClose, onSaved }) {
@@ -95,6 +95,17 @@ function CreateInvoiceModal({ companyId, session, invoiceCount, onClose, onSaved
   })
   const [lines, setLines] = useState([blankLine()])
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
+
+  // Equipment list for line item linking
+  const { data: equipList = [] } = useQuery({
+    queryKey: ['equip_list_invoice', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('equipment').select('id, name, equipment_number, category')
+        .eq('company_id', companyId).order('name')
+      return data || []
+    },
+    enabled: !!companyId,
+  })
 
   const updateLine = (id, key, val) => {
     setLines(prev => prev.map(l => {
@@ -143,9 +154,10 @@ function CreateInvoiceModal({ companyId, session, invoiceCount, onClose, onSaved
       if (invErr) throw invErr
 
       const linePayload = lines.filter(l => l.description.trim()).map((l, i) => ({
-        invoice_id: invoiceId, description: l.description.trim(),
+        invoice_id: invoiceId, company_id: companyId, description: l.description.trim(),
         quantity: parseFloat(l.quantity) || 1, unit: l.unit,
         rate: parseFloat(l.rate) || 0, amount: l.amount, sort_order: i,
+        equipment_id: l.equipment_id || null,
       }))
       if (linePayload.length > 0) {
         const { error: le } = await supabase.from('invoice_line_items').insert(linePayload)
@@ -206,31 +218,47 @@ function CreateInvoiceModal({ companyId, session, invoiceCount, onClose, onSaved
               <div className="col-span-1" />
             </div>
             {lines.map(l => (
-              <div key={l._id} className="grid grid-cols-12 gap-2 items-center">
-                <div className="col-span-5">
-                  <input className={inp('text-xs')} value={l.description}
-                    onChange={e => updateLine(l._id, 'description', e.target.value)} placeholder="Service description…" />
+              <div key={l._id} className="space-y-1">
+                <div className="grid grid-cols-12 gap-2 items-center">
+                  <div className="col-span-5">
+                    <input className={inp('text-xs')} value={l.description}
+                      onChange={e => updateLine(l._id, 'description', e.target.value)} placeholder="Service description…" />
+                  </div>
+                  <div className="col-span-2">
+                    <input type="number" className={inp('text-xs')} value={l.quantity}
+                      onChange={e => updateLine(l._id, 'quantity', e.target.value)} min="0" step="0.5" />
+                  </div>
+                  <div className="col-span-1">
+                    <select className={inp('text-xs')} value={l.unit} onChange={e => updateLine(l._id, 'unit', e.target.value)}>
+                      {UNITS.map(u => <option key={u}>{u}</option>)}
+                    </select>
+                  </div>
+                  <div className="col-span-2">
+                    <input type="number" className={inp('text-xs')} value={l.rate}
+                      onChange={e => updateLine(l._id, 'rate', e.target.value)} placeholder="0" min="0" />
+                  </div>
+                  <div className="col-span-1 text-right text-xs text-slate-300 font-mono">{fmt(l.amount)}</div>
+                  <div className="col-span-1 text-right">
+                    <button onClick={() => lines.length > 1 && setLines(p => p.filter(x => x._id !== l._id))}
+                      className="text-slate-600 hover:text-red-400 transition-colors">
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
-                <div className="col-span-2">
-                  <input type="number" className={inp('text-xs')} value={l.quantity}
-                    onChange={e => updateLine(l._id, 'quantity', e.target.value)} min="0" step="0.5" />
-                </div>
-                <div className="col-span-1">
-                  <select className={inp('text-xs')} value={l.unit} onChange={e => updateLine(l._id, 'unit', e.target.value)}>
-                    {UNITS.map(u => <option key={u}>{u}</option>)}
-                  </select>
-                </div>
-                <div className="col-span-2">
-                  <input type="number" className={inp('text-xs')} value={l.rate}
-                    onChange={e => updateLine(l._id, 'rate', e.target.value)} placeholder="0" min="0" />
-                </div>
-                <div className="col-span-1 text-right text-xs text-slate-300 font-mono">{fmt(l.amount)}</div>
-                <div className="col-span-1 text-right">
-                  <button onClick={() => lines.length > 1 && setLines(p => p.filter(x => x._id !== l._id))}
-                    className="text-slate-600 hover:text-red-400 transition-colors">
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                </div>
+                {/* Equipment tag — optional link to fleet asset */}
+                {equipList.length > 0 && (
+                  <div className="pl-0">
+                    <select className="bg-dark-800 border border-dark-600 rounded-lg px-2 py-1 text-[10px] text-slate-400 focus:outline-none focus:border-primary-500 w-full max-w-xs"
+                      value={l.equipment_id || ''} onChange={e => updateLine(l._id, 'equipment_id', e.target.value)}>
+                      <option value="">— Link equipment (optional) —</option>
+                      {equipList.map(eq => (
+                        <option key={eq.id} value={eq.id}>
+                          {eq.equipment_number ? `${eq.equipment_number} · ` : ''}{eq.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -335,6 +363,17 @@ function EditInvoiceModal({ invoice, companyId, session, onClose, onSaved }) {
   const [lines, setLines] = useState([blankLine()])
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
 
+  // Equipment list for line item linking
+  const { data: equipList = [] } = useQuery({
+    queryKey: ['equip_list_invoice', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('equipment').select('id, name, equipment_number, category')
+        .eq('company_id', companyId).order('name')
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+
   // Load existing line items
   useState(() => {
     supabase.from('invoice_line_items')
@@ -344,6 +383,7 @@ function EditInvoiceModal({ invoice, companyId, session, onClose, onSaved }) {
           setLines(data.map(l => ({
             _id: l.id, description: l.description,
             quantity: l.quantity, unit: l.unit, rate: l.rate, amount: l.amount,
+            equipment_id: l.equipment_id || '',
           })))
         }
         setLoadingLines(false)
@@ -396,9 +436,10 @@ function EditInvoiceModal({ invoice, companyId, session, onClose, onSaved }) {
       // Replace line items: delete old, insert new
       await supabase.from('invoice_line_items').delete().eq('invoice_id', invoice.id)
       const linePayload = lines.filter(l => l.description.trim()).map((l, i) => ({
-        invoice_id: invoice.id, description: l.description.trim(),
+        invoice_id: invoice.id, company_id: companyId, description: l.description.trim(),
         quantity: parseFloat(l.quantity) || 1, unit: l.unit,
         rate: parseFloat(l.rate) || 0, amount: l.amount, sort_order: i,
+        equipment_id: l.equipment_id || null,
       }))
       if (linePayload.length > 0) {
         const { error: le } = await supabase.from('invoice_line_items').insert(linePayload)
@@ -462,31 +503,47 @@ function EditInvoiceModal({ invoice, companyId, session, onClose, onSaved }) {
                 <div className="col-span-1" />
               </div>
               {lines.map(l => (
-                <div key={l._id} className="grid grid-cols-12 gap-2 items-center">
-                  <div className="col-span-5">
-                    <input className={inp('text-xs')} value={l.description}
-                      onChange={e => updateLine(l._id, 'description', e.target.value)} placeholder="Service description…" />
+                <div key={l._id} className="space-y-1">
+                  <div className="grid grid-cols-12 gap-2 items-center">
+                    <div className="col-span-5">
+                      <input className={inp('text-xs')} value={l.description}
+                        onChange={e => updateLine(l._id, 'description', e.target.value)} placeholder="Service description…" />
+                    </div>
+                    <div className="col-span-2">
+                      <input type="number" className={inp('text-xs')} value={l.quantity}
+                        onChange={e => updateLine(l._id, 'quantity', e.target.value)} min="0" step="0.5" />
+                    </div>
+                    <div className="col-span-1">
+                      <select className={inp('text-xs')} value={l.unit} onChange={e => updateLine(l._id, 'unit', e.target.value)}>
+                        {UNITS.map(u => <option key={u}>{u}</option>)}
+                      </select>
+                    </div>
+                    <div className="col-span-2">
+                      <input type="number" className={inp('text-xs')} value={l.rate}
+                        onChange={e => updateLine(l._id, 'rate', e.target.value)} placeholder="0" min="0" />
+                    </div>
+                    <div className="col-span-1 text-right text-xs text-slate-300 font-mono">{fmt(l.amount)}</div>
+                    <div className="col-span-1 text-right">
+                      <button onClick={() => lines.length > 1 && setLines(p => p.filter(x => x._id !== l._id))}
+                        className="text-slate-600 hover:text-red-400 transition-colors">
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
-                  <div className="col-span-2">
-                    <input type="number" className={inp('text-xs')} value={l.quantity}
-                      onChange={e => updateLine(l._id, 'quantity', e.target.value)} min="0" step="0.5" />
-                  </div>
-                  <div className="col-span-1">
-                    <select className={inp('text-xs')} value={l.unit} onChange={e => updateLine(l._id, 'unit', e.target.value)}>
-                      {UNITS.map(u => <option key={u}>{u}</option>)}
-                    </select>
-                  </div>
-                  <div className="col-span-2">
-                    <input type="number" className={inp('text-xs')} value={l.rate}
-                      onChange={e => updateLine(l._id, 'rate', e.target.value)} placeholder="0" min="0" />
-                  </div>
-                  <div className="col-span-1 text-right text-xs text-slate-300 font-mono">{fmt(l.amount)}</div>
-                  <div className="col-span-1 text-right">
-                    <button onClick={() => lines.length > 1 && setLines(p => p.filter(x => x._id !== l._id))}
-                      className="text-slate-600 hover:text-red-400 transition-colors">
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
+                  {/* Equipment tag — optional link to fleet asset */}
+                  {equipList.length > 0 && (
+                    <div className="pl-0">
+                      <select className="bg-dark-800 border border-dark-600 rounded-lg px-2 py-1 text-[10px] text-slate-400 focus:outline-none focus:border-primary-500 w-full max-w-xs"
+                        value={l.equipment_id || ''} onChange={e => updateLine(l._id, 'equipment_id', e.target.value)}>
+                        <option value="">— Link equipment (optional) —</option>
+                        {equipList.map(eq => (
+                          <option key={eq.id} value={eq.id}>
+                            {eq.equipment_number ? `${eq.equipment_number} · ` : ''}{eq.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
