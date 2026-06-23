@@ -1017,6 +1017,18 @@ function InvoicesTab({ companyId, session }) {
     enabled: !!companyId,
   })
 
+  // Company payment info for UPI QR + bank details on invoices
+  const { data: paymentInfo } = useQuery({
+    queryKey: ['company_payment_info', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('companies')
+        .select('upi_id, bank_account_name, bank_account_number, bank_ifsc, bank_name')
+        .eq('id', companyId).single()
+      return data || {}
+    },
+    enabled: !!companyId,
+  })
+
   const filtered = useMemo(() => invoices.filter(inv => {
     if (statusFilter !== 'all' && inv.status !== statusFilter) return false
     if (search.trim()) {
@@ -1151,11 +1163,48 @@ function InvoicesTab({ companyId, session }) {
                           )}
                         </div>
 
+                        {/* ── UPI QR + Bank Details ── */}
+                        {(paymentInfo?.upi_id || paymentInfo?.bank_account_number) && ['sent','partial','overdue'].includes(inv.status) && (
+                          <div className="mt-3 pt-3 border-t border-dark-600">
+                            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">
+                              Pay Directly — 0% Fee
+                            </p>
+                            <div className="flex gap-3 items-start flex-wrap">
+                              {paymentInfo.upi_id && (
+                                <div className="flex items-start gap-3 bg-dark-700/60 rounded-xl p-3 flex-1 min-w-[200px]">
+                                  <div className="shrink-0 bg-white p-1.5 rounded-lg">
+                                    <img
+                                      src={`https://chart.googleapis.com/chart?chs=80x80&cht=qr&chl=${encodeURIComponent(`upi://pay?pa=${encodeURIComponent(paymentInfo.upi_id)}&pn=${encodeURIComponent(paymentInfo.bank_account_name || '')}&am=${inv.balance_due}&tn=${encodeURIComponent(inv.invoice_number)}&cu=INR`)}&choe=UTF-8`}
+                                      alt="UPI QR" className="w-16 h-16"
+                                    />
+                                  </div>
+                                  <div>
+                                    <p className="text-[10px] font-semibold text-emerald-400 mb-1">Scan & Pay via UPI</p>
+                                    <p className="text-[11px] text-slate-300 font-mono">{paymentInfo.upi_id}</p>
+                                    <p className="text-[11px] text-slate-500 mt-1">GPay · PhonePe · BHIM · any UPI app</p>
+                                    <p className="text-[11px] text-amber-400 font-semibold mt-1">₹{Number(inv.balance_due).toLocaleString('en-IN')}</p>
+                                  </div>
+                                </div>
+                              )}
+                              {paymentInfo.bank_account_number && (
+                                <div className="bg-dark-700/60 rounded-xl p-3 flex-1 min-w-[180px] space-y-1">
+                                  <p className="text-[10px] font-semibold text-blue-400 mb-1.5">NEFT / RTGS Transfer</p>
+                                  {paymentInfo.bank_account_name && <p className="text-[11px] text-slate-300"><span className="text-slate-500">Name: </span>{paymentInfo.bank_account_name}</p>}
+                                  <p className="text-[11px] text-slate-300"><span className="text-slate-500">A/C: </span>{paymentInfo.bank_account_number}</p>
+                                  <p className="text-[11px] text-slate-300"><span className="text-slate-500">IFSC: </span>{paymentInfo.bank_ifsc}</p>
+                                  {paymentInfo.bank_name && <p className="text-[11px] text-slate-300"><span className="text-slate-500">Bank: </span>{paymentInfo.bank_name}</p>}
+                                  <p className="text-[11px] text-slate-500 mt-1">Ref: {inv.invoice_number}</p>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
                         {/* ── Razorpay Payment Link Section ── */}
                         {['sent', 'partial', 'overdue'].includes(inv.status) && (
                           <div className="mt-3 pt-3 border-t border-dark-600">
                             <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">
-                              Online Payment Link (Razorpay)
+                              Online UPI Payment Link (Razorpay)
                             </p>
                             {inv.payment_link_url ? (
                               <div className="space-y-2">

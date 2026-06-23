@@ -407,6 +407,127 @@ function CompanyProfile({ company }) {
   )
 }
 
+// ─── Payment Info Settings (UPI + Bank) ──────────────────────────────────────
+function PaymentInfoSettings({ companyId, isAdmin }) {
+  const [form, setForm] = useState({
+    upi_id: '', bank_account_name: '', bank_account_number: '', bank_ifsc: '', bank_name: '',
+  })
+  const [loading, setLoading] = useState(true)
+  const [saving,  setSaving]  = useState(false)
+  const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
+
+  useEffect(() => {
+    if (!companyId) return
+    supabase.from('companies')
+      .select('upi_id, bank_account_name, bank_account_number, bank_ifsc, bank_name')
+      .eq('id', companyId).single()
+      .then(({ data }) => { if (data) setForm({ upi_id: data.upi_id || '', bank_account_name: data.bank_account_name || '', bank_account_number: data.bank_account_number || '', bank_ifsc: data.bank_ifsc || '', bank_name: data.bank_name || '' }); setLoading(false) })
+  }, [companyId])
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      const { error } = await supabase.from('companies').update({
+        upi_id: form.upi_id.trim() || null,
+        bank_account_name: form.bank_account_name.trim() || null,
+        bank_account_number: form.bank_account_number.trim() || null,
+        bank_ifsc: form.bank_ifsc.trim().toUpperCase() || null,
+        bank_name: form.bank_name.trim() || null,
+      }).eq('id', companyId)
+      if (error) throw error
+      toast.success('Payment info saved')
+    } catch (e) { toast.error(e.message) } finally { setSaving(false) }
+  }
+
+  // Live UPI QR URI preview
+  const upiUri = form.upi_id.trim()
+    ? `upi://pay?pa=${encodeURIComponent(form.upi_id.trim())}&pn=${encodeURIComponent(form.bank_account_name.trim() || 'Payment')}&cu=INR`
+    : null
+
+  if (loading) return <div className="flex justify-center py-6"><Loader2 className="w-5 h-5 animate-spin text-primary-400" /></div>
+
+  return (
+    <div className="space-y-5">
+      <p className="text-xs text-slate-400 leading-relaxed">
+        This information is shown on your invoices so clients can pay directly via UPI or bank transfer — <span className="text-emerald-400 font-medium">0% commission</span>. No payment gateway needed.
+      </p>
+
+      {/* UPI Section */}
+      <div>
+        <p className="text-xs font-semibold text-slate-300 mb-3 flex items-center gap-2">
+          <span className="w-5 h-5 rounded bg-emerald-900/40 border border-emerald-700/40 flex items-center justify-center text-[10px] text-emerald-400 font-bold">₹</span>
+          UPI Details
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="sm:col-span-2">
+            <label className="text-xs text-slate-400 mb-1 block">UPI ID</label>
+            <input className={inp()} value={form.upi_id} onChange={e => setF('upi_id', e.target.value)}
+              placeholder="yourname@ybl  or  company@okicici" disabled={!isAdmin} />
+            <p className="text-[11px] text-slate-600 mt-1">Find in PhonePe / GPay / BHIM → Profile → UPI ID</p>
+          </div>
+        </div>
+        {upiUri && (
+          <div className="mt-3 flex items-start gap-4 bg-dark-700/60 border border-dark-600 rounded-xl p-4">
+            <div className="shrink-0 bg-white p-2 rounded-lg">
+              {/* QR code rendered via Google Charts API — no npm package needed */}
+              <img
+                src={`https://chart.googleapis.com/chart?chs=120x120&cht=qr&chl=${encodeURIComponent(upiUri)}&choe=UTF-8`}
+                alt="UPI QR Code"
+                className="w-24 h-24"
+              />
+            </div>
+            <div className="space-y-1 text-xs">
+              <p className="text-emerald-400 font-semibold">QR Preview</p>
+              <p className="text-slate-400">This QR will appear on your invoices. Clients scan with any UPI app to pay instantly.</p>
+              <p className="text-slate-500 font-mono break-all mt-2">{form.upi_id}</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Bank Section */}
+      <div>
+        <p className="text-xs font-semibold text-slate-300 mb-3 flex items-center gap-2">
+          <span className="w-5 h-5 rounded bg-blue-900/40 border border-blue-700/40 flex items-center justify-center text-[10px] text-blue-400 font-bold">⇄</span>
+          Bank Account (for NEFT / RTGS)
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="sm:col-span-2">
+            <label className="text-xs text-slate-400 mb-1 block">Account Holder Name</label>
+            <input className={inp()} value={form.bank_account_name} onChange={e => setF('bank_account_name', e.target.value)}
+              placeholder="As per bank records" disabled={!isAdmin} />
+          </div>
+          <div>
+            <label className="text-xs text-slate-400 mb-1 block">Account Number</label>
+            <input className={inp()} value={form.bank_account_number} onChange={e => setF('bank_account_number', e.target.value)}
+              placeholder="000123456789" disabled={!isAdmin} />
+          </div>
+          <div>
+            <label className="text-xs text-slate-400 mb-1 block">IFSC Code</label>
+            <input className={inp()} value={form.bank_ifsc} onChange={e => setF('bank_ifsc', e.target.value.toUpperCase())}
+              placeholder="HDFC0001234" disabled={!isAdmin} />
+          </div>
+          <div className="sm:col-span-2">
+            <label className="text-xs text-slate-400 mb-1 block">Bank Name</label>
+            <input className={inp()} value={form.bank_name} onChange={e => setF('bank_name', e.target.value)}
+              placeholder="HDFC Bank / SBI / ICICI Bank…" disabled={!isAdmin} />
+          </div>
+        </div>
+      </div>
+
+      {isAdmin && (
+        <div className="flex justify-end pt-1">
+          <button onClick={handleSave} disabled={saving}
+            className="flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-500 text-white text-sm font-medium rounded-lg transition-all disabled:opacity-50">
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            {saving ? 'Saving…' : 'Save Payment Info'}
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Razorpay Settings ───────────────────────────────────────────────────────
 function RazorpaySettings({ companyId, isAdmin }) {
   const [keyId,          setKeyId]          = useState('')
@@ -627,7 +748,11 @@ export default function SettingsPage() {
           <DisplayModeSettings company={company} isAdmin={adminAccess} />
         </SectionCard>
 
-        <SectionCard icon={CreditCard} title="Payment Gateway — Razorpay">
+        <SectionCard icon={CreditCard} title="Payment Info — UPI &amp; Bank Transfer (0% fee)">
+          <PaymentInfoSettings companyId={companyId} isAdmin={adminAccess} />
+        </SectionCard>
+
+        <SectionCard icon={CreditCard} title="Online Payments — Razorpay UPI">
           <RazorpaySettings companyId={companyId} isAdmin={adminAccess} />
         </SectionCard>
 

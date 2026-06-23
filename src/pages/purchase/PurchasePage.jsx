@@ -365,9 +365,8 @@ function VendorsTab({ companyId, session }) {
     enabled: !!companyId,
   })
 
-  const openCreate = async () => {
-    const code = await nextDocNumber(companyId, 'vendor').catch(() => '')
-    setForm({ ...BLANK_VENDOR, vendor_code: code })
+  const openCreate = () => {
+    setForm(BLANK_VENDOR)
     setDocs({ aadhar: null, pan: null, cheque: null, gst_cert: null })
     setShowCreate(true)
   }
@@ -393,16 +392,18 @@ function VendorsTab({ companyId, session }) {
     }
     setSaving(true)
     try {
+      // Generate vendor code at save time (not on open) to avoid wasting sequences
+      const vendorCode = form.vendor_code.trim() || await nextDocNumber(companyId, 'vendor').catch(() => '')
       // Upload documents first
       const docUrls = {}
       for (const d of VENDOR_DOCS) {
         if (docs[d.key]) {
-          docUrls[d.urlKey] = await uploadVendorDoc(docs[d.key], d.key, form.vendor_code)
+          docUrls[d.urlKey] = await uploadVendorDoc(docs[d.key], d.key, vendorCode)
         }
       }
       const { error } = await supabase.from('vendors').insert({
         company_id: companyId, name: form.name.trim(),
-        vendor_code: form.vendor_code.trim() || null, category: form.category,
+        vendor_code: vendorCode || null, category: form.category,
         gstin: form.gstin.trim() || null, contact_name: form.contact_name.trim() || null,
         contact_phone: form.contact_phone.trim() || null, contact_email: form.contact_email.trim() || null,
         address: form.address.trim() || null, bank_name: form.bank_name || null,
@@ -705,14 +706,9 @@ function BillsTab({ companyId, session }) {
   const [addToInv, setAddToInv] = useState(false)
   const [invCategory, setInvCategory] = useState('')
   const [invStore, setInvStore] = useState('')
-  const [blNum, setBlNum] = useState('')
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
 
-  const openCreate = async () => {
-    const num = await nextDocNumber(companyId, 'bill').catch(() => `BL-${Date.now()}`)
-    setBlNum(num)
-    setShowCreate(true)
-  }
+  const openCreate = () => setShowCreate(true)
 
   const { data: bills = [], isLoading } = useQuery({
     queryKey: ['bills', companyId],
@@ -763,6 +759,7 @@ function BillsTab({ companyId, session }) {
     setSaving(true)
     try {
       const id = crypto.randomUUID()
+      const blNum = await nextDocNumber(companyId, 'bill').catch(() => `BL-${Date.now()}`)
       const { taxable, cgst_amt, sgst_amt, igst_amt, total } = calcTotal(form, subtotal)
       const vendor = vendors.find(v => v.id === form.vendor_id)
       const { error } = await supabase.from('bills').insert({
@@ -885,7 +882,7 @@ function BillsTab({ companyId, session }) {
         </div>}
       </div>
       {showCreate && (
-        <Modal title={`New Bill — ${blNum}`} onClose={() => setShowCreate(false)} wide
+        <Modal title="New Bill" onClose={() => setShowCreate(false)} wide
           footer={<><button onClick={() => setShowCreate(false)} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Create Bill'}</button></>}>
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2">
@@ -960,14 +957,9 @@ function PurchaseOrdersTab({ companyId, session }) {
   const blankForm = () => ({ vendor_id: '', vendor_gstin: '', po_date: todayStr(), expected_delivery: '', delivery_address: '', notes: '', cgst_rate: 9, sgst_rate: 9, igst_rate: 18, use_igst: false, discount_amount: 0, is_tax_invoice: true })
   const [form, setForm] = useState(blankForm())
   const [lines, setLines] = useState([blankLine()])
-  const [poNum, setPoNum] = useState('')
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
 
-  const openCreate = async () => {
-    const num = await nextDocNumber(companyId, 'po').catch(() => `PO-${Date.now()}`)
-    setPoNum(num)
-    setShowCreate(true)
-  }
+  const openCreate = () => setShowCreate(true)
 
   const { data: pos = [], isLoading } = useQuery({
     queryKey: ['purchase_orders', companyId],
@@ -998,6 +990,7 @@ function PurchaseOrdersTab({ companyId, session }) {
     setSaving(true)
     try {
       const id = crypto.randomUUID()
+      const poNum = await nextDocNumber(companyId, 'po').catch(() => `PO-${Date.now()}`)
       const { taxable, cgst_amt, sgst_amt, igst_amt, total } = calcTotal(form, subtotal)
       const vendor = vendors.find(v => v.id === form.vendor_id)
       const { error } = await supabase.from('purchase_orders').insert({
@@ -1066,7 +1059,7 @@ function PurchaseOrdersTab({ companyId, session }) {
         </div>}
       </div>
       {showCreate && (
-        <Modal title={`New Purchase Order — ${poNum}`} onClose={() => setShowCreate(false)} wide
+        <Modal title="New Purchase Order" onClose={() => setShowCreate(false)} wide
           footer={<><button onClick={() => setShowCreate(false)} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Create PO'}</button></>}>
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2"><Field label="Vendor *">
@@ -1106,14 +1099,9 @@ function VendorCreditsTab({ companyId, session }) {
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState({ vendor_id: '', cn_date: todayStr(), reason: '', amount: '', notes: '' })
-  const [vcNum, setVcNum] = useState('')
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
 
-  const openCreate = async () => {
-    const num = await nextDocNumber(companyId, 'vendor_credit').catch(() => `VC-${Date.now()}`)
-    setVcNum(num)
-    setShowCreate(true)
-  }
+  const openCreate = () => setShowCreate(true)
 
   const { data: credits = [], isLoading } = useQuery({
     queryKey: ['vendor_credits', companyId],
@@ -1138,6 +1126,7 @@ function VendorCreditsTab({ companyId, session }) {
     if (!form.amount || parseFloat(form.amount) <= 0) return toast.error('Enter valid amount')
     setSaving(true)
     try {
+      const vcNum = await nextDocNumber(companyId, 'vendor_credit').catch(() => `VC-${Date.now()}`)
       const vendor = vendors.find(v => v.id === form.vendor_id)
       const { error } = await supabase.from('vendor_credits').insert({
         company_id: companyId, vc_number: vcNum, vendor_id: form.vendor_id,
@@ -1176,7 +1165,7 @@ function VendorCreditsTab({ companyId, session }) {
         </div>}
       </div>
       {showCreate && (
-        <Modal title={`New Vendor Credit — ${vcNum}`} onClose={() => setShowCreate(false)}
+        <Modal title="New Vendor Credit" onClose={() => setShowCreate(false)}
           footer={<><button onClick={() => setShowCreate(false)} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Issue Credit'}</button></>}>
           <Field label="Vendor *">
             <select className={inp()} value={form.vendor_id} onChange={e => setF('vendor_id', e.target.value)}>
@@ -1203,14 +1192,9 @@ function PaymentsMadeTab({ companyId, session }) {
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState({ vendor_id: '', amount: '', payment_date: todayStr(), payment_mode: 'bank', bank_reference: '', notes: '' })
   const [billId, setBillId] = useState('')
-  const [pmNum, setPmNum] = useState('')
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
 
-  const openCreate = async () => {
-    const num = await nextDocNumber(companyId, 'payment_made').catch(() => `PM-${Date.now()}`)
-    setPmNum(num)
-    setShowCreate(true)
-  }
+  const openCreate = () => setShowCreate(true)
 
   const { data: payments = [], isLoading } = useQuery({
     queryKey: ['payments_made', companyId],
@@ -1247,6 +1231,7 @@ function PaymentsMadeTab({ companyId, session }) {
     if (!form.amount || parseFloat(form.amount) <= 0) return toast.error('Enter valid amount')
     setSaving(true)
     try {
+      const pmNum = await nextDocNumber(companyId, 'payment_made').catch(() => `PM-${Date.now()}`)
       const vendor = vendors.find(v => v.id === form.vendor_id)
       const { error } = await supabase.from('payments_made').insert({
         company_id: companyId, payment_number: pmNum,
@@ -1289,7 +1274,7 @@ function PaymentsMadeTab({ companyId, session }) {
         </div>}
       </div>
       {showCreate && (
-        <Modal title={`Record Payment — ${pmNum}`} onClose={() => setShowCreate(false)}
+        <Modal title="Record Payment" onClose={() => setShowCreate(false)}
           footer={<><button onClick={() => setShowCreate(false)} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Record Payment'}</button></>}>
           <Field label="Vendor *">
             <select className={inp()} value={form.vendor_id} onChange={e => { setF('vendor_id', e.target.value); setBillId('') }}>

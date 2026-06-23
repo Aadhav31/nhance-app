@@ -78,17 +78,28 @@ serve(async (req: Request) => {
         name: invoice.client_name,
       },
       notify: {
-        sms: false,   // set true if you want Razorpay to SMS the client directly
-        email: false, // set true if client email is stored
+        sms: false,
+        email: false,
       },
       reminder_enable: true,
       notes: {
-        // These notes come back in the webhook — used to identify the invoice
         invoice_id:     invoice.id,
         invoice_number: invoice.invoice_number,
         company_id:     invoice.company_id,
       },
-      // Optional: auto-expire link after 30 days
+      // Restrict to UPI only — 0% Razorpay fee for UPI transactions
+      options: {
+        checkout: {
+          method: {
+            upi:        1,   // enable UPI
+            card:       0,   // disable cards (charged at 2%)
+            netbanking: 0,   // disable netbanking (charged)
+            wallet:     0,   // disable wallets
+            emi:        0,   // disable EMI
+          },
+        },
+      },
+      // Auto-expire link after 30 days
       expire_by: Math.floor(Date.now() / 1000) + (30 * 24 * 60 * 60),
     }
 
