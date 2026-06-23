@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import { lookupHsnSac } from '../../utils/hsnSacLookup'
+import { nextDocNumber } from '../../utils/docNumbers'
 import {
   Plus, X, Loader2, ShoppingCart, FileText, Building, CreditCard,
   ArrowUpCircle, RefreshCcw, Wallet, Search, ChevronRight,
@@ -364,9 +365,8 @@ function VendorsTab({ companyId, session }) {
     enabled: !!companyId,
   })
 
-  const openCreate = () => {
-    const nextNum = vendors.length + 1
-    const code = `V-${String(nextNum).padStart(3, '0')}`
+  const openCreate = async () => {
+    const code = await nextDocNumber(companyId, 'vendor').catch(() => '')
     setForm({ ...BLANK_VENDOR, vendor_code: code })
     setDocs({ aadhar: null, pan: null, cheque: null, gst_cert: null })
     setShowCreate(true)
@@ -705,7 +705,14 @@ function BillsTab({ companyId, session }) {
   const [addToInv, setAddToInv] = useState(false)
   const [invCategory, setInvCategory] = useState('')
   const [invStore, setInvStore] = useState('')
+  const [blNum, setBlNum] = useState('')
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
+
+  const openCreate = async () => {
+    const num = await nextDocNumber(companyId, 'bill').catch(() => `BL-${Date.now()}`)
+    setBlNum(num)
+    setShowCreate(true)
+  }
 
   const { data: bills = [], isLoading } = useQuery({
     queryKey: ['bills', companyId],
@@ -744,7 +751,6 @@ function BillsTab({ companyId, session }) {
   })
 
   const subtotal = useMemo(() => lines.reduce((s, l) => s + (l.amount || 0), 0), [lines])
-  const blNum = useMemo(() => `BL-${new Date().getFullYear()}-${String((bills.length || 0) + 1).padStart(3, '0')}`, [bills.length])
 
   const isTax = form.is_tax_invoice !== false
 
@@ -847,7 +853,7 @@ function BillsTab({ companyId, session }) {
     <div className="flex flex-col h-full">
       <div className="px-4 py-3 border-b border-dark-800 shrink-0 flex items-center justify-between">
         <div className="bg-dark-800 rounded-xl px-3 py-2 text-xs"><span className="text-slate-500">Payable </span><span className="font-bold text-orange-400">{fmtINR(totalPending)}</span></div>
-        <button onClick={() => setShowCreate(true)} className="btn-primary"><Plus className="w-4 h-4" /> New Bill</button>
+        <button onClick={openCreate} className="btn-primary"><Plus className="w-4 h-4" /> New Bill</button>
       </div>
       <div className="flex-1 overflow-y-auto px-4 pb-4 pt-3">
         {isLoading ? <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-primary-400" /></div>
@@ -954,7 +960,14 @@ function PurchaseOrdersTab({ companyId, session }) {
   const blankForm = () => ({ vendor_id: '', vendor_gstin: '', po_date: todayStr(), expected_delivery: '', delivery_address: '', notes: '', cgst_rate: 9, sgst_rate: 9, igst_rate: 18, use_igst: false, discount_amount: 0, is_tax_invoice: true })
   const [form, setForm] = useState(blankForm())
   const [lines, setLines] = useState([blankLine()])
+  const [poNum, setPoNum] = useState('')
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
+
+  const openCreate = async () => {
+    const num = await nextDocNumber(companyId, 'po').catch(() => `PO-${Date.now()}`)
+    setPoNum(num)
+    setShowCreate(true)
+  }
 
   const { data: pos = [], isLoading } = useQuery({
     queryKey: ['purchase_orders', companyId],
@@ -975,7 +988,6 @@ function PurchaseOrdersTab({ companyId, session }) {
   })
 
   const subtotal = useMemo(() => lines.reduce((s, l) => s + (l.amount || 0), 0), [lines])
-  const poNum = useMemo(() => `PO-${new Date().getFullYear()}-${String((pos.length || 0) + 1).padStart(3, '0')}`, [pos.length])
 
   const isTax = form.is_tax_invoice !== false
 
@@ -1024,7 +1036,7 @@ function PurchaseOrdersTab({ companyId, session }) {
     <div className="flex flex-col h-full">
       <div className="px-4 py-3 border-b border-dark-800 shrink-0 flex items-center justify-between">
         <span className="text-xs bg-dark-800 rounded-xl px-3 py-2 text-slate-500">{pos.length} purchase orders</span>
-        <button onClick={() => setShowCreate(true)} className="btn-primary"><Plus className="w-4 h-4" /> New PO</button>
+        <button onClick={openCreate} className="btn-primary"><Plus className="w-4 h-4" /> New PO</button>
       </div>
       <div className="flex-1 overflow-y-auto px-4 pb-4 pt-3">
         {isLoading ? <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-primary-400" /></div>
@@ -1094,7 +1106,14 @@ function VendorCreditsTab({ companyId, session }) {
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState({ vendor_id: '', cn_date: todayStr(), reason: '', amount: '', notes: '' })
+  const [vcNum, setVcNum] = useState('')
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
+
+  const openCreate = async () => {
+    const num = await nextDocNumber(companyId, 'vendor_credit').catch(() => `VC-${Date.now()}`)
+    setVcNum(num)
+    setShowCreate(true)
+  }
 
   const { data: credits = [], isLoading } = useQuery({
     queryKey: ['vendor_credits', companyId],
@@ -1113,8 +1132,6 @@ function VendorCreditsTab({ companyId, session }) {
     },
     enabled: !!companyId && showCreate,
   })
-
-  const vcNum = `VC-${new Date().getFullYear()}-${String((credits.length || 0) + 1).padStart(3, '0')}`
 
   const save = async () => {
     if (!form.vendor_id) return toast.error('Select a vendor')
@@ -1139,7 +1156,7 @@ function VendorCreditsTab({ companyId, session }) {
     <div className="flex flex-col h-full">
       <div className="px-4 py-3 border-b border-dark-800 shrink-0 flex items-center justify-between">
         <span className="text-xs bg-dark-800 rounded-xl px-3 py-2 text-slate-500">{credits.length} vendor credits</span>
-        <button onClick={() => setShowCreate(true)} className="btn-primary"><Plus className="w-4 h-4" /> New Vendor Credit</button>
+        <button onClick={openCreate} className="btn-primary"><Plus className="w-4 h-4" /> New Vendor Credit</button>
       </div>
       <div className="flex-1 overflow-y-auto px-4 pb-4 pt-3">
         {isLoading ? <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-primary-400" /></div>
@@ -1186,7 +1203,14 @@ function PaymentsMadeTab({ companyId, session }) {
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState({ vendor_id: '', amount: '', payment_date: todayStr(), payment_mode: 'bank', bank_reference: '', notes: '' })
   const [billId, setBillId] = useState('')
+  const [pmNum, setPmNum] = useState('')
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
+
+  const openCreate = async () => {
+    const num = await nextDocNumber(companyId, 'payment_made').catch(() => `PM-${Date.now()}`)
+    setPmNum(num)
+    setShowCreate(true)
+  }
 
   const { data: payments = [], isLoading } = useQuery({
     queryKey: ['payments_made', companyId],
@@ -1216,7 +1240,6 @@ function PaymentsMadeTab({ companyId, session }) {
   })
 
   const totalPaid = payments.reduce((s, p) => s + Number(p.amount || 0), 0)
-  const pmNum = `PM-${new Date().getFullYear()}-${String((payments.length || 0) + 1).padStart(3, '0')}`
   const MODES = ['cash','bank','upi','cheque','neft','rtgs']
 
   const save = async () => {
@@ -1247,7 +1270,7 @@ function PaymentsMadeTab({ companyId, session }) {
     <div className="flex flex-col h-full">
       <div className="px-4 py-3 border-b border-dark-800 shrink-0 flex items-center justify-between">
         <div className="bg-dark-800 rounded-xl px-3 py-2 text-xs"><span className="text-slate-500">Total Paid Out </span><span className="font-bold text-red-400">{fmtINR(totalPaid)}</span></div>
-        <button onClick={() => setShowCreate(true)} className="btn-primary"><Plus className="w-4 h-4" /> Record Payment</button>
+        <button onClick={openCreate} className="btn-primary"><Plus className="w-4 h-4" /> Record Payment</button>
       </div>
       <div className="flex-1 overflow-y-auto px-4 pb-4 pt-3">
         {isLoading ? <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-primary-400" /></div>

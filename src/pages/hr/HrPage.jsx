@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
+import { nextDocNumber } from '../../utils/docNumbers'
 import {
   Users, Plus, X, Loader2, Save, Trash2, Edit2,
   Phone, Calendar, CreditCard, FileText,
@@ -227,9 +228,7 @@ function EmployeeFormModal({ companyId, initialValues, onClose }) {
     try {
       let empNumber = form.employee_number
       if (!isEdit && !empNumber) {
-        const { count } = await supabase.from('hr_employees')
-          .select('*', { count: 'exact', head: true }).eq('company_id', companyId)
-        empNumber = `EMP-${String((count || 0) + 1).padStart(3, '0')}`
+        empNumber = await nextDocNumber(companyId, 'employee').catch(() => `EMP-${Date.now()}`)
       }
 
       const payload = {
