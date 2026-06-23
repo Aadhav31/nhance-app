@@ -275,7 +275,7 @@ function TaxSection({ form, setF, subtotal }) {
 }
 
 // ── INVOICES TAB ──────────────────────────────────────────────────────────────
-function CreateInvoiceModal({ companyId, session, invNum, onClose, onSaved }) {
+function CreateInvoiceModal({ companyId, session, onClose, onSaved }) {
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState({
     client_name: '', client_address: '', client_gstin: '', project_name: '',
@@ -300,6 +300,7 @@ function CreateInvoiceModal({ companyId, session, invNum, onClose, onSaved }) {
     setSaving(true)
     try {
       const id = crypto.randomUUID()
+      const invNum = await nextDocNumber(companyId, 'invoice').catch(() => `INV-${Date.now()}`)
       const { error } = await supabase.from('client_invoices').insert({
         id, company_id: companyId, invoice_number: invNum,
         invoice_date: form.invoice_date, due_date: form.due_date || null,
@@ -325,7 +326,7 @@ function CreateInvoiceModal({ companyId, session, invNum, onClose, onSaved }) {
   }
 
   return (
-    <Modal title={`New Invoice — ${invNum}`} onClose={onClose} wide
+    <Modal title="New Invoice" onClose={onClose} wide
       footer={<>
         <button onClick={onClose} className="flex-1 btn-ghost">Cancel</button>
         <button onClick={() => save('draft')} disabled={saving} className="flex-1 btn-secondary">Save Draft</button>
@@ -362,15 +363,8 @@ function CreateInvoiceModal({ companyId, session, invNum, onClose, onSaved }) {
 function InvoicesTab({ companyId, session }) {
   const qc = useQueryClient()
   const [showCreate, setShowCreate] = useState(false)
-  const [invNum, setInvNum] = useState('')
   const [search, setSearch] = useState('')
   const [filterStatus, setFilterStatus] = useState('all')
-
-  const openCreate = async () => {
-    const num = await nextDocNumber(companyId, 'invoice').catch(() => `INV-${Date.now()}`)
-    setInvNum(num)
-    setShowCreate(true)
-  }
 
   const { data: invoices = [], isLoading } = useQuery({
     queryKey: ['sales_invoices', companyId],
@@ -404,7 +398,7 @@ function InvoicesTab({ companyId, session }) {
           <div className="bg-dark-800 rounded-xl px-3 py-2 text-xs"><span className="text-slate-500">Collected </span><span className="font-bold text-emerald-400">{fmtINR(totalPaid)}</span></div>
           <div className="bg-dark-800 rounded-xl px-3 py-2 text-xs"><span className="text-slate-500">Pending </span><span className="font-bold text-orange-400">{fmtINR(totalPending)}</span></div>
         </div>
-        <button onClick={openCreate} className="btn-primary shrink-0"><Plus className="w-4 h-4" /> New Invoice</button>
+        <button onClick={() => setShowCreate(true)} className="btn-primary shrink-0"><Plus className="w-4 h-4" /> New Invoice</button>
       </div>
       <div className="px-4 py-2 flex gap-2 shrink-0 flex-wrap">
         <div className="relative flex-1 min-w-[160px]">
@@ -451,13 +445,13 @@ function InvoicesTab({ companyId, session }) {
           ))}
         </div>}
       </div>
-      {showCreate && <CreateInvoiceModal companyId={companyId} session={session} invNum={invNum} onClose={() => setShowCreate(false)} onSaved={() => { setShowCreate(false); qc.invalidateQueries(['sales_invoices', companyId]) }} />}
+      {showCreate && <CreateInvoiceModal companyId={companyId} session={session} onClose={() => setShowCreate(false)} onSaved={() => { setShowCreate(false); qc.invalidateQueries(['sales_invoices', companyId]) }} />}
     </div>
   )
 }
 
 // ── QUOTES TAB ────────────────────────────────────────────────────────────────
-function CreateQuoteModal({ companyId, session, qNum, onClose, onSaved }) {
+function CreateQuoteModal({ companyId, session, onClose, onSaved }) {
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState({
     client_name: '', client_address: '', client_gstin: '', project_name: '',
@@ -482,6 +476,7 @@ function CreateQuoteModal({ companyId, session, qNum, onClose, onSaved }) {
     setSaving(true)
     try {
       const id = crypto.randomUUID()
+      const qNum = await nextDocNumber(companyId, 'quote').catch(() => `QT-${Date.now()}`)
       const { error } = await supabase.from('quotes').insert({
         id, company_id: companyId, quote_number: qNum,
         quote_date: form.quote_date, valid_until: form.valid_until || null,
@@ -507,7 +502,7 @@ function CreateQuoteModal({ companyId, session, qNum, onClose, onSaved }) {
   }
 
   return (
-    <Modal title={`New Quote — ${qNum}`} onClose={onClose} wide
+    <Modal title="New Quote" onClose={onClose} wide
       footer={<>
         <button onClick={onClose} className="flex-1 btn-ghost">Cancel</button>
         <button onClick={() => save('draft')} disabled={saving} className="flex-1 btn-secondary">Save Draft</button>
@@ -544,14 +539,7 @@ function CreateQuoteModal({ companyId, session, qNum, onClose, onSaved }) {
 function QuotesTab({ companyId, session }) {
   const qc = useQueryClient()
   const [showCreate, setShowCreate] = useState(false)
-  const [qNum, setQNum] = useState('')
   const [search, setSearch] = useState('')
-
-  const openCreate = async () => {
-    const num = await nextDocNumber(companyId, 'quote').catch(() => `QT-${Date.now()}`)
-    setQNum(num)
-    setShowCreate(true)
-  }
 
   const { data: quotes = [], isLoading } = useQuery({
     queryKey: ['quotes', companyId],
@@ -577,7 +565,7 @@ function QuotesTab({ companyId, session }) {
           <span className="bg-dark-800 rounded-xl px-3 py-2"><span className="text-slate-500">Total </span><span className="font-bold text-slate-200">{quotes.length}</span></span>
           <span className="bg-dark-800 rounded-xl px-3 py-2"><span className="text-slate-500">Accepted </span><span className="font-bold text-emerald-400">{quotes.filter(q => q.status === 'accepted').length}</span></span>
         </div>
-        <button onClick={openCreate} className="btn-primary shrink-0"><Plus className="w-4 h-4" /> New Quote</button>
+        <button onClick={() => setShowCreate(true)} className="btn-primary shrink-0"><Plus className="w-4 h-4" /> New Quote</button>
       </div>
       <div className="px-4 py-2 shrink-0">
         <div className="relative"><Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" /><input className={inp('pl-8 text-xs')} placeholder="Search client or quote #…" value={search} onChange={e => setSearch(e.target.value)} /></div>
@@ -614,7 +602,7 @@ function QuotesTab({ companyId, session }) {
           ))}
         </div>}
       </div>
-      {showCreate && <CreateQuoteModal companyId={companyId} session={session} qNum={qNum} onClose={() => setShowCreate(false)} onSaved={() => { setShowCreate(false); qc.invalidateQueries(['quotes', companyId]) }} />}
+      {showCreate && <CreateQuoteModal companyId={companyId} session={session} onClose={() => setShowCreate(false)} onSaved={() => { setShowCreate(false); qc.invalidateQueries(['quotes', companyId]) }} />}
     </div>
   )
 }
@@ -626,14 +614,7 @@ function SalesOrdersTab({ companyId, session }) {
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState({ client_name: '', client_gstin: '', project_name: '', so_date: todayStr(), expected_delivery: '', notes: '', cgst_rate: 9, sgst_rate: 9, igst_rate: 18, use_igst: false, discount_amount: 0, is_tax_invoice: true })
   const [lines, setLines] = useState([blankLine()])
-  const [soNum, setSoNum] = useState('')
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
-
-  const openCreate = async () => {
-    const num = await nextDocNumber(companyId, 'sales_order').catch(() => `SO-${Date.now()}`)
-    setSoNum(num)
-    setShowCreate(true)
-  }
 
   const { data: orders = [], isLoading } = useQuery({
     queryKey: ['sales_orders', companyId],
@@ -652,6 +633,7 @@ function SalesOrdersTab({ companyId, session }) {
     setSaving(true)
     try {
       const id = crypto.randomUUID()
+      const soNum = await nextDocNumber(companyId, 'sales_order').catch(() => `SO-${Date.now()}`)
       const taxable = subtotal - (parseFloat(form.discount_amount) || 0)
       const isTax = form.is_tax_invoice !== false
       const cgst = (isTax && !form.use_igst) ? taxable * (parseFloat(form.cgst_rate) || 0) / 100 : 0
@@ -695,7 +677,7 @@ function SalesOrdersTab({ companyId, session }) {
     <div className="flex flex-col h-full">
       <div className="px-4 py-3 border-b border-dark-800 shrink-0 flex items-center justify-between">
         <div className="text-xs bg-dark-800 rounded-xl px-3 py-2"><span className="text-slate-500">Total SOs </span><span className="font-bold text-slate-200">{orders.length}</span></div>
-        <button onClick={openCreate} className="btn-primary"><Plus className="w-4 h-4" /> New Sales Order</button>
+        <button onClick={() => setShowCreate(true)} className="btn-primary"><Plus className="w-4 h-4" /> New Sales Order</button>
       </div>
       <div className="flex-1 overflow-y-auto px-4 pb-4 pt-3">
         {isLoading ? <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-primary-400" /></div>
@@ -729,7 +711,7 @@ function SalesOrdersTab({ companyId, session }) {
         </div>}
       </div>
       {showCreate && (
-        <Modal title={`New Sales Order — ${soNum}`} onClose={() => setShowCreate(false)} wide
+        <Modal title="New Sales Order" onClose={() => setShowCreate(false)} wide
           footer={<><button onClick={() => setShowCreate(false)} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Create Sales Order'}</button></>}>
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2"><Field label="Client Name *"><input className={inp()} value={form.client_name} onChange={e => setF('client_name', e.target.value)} /></Field></div>
@@ -762,14 +744,7 @@ function DeliveryChallansTab({ companyId, session }) {
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState({ client_name: '', delivery_address: '', vehicle_number: '', driver_name: '', dc_date: todayStr(), notes: '' })
   const [lines, setLines] = useState([{ _id: Math.random().toString(36).slice(2), description: '', quantity: 1, unit: 'nos' }])
-  const [dcNum, setDcNum] = useState('')
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
-
-  const openCreate = async () => {
-    const num = await nextDocNumber(companyId, 'challan').catch(() => `DC-${Date.now()}`)
-    setDcNum(num)
-    setShowCreate(true)
-  }
 
   const { data: challans = [], isLoading } = useQuery({
     queryKey: ['delivery_challans', companyId],
@@ -787,6 +762,7 @@ function DeliveryChallansTab({ companyId, session }) {
     setSaving(true)
     try {
       const id = crypto.randomUUID()
+      const dcNum = await nextDocNumber(companyId, 'challan').catch(() => `DC-${Date.now()}`)
       const { error } = await supabase.from('delivery_challans').insert({
         id, company_id: companyId, dc_number: dcNum, dc_date: form.dc_date,
         client_name: form.client_name.trim(), delivery_address: form.delivery_address || null,
@@ -814,7 +790,7 @@ function DeliveryChallansTab({ companyId, session }) {
     <div className="flex flex-col h-full">
       <div className="px-4 py-3 border-b border-dark-800 shrink-0 flex items-center justify-between">
         <span className="text-xs bg-dark-800 rounded-xl px-3 py-2 text-slate-500">{challans.length} challans</span>
-        <button onClick={openCreate} className="btn-primary"><Plus className="w-4 h-4" /> New Challan</button>
+        <button onClick={() => setShowCreate(true)} className="btn-primary"><Plus className="w-4 h-4" /> New Challan</button>
       </div>
       <div className="flex-1 overflow-y-auto px-4 pb-4 pt-3">
         {isLoading ? <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-primary-400" /></div>
@@ -842,7 +818,7 @@ function DeliveryChallansTab({ companyId, session }) {
         </div>}
       </div>
       {showCreate && (
-        <Modal title={`New Delivery Challan — ${dcNum}`} onClose={() => setShowCreate(false)}
+        <Modal title="New Delivery Challan" onClose={() => setShowCreate(false)}
           footer={<><button onClick={() => setShowCreate(false)} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Create & Dispatch'}</button></>}>
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2"><Field label="Client Name *"><input className={inp()} value={form.client_name} onChange={e => setF('client_name', e.target.value)} /></Field></div>
@@ -880,14 +856,7 @@ function CreditNotesTab({ companyId, session }) {
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState({ client_name: '', client_gstin: '', reason: '', cn_date: todayStr(), cgst_rate: 9, sgst_rate: 9, notes: '', use_igst: false, igst_rate: 18, is_tax_invoice: true })
   const [lines, setLines] = useState([blankLine()])
-  const [cnNum, setCnNum] = useState('')
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
-
-  const openCreate = async () => {
-    const num = await nextDocNumber(companyId, 'credit_note').catch(() => `CN-${Date.now()}`)
-    setCnNum(num)
-    setShowCreate(true)
-  }
 
   const { data: notes = [], isLoading } = useQuery({
     queryKey: ['credit_notes', companyId],
@@ -910,6 +879,7 @@ function CreditNotesTab({ companyId, session }) {
     setSaving(true)
     try {
       const id = crypto.randomUUID()
+      const cnNum = await nextDocNumber(companyId, 'credit_note').catch(() => `CN-${Date.now()}`)
       const { error } = await supabase.from('credit_notes').insert({
         id, company_id: companyId, cn_number: cnNum, cn_date: form.cn_date,
         client_name: form.client_name.trim(), reason: form.reason || null,
@@ -934,7 +904,7 @@ function CreditNotesTab({ companyId, session }) {
     <div className="flex flex-col h-full">
       <div className="px-4 py-3 border-b border-dark-800 shrink-0 flex items-center justify-between">
         <span className="text-xs bg-dark-800 rounded-xl px-3 py-2 text-slate-500">{notes.length} credit notes</span>
-        <button onClick={openCreate} className="btn-primary"><Plus className="w-4 h-4" /> New Credit Note</button>
+        <button onClick={() => setShowCreate(true)} className="btn-primary"><Plus className="w-4 h-4" /> New Credit Note</button>
       </div>
       <div className="flex-1 overflow-y-auto px-4 pb-4 pt-3">
         {isLoading ? <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-primary-400" /></div>
@@ -958,7 +928,7 @@ function CreditNotesTab({ companyId, session }) {
         </div>}
       </div>
       {showCreate && (
-        <Modal title={`New Credit Note — ${cnNum}`} onClose={() => setShowCreate(false)} wide
+        <Modal title="New Credit Note" onClose={() => setShowCreate(false)} wide
           footer={<><button onClick={() => setShowCreate(false)} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Issue Credit Note'}</button></>}>
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2"><Field label="Client Name *"><input className={inp()} value={form.client_name} onChange={e => setF('client_name', e.target.value)} /></Field></div>
@@ -1003,14 +973,7 @@ function PaymentsReceivedTab({ companyId, session }) {
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState({ client_name: '', amount: '', payment_date: todayStr(), payment_mode: 'bank', bank_reference: '', notes: '' })
-  const [prNum, setPrNum] = useState('')
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
-
-  const openCreate = async () => {
-    const num = await nextDocNumber(companyId, 'payment_recv').catch(() => `PR-${Date.now()}`)
-    setPrNum(num)
-    setShowCreate(true)
-  }
 
   const { data: payments = [], isLoading } = useQuery({
     queryKey: ['payments_received', companyId],
@@ -1038,6 +1001,7 @@ function PaymentsReceivedTab({ companyId, session }) {
     if (!form.amount || parseFloat(form.amount) <= 0) return toast.error('Enter valid amount')
     setSaving(true)
     try {
+      const prNum = await nextDocNumber(companyId, 'payment_recv').catch(() => `PR-${Date.now()}`)
       const { error } = await supabase.from('payments_received').insert({
         company_id: companyId, payment_number: prNum,
         payment_date: form.payment_date, invoice_id: invoiceId || null,
@@ -1061,7 +1025,7 @@ function PaymentsReceivedTab({ companyId, session }) {
     <div className="flex flex-col h-full">
       <div className="px-4 py-3 border-b border-dark-800 shrink-0 flex items-center justify-between">
         <div className="bg-dark-800 rounded-xl px-3 py-2 text-xs"><span className="text-slate-500">Total Received </span><span className="font-bold text-emerald-400">{fmtINR(totalReceived)}</span></div>
-        <button onClick={openCreate} className="btn-primary"><Plus className="w-4 h-4" /> Record Payment</button>
+        <button onClick={() => setShowCreate(true)} className="btn-primary"><Plus className="w-4 h-4" /> Record Payment</button>
       </div>
       <div className="flex-1 overflow-y-auto px-4 pb-4 pt-3">
         {isLoading ? <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-primary-400" /></div>
@@ -1080,7 +1044,7 @@ function PaymentsReceivedTab({ companyId, session }) {
         </div>}
       </div>
       {showCreate && (
-        <Modal title={`Record Payment — ${prNum}`} onClose={() => setShowCreate(false)}
+        <Modal title="Record Payment" onClose={() => setShowCreate(false)}
           footer={<><button onClick={() => setShowCreate(false)} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Record Payment'}</button></>}>
           <Field label="Client Name *"><input className={inp()} value={form.client_name} onChange={e => setF('client_name', e.target.value)} placeholder="Who paid?" /></Field>
           {invoices.length > 0 && <Field label="Link to Invoice (optional)">

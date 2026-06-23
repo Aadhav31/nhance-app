@@ -208,10 +208,9 @@ function ItemsTab({ companyId, session }) {
   const [form, setForm] = useState(blank)
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
 
-  const openCreate = async () => {
-    const code = await nextDocNumber(companyId, 'inventory_item').catch(() => '')
+  const openCreate = () => {
     setEditing(null)
-    setForm({ ...blank, item_code: code })
+    setForm(blank)
     setShowCreate(true)
   }
 
@@ -251,8 +250,9 @@ function ItemsTab({ companyId, session }) {
     if (!form.item_name.trim()) return toast.error('Item name required')
     setSaving(true)
     try {
+      const item_code = form.item_code?.trim() || (!editing ? await nextDocNumber(companyId, 'inventory_item').catch(() => null) : null)
       const payload = {
-        company_id: companyId, item_code: form.item_code?.trim() || null,
+        company_id: companyId, item_code,
         item_name: form.item_name.trim(), category: form.category,
         sub_category: form.sub_category?.trim() || null, brand: form.brand?.trim() || null,
         unit: form.unit, description: form.description?.trim() || null,
@@ -530,15 +530,8 @@ function StockInTab({ companyId, session }) {
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving]         = useState(false)
   const [form, setForm] = useState({ item_id:'', store_id:'', quantity:'', unit_cost:'', txn_date: todayStr(), vendor_id:'', po_id:'', notes:'' })
-  const [txnNum, setTxnNum] = useState('')
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
   const { items, stores, vendors } = useInventoryData(companyId)
-
-  const openCreate = async () => {
-    const num = await nextDocNumber(companyId, 'stock_in').catch(() => `GRN-${Date.now()}`)
-    setTxnNum(num)
-    setShowCreate(true)
-  }
 
   const { data: txns = [], isLoading } = useQuery({
     queryKey: ['stxn_in', companyId],
@@ -557,6 +550,7 @@ function StockInTab({ companyId, session }) {
     if (!form.quantity || parseFloat(form.quantity) <= 0) return toast.error('Enter valid quantity')
     setSaving(true)
     try {
+      const txnNum = await nextDocNumber(companyId, 'stock_in').catch(() => `GRN-${Date.now()}`)
       const { error } = await supabase.from('stock_transactions').insert({
         company_id: companyId, txn_number: txnNum, txn_type: 'in',
         txn_date: form.txn_date, item_id: form.item_id, store_id: form.store_id,
@@ -587,7 +581,7 @@ function StockInTab({ companyId, session }) {
           <span className="text-slate-500">Total Receipts </span>
           <span className="font-bold text-emerald-400">{txns.length}</span>
         </div>
-        <button onClick={openCreate} className="btn-primary"><Plus className="w-4 h-4" /> Receive Stock</button>
+        <button onClick={() => setShowCreate(true)} className="btn-primary"><Plus className="w-4 h-4" /> Receive Stock</button>
       </div>
       <div className="flex-1 overflow-y-auto px-4 pb-4 pt-3">
         {isLoading ? <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-primary-400" /></div>
@@ -611,7 +605,7 @@ function StockInTab({ companyId, session }) {
       </div>
 
       {showCreate && (
-        <Modal title={`Receive Stock — ${txnNum}`} onClose={() => setShowCreate(false)} wide
+        <Modal title="Receive Stock" onClose={() => setShowCreate(false)} wide
           footer={<><button onClick={() => setShowCreate(false)} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Confirm Receipt'}</button></>}>
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2">
@@ -652,15 +646,8 @@ function StockOutTab({ companyId, session }) {
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving]         = useState(false)
   const [form, setForm] = useState({ item_id:'', store_id:'', quantity:'', txn_date: todayStr(), project_id:'', equipment_id:'', issued_to:'', notes:'' })
-  const [issNum, setIssNum] = useState('')
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
   const { items, stores, projects, equipment } = useInventoryData(companyId)
-
-  const openCreate = async () => {
-    const num = await nextDocNumber(companyId, 'stock_out').catch(() => `ISS-${Date.now()}`)
-    setIssNum(num)
-    setShowCreate(true)
-  }
 
   const { data: txns = [], isLoading } = useQuery({
     queryKey: ['stxn_out', companyId],
@@ -689,6 +676,7 @@ function StockOutTab({ companyId, session }) {
       return toast.error(`Only ${fmtQty(availableStock, '')} available in this store`)
     setSaving(true)
     try {
+      const issNum = await nextDocNumber(companyId, 'stock_out').catch(() => `ISS-${Date.now()}`)
       const { error } = await supabase.from('stock_transactions').insert({
         company_id: companyId, txn_number: issNum, txn_type: 'out',
         txn_date: form.txn_date, item_id: form.item_id, store_id: form.store_id,
@@ -713,7 +701,7 @@ function StockOutTab({ companyId, session }) {
           <span className="text-slate-500">Total Issues </span>
           <span className="font-bold text-red-400">{txns.length}</span>
         </div>
-        <button onClick={openCreate} className="btn-primary"><Plus className="w-4 h-4" /> Issue Stock</button>
+        <button onClick={() => setShowCreate(true)} className="btn-primary"><Plus className="w-4 h-4" /> Issue Stock</button>
       </div>
       <div className="flex-1 overflow-y-auto px-4 pb-4 pt-3">
         {isLoading ? <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-primary-400" /></div>
@@ -734,7 +722,7 @@ function StockOutTab({ companyId, session }) {
       </div>
 
       {showCreate && (
-        <Modal title={`Issue Stock — ${issNum}`} onClose={() => setShowCreate(false)} wide
+        <Modal title="Issue Stock" onClose={() => setShowCreate(false)} wide
           footer={<><button onClick={() => setShowCreate(false)} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Issue Stock'}</button></>}>
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2">
@@ -784,15 +772,8 @@ function TransfersTab({ companyId, session }) {
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving]         = useState(false)
   const [form, setForm] = useState({ item_id:'', store_id:'', to_store_id:'', quantity:'', txn_date: todayStr(), notes:'' })
-  const [trfNum, setTrfNum] = useState('')
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
   const { items, stores } = useInventoryData(companyId)
-
-  const openCreate = async () => {
-    const num = await nextDocNumber(companyId, 'stock_transfer').catch(() => `TRF-${Date.now()}`)
-    setTrfNum(num)
-    setShowCreate(true)
-  }
 
   const { data: txns = [], isLoading } = useQuery({
     queryKey: ['stxn_transfer', companyId],
@@ -811,6 +792,7 @@ function TransfersTab({ companyId, session }) {
     if (!form.quantity || parseFloat(form.quantity) <= 0) return toast.error('Enter valid quantity')
     setSaving(true)
     try {
+      const trfNum = await nextDocNumber(companyId, 'stock_transfer').catch(() => `TRF-${Date.now()}`)
       const { error } = await supabase.from('stock_transactions').insert({
         company_id: companyId, txn_number: trfNum, txn_type: 'transfer',
         txn_date: form.txn_date, item_id: form.item_id,
@@ -831,7 +813,7 @@ function TransfersTab({ companyId, session }) {
     <div className="flex flex-col h-full">
       <div className="px-4 py-3 border-b border-dark-800 shrink-0 flex items-center justify-between">
         <span className="text-xs bg-dark-800 rounded-xl px-3 py-2 text-slate-500">{txns.length} transfers</span>
-        <button onClick={openCreate} className="btn-primary"><Plus className="w-4 h-4" /> Transfer Stock</button>
+        <button onClick={() => setShowCreate(true)} className="btn-primary"><Plus className="w-4 h-4" /> Transfer Stock</button>
       </div>
       <div className="flex-1 overflow-y-auto px-4 pb-4 pt-3">
         {isLoading ? <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-primary-400" /></div>
@@ -851,7 +833,7 @@ function TransfersTab({ companyId, session }) {
       </div>
 
       {showCreate && (
-        <Modal title={`Transfer Stock — ${trfNum}`} onClose={() => setShowCreate(false)} wide
+        <Modal title="Transfer Stock" onClose={() => setShowCreate(false)} wide
           footer={<><button onClick={() => setShowCreate(false)} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Transfer'}</button></>}>
           <div className="col-span-2">
             <Field label="Item *">
@@ -890,15 +872,8 @@ function AdjustmentsTab({ companyId, session }) {
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving]         = useState(false)
   const [form, setForm] = useState({ item_id:'', store_id:'', quantity:'', adj_type:'+', txn_date: todayStr(), reason:'', notes:'' })
-  const [adjNum, setAdjNum] = useState('')
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
   const { items, stores } = useInventoryData(companyId)
-
-  const openCreate = async () => {
-    const num = await nextDocNumber(companyId, 'stock_adjustment').catch(() => `ADJ-${Date.now()}`)
-    setAdjNum(num)
-    setShowCreate(true)
-  }
 
   const { data: txns = [], isLoading } = useQuery({
     queryKey: ['stxn_adj', companyId],
@@ -917,6 +892,7 @@ function AdjustmentsTab({ companyId, session }) {
     if (!form.quantity || parseFloat(form.quantity) <= 0) return toast.error('Enter valid quantity')
     setSaving(true)
     try {
+      const adjNum = await nextDocNumber(companyId, 'stock_adjustment').catch(() => `ADJ-${Date.now()}`)
       const delta = form.adj_type === '-' ? -Math.abs(parseFloat(form.quantity)) : Math.abs(parseFloat(form.quantity))
       const { error } = await supabase.from('stock_transactions').insert({
         company_id: companyId, txn_number: adjNum, txn_type: 'adjustment',
@@ -937,7 +913,7 @@ function AdjustmentsTab({ companyId, session }) {
     <div className="flex flex-col h-full">
       <div className="px-4 py-3 border-b border-dark-800 shrink-0 flex items-center justify-between">
         <span className="text-xs bg-dark-800 rounded-xl px-3 py-2 text-slate-500">{txns.length} adjustments</span>
-        <button onClick={openCreate} className="btn-primary"><Plus className="w-4 h-4" /> Adjust Stock</button>
+        <button onClick={() => setShowCreate(true)} className="btn-primary"><Plus className="w-4 h-4" /> Adjust Stock</button>
       </div>
       <div className="flex-1 overflow-y-auto px-4 pb-4 pt-3">
         {isLoading ? <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-primary-400" /></div>
@@ -960,7 +936,7 @@ function AdjustmentsTab({ companyId, session }) {
       </div>
 
       {showCreate && (
-        <Modal title={`Stock Adjustment — ${adjNum}`} onClose={() => setShowCreate(false)} wide
+        <Modal title="Stock Adjustment" onClose={() => setShowCreate(false)} wide
           footer={<><button onClick={() => setShowCreate(false)} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save Adjustment'}</button></>}>
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2">

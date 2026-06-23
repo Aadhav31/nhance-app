@@ -258,7 +258,7 @@ function EquipmentFormModal({ companyId, initialValues, onClose, onSaved }) {
   const [saving, setSaving] = useState(false)
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
 
-  const handleCategoryChange = async (cat) => {
+  const handleCategoryChange = (cat) => {
     const prefix    = getPrefix(cat)
     const subCats   = getSubCategories(cat)
     const curNum    = form.equipment_number
@@ -267,24 +267,23 @@ function EquipmentFormModal({ companyId, initialValues, onClose, onSaved }) {
     set('category',     cat)
     set('sub_category', subCats.length > 0 ? subCats[0] : '')
     set('meter_type',   getMeterType(cat))
-    // For new equipment, auto-generate the number from DB sequence
-    if (!isEdit && shouldUpdateNum) {
-      const autoNum = await nextEquipmentNumber(companyId, prefix).catch(() => `${prefix}-`)
-      set('equipment_number', autoNum)
-    } else if (shouldUpdateNum) {
-      set('equipment_number', `${prefix}-`)
-    }
+    // Just set the prefix placeholder — actual number generated on save
+    if (shouldUpdateNum) set('equipment_number', `${prefix}-`)
   }
 
   const handleSave = async () => {
-    if (!form.name.trim())             { toast.error('Equipment name is required'); return }
-    if (!form.category.trim())         { toast.error('Category is required'); return }
-    if (!form.equipment_number.trim()) { toast.error('Equipment number is required'); return }
+    if (!form.name.trim())     { toast.error('Equipment name is required'); return }
+    if (!form.category.trim()) { toast.error('Category is required'); return }
     setSaving(true)
     try {
+      const prefix = getPrefix(form.category)
+      const rawNum = form.equipment_number.trim()
+      const equipment_number = (!isEdit && (!rawNum || rawNum === `${prefix}-`))
+        ? await nextEquipmentNumber(companyId, prefix).catch(() => `${prefix}-${Date.now()}`)
+        : rawNum || `${prefix}-`
       const payload = {
         company_id:            companyId,
-        equipment_number:      form.equipment_number,
+        equipment_number:      equipment_number,
         name:                  form.name,
         category:              form.category,
         sub_category:          form.sub_category || null,
