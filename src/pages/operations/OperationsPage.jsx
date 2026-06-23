@@ -2083,8 +2083,8 @@ function ShiftsTab({ companyId }) {
       {/* ── Table Header ── */}
       {!isLoading && shifts.length > 0 && (
         <div className="shrink-0 px-4 pt-2 pb-1">
-          <div className="grid text-[10px] font-bold text-slate-600 uppercase tracking-wider"
-            style={{ gridTemplateColumns: '90px 80px 70px 70px 65px 65px 60px 60px 50px 24px' }}>
+          <div className="grid w-full text-[10px] font-bold text-slate-600 uppercase tracking-wider"
+            style={{ gridTemplateColumns: '0.7fr 2fr 0.9fr 0.9fr 1fr 1fr 0.8fr 0.8fr 0.8fr 26px' }}>
             <span>Date</span>
             <span>Equipment</span>
             <span className="text-center">Start Hr</span>
@@ -2124,8 +2124,8 @@ function ShiftsTab({ companyId }) {
                     ${isOpen
                       ? 'bg-emerald-900/10 border-emerald-700/20 hover:border-emerald-600/40'
                       : 'bg-dark-800 border-dark-700 hover:border-primary-700/40'}`}>
-                  <div className="grid items-center gap-x-1"
-                    style={{ gridTemplateColumns: '90px 80px 70px 70px 65px 65px 60px 60px 50px 24px' }}>
+                  <div className="grid w-full items-center gap-x-1"
+                    style={{ gridTemplateColumns: '0.7fr 2fr 0.9fr 0.9fr 1fr 1fr 0.8fr 0.8fr 0.8fr 26px' }}>
 
                     {/* Date */}
                     <div>
