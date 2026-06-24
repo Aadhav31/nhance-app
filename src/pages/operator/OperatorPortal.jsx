@@ -604,24 +604,16 @@ function ShiftModule({ companyId, operatorId, employeeId, employeeName, mode }) 
   const [incOpen, setIncOpen]   = useState(false)
   const [endOpen, setEndOpen]   = useState(false)
 
-  // Equipment lookup — purely by user_id in equipment_assignments (all operators equal)
+  // Equipment lookup — SECURITY DEFINER RPC bypasses RLS, uses auth.uid() server-side
   const { data: assignedEq, isLoading: eqLoading } = useQuery({
     queryKey: ['op_assigned_equipment', operatorId, companyId],
     queryFn: async () => {
-      // Look up via equipment_assignments.user_id — reflects any reassignment immediately
-      const { data: assignment } = await supabase.from('equipment_assignments')
-        .select('equipment_id, shift_type')
-        .eq('user_id', operatorId)
-        .eq('is_active', true)
-        .maybeSingle()
-      if (!assignment?.equipment_id) return null
-
-      const { data: eq } = await supabase.from('equipment')
-        .select('id,name,equipment_number,category,meter_reading,assigned_operator_id,default_shift_type,current_project_id,current_site_name,status')
-        .eq('id', assignment.equipment_id).maybeSingle()
-      // Use the assignment's shift_type as default if equipment doesn't have one
-      if (eq && !eq.default_shift_type) eq.default_shift_type = assignment.shift_type
-      return eq || null
+      const { data: eq, error } = await supabase.rpc('get_my_equipment')
+      if (error) { console.error('get_my_equipment error:', error); return null }
+      if (!eq) return null
+      // Use assignment's shift_type as fallback if equipment doesn't have one
+      if (eq && !eq.default_shift_type) eq.default_shift_type = eq.assignment_shift_type
+      return eq
     },
     enabled: !!companyId && !!operatorId,
   })
