@@ -232,7 +232,7 @@ function AssignedEquipmentCard({ equipment, project }) {
   )
 }
 
-function StartShiftForm({ companyId, operatorId, equipment, project, mode, onStarted }) {
+function StartShiftForm({ companyId, operatorId, employeeId, equipment, project, mode, onStarted }) {
   const [meter, setMeter]     = useState('')
   const [photoFile, setPhoto] = useState(null)
   const [photoPreview, setPP] = useState(null)
@@ -251,7 +251,7 @@ function StartShiftForm({ companyId, operatorId, equipment, project, mode, onSta
       const label = `${equipment.equipment_number} — Shift Start`
       const { url, location } = await stampAndUpload(photoFile, label)
       const { data, error } = await supabase.from('shifts').insert({
-        company_id: companyId, equipment_id: equipment.id, operator_id: operatorId,
+        company_id: companyId, equipment_id: equipment.id, operator_id: employeeId,
         shift_date: today(), shift_type: check.shiftType, start_time: nowTime(),
         start_meter: Number(meter), start_meter_photo: url, start_location: location,
         project_id: project?.id || null, status: 'open',
@@ -632,16 +632,16 @@ function ShiftModule({ companyId, operatorId, employeeId, employeeName, mode }) 
 
   // Today's active shift
   const { data: activeShift, isLoading: shiftLoading, refetch: refetchShift } = useQuery({
-    queryKey: ['op_active_shift', operatorId, today()],
+    queryKey: ['op_active_shift', employeeId, today()],
     queryFn: async () => {
       const { data } = await supabase.from('shifts')
         .select('*, equipment:equipment_id(name,equipment_number,category)')
-        .eq('company_id', companyId).eq('operator_id', operatorId)
+        .eq('company_id', companyId).eq('operator_id', employeeId)
         .eq('shift_date', today()).eq('status','open')
         .order('created_at', { ascending:false }).limit(1).maybeSingle()
       return data || null
     },
-    enabled: !!companyId && !!operatorId,
+    enabled: !!companyId && !!employeeId,
   })
 
   // Fuel entries
@@ -659,7 +659,7 @@ function ShiftModule({ companyId, operatorId, employeeId, employeeName, mode }) 
 
   const onEnded = () => {
     refetchShift()
-    qc.invalidateQueries(['op_active_shift', operatorId, today()])
+    qc.invalidateQueries(['op_active_shift', employeeId, today()])
     qc.invalidateQueries(['op_attendance_today', employeeId, today()])
     qc.invalidateQueries(['op_attendance_month', employeeId])
     qc.invalidateQueries(['op_live_salary', operatorId])
@@ -695,7 +695,7 @@ function ShiftModule({ companyId, operatorId, employeeId, employeeName, mode }) 
         <AssignedEquipmentCard equipment={assignedEq} project={project} />
         {!check.allowed && <ShiftWindowBanner check={check} />}
         {check.allowed && (
-          <StartShiftForm companyId={companyId} operatorId={operatorId}
+          <StartShiftForm companyId={companyId} operatorId={operatorId} employeeId={employeeId}
             equipment={assignedEq} project={project} mode={mode} onStarted={refetchShift} />
         )}
       </div>
@@ -782,15 +782,15 @@ function AttendanceModule({ companyId, operatorId, employeeId, mode }) {
   const STATUS_COLOR = { present:'text-green-400', absent:'text-red-400', on_leave:'text-blue-400', half_day:'text-yellow-400', holiday:'text-purple-400' }
 
   const { data: todayShift } = useQuery({
-    queryKey: ['op_today_shift_att', operatorId, todayStr],
+    queryKey: ['op_today_shift_att', employeeId, todayStr],
     queryFn: async () => {
       const { data } = await supabase.from('shifts')
         .select('start_time,end_time,working_hours,status,equipment:equipment_id(name,equipment_number)')
-        .eq('company_id', companyId).eq('operator_id', operatorId).eq('shift_date', todayStr)
+        .eq('company_id', companyId).eq('operator_id', employeeId).eq('shift_date', todayStr)
         .order('created_at',{ascending:false}).limit(1).maybeSingle()
       return data || null
     },
-    enabled: !!companyId && !!operatorId, refetchInterval: 30000,
+    enabled: !!companyId && !!employeeId, refetchInterval: 30000,
   })
 
   const { data: todayAtt } = useQuery({
