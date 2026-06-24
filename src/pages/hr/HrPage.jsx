@@ -1777,17 +1777,21 @@ function AttendanceTab({ companyId }) {
           </div>
         </div>
 
-        {/* Summary pills */}
+        {/* Summary pills — only marked statuses */}
         <div className="flex gap-2 overflow-x-auto pb-0.5 text-xs">
           {[
-            { label:`${summary.present} Present`,   cls:'text-emerald-400 bg-emerald-500/10 border-emerald-700/40' },
-            { label:`${summary.absent} Absent`,     cls:'text-red-400 bg-red-500/10 border-red-700/40' },
-            { label:`${summary.half_day} Half Day`, cls:'text-yellow-400 bg-yellow-500/10 border-yellow-700/40' },
-            { label:`${summary.leave} Leave`,       cls:'text-blue-400 bg-blue-500/10 border-blue-700/40' },
-            summary.unmarked > 0 && { label:`${summary.unmarked} Unmarked`, cls:'text-slate-400 border-slate-600 bg-dark-700' },
+            summary.present  > 0 && { label:`${summary.present} Present`,   cls:'text-emerald-400 bg-emerald-500/10 border-emerald-700/40' },
+            summary.absent   > 0 && { label:`${summary.absent} Absent`,     cls:'text-red-400 bg-red-500/10 border-red-700/40' },
+            summary.half_day > 0 && { label:`${summary.half_day} Half Day`, cls:'text-yellow-400 bg-yellow-500/10 border-yellow-700/40' },
+            summary.leave    > 0 && { label:`${summary.leave} Leave`,       cls:'text-blue-400 bg-blue-500/10 border-blue-700/40' },
+            summary.week_off > 0 && { label:`${summary.week_off} Week Off`, cls:'text-slate-400 border-slate-600 bg-dark-700' },
+            summary.holiday  > 0 && { label:`${summary.holiday} Holiday`,   cls:'text-purple-400 bg-purple-500/10 border-purple-700/40' },
           ].filter(Boolean).map(c => (
             <span key={c.label} className={`shrink-0 px-2.5 py-1 rounded-full border font-medium ${c.cls}`}>{c.label}</span>
           ))}
+          {Object.values(summary).slice(0,6).every(v=>v===0) && (
+            <span className="text-xs text-slate-600 italic">No attendance recorded yet for this date</span>
+          )}
         </div>
 
         {/* Info banner */}
@@ -1806,10 +1810,17 @@ function AttendanceTab({ companyId }) {
           </div>
         ) : (
           <div className="space-y-2 pt-1">
-            {employees.map(emp => {
+            {/* Only show employees who have a record for this date */}
+            {employees.filter(emp => !!attMap[emp.id]).length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 gap-2 text-center">
+                <span className="text-3xl">📅</span>
+                <p className="text-sm text-slate-400">No attendance marked for this date</p>
+                <p className="text-xs text-slate-600">Use "All Present" or "All Week Off" above to bulk mark,<br/>or mark employees individually from the Employees tab.</p>
+              </div>
+            ) : null}
+            {employees.filter(emp => !!attMap[emp.id]).map(emp => {
               const att    = attMap[emp.id]
               const status = att?.status || null
-              const isShift = isShiftWorker(emp)
               const isAutoFill = att?.source === 'shift_auto'
 
               return (
