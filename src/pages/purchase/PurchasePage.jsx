@@ -809,7 +809,7 @@ function BillsTab({ companyId, session }) {
                 item_code: itemCode, category: invCategory,
                 unit: l.unit, is_active: true, created_by: session.user.id,
               }).select('id').single()
-              if (nie) { invErrors++; continue }
+              if (nie) { invErrors++; toast.error(`Item error: ${nie.message}`); continue }
               itemId = newItem.id
             }
             // Create stock transaction — triggers fn_update_inventory_stock
@@ -822,7 +822,7 @@ function BillsTab({ companyId, session }) {
               total_cost: l.amount, vendor_id: form.vendor_id, bill_id: id,
               notes: `Auto-inward from Bill ${blNum}`, created_by: session.user.id,
             })
-          } catch (_) { invErrors++ }
+          } catch (err) { invErrors++; toast.error(`Inv error: ${err?.message || JSON.stringify(err)}`) }
         }
         if (invErrors > 0) toast.error(`Bill saved · ${invErrors} item(s) failed to add to inventory`)
         else toast.success(`Bill ${blNum} created · ${validLines.length} item(s) added to inventory`)
