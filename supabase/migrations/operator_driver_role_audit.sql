@@ -1,8 +1,9 @@
 -- ─────────────────────────────────────────────────────────────────────────────
 -- operator_driver_role_audit.sql
 -- Verifies that all Operator/Driver employees have role = 'operator' in system.
--- The role VALUE stays 'operator' in the DB (changing the enum breaks auth).
+-- The role VALUE stays 'operator' in DB (changing enum breaks auth).
 -- The LABEL shown in the UI now says "Operator/Driver" everywhere.
+-- Role is stored in the 'user_roles' table, NOT user_profiles.
 --
 -- HOW TO RUN: Supabase Dashboard → SQL Editor → paste & run
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -13,10 +14,10 @@ SELECT
   e.name,
   e.designation,
   e.email,
-  up.role       AS system_role,
-  up.id         AS user_profile_id
+  ur.role       AS system_role,
+  ur.user_id
 FROM hr_employees e
-LEFT JOIN user_profiles up ON up.id = e.user_id
+LEFT JOIN user_roles ur ON ur.user_id = e.user_id
 WHERE e.designation = 'Operator/Driver'
 ORDER BY e.name;
 
@@ -25,12 +26,12 @@ ORDER BY e.name;
 SELECT
   e.name,
   e.designation,
-  up.role AS system_role,
+  ur.role AS system_role,
   'MISMATCH — expected operator role' AS issue
 FROM hr_employees e
-JOIN user_profiles up ON up.id = e.user_id
+JOIN user_roles ur ON ur.user_id = e.user_id
 WHERE e.designation = 'Operator/Driver'
-  AND up.role <> 'operator';
+  AND ur.role <> 'operator';
 
 -- 3. Confirm designation counts after the merge
 SELECT designation, COUNT(*) AS count
@@ -40,9 +41,9 @@ GROUP BY designation
 ORDER BY designation;
 
 -- NOTE: If query 2 returns any rows, fix them with:
---   UPDATE user_profiles SET role = 'operator'
---   WHERE id IN (
---     SELECT up.id FROM user_profiles up
---     JOIN hr_employees e ON e.user_id = up.id
---     WHERE e.designation = 'Operator/Driver' AND up.role <> 'operator'
+--   UPDATE user_roles SET role = 'operator'
+--   WHERE user_id IN (
+--     SELECT e.user_id FROM hr_employees e
+--     JOIN user_roles ur ON ur.user_id = e.user_id
+--     WHERE e.designation = 'Operator/Driver' AND ur.role <> 'operator'
 --   );

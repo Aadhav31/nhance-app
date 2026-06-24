@@ -86,17 +86,18 @@ serve(async (req: Request) => {
       id: userId,
       company_id,
       full_name: full_name || email.split('@')[0],
-      email,
+      is_active: true,
     }, { onConflict: 'id' })
-    if (profileErr) console.error('user_profiles upsert error:', profileErr)
+    if (profileErr) throw new Error(`Failed to create user profile: ${profileErr.message}`)
 
-    // ── Upsert user_roles ───────────────────────────────────────────────────────
-    const { error: roleErr } = await admin.from('user_roles').upsert({
+    // ── Insert/update user_roles (no unique constraint — delete then insert) ────
+    await admin.from('user_roles').delete().eq('user_id', userId)
+    const { error: roleErr } = await admin.from('user_roles').insert({
       user_id: userId,
       company_id,
       role,
-    }, { onConflict: 'user_id' })
-    if (roleErr) console.error('user_roles upsert error:', roleErr)
+    })
+    if (roleErr) throw new Error(`Failed to assign role: ${roleErr.message}`)
 
     // ── Link employee record (optional) ────────────────────────────────────────
     if (employee_id) {

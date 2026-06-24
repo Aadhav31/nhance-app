@@ -598,20 +598,37 @@ function ActionBtn({ icon, label, onClick, color }) {
   )
 }
 
-function ShiftModule({ companyId, operatorId, employeeId, mode }) {
+function ShiftModule({ companyId, operatorId, employeeId, employeeName, mode }) {
   const qc = useQueryClient()
   const [fuelOpen, setFuelOpen] = useState(false)
   const [incOpen, setIncOpen]   = useState(false)
   const [endOpen, setEndOpen]   = useState(false)
 
-  // Pre-assigned equipment — operator cannot change this
+  // Pre-assigned equipment — check primary (assigned_operator_id) first,
+  // then fall back to equipment_assignments by operator name (for secondary/night shifts)
   const { data: assignedEq, isLoading: eqLoading } = useQuery({
-    queryKey: ['op_assigned_equipment', operatorId, companyId],
+    queryKey: ['op_assigned_equipment', operatorId, companyId, employeeName],
     queryFn: async () => {
-      const { data } = await supabase.from('equipment')
+      // 1. Primary assignment via assigned_operator_id
+      const { data: primary } = await supabase.from('equipment')
         .select('id,name,equipment_number,category,meter_reading,assigned_operator_id,default_shift_type,current_project_id,current_site_name,status')
         .eq('company_id', companyId).eq('assigned_operator_id', operatorId).maybeSingle()
-      return data || null
+      if (primary) return primary
+
+      // 2. Fallback — look up via equipment_assignments by name (secondary/night operators)
+      if (!employeeName) return null
+      const { data: assignment } = await supabase.from('equipment_assignments')
+        .select('equipment_id')
+        .eq('company_id', companyId)
+        .ilike('operator_name', employeeName)
+        .eq('is_active', true)
+        .maybeSingle()
+      if (!assignment?.equipment_id) return null
+
+      const { data: eq } = await supabase.from('equipment')
+        .select('id,name,equipment_number,category,meter_reading,assigned_operator_id,default_shift_type,current_project_id,current_site_name,status')
+        .eq('id', assignment.equipment_id).maybeSingle()
+      return eq || null
     },
     enabled: !!companyId && !!operatorId,
   })
@@ -1210,8 +1227,9 @@ export default function OperatorPortal() {
     enabled: !!userProfile?.id,
   })
 
-  const employeeId = employee?.id || null
-  const props = { companyId, operatorId: userProfile?.id, employeeId, profile: userProfile, mode }
+  const employeeId   = employee?.id   || null
+  const employeeName = employee?.name || null
+  const props = { companyId, operatorId: userProfile?.id, employeeId, employeeName, profile: userProfile, mode }
 
   const content = () => {
     switch (tab) {
