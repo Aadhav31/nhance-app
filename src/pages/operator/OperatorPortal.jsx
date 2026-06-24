@@ -222,10 +222,10 @@ function AssignedEquipmentCard({ equipment, project }) {
           <p className="text-xs text-slate-200">{project.shift_start_time.slice(0,5)} – {project.shift_end_time.slice(0,5)}</p>
         </div>
       )}
-      {equipment.meter_reading && (
+      {equipment.current_meter_reading && (
         <div className="flex items-center justify-between mt-1">
           <p className="text-xs text-slate-400">Last Meter</p>
-          <p className="text-xs text-slate-200 font-mono">{Number(equipment.meter_reading).toLocaleString('en-IN')} hrs</p>
+          <p className="text-xs text-slate-200 font-mono">{Number(equipment.current_meter_reading).toLocaleString('en-IN')} hrs</p>
         </div>
       )}
     </div>
@@ -269,8 +269,8 @@ function StartShiftForm({ companyId, operatorId, equipment, project, mode, onSta
         <FL>Start Hour Meter Reading</FL>
         <input type="number" className={bigNum} value={meter} onChange={e => setMeter(e.target.value)}
           placeholder="0000.0" step="0.1" min="0" inputMode="decimal" />
-        {equipment?.meter_reading && (
-          <p className="text-center text-xs text-slate-500 mt-1">Last recorded: {Number(equipment.meter_reading).toLocaleString('en-IN')} hrs</p>
+        {equipment?.current_meter_reading && (
+          <p className="text-center text-xs text-slate-500 mt-1">Last recorded: {Number(equipment.current_meter_reading).toLocaleString('en-IN')} hrs</p>
         )}
       </div>
 
