@@ -7,7 +7,7 @@ import {
   Users, Plus, X, Loader2, Save, Trash2, Edit2,
   Phone, Calendar, CreditCard, FileText,
   CheckCircle, Banknote, BarChart2, Search, Mail, UserPlus, Link, Copy,
-  ChevronLeft, ChevronRight
+  ChevronLeft, ChevronRight, RefreshCw, AlertTriangle
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format, getDaysInMonth, parseISO } from 'date-fns'
@@ -19,7 +19,7 @@ const DEPARTMENTS = [
 ]
 
 const DESIGNATIONS = [
-  'Equipment Operator', 'Tipper / Dumper Driver', 'Site Supervisor',
+  'Operator/Driver', 'Site Supervisor',
   'P&M Manager', 'Project Manager', 'Admin Executive', 'Accounts Executive',
   'HR Executive', 'Management', 'Labour', 'Helper', 'Other'
 ]
@@ -118,7 +118,7 @@ function calcOtHours(hours, threshold = 12) {
 
 // Designations that must use clock-in / clock-out (regardless of pay type)
 const SHIFT_CLOCK_DESIGNATIONS = [
-  'Equipment Operator', 'Tipper / Dumper Driver', 'Site Supervisor',
+  'Operator/Driver', 'Site Supervisor',
   'P&M Manager', 'Labour', 'Helper',
 ]
 
@@ -190,6 +190,7 @@ function EmployeeFormModal({ companyId, initialValues, onClose }) {
     basic_salary: '', hra: '', special_allowance: '', other_allowance: '',
     daily_rate: '',
     day_shift_rate: '', night_shift_rate: '', double_shift_rate: '', ot_rate_per_hour: '',
+    ot_threshold_hours: '12',
     user_id: '',
     login_email: '', login_password: '', login_role: 'operator', showLoginPwd: false,
   }
@@ -248,6 +249,7 @@ function EmployeeFormModal({ companyId, initialValues, onClose }) {
         bocw_number: form.bocw_number || null, min_wage_category: form.min_wage_category || 'unskilled',
         notes: form.notes || null,
         user_id: form.user_id || null,
+        ot_threshold_hours: form.ot_threshold_hours ? Number(form.ot_threshold_hours) : 12,
       }
 
       let empId = initialValues?.id
@@ -506,6 +508,9 @@ function EmployeeFormModal({ companyId, initialValues, onClose }) {
               <input type="number" className={inp()} value={form.ot_rate_per_hour} onChange={e => set('ot_rate_per_hour', e.target.value)} placeholder="e.g. 100" />
             </Field>
           </div>
+          <Field label="OT Starts After (hours)" hint="Shift hours beyond this count as OT. Default: 12 hrs.">
+            <input type="number" className={inp()} value={form.ot_threshold_hours} onChange={e => set('ot_threshold_hours', e.target.value)} placeholder="12" min="1" max="24" step="0.5" />
+          </Field>
         </>)}
 
         {form.employment_type !== 'shift' && (
@@ -945,6 +950,151 @@ function EmployeeCard({ emp, onClick }) {
   )
 }
 
+// ── Salary Raise Modal ────────────────────────────────────────────────────────
+function SalaryRaiseModal({ emp, companyId, currentSalary, onClose, onDone }) {
+  const { userProfile, role } = useAuth()
+  const [pct, setPct]             = useState('')
+  const [reason, setReason]       = useState('')
+  const [effectiveDate, setDate]  = useState(new Date().toISOString().split('T')[0])
+  const [saving, setSaving]       = useState(false)
+
+  const isShift   = emp.employment_type === 'shift'
+  const isDaily   = emp.employment_type === 'daily'
+  const isMonthly = emp.employment_type === 'monthly'
+
+  const currentBasic = Number(currentSalary.basic_salary || 0)
+  const currentDaily = Number(currentSalary.daily_rate   || 0)
+  const currentDay   = Number(currentSalary.day_shift_rate || 0)
+  const currentNight = Number(currentSalary.night_shift_rate || 0)
+  const currentDbl   = Number(currentSalary.double_shift_rate || 0)
+
+  const factor  = pct ? (1 + Number(pct) / 100) : 1
+  const newBasic = Math.round(currentBasic * factor)
+  const newHra   = Math.round(Number(currentSalary.hra || 0) * factor)
+  const newSA    = Math.round(Number(currentSalary.special_allowance || 0) * factor)
+  const newOA    = Math.round(Number(currentSalary.other_allowance || 0) * factor)
+  const newDaily = Math.round(currentDaily * factor)
+  const newDay   = Math.round(currentDay * factor)
+  const newNight = Math.round(currentNight * factor)
+  const newDbl   = Math.round(currentDbl * factor)
+
+  const handleApply = async () => {
+    if (!pct || Number(pct) <= 0) return toast.error('Enter a positive percentage')
+    if (!reason.trim()) return toast.error('Reason is required for audit trail')
+    setSaving(true)
+    try {
+      const today = effectiveDate
+      // Build updated salary payload
+      const updatedSal = { ...currentSalary, effective_from: today }
+      if (isMonthly) {
+        Object.assign(updatedSal, { basic_salary: newBasic, hra: newHra, special_allowance: newSA, other_allowance: newOA })
+      } else if (isDaily) {
+        updatedSal.daily_rate = newDaily
+      } else if (isShift) {
+        Object.assign(updatedSal, { day_shift_rate: newDay, night_shift_rate: newNight, double_shift_rate: newDbl })
+      }
+      delete updatedSal.id; delete updatedSal.created_at
+
+      // Insert new salary record (keep history intact, never overwrite)
+      const { error: salErr } = await supabase.from('hr_salary_structure').insert({ ...updatedSal, company_id: companyId, employee_id: emp.id })
+      if (salErr) throw salErr
+
+      // Log to hr_salary_history
+      await supabase.from('hr_salary_history').insert({
+        company_id:        companyId,
+        employee_id:       emp.id,
+        change_type:       'raise',
+        previous_basic:    isMonthly ? currentBasic  : null,
+        new_basic:         isMonthly ? newBasic       : null,
+        previous_daily:    isDaily   ? currentDaily   : isShift ? currentDay  : null,
+        new_daily:         isDaily   ? newDaily        : isShift ? newDay      : null,
+        percentage_change: Number(pct),
+        effective_date:    today,
+        reason,
+        changed_by:        userProfile?.id || null,
+      })
+
+      toast.success(`${Number(pct)}% raise applied effective ${today}`)
+      onDone()
+    } catch (err) { toast.error(err.message || 'Failed to apply raise')
+    } finally { setSaving(false) }
+  }
+
+  const fmt = n => n > 0 ? `₹${Number(n).toLocaleString('en-IN')}` : '—'
+  const diff = (a, b) => b - a > 0 ? <span className="text-emerald-400 text-[10px] ml-1">+₹{(b-a).toLocaleString('en-IN')}</span> : null
+
+  return (
+    <Modal title={`Salary Raise — ${emp.name}`} onClose={onClose}
+      footer={<>
+        <button onClick={onClose} className="btn-ghost flex-1">Cancel</button>
+        <button onClick={handleApply} disabled={saving || !pct || !reason.trim()}
+          className="flex-1 btn-primary flex items-center justify-center gap-1.5 disabled:opacity-40">
+          {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Banknote className="w-3.5 h-3.5" />}
+          Apply Raise
+        </button>
+      </>}>
+
+      <div className="bg-amber-900/20 border border-amber-700/30 rounded-xl px-3 py-2 text-xs text-amber-300">
+        ⚠️ Raise is <strong>percentage-based only</strong>. The new rate is auto-calculated and logged with a full audit trail. This action is visible to Admin and HR.
+      </div>
+
+      {/* Percentage input */}
+      <div>
+        <p className="text-xs text-slate-400 mb-1.5">Raise Percentage *</p>
+        <div className="flex items-center gap-2">
+          <input type="number" min="0.1" max="100" step="0.5"
+            className="w-full bg-dark-700 border border-dark-500 rounded-xl px-4 py-3 text-3xl font-bold text-emerald-400 text-center focus:outline-none focus:border-primary-500"
+            value={pct} onChange={e => setPct(e.target.value)} placeholder="0" />
+          <span className="text-2xl font-bold text-slate-300">%</span>
+        </div>
+        <div className="flex gap-2 mt-2">
+          {[5, 10, 15, 20].map(p => (
+            <button key={p} onClick={() => setPct(String(p))}
+              className={`flex-1 py-1.5 rounded-lg text-xs font-semibold border transition-all ${Number(pct) === p ? 'bg-primary-600 text-white border-primary-500' : 'bg-dark-700 text-slate-400 border-dark-500 hover:border-primary-600'}`}>
+              {p}%
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Preview */}
+      {pct && Number(pct) > 0 && (
+        <div className="bg-dark-700 rounded-xl p-3 text-xs space-y-1.5">
+          <p className="text-slate-400 font-semibold mb-2">Preview (current → new)</p>
+          {isMonthly && <>
+            {currentBasic > 0   && <div className="flex justify-between"><span className="text-slate-400">Basic</span><span>{fmt(currentBasic)} → <strong className="text-slate-100">{fmt(newBasic)}</strong>{diff(currentBasic, newBasic)}</span></div>}
+            {Number(currentSalary.hra||0) > 0 && <div className="flex justify-between"><span className="text-slate-400">HRA</span><span>{fmt(currentSalary.hra)} → <strong className="text-slate-100">{fmt(newHra)}</strong></span></div>}
+            {Number(currentSalary.special_allowance||0) > 0 && <div className="flex justify-between"><span className="text-slate-400">Special Allow.</span><span>{fmt(currentSalary.special_allowance)} → <strong className="text-slate-100">{fmt(newSA)}</strong></span></div>}
+            <div className="flex justify-between border-t border-dark-600 pt-1.5 font-semibold">
+              <span className="text-slate-300">Gross</span>
+              <span>{fmt(currentBasic + Number(currentSalary.hra||0) + Number(currentSalary.special_allowance||0) + Number(currentSalary.other_allowance||0))} → <span className="text-emerald-400">{fmt(newBasic + newHra + newSA + newOA)}</span></span>
+            </div>
+          </>}
+          {isDaily  && <div className="flex justify-between"><span className="text-slate-400">Daily Rate</span><span>{fmt(currentDaily)} → <strong className="text-emerald-400">{fmt(newDaily)}</strong>/day</span></div>}
+          {isShift  && <>
+            {currentDay   > 0 && <div className="flex justify-between"><span className="text-slate-400">Day Shift</span><span>{fmt(currentDay)} → <strong className="text-emerald-400">{fmt(newDay)}</strong></span></div>}
+            {currentNight > 0 && <div className="flex justify-between"><span className="text-slate-400">Night Shift</span><span>{fmt(currentNight)} → <strong className="text-emerald-400">{fmt(newNight)}</strong></span></div>}
+            {currentDbl   > 0 && <div className="flex justify-between"><span className="text-slate-400">Double Shift</span><span>{fmt(currentDbl)} → <strong className="text-emerald-400">{fmt(newDbl)}</strong></span></div>}
+          </>}
+        </div>
+      )}
+
+      <div>
+        <p className="text-xs text-slate-400 mb-1.5">Effective Date *</p>
+        <input type="date" className="w-full bg-dark-700 border border-dark-500 rounded-xl px-4 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
+          value={effectiveDate} onChange={e => setDate(e.target.value)} />
+      </div>
+
+      <div>
+        <p className="text-xs text-slate-400 mb-1.5">Reason * <span className="text-slate-600">(logged in audit trail)</span></p>
+        <textarea rows={2} className="w-full bg-dark-700 border border-dark-500 rounded-xl px-4 py-2.5 text-sm text-slate-100 resize-none focus:outline-none focus:border-primary-500"
+          value={reason} onChange={e => setReason(e.target.value)}
+          placeholder="e.g. Annual increment, performance appraisal, promotion…" />
+      </div>
+    </Modal>
+  )
+}
+
 // ── Employee Detail Modal ─────────────────────────────────────────────────────
 function EmployeeDetailModal({ emp, companyId, onClose, onEdit }) {
   const { role } = useAuth()
@@ -954,12 +1104,23 @@ function EmployeeDetailModal({ emp, companyId, onClose, onEdit }) {
   const [showInvite, setShowInvite]   = useState(false)
   const [showLinkModal, setShowLinkModal] = useState(false)
 
-  const { data: salary } = useQuery({
+  const [showRaise, setShowRaise] = useState(false)
+
+  const { data: salary, refetch: refetchSalary } = useQuery({
     queryKey: ['hr_salary', emp.id],
     queryFn: async () => {
       const { data } = await supabase.from('hr_salary_structure')
         .select('*').eq('employee_id', emp.id).order('effective_from', { ascending: false }).limit(1).maybeSingle()
       return data
+    },
+  })
+
+  const { data: salaryHistory = [] } = useQuery({
+    queryKey: ['hr_salary_history', emp.id],
+    queryFn: async () => {
+      const { data } = await supabase.from('hr_salary_history')
+        .select('*').eq('employee_id', emp.id).order('created_at', { ascending: false }).limit(10)
+      return data || []
     },
   })
 
@@ -1000,6 +1161,11 @@ function EmployeeDetailModal({ emp, companyId, onClose, onEdit }) {
                 <Link className="w-3.5 h-3.5" /> Set Password
               </button>
             )}
+            {salary && ['admin','hr'].includes(role) && (
+              <button onClick={() => setShowRaise(true)} className="btn-ghost flex items-center gap-1.5 text-xs px-3 border-emerald-700/50 text-emerald-400 hover:bg-emerald-500/10">
+                <Banknote className="w-3.5 h-3.5" /> Salary Raise
+              </button>
+            )}
             <button onClick={onEdit} className="flex-1 btn-primary text-sm flex items-center justify-center gap-1.5">
               <Edit2 className="w-3.5 h-3.5" /> Edit
             </button>
@@ -1018,6 +1184,13 @@ function EmployeeDetailModal({ emp, companyId, onClose, onEdit }) {
       )}
       {showLinkModal && (
         <SetPasswordModal emp={emp} onClose={() => setShowLinkModal(false)} />
+      )}
+      {showRaise && salary && (
+        <SalaryRaiseModal
+          emp={emp} companyId={companyId} currentSalary={salary}
+          onClose={() => setShowRaise(false)}
+          onDone={() => { setShowRaise(false); refetchSalary(); qc.invalidateQueries(['hr_salary_history', emp.id]) }}
+        />
       )}
       <div className="flex items-center gap-3">
         <div className="w-12 h-12 rounded-full bg-primary-900/40 border border-primary-700/40 flex items-center justify-center shrink-0">
@@ -1128,6 +1301,28 @@ function EmployeeDetailModal({ emp, companyId, onClose, onEdit }) {
           </div>
         )}
       </>)}
+
+      {/* Salary History */}
+      {salaryHistory.length > 0 && (
+        <>
+          <div className="h-px bg-dark-600" />
+          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Salary History</p>
+          <div className="space-y-1.5">
+            {salaryHistory.map(h => (
+              <div key={h.id} className="bg-dark-700 rounded-lg px-3 py-2 text-xs flex items-center justify-between gap-2">
+                <div className="flex-1">
+                  <span className="text-slate-300 capitalize">{h.change_type}</span>
+                  {h.reason && <span className="text-slate-500 ml-2">· {h.reason}</span>}
+                  <p className="text-slate-500 mt-0.5">{h.effective_date} · {h.previous_basic ? `₹${Number(h.previous_basic).toLocaleString('en-IN')} → ₹${Number(h.new_basic).toLocaleString('en-IN')}` : h.previous_daily ? `₹${Number(h.previous_daily).toLocaleString('en-IN')} → ₹${Number(h.new_daily).toLocaleString('en-IN')}/day` : ''}</p>
+                </div>
+                {h.percentage_change > 0 && (
+                  <span className="text-emerald-400 font-bold shrink-0">+{h.percentage_change}%</span>
+                )}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
 
       {/* Attendance Calendar */}
       <div className="h-px bg-dark-600" />
@@ -1450,57 +1645,26 @@ function EmployeesTab({ companyId }) {
 }
 
 // ── Attendance Tab ────────────────────────────────────────────────────────────
+// Purpose: govern attendance records only.
+// Shift start/end is controlled from Equipment page.
+// OT threshold is set per-employee when adding/editing the employee.
 function AttendanceTab({ companyId }) {
   const { role } = useAuth()
-  const qc = useQueryClient()
   const _now = new Date()
   const [year,        setYear]        = useState(_now.getFullYear())
   const [month,       setMonth]       = useState(_now.getMonth() + 1)
   const [selectedDay, setSelectedDay] = useState(_now.getDate())
-  const [saving, setSaving]           = useState(false)
-  const [shiftTimes, setShiftTimes]   = useState({})
-  const [editOt, setEditOt]           = useState(false)
-  const [otInput, setOtInput]         = useState('')
-  const [editRec, setEditRec]         = useState(null) // { record, empName }
+  const [saving,      setSaving]      = useState(false)
+  const [editRec,     setEditRec]     = useState(null)
 
-  // Derived date string
-  const date = `${year}-${String(month).padStart(2,'0')}-${String(selectedDay).padStart(2,'0')}`
+  const date       = `${year}-${String(month).padStart(2,'0')}-${String(selectedDay).padStart(2,'0')}`
   const daysInMonth = new Date(year, month, 0).getDate()
   const monthStart  = `${year}-${String(month).padStart(2,'0')}-01`
   const monthEnd    = `${year}-${String(month).padStart(2,'0')}-${String(daysInMonth).padStart(2,'0')}`
 
-  const prevMonth = () => {
-    if (month === 1) { setYear(y => y - 1); setMonth(12) }
-    else setMonth(m => m - 1)
-  }
-  const nextMonth = () => {
-    if (month === 12) { setYear(y => y + 1); setMonth(1) }
-    else setMonth(m => m + 1)
-  }
-  const goToday = () => {
-    const n = new Date()
-    setYear(n.getFullYear()); setMonth(n.getMonth() + 1); setSelectedDay(n.getDate())
-  }
-
-  // Fetch company OT threshold (editable by admin/manager)
-  const { data: company, refetch: refetchCompany } = useQuery({
-    queryKey: ['company_ot', companyId],
-    queryFn: async () => {
-      const { data } = await supabase.from('companies').select('ot_threshold_hours').eq('id', companyId).single()
-      return data
-    },
-    enabled: !!companyId,
-  })
-  const otThreshold = company?.ot_threshold_hours ?? 12
-
-  const saveOtThreshold = async () => {
-    const v = parseFloat(otInput)
-    if (isNaN(v) || v < 1 || v > 24) { toast.error('Enter a valid hour (1–24)'); return }
-    await supabase.from('companies').update({ ot_threshold_hours: v }).eq('id', companyId)
-    refetchCompany()
-    setEditOt(false)
-    toast.success(`OT threshold updated to ${v}h`)
-  }
+  const prevMonth = () => { if (month === 1) { setYear(y=>y-1); setMonth(12) } else setMonth(m=>m-1) }
+  const nextMonth = () => { if (month === 12) { setYear(y=>y+1); setMonth(1)  } else setMonth(m=>m+1) }
+  const goToday   = () => { const n=new Date(); setYear(n.getFullYear()); setMonth(n.getMonth()+1); setSelectedDay(n.getDate()) }
 
   const { data: employees = [] } = useQuery({
     queryKey: ['hr_employees_active', companyId],
@@ -1523,7 +1687,6 @@ function AttendanceTab({ companyId }) {
     enabled: !!companyId,
   })
 
-  // Fetch entire month's attendance to power the calendar dots
   const { data: monthAttendance = [], refetch: refetchMonth } = useQuery({
     queryKey: ['hr_attendance_month', companyId, year, month],
     queryFn: async () => {
@@ -1534,24 +1697,11 @@ function AttendanceTab({ companyId }) {
     enabled: !!companyId,
   })
 
-  // Build a date→first-record map for calendar coloring (keyed by 'YYYY-MM-DD')
   const monthDotMap = useMemo(() => {
     const m = {}
-    monthAttendance.forEach(a => {
-      if (!m[a.attendance_date]) m[a.attendance_date] = a
-    })
+    monthAttendance.forEach(a => { if (!m[a.attendance_date]) m[a.attendance_date] = a })
     return m
   }, [monthAttendance])
-
-  useEffect(() => {
-    const times = {}
-    attendance.forEach(a => {
-      if (a.shift_start_time || a.shift_end_time) {
-        times[a.employee_id] = { start: a.shift_start_time || '', end: a.shift_end_time || '' }
-      }
-    })
-    setShiftTimes(prev => ({ ...prev, ...times }))
-  }, [attendance])
 
   const attMap = useMemo(() => {
     const m = {}
@@ -1559,62 +1709,30 @@ function AttendanceTab({ companyId }) {
     return m
   }, [attendance])
 
-  const setShiftTime = (empId, field, value) =>
-    setShiftTimes(prev => ({ ...prev, [empId]: { ...prev[empId], [field]: value } }))
-
-  // Core upsert — manual overrides always win; source='manual'
-  const markAttendance = async (empId, status, extraFields = {}) => {
+  const markAttendance = async (empId, status) => {
     const existing = attMap[empId]
-    const payload  = { status, shift_start_time: null, shift_end_time: null, ot_hours: 0, source: 'manual', ...extraFields }
+    const payload  = { status, source: 'manual' }
     if (existing) {
       await supabase.from('hr_attendance').update(payload).eq('id', existing.id)
     } else {
-      await supabase.from('hr_attendance').insert({
-        company_id: companyId, employee_id: empId, attendance_date: date, ...payload,
-      })
+      await supabase.from('hr_attendance').insert({ company_id: companyId, employee_id: empId, attendance_date: date, ...payload })
     }
-    refetch()
-    refetchMonth()
+    refetch(); refetchMonth()
   }
 
-  // Manual shift time entry in HR tab
-  const saveShiftAttendance = async (emp) => {
-    const st = shiftTimes[emp.id] || {}
-    if (!st.start) { toast.error('Enter shift start time'); return }
-    if (!st.end)   { toast.error('Enter shift end time');   return }
-    const hours   = calcShiftHours(st.start, st.end)
-    const status  = calcShiftStatus(hours)
-    if (!status)  { toast.error('Duration is 0 — check times'); return }
-    const otHours = calcOtHours(hours, otThreshold)
-    await markAttendance(emp.id, status, {
-      shift_start_time: st.start,
-      shift_end_time:   st.end,
-      ot_hours:         otHours,
-    })
-    const label = status === 'half_day'
-      ? `Half Day (${hours}h)`
-      : otHours > 0 ? `Present + ${otHours}h OT` : `Present (${hours}h)`
-    toast.success(`${emp.name} — ${label}`)
-  }
-
-  // Bulk mark — skips shift workers (they must use clock-in/out)
+  // Bulk mark — all employees (shift workers included — just sets the status flag)
   const markAll = async (status) => {
     setSaving(true)
     for (const emp of employees) {
-      if (isShiftWorker(emp)) continue
       const existing = attMap[emp.id]
       if (existing) {
-        await supabase.from('hr_attendance').update({ status, shift_start_time: null, shift_end_time: null }).eq('id', existing.id)
+        await supabase.from('hr_attendance').update({ status, source: 'manual' }).eq('id', existing.id)
       } else {
-        await supabase.from('hr_attendance').insert({
-          company_id: companyId, employee_id: emp.id, attendance_date: date, status,
-        })
+        await supabase.from('hr_attendance').insert({ company_id: companyId, employee_id: emp.id, attendance_date: date, status, source: 'manual' })
       }
     }
-    refetch()
-    refetchMonth()
-    setSaving(false)
-    toast.success(`Non-shift employees marked ${status}`)
+    refetch(); refetchMonth(); setSaving(false)
+    toast.success(`All employees marked ${status}`)
   }
 
   const summary = useMemo(() => {
@@ -1633,33 +1751,19 @@ function AttendanceTab({ companyId }) {
 
         {/* Month navigator */}
         <div className="flex items-center gap-1">
-          <button onClick={prevMonth} className="p-1 rounded-lg hover:bg-dark-700 text-slate-400 hover:text-slate-200">
-            <ChevronLeft className="w-4 h-4" />
-          </button>
-          <span className="flex-1 text-center text-sm font-semibold text-slate-100">
-            {MONTH_NAMES[month - 1]} {year}
-          </span>
-          <button onClick={nextMonth} className="p-1 rounded-lg hover:bg-dark-700 text-slate-400 hover:text-slate-200">
-            <ChevronRight className="w-4 h-4" />
-          </button>
-          <button onClick={goToday} className="text-xs text-primary-400 hover:text-primary-300 ml-1 px-2 py-1 rounded-lg hover:bg-dark-700">
-            Today
-          </button>
+          <button onClick={prevMonth} className="p-1 rounded-lg hover:bg-dark-700 text-slate-400 hover:text-slate-200"><ChevronLeft className="w-4 h-4" /></button>
+          <span className="flex-1 text-center text-sm font-semibold text-slate-100">{MONTH_NAMES[month-1]} {year}</span>
+          <button onClick={nextMonth} className="p-1 rounded-lg hover:bg-dark-700 text-slate-400 hover:text-slate-200"><ChevronRight className="w-4 h-4" /></button>
+          <button onClick={goToday} className="text-xs text-primary-400 hover:text-primary-300 ml-1 px-2 py-1 rounded-lg hover:bg-dark-700">Today</button>
         </div>
 
-        {/* Monthly calendar — click a date to view/edit that day's attendance */}
-        <MonthlyCalendar
-          year={year} month={month}
-          dotMap={monthDotMap}
-          selectedDate={date}
-          onDateClick={d => setSelectedDay(parseInt(d.split('-')[2], 10))}
-          compact={true}
-        />
+        <MonthlyCalendar year={year} month={month} dotMap={monthDotMap} selectedDate={date}
+          onDateClick={d => setSelectedDay(parseInt(d.split('-')[2], 10))} compact={true} />
 
         {/* Selected day header + bulk actions */}
         <div className="flex items-center gap-2 pt-1 border-t border-dark-700">
           <span className="text-xs font-semibold text-slate-300">
-            {new Date(date + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })}
+            {new Date(date+'T00:00:00').toLocaleDateString('en-IN',{weekday:'short',day:'numeric',month:'short'})}
           </span>
           <div className="ml-auto flex gap-1.5">
             <button onClick={() => markAll('present')} disabled={saving}
@@ -1676,40 +1780,21 @@ function AttendanceTab({ companyId }) {
         {/* Summary pills */}
         <div className="flex gap-2 overflow-x-auto pb-0.5 text-xs">
           {[
-            { label: `${summary.present} Present`,   cls: 'text-emerald-400 bg-emerald-500/10 border-emerald-700/40' },
-            { label: `${summary.absent} Absent`,     cls: 'text-red-400 bg-red-500/10 border-red-700/40' },
-            { label: `${summary.half_day} Half Day`, cls: 'text-yellow-400 bg-yellow-500/10 border-yellow-700/40' },
-            { label: `${summary.leave} Leave`,       cls: 'text-blue-400 bg-blue-500/10 border-blue-700/40' },
-            summary.unmarked > 0 && { label: `${summary.unmarked} Unmarked`, cls: 'text-slate-400 border-slate-600 bg-dark-700' },
+            { label:`${summary.present} Present`,   cls:'text-emerald-400 bg-emerald-500/10 border-emerald-700/40' },
+            { label:`${summary.absent} Absent`,     cls:'text-red-400 bg-red-500/10 border-red-700/40' },
+            { label:`${summary.half_day} Half Day`, cls:'text-yellow-400 bg-yellow-500/10 border-yellow-700/40' },
+            { label:`${summary.leave} Leave`,       cls:'text-blue-400 bg-blue-500/10 border-blue-700/40' },
+            summary.unmarked > 0 && { label:`${summary.unmarked} Unmarked`, cls:'text-slate-400 border-slate-600 bg-dark-700' },
           ].filter(Boolean).map(c => (
             <span key={c.label} className={`shrink-0 px-2.5 py-1 rounded-full border font-medium ${c.cls}`}>{c.label}</span>
           ))}
         </div>
 
-        {/* OT threshold setting */}
-        <div className="flex items-center gap-2 text-xs text-slate-400 border-t border-dark-700 pt-2">
-          <span className="text-slate-500">OT after</span>
-          {editOt ? (
-            <>
-              <input type="number" min="1" max="24" step="0.5"
-                className="w-14 bg-dark-700 border border-primary-500 rounded px-2 py-0.5 text-slate-100 text-xs focus:outline-none"
-                value={otInput}
-                onChange={e => setOtInput(e.target.value)}
-                autoFocus />
-              <span className="text-slate-500">hrs</span>
-              <button onClick={saveOtThreshold} className="text-primary-400 hover:text-primary-300">Save</button>
-              <button onClick={() => setEditOt(false)} className="text-slate-500 hover:text-slate-300">Cancel</button>
-            </>
-          ) : (
-            <>
-              <span className="font-semibold text-slate-200">{otThreshold}h</span>
-              {['admin','manager'].includes(role) && (
-                <button onClick={() => { setOtInput(String(otThreshold)); setEditOt(true) }}
-                  className="text-primary-400/60 hover:text-primary-300 underline underline-offset-2">Edit</button>
-              )}
-            </>
-          )}
-          <span className="ml-1 text-slate-600">· Auto-filled from shift on operators/supervisors</span>
+        {/* Info banner */}
+        <div className="flex items-start gap-2 bg-dark-800 border border-dark-600 rounded-lg px-3 py-2">
+          <span className="text-slate-500 text-[11px] leading-relaxed">
+            Shift workers — attendance is auto-filled from the Equipment page when a shift ends. Use status buttons below only to override (e.g. mark absent, leave, or holiday).
+          </span>
         </div>
       </div>
 
@@ -1722,118 +1807,48 @@ function AttendanceTab({ companyId }) {
         ) : (
           <div className="space-y-2 pt-1">
             {employees.map(emp => {
-              const att      = attMap[emp.id]
-              const status   = att?.status || null
-              const isShift  = isShiftWorker(emp)
-              const st       = shiftTimes[emp.id] || {}
-              const shiftHrs   = (st.start && st.end) ? calcShiftHours(st.start, st.end) : 0
-              const autoStatus = (st.start && st.end) ? calcShiftStatus(shiftHrs) : null
-              const autoOT     = calcOtHours(shiftHrs, otThreshold)
+              const att    = attMap[emp.id]
+              const status = att?.status || null
+              const isShift = isShiftWorker(emp)
               const isAutoFill = att?.source === 'shift_auto'
 
               return (
                 <div key={emp.id} className="bg-dark-800 border border-dark-700 rounded-xl p-3">
-                  {/* Employee header */}
                   <div className="flex items-center justify-between gap-2 mb-2">
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-semibold text-slate-100 truncate">{emp.name}</p>
                       <p className="text-xs text-slate-500">
-                        {emp.employee_number}
-                        {emp.designation ? ` · ${emp.designation}` : ''}
-                        {isShift && <span className="ml-1.5 text-orange-400/60">· shift</span>}
-                        {isAutoFill && <span className="ml-1.5 text-sky-400/60">· auto from shift</span>}
+                        {emp.employee_number}{emp.designation ? ` · ${emp.designation}` : ''}
+                        {isAutoFill && <span className="ml-1.5 text-sky-400/70">· from shift</span>}
                       </p>
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
                       {status && (
                         <span className={`text-xs px-2 py-0.5 rounded-full border font-medium
-                          ${ATTENDANCE_STATUS.find(s => s.value === status)?.cls || 'border-dark-600 text-slate-400'}`}>
-                          {ATTENDANCE_STATUS.find(s => s.value === status)?.full}
+                          ${ATTENDANCE_STATUS.find(s=>s.value===status)?.cls || 'border-dark-600 text-slate-400'}`}>
+                          {ATTENDANCE_STATUS.find(s=>s.value===status)?.full}
                           {att?.ot_hours > 0 && <span className="ml-1 text-orange-400">+{att.ot_hours}h OT</span>}
                         </span>
                       )}
                       {['admin','manager'].includes(role) && att && (
-                        <button
-                          onClick={() => setEditRec({ record: att, empName: emp.name })}
-                          className="p-1.5 rounded-lg text-slate-500 hover:text-slate-200 hover:bg-dark-700"
-                          title="Edit attendance">
+                        <button onClick={() => setEditRec({ record: att, empName: emp.name })}
+                          className="p-1.5 rounded-lg text-slate-500 hover:text-slate-200 hover:bg-dark-700">
                           <Edit2 className="w-3.5 h-3.5" />
                         </button>
                       )}
                     </div>
                   </div>
 
-                  {isShift ? (
-                    /* ── Shift worker: clock in / clock out ── */
-                    <div className="space-y-2">
-                      <div className="flex gap-2 items-end">
-                        <div className="flex-1">
-                          <p className="text-xs text-slate-500 mb-1">Start Time</p>
-                          <input type="time"
-                            className="w-full bg-dark-700 border border-dark-600 rounded-lg px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
-                            value={st.start || ''}
-                            onChange={e => setShiftTime(emp.id, 'start', e.target.value)} />
-                        </div>
-                        <div className="flex-1">
-                          <p className="text-xs text-slate-500 mb-1">End Time</p>
-                          <input type="time"
-                            className="w-full bg-dark-700 border border-dark-600 rounded-lg px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
-                            value={st.end || ''}
-                            onChange={e => setShiftTime(emp.id, 'end', e.target.value)} />
-                        </div>
-                        <button onClick={() => saveShiftAttendance(emp)}
-                          className="shrink-0 px-3 py-1.5 text-xs rounded-lg bg-primary-600/20 border border-primary-700/40 text-primary-400 hover:bg-primary-600/30">
-                          Save
-                        </button>
-                      </div>
-
-                      {/* Live duration & auto-status preview */}
-                      {st.start && st.end ? (
-                        <div className={`text-xs flex items-center gap-2 px-2.5 py-1.5 rounded-lg border
-                          ${autoStatus === 'half_day'
-                            ? 'bg-yellow-500/10 text-yellow-400 border-yellow-700/30'
-                            : 'bg-emerald-500/10 text-emerald-400 border-emerald-700/30'}`}>
-                          <span>{autoStatus === 'half_day' ? '⚡' : '✅'}</span>
-                          <span>
-                            {shiftHrs}h —{' '}
-                            {autoStatus === 'half_day'
-                              ? 'Half Day (below 4 hrs)'
-                              : autoOT > 0
-                                ? `Full Day + ${autoOT}h OT`
-                                : 'Full Day'}
-                          </span>
-                        </div>
-                      ) : (
-                        !status && <p className="text-xs text-slate-500 italic px-1">Enter start & end time to log attendance</p>
-                      )}
-
-                      {/* Override for absent / leave / week_off / holiday */}
-                      <div className="flex gap-1.5 flex-wrap">
-                        {['absent', 'leave', 'week_off', 'holiday'].map(sv => {
-                          const s = ATTENDANCE_STATUS.find(s => s.value === sv)
-                          return (
-                            <button key={sv}
-                              onClick={() => markAttendance(emp.id, sv)}
-                              className={`px-2.5 py-1 rounded-lg border text-xs font-medium transition-all
-                                ${status === sv ? s.cls : 'border-dark-600 bg-dark-700 text-slate-500 hover:border-dark-500'}`}>
-                              {s.full}
-                            </button>
-                          )
-                        })}
-                      </div>
-                    </div>
-                  ) : (
-                    /* ── Non-shift: manual status buttons ── */
-                    <div className="flex gap-1.5 flex-wrap">
-                      {ATTENDANCE_STATUS.map(s => (
-                        <button key={s.value} onClick={() => markAttendance(emp.id, s.value)}
-                          className={`px-2.5 py-1 rounded-lg border text-xs font-medium transition-all
-                            ${status === s.value ? s.cls : 'border-dark-600 bg-dark-700 text-slate-500 hover:border-dark-500'}`}>
-                          {s.full}
-                        </button>
-                      ))}
-                    </div>
-                  )}
+                  {/* Status buttons — all employees get the same set */}
+                  <div className="flex gap-1.5 flex-wrap">
+                    {ATTENDANCE_STATUS.map(s => (
+                      <button key={s.value} onClick={() => markAttendance(emp.id, s.value)}
+                        className={`px-2.5 py-1 rounded-lg border text-xs font-medium transition-all
+                          ${status===s.value ? s.cls : 'border-dark-600 bg-dark-700 text-slate-500 hover:border-dark-500'}`}>
+                        {s.full}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )
             })}
@@ -1842,17 +1857,9 @@ function AttendanceTab({ companyId }) {
       </div>
 
       {editRec && (
-        <EditAttendanceModal
-          record={editRec.record}
-          empName={editRec.empName}
-          companyId={companyId}
+        <EditAttendanceModal record={editRec.record} empName={editRec.empName} companyId={companyId}
           onClose={() => setEditRec(null)}
-          onSaved={() => {
-            setEditRec(null)
-            refetch()
-            refetchMonth()
-          }}
-        />
+          onSaved={() => { setEditRec(null); refetch(); refetchMonth() }} />
       )}
     </div>
   )
@@ -2458,6 +2465,234 @@ function LeavesTab({ companyId }) {
   )
 }
 
+// ── Substitutions Tab ─────────────────────────────────────────────────────────
+function SubstitutionsTab({ companyId }) {
+  const { role, userProfile } = useAuth()
+  const qc = useQueryClient()
+  const [showForm, setShowForm] = useState(false)
+  const canLog = ['admin','manager','hr'].includes(role)
+
+  const { data: subs = [], isLoading } = useQuery({
+    queryKey: ['operator_substitutions', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('operator_substitutions')
+        .select(`*, equipment:equipment_id(name,equipment_number),
+          original:original_operator_id(full_name),
+          substitute:substitute_operator_id(full_name),
+          approver:approved_by(full_name)`)
+        .eq('company_id', companyId)
+        .order('shift_date', { ascending: false })
+        .limit(100)
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+
+  const SEV_COLOR = { absent: 'text-red-400', consecutive: 'text-yellow-400', other: 'text-slate-400' }
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="px-4 py-3 border-b border-dark-700 flex items-center justify-between shrink-0">
+        <div>
+          <p className="text-sm font-semibold text-slate-200">Operator Substitutions</p>
+          <p className="text-xs text-slate-500">Last-minute operator changes — logged with approval trail</p>
+        </div>
+        {canLog && (
+          <button onClick={() => setShowForm(true)}
+            className="btn-primary flex items-center gap-1.5 text-xs px-3 py-2">
+            <Plus className="w-3.5 h-3.5" /> Log Substitution
+          </button>
+        )}
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-4 space-y-3">
+        {isLoading && <div className="flex justify-center py-10"><Loader2 className="w-5 h-5 animate-spin text-primary-400" /></div>}
+        {!isLoading && subs.length === 0 && (
+          <div className="text-center py-16 text-slate-600">
+            <RefreshCw className="w-8 h-8 mx-auto mb-3 opacity-30" />
+            <p className="text-sm">No substitutions logged yet</p>
+          </div>
+        )}
+        {subs.map(s => (
+          <div key={s.id} className="bg-dark-800 border border-dark-600 rounded-xl p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-xs font-mono text-slate-500">{s.shift_date}</span>
+                  {s.shift_type && <span className="text-[10px] px-1.5 py-0.5 bg-dark-700 border border-dark-600 text-slate-400 rounded capitalize">{s.shift_type} shift</span>}
+                  {s.reason && <span className={`text-[10px] font-semibold capitalize ${SEV_COLOR[s.reason] || 'text-slate-400'}`}>{s.reason}</span>}
+                </div>
+                <p className="text-sm font-semibold text-slate-100 truncate">
+                  {s.equipment?.name} <span className="text-slate-500 font-mono text-xs">({s.equipment?.equipment_number})</span>
+                </p>
+                <div className="flex items-center gap-2 mt-2 text-xs">
+                  <span className="text-slate-400">{s.original?.full_name || 'Unassigned'}</span>
+                  <span className="text-slate-600">→</span>
+                  <span className="text-primary-300 font-semibold">{s.substitute?.full_name}</span>
+                </div>
+                {s.approver && (
+                  <p className="text-[10px] text-slate-600 mt-1">Approved by {s.approver.full_name}</p>
+                )}
+              </div>
+              <AlertTriangle className={`w-4 h-4 shrink-0 mt-0.5 ${s.reason === 'absent' ? 'text-red-400' : 'text-yellow-500'}`} />
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {showForm && (
+        <SubstitutionFormModal companyId={companyId} userProfile={userProfile}
+          onClose={() => setShowForm(false)}
+          onSaved={() => { setShowForm(false); qc.invalidateQueries(['operator_substitutions', companyId]) }} />
+      )}
+    </div>
+  )
+}
+
+function SubstitutionFormModal({ companyId, userProfile, onClose, onSaved }) {
+  const { role } = useAuth()
+  const [equipmentId, setEquipmentId] = useState('')
+  const [origId,      setOrigId]      = useState('')
+  const [subId,       setSubId]       = useState('')
+  const [shiftDate,   setShiftDate]   = useState(new Date().toISOString().split('T')[0])
+  const [shiftType,   setShiftType]   = useState('day')
+  const [reason,      setReason]      = useState('absent')
+  const [saving,      setSaving]      = useState(false)
+
+  const { data: equipment = [] } = useQuery({
+    queryKey: ['equipment_active', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('equipment').select('id,name,equipment_number,assigned_operator_id')
+        .eq('company_id', companyId).eq('status','active').order('name')
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+
+  const { data: operators = [] } = useQuery({
+    queryKey: ['hr_operators_all', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('hr_employees')
+        .select('id,name,employee_number,user_id')
+        .eq('company_id', companyId).eq('status','active')
+        .eq('designation','Operator/Driver').order('name')
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+
+  // Auto-fill original operator when equipment selected
+  useEffect(() => {
+    if (!equipmentId) return
+    const eq = equipment.find(e => e.id === equipmentId)
+    if (eq?.assigned_operator_id) {
+      // find matching operator by user_id
+      const op = operators.find(o => o.user_id === eq.assigned_operator_id)
+      if (op) setOrigId(op.id)
+    }
+  }, [equipmentId, equipment, operators])
+
+  const handleSave = async () => {
+    if (!equipmentId) return toast.error('Select equipment')
+    if (!subId)       return toast.error('Select substitute operator')
+    if (subId === origId) return toast.error('Substitute must be a different operator')
+    setSaving(true)
+    try {
+      const origOp = operators.find(o => o.id === origId)
+      const subOp  = operators.find(o => o.id === subId)
+
+      await supabase.from('operator_substitutions').insert({
+        company_id:             companyId,
+        equipment_id:           equipmentId,
+        original_operator_id:   origOp?.user_id || null,
+        substitute_operator_id: subOp?.user_id  || subId,
+        shift_date:  shiftDate,
+        shift_type:  shiftType,
+        reason,
+        approved_by:    userProfile?.id,
+        notified_admin: true,
+        notified_hr:    true,
+      })
+
+      toast.success('Substitution logged')
+      onSaved()
+    } catch (err) { toast.error(err.message || 'Failed')
+    } finally { setSaving(false) }
+  }
+
+  const inp = 'w-full bg-dark-700 border border-dark-500 rounded-xl px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-primary-500'
+
+  return (
+    <Modal title="Log Operator Substitution" onClose={onClose}
+      footer={<>
+        <button onClick={onClose} className="btn-ghost flex-1">Cancel</button>
+        <button onClick={handleSave} disabled={saving}
+          className="flex-1 btn-primary flex items-center justify-center gap-1.5">
+          {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+          Log Substitution
+        </button>
+      </>}>
+
+      <div className="bg-amber-900/20 border border-amber-700/30 rounded-xl px-3 py-2 text-xs text-amber-300">
+        ⚠️ This log is permanent and visible to Admin and HR. Only authorised supervisors, HR, or Admin should log substitutions.
+      </div>
+
+      <div>
+        <p className="text-xs text-slate-400 mb-1.5">Equipment *</p>
+        <select className={inp} value={equipmentId} onChange={e => setEquipmentId(e.target.value)}>
+          <option value="">Select equipment…</option>
+          {equipment.map(e => <option key={e.id} value={e.id}>{e.name} — {e.equipment_number}</option>)}
+        </select>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <p className="text-xs text-slate-400 mb-1.5">Shift Date *</p>
+          <input type="date" className={inp} value={shiftDate} onChange={e => setShiftDate(e.target.value)} />
+        </div>
+        <div>
+          <p className="text-xs text-slate-400 mb-1.5">Shift Type</p>
+          <select className={inp} value={shiftType} onChange={e => setShiftType(e.target.value)}>
+            <option value="day">☀️ Day</option>
+            <option value="night">🌙 Night</option>
+            <option value="double">🔄 Double</option>
+          </select>
+        </div>
+      </div>
+
+      <div>
+        <p className="text-xs text-slate-400 mb-1.5">Original Operator (scheduled)</p>
+        <select className={inp} value={origId} onChange={e => setOrigId(e.target.value)}>
+          <option value="">None / Unassigned</option>
+          {operators.map(o => <option key={o.id} value={o.id}>{o.name} — {o.employee_number}</option>)}
+        </select>
+      </div>
+
+      <div>
+        <p className="text-xs text-slate-400 mb-1.5">Substitute Operator *</p>
+        <select className={inp} value={subId} onChange={e => setSubId(e.target.value)}>
+          <option value="">Select substitute…</option>
+          {operators.filter(o => o.id !== origId).map(o => (
+            <option key={o.id} value={o.id}>{o.name} — {o.employee_number}</option>
+          ))}
+        </select>
+      </div>
+
+      <div>
+        <p className="text-xs text-slate-400 mb-1.5">Reason *</p>
+        <div className="grid grid-cols-3 gap-2">
+          {[['absent','🤒 Absent'],['consecutive','🔄 Consecutive'],['other','📝 Other']].map(([v,l]) => (
+            <button key={v} onClick={() => setReason(v)}
+              className={`py-2 rounded-xl text-xs font-semibold border transition-all ${reason===v ? 'bg-primary-600 text-white border-primary-500' : 'bg-dark-700 text-slate-400 border-dark-600'}`}>
+              {l}
+            </button>
+          ))}
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
 // ── Main HRPage ───────────────────────────────────────────────────────────────
 export default function HRPage() {
   const { companyId } = useAuth()
@@ -2475,10 +2710,11 @@ export default function HRPage() {
   })
 
   const tabs = [
-    { id: 'employees',  label: 'Employees',  icon: Users },
-    { id: 'attendance', label: 'Attendance', icon: CheckCircle },
-    { id: 'payroll',    label: 'Payroll',    icon: Banknote },
-    { id: 'leaves',     label: 'Leaves',     icon: Calendar },
+    { id: 'employees',     label: 'Employees',    icon: Users },
+    { id: 'attendance',    label: 'Attendance',   icon: CheckCircle },
+    { id: 'payroll',       label: 'Payroll',      icon: Banknote },
+    { id: 'leaves',        label: 'Leaves',       icon: Calendar },
+    { id: 'substitutions', label: 'Substitutions',icon: RefreshCw },
   ]
 
   return (
@@ -2509,10 +2745,11 @@ export default function HRPage() {
       </div>
 
       <div className="flex-1 overflow-hidden">
-        {activeTab === 'employees'  && <EmployeesTab  companyId={companyId} />}
-        {activeTab === 'attendance' && <AttendanceTab companyId={companyId} />}
-        {activeTab === 'payroll'    && <PayrollTab    companyId={companyId} />}
-        {activeTab === 'leaves'     && <LeavesTab     companyId={companyId} />}
+        {activeTab === 'employees'     && <EmployeesTab     companyId={companyId} />}
+        {activeTab === 'attendance'    && <AttendanceTab    companyId={companyId} />}
+        {activeTab === 'payroll'       && <PayrollTab       companyId={companyId} />}
+        {activeTab === 'leaves'        && <LeavesTab        companyId={companyId} />}
+        {activeTab === 'substitutions' && <SubstitutionsTab companyId={companyId} />}
       </div>
 
       {showAdd && <EmployeeFormModal companyId={companyId} onClose={() => setShowAdd(false)} />}
