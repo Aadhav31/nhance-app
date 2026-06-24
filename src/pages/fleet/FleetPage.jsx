@@ -1568,12 +1568,13 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
     if (!selectedEmp) return
     setOperatorSaving(true)
     try {
-      // 1. Write to equipment_assignments log (legacy — keeps schedule history)
-      const { error } = await supabase.from('equipment_assignments').insert({
+      // 1. Write to equipment_assignments — upsert so re-assigning a previously removed
+      //    operator reactivates their row rather than hitting the unique constraint
+      const { error } = await supabase.from('equipment_assignments').upsert({
         company_id: companyId, equipment_id: equipment.id,
         operator_name: selectedEmp.name, shift_type: newShiftType, is_active: true,
-      })
-      if (error) { if (error.code === '23505') { toast.error('Operator already assigned'); return }; throw error }
+      }, { onConflict: 'equipment_id,operator_name' })
+      if (error) throw error
 
       // 2. Link operator to equipment so the Operator Portal can look them up
       //    assigned_operator_id → user_profiles.id (= hr_employees.user_id)
