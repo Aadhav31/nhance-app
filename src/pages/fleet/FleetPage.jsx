@@ -1374,8 +1374,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
         .eq('company_id', companyId)
         .eq('status', 'active')
         .in('designation', [
-          'Equipment Operator', 'Tipper / Dumper Driver',
-          'Site Supervisor', 'P&M Manager', 'Labour', 'Helper',
+          'Operator/Driver', 'Site Supervisor', 'P&M Manager', 'Labour', 'Helper',
         ])
         .order('name')
       return data || []
@@ -1994,7 +1993,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
                 const available = hrOperators.filter(e => !assignedNames.has(e.name))
                 if (hrOperators.length === 0) return (
                   <p className="text-xs text-amber-400/80 bg-amber-900/20 border border-amber-700/30 rounded-lg px-2.5 py-2">
-                    No operators found in HR module. Add employees with Equipment Operator / Driver designation first.
+                    No operators found in HR module. Add employees with the Operator/Driver designation first.
                   </p>
                 )
                 return (
