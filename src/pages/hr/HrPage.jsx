@@ -386,7 +386,11 @@ function EmployeeFormModal({ companyId, initialValues, onClose }) {
 
         <div className="grid grid-cols-2 gap-3">
           <Field label="Designation">
-            <select className={inp()} value={form.designation} onChange={e => set('designation', e.target.value)}>
+            <select className={inp()} value={form.designation} onChange={e => {
+                set('designation', e.target.value)
+                // Auto-set login role when designation is Operator/Driver
+                if (e.target.value === 'Operator/Driver') set('login_role', 'operator')
+              }}>
               <option value="">Select…</option>
               {DESIGNATIONS.map(d => <option key={d} value={d}>{d}</option>)}
             </select>
@@ -540,7 +544,7 @@ function EmployeeFormModal({ companyId, initialValues, onClose }) {
               </Field>
               <Field label="App Role">
                 <select className={inp()} value={form.login_role || 'operator'} onChange={e => set('login_role', e.target.value)}>
-                  <option value="operator">Operator — daily operations only</option>
+                  <option value="operator">Operator/Driver — daily operations portal only</option>
                   <option value="supervisor">Supervisor — operations, fleet, projects</option>
                   <option value="manager">Manager — full access</option>
                   <option value="accounts">Accounts — invoices, expenses</option>
@@ -643,7 +647,7 @@ function EmployeeFormModal({ companyId, initialValues, onClose }) {
 
 // ── Create Login Modal (no email — admin sets password, shares via WhatsApp) ──
 const LOGIN_ROLES = [
-  { key: 'operator',   label: 'Operator — daily operations only' },
+  { key: 'operator',   label: 'Operator/Driver — daily operations portal only' },
   { key: 'supervisor', label: 'Supervisor — operations, fleet, projects' },
   { key: 'manager',    label: 'Manager — full operations + business' },
   { key: 'accounts',   label: 'Accounts — invoices, expenses, ledger' },

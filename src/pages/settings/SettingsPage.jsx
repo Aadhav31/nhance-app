@@ -14,7 +14,7 @@ const ROLES = [
   { key: 'manager',    label: 'Manager',    color: 'text-primary-400 border-primary-700/40 bg-primary-900/20' },
   { key: 'supervisor', label: 'Supervisor', color: 'text-amber-400 border-amber-700/40 bg-amber-900/20' },
   { key: 'accounts',   label: 'Accounts',   color: 'text-emerald-400 border-emerald-700/40 bg-emerald-900/20' },
-  { key: 'operator',   label: 'Operator',   color: 'text-blue-400 border-blue-700/40 bg-blue-900/20' },
+  { key: 'operator',   label: 'Operator/Driver',   color: 'text-blue-400 border-blue-700/40 bg-blue-900/20' },
 ]
 
 const DEFAULT_ROLE_MODES = {
@@ -110,7 +110,7 @@ function InviteModal({ onClose, onSent, companyId }) {
               {form.role === 'manager' && 'Access to all operations, clients, projects, accounts'}
               {form.role === 'supervisor' && 'Operations, fleet view, inventory, projects, reports'}
               {form.role === 'accounts' && 'Accounts, invoices, expenses, ledger, HR view'}
-              {form.role === 'operator' && 'Daily operations only — start/end shifts'}
+              {form.role === 'operator' && 'Operator/Driver — daily operations portal only'}
             </p>
           </div>
           <div className="flex gap-3 pt-2">
