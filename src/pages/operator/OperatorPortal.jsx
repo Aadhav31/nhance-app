@@ -604,23 +604,14 @@ function ShiftModule({ companyId, operatorId, employeeId, employeeName, mode }) 
   const [incOpen, setIncOpen]   = useState(false)
   const [endOpen, setEndOpen]   = useState(false)
 
-  // Pre-assigned equipment — check primary (assigned_operator_id) first,
-  // then fall back to equipment_assignments by operator name (for secondary/night shifts)
+  // Equipment lookup — purely by user_id in equipment_assignments (all operators equal)
   const { data: assignedEq, isLoading: eqLoading } = useQuery({
-    queryKey: ['op_assigned_equipment', operatorId, companyId, employeeName],
+    queryKey: ['op_assigned_equipment', operatorId, companyId],
     queryFn: async () => {
-      // 1. Primary assignment via assigned_operator_id
-      const { data: primary } = await supabase.from('equipment')
-        .select('id,name,equipment_number,category,meter_reading,assigned_operator_id,default_shift_type,current_project_id,current_site_name,status')
-        .eq('company_id', companyId).eq('assigned_operator_id', operatorId).maybeSingle()
-      if (primary) return primary
-
-      // 2. Fallback — look up via equipment_assignments by name (secondary/night operators)
-      if (!employeeName) return null
+      // Look up via equipment_assignments.user_id — reflects any reassignment immediately
       const { data: assignment } = await supabase.from('equipment_assignments')
-        .select('equipment_id')
-        .eq('company_id', companyId)
-        .ilike('operator_name', employeeName)
+        .select('equipment_id, shift_type')
+        .eq('user_id', operatorId)
         .eq('is_active', true)
         .maybeSingle()
       if (!assignment?.equipment_id) return null
@@ -628,6 +619,8 @@ function ShiftModule({ companyId, operatorId, employeeId, employeeName, mode }) 
       const { data: eq } = await supabase.from('equipment')
         .select('id,name,equipment_number,category,meter_reading,assigned_operator_id,default_shift_type,current_project_id,current_site_name,status')
         .eq('id', assignment.equipment_id).maybeSingle()
+      // Use the assignment's shift_type as default if equipment doesn't have one
+      if (eq && !eq.default_shift_type) eq.default_shift_type = assignment.shift_type
       return eq || null
     },
     enabled: !!companyId && !!operatorId,

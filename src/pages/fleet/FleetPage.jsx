@@ -1568,24 +1568,13 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
     if (!selectedEmp) return
     setOperatorSaving(true)
     try {
-      // 1. Write to equipment_assignments — upsert so re-assigning a previously removed
-      //    operator reactivates their row rather than hitting the unique constraint
+      // Upsert into equipment_assignments — store user_id so portal can look up by user
       const { error } = await supabase.from('equipment_assignments').upsert({
         company_id: companyId, equipment_id: equipment.id,
         operator_name: selectedEmp.name, shift_type: newShiftType, is_active: true,
+        user_id: selectedEmp.user_id || null,
       }, { onConflict: 'equipment_id,operator_name' })
       if (error) throw error
-
-      // 2. Link operator to equipment so the Operator Portal can look them up
-      //    assigned_operator_id → user_profiles.id (= hr_employees.user_id)
-      if (selectedEmp.user_id) {
-        await supabase.from('equipment').update({
-          assigned_operator_id: selectedEmp.user_id,
-          default_shift_type:   newShiftType,
-        }).eq('id', equipment.id)
-        setEquipment(e => ({ ...e, assigned_operator_id: selectedEmp.user_id, default_shift_type: newShiftType }))
-        qc.invalidateQueries(['equipment', companyId])
-      }
 
       setNewOperator(''); setNewShiftType('day'); refetchAssignments()
       qc.invalidateQueries(['equipment_assignments', equipment.id])
@@ -1596,13 +1585,6 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
 
   const handleRemoveOperator = async (assignmentId, name) => {
     await supabase.from('equipment_assignments').update({ is_active: false }).eq('id', assignmentId)
-    // If this was the primary portal-linked operator, clear equipment.assigned_operator_id
-    const hr = hrOperators.find(e => e.name === name)
-    if (hr?.user_id && hr.user_id === equipment.assigned_operator_id) {
-      await supabase.from('equipment').update({ assigned_operator_id: null }).eq('id', equipment.id)
-      setEquipment(e => ({ ...e, assigned_operator_id: null }))
-      qc.invalidateQueries(['equipment', companyId])
-    }
     refetchAssignments()
     toast.success(`${name} removed`)
   }
@@ -1968,15 +1950,13 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
                 <div className="space-y-1.5">
                   {assignments.map(a => {
                     const hr = hrOperators.find(e => e.name === a.operator_name)
-                    const isPrimary = hr?.user_id && hr.user_id === equipment.assigned_operator_id
                     const shiftLabel = { day: '☀️ Day', night: '🌙 Night', double: '🔄 Double' }[a.shift_type] || '☀️ Day'
                     return (
-                      <div key={a.id} className={`flex items-center justify-between rounded-lg px-2.5 py-1.5 ${isPrimary ? 'bg-primary-900/30 border border-primary-700/40' : 'bg-dark-700'}`}>
+                      <div key={a.id} className="flex items-center justify-between rounded-lg px-2.5 py-1.5 bg-dark-700">
                         <div className="flex-1 min-w-0">
                           <span className="text-xs text-slate-200">{a.operator_name}</span>
                           {hr && <span className="text-[10px] text-slate-500 ml-2">{hr.employee_number}</span>}
-                          {hr?.user_id && <span className="text-[10px] text-slate-400 ml-1">📱</span>}
-                          {isPrimary && <span className="text-[10px] text-primary-400 ml-1 font-semibold">⭐ Primary</span>}
+                          {(hr?.user_id || a.user_id) && <span className="text-[10px] text-slate-400 ml-1">📱</span>}
                           <span className="text-[10px] text-slate-500 ml-2">{shiftLabel}</span>
                         </div>
                         <button onClick={() => handleRemoveOperator(a.id, a.operator_name)}
