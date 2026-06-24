@@ -803,9 +803,11 @@ function BillsTab({ companyId, session }) {
             if (existing) {
               itemId = existing.id
             } else {
+              const itemCode = await nextDocNumber(companyId, 'inventory_item').catch(() => null)
               const { data: newItem, error: nie } = await supabase.from('inventory_items').insert({
                 company_id: companyId, item_name: l.description.trim(),
-                category: invCategory, unit: l.unit, created_by: session.user.id,
+                item_code: itemCode, category: invCategory,
+                unit: l.unit, is_active: true, created_by: session.user.id,
               }).select('id').single()
               if (nie) { invErrors++; continue }
               itemId = newItem.id
