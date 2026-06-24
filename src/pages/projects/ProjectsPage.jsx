@@ -7,7 +7,7 @@ import toast from 'react-hot-toast'
 import {
   Plus, X, Search, MapPin, Calendar, FileText, Users,
   Droplet, Building2, Trash2, Edit2, IndianRupee, ExternalLink,
-  Cpu, Phone, Mail, FolderOpen, Navigation, UserPlus, RefreshCw,
+  Cpu, Phone, Mail, FolderOpen, Navigation, UserPlus, RefreshCw, Clock,
 } from 'lucide-react'
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -429,6 +429,7 @@ const INIT_FORM = {
   retention_pct: '', gst_rate: '18', payment_terms: '',
   hsd_supplied_by: 'company', hsd_consumption_norm: '', hsd_rate_per_liter: '',
   hsd_excess_bill_rate: '', hsd_shortage_credit: '',
+  shift_start_time: '', shift_end_time: '', shift_grace_mins: '30',
   our_pm_name: '', our_pm_phone: '', our_pm_email: '',
   our_supervisor_name: '', our_supervisor_phone: '',
   our_pnm_name: '', our_pnm_phone: '',
@@ -601,6 +602,9 @@ function AddEditModal({ project, clients, onClose, onSaved }) {
         client_accounts_name:  form.client_accounts_name  || null,
         client_accounts_phone: form.client_accounts_phone || null,
         notes:       form.notes || null,
+        shift_start_time: form.shift_start_time || null,
+        shift_end_time:   form.shift_end_time   || null,
+        shift_grace_mins: form.shift_grace_mins ? Number(form.shift_grace_mins) : 30,
         updated_at:  new Date().toISOString(),
       }
 
@@ -1030,6 +1034,42 @@ function AddEditModal({ project, clients, onClose, onSaved }) {
         </div>
       )}
 
+      {/* ── 9. Operator Shift Window ── */}
+      <div className="space-y-3">
+        <Sec icon={Clock} label="Operator Shift Window" />
+        <p className="text-xs text-slate-500">
+          Sets the allowed start/end window for operators on this project.
+          The Operator Portal will block shift start outside this window (±grace period).
+          Leave blank to allow shifts at any time.
+        </p>
+        <div className={half}>
+          <F label="Shift Start Time">
+            <input type="time" className={inp()} value={form.shift_start_time}
+              onChange={e => set('shift_start_time', e.target.value)} />
+          </F>
+          <F label="Shift End Time">
+            <input type="time" className={inp()} value={form.shift_end_time}
+              onChange={e => set('shift_end_time', e.target.value)} />
+          </F>
+        </div>
+        <F label="Grace Period (minutes)"
+          hint="Operators can start up to this many minutes before/after the window. Default: 30 mins.">
+          <input type="number" className={inp()} value={form.shift_grace_mins}
+            onChange={e => set('shift_grace_mins', e.target.value)}
+            placeholder="30" min="0" max="120" step="5" />
+        </F>
+        {form.shift_start_time && form.shift_end_time && (
+          <div className="flex items-center gap-2 bg-primary-900/20 border border-primary-700/30 rounded-lg px-3 py-2">
+            <span className="text-primary-400 text-sm">🕐</span>
+            <p className="text-xs text-primary-300">
+              Operators can start between{' '}
+              <strong>{form.shift_start_time}</strong> and <strong>{form.shift_end_time}</strong>
+              {form.shift_grace_mins ? ` (±${form.shift_grace_mins} min grace)` : ''}
+            </p>
+          </div>
+        )}
+      </div>
+
       {/* ── 10. Notes (Advanced) ── */}
       {isAdvanced && (
         <div className="space-y-3">
@@ -1319,6 +1359,21 @@ function ProjectDetail({ project, onClose, onEdit, onDelete }) {
               <Row label="Excess Billing"  value={project.hsd_excess_bill_rate  ? `₹${project.hsd_excess_bill_rate}/L` : null}/>
               <Row label="Shortage Credit" value={project.hsd_shortage_credit   ? `₹${project.hsd_shortage_credit}/L`  : null}/>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Shift Window */}
+      {(project.shift_start_time || project.shift_end_time) && (
+        <div>
+          <Sec icon={Clock} label="Operator Shift Window"/>
+          <div className="mt-2 flex items-center gap-3">
+            <span className="text-sm text-slate-200 font-mono">
+              {project.shift_start_time?.slice(0,5) || '—'} → {project.shift_end_time?.slice(0,5) || '—'}
+            </span>
+            {project.shift_grace_mins && (
+              <span className="text-xs text-slate-500">±{project.shift_grace_mins} min grace</span>
+            )}
           </div>
         </div>
       )}
