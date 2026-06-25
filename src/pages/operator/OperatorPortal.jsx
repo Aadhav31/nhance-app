@@ -8,7 +8,7 @@
  *  - Live salary shown: days worked × daily rate, updates after each shift
  */
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
@@ -642,7 +642,24 @@ function ShiftModule({ companyId, operatorId, employeeId, employeeName, mode }) 
       return data || null
     },
     enabled: !!companyId && !!employeeId,
+    refetchInterval: 30_000,          // poll every 30 s as fallback
+    refetchIntervalInBackground: true,
   })
+
+  // Realtime: instantly sync shift state across devices
+  useEffect(() => {
+    if (!companyId || !employeeId) return
+    const channel = supabase
+      .channel(`op_shift_${employeeId}`)
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'shifts',
+        filter: `operator_id=eq.${employeeId}`,
+      }, () => {
+        qc.invalidateQueries(['op_active_shift', employeeId, today()])
+      })
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [companyId, employeeId])
 
   // Fuel entries
   const { data: fuelEntries = [] } = useQuery({

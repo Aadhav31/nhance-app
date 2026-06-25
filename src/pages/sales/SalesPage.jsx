@@ -9,11 +9,19 @@ import {
   ArrowDownCircle, ShoppingCart, ChevronRight, CheckCircle,
   Copy, Edit2, Trash2, Search, IndianRupee, Calendar, User,
   FileQuestion, Send, AlertTriangle, Building2, Phone, Mail,
-  MapPin, BadgeCheck,
+  MapPin, BadgeCheck, Ban, FileDown, Sheet,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format } from 'date-fns'
 import ClientsPage from '../clients/ClientsPage'
+import {
+  downloadInvoicePDF, downloadQuotePDF, downloadSOPDF,
+  downloadDCPDF, downloadCNPDF, downloadPaymentReceivedPDF,
+} from '../../lib/docPDF'
+import {
+  downloadInvoiceXLSX, downloadQuoteXLSX, downloadSOXLSX,
+  downloadDCXLSX, downloadCNXLSX, downloadPaymentReceivedXLSX,
+} from '../../lib/docXLSX'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const todayStr = () => new Date().toISOString().split('T')[0]
@@ -275,15 +283,35 @@ function TaxSection({ form, setF, subtotal }) {
 }
 
 // ── INVOICES TAB ──────────────────────────────────────────────────────────────
-function CreateInvoiceModal({ companyId, session, onClose, onSaved }) {
+function CreateInvoiceModal({ companyId, session, onClose, onSaved, initialDoc = null }) {
   const [saving, setSaving] = useState(false)
-  const [form, setForm] = useState({
+  const [form, setForm] = useState(() => initialDoc ? {
+    client_name: initialDoc.client_name || '',
+    client_address: initialDoc.client_address || '',
+    client_gstin: initialDoc.client_gstin || '',
+    project_name: initialDoc.project_name || '',
+    invoice_date: initialDoc.invoice_date || todayStr(),
+    due_date: initialDoc.due_date || '',
+    cgst_rate: initialDoc.cgst_rate ?? 9,
+    sgst_rate: initialDoc.sgst_rate ?? 9,
+    igst_rate: initialDoc.igst_rate ?? 18,
+    use_igst: (initialDoc.igst_rate || 0) > 0,
+    discount_amount: initialDoc.discount_amount || 0,
+    notes: initialDoc.notes || '',
+    terms: initialDoc.terms || 'Payment due within 30 days.',
+    is_tax_invoice: initialDoc.is_tax_invoice !== false,
+  } : {
     client_name: '', client_address: '', client_gstin: '', project_name: '',
     invoice_date: todayStr(), due_date: '', cgst_rate: 9, sgst_rate: 9, igst_rate: 18,
     use_igst: false, discount_amount: 0, notes: '', terms: 'Payment due within 30 days.',
     is_tax_invoice: true,
   })
-  const [lines, setLines] = useState([blankLine()])
+  const [lines, setLines] = useState(() => initialDoc?._lines?.length ? initialDoc._lines.map(l => ({
+    _id: Math.random().toString(36).slice(2), description: l.description || '',
+    hsn_sac: l.hsn_sac || '', quantity: l.quantity || 1, unit: l.unit || 'hrs',
+    rate: String(l.rate || ''), amount: l.amount || 0,
+    _gst_rate: null, _gst_desc: null, _hsn_open: false,
+  })) : [blankLine()])
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
   const subtotal = useMemo(() => lines.reduce((s, l) => s + (l.amount || 0), 0), [lines])
   const taxable  = subtotal - (parseFloat(form.discount_amount) || 0)
@@ -299,6 +327,33 @@ function CreateInvoiceModal({ companyId, session, onClose, onSaved }) {
     if (lines.every(l => !l.description.trim())) return toast.error('Add at least one line item')
     setSaving(true)
     try {
+      const lineItems = lines.filter(l => l.description.trim()).map((l, i) => ({
+        description: l.description.trim(), hsn_sac: l.hsn_sac?.trim() || null,
+        quantity: parseFloat(l.quantity) || 1, unit: l.unit,
+        rate: parseFloat(l.rate) || 0, amount: l.amount, sort_order: i,
+      }))
+      if (initialDoc) {
+        // ── UPDATE ──
+        const { error } = await supabase.from('client_invoices').update({
+          invoice_date: form.invoice_date, due_date: form.due_date || null,
+          client_name: form.client_name.trim(), client_address: form.client_address.trim() || null,
+          client_gstin: form.client_gstin.trim() || null, project_name: form.project_name.trim() || null,
+          subtotal, discount_amount: parseFloat(form.discount_amount) || 0, taxable_amount: taxable,
+          cgst_rate: form.use_igst ? 0 : parseFloat(form.cgst_rate),
+          sgst_rate: form.use_igst ? 0 : parseFloat(form.sgst_rate),
+          igst_rate: form.use_igst ? parseFloat(form.igst_rate) : 0,
+          cgst_amount: cgst_amt, sgst_amount: sgst_amt, igst_amount: igst_amt,
+          total_amount: total, balance_due: Math.max(0, total - (Number(initialDoc.paid_amount) || 0)),
+          notes: form.notes.trim() || null, terms: form.terms.trim() || null,
+        }).eq('id', initialDoc.id)
+        if (error) throw error
+        await supabase.from('invoice_line_items').delete().eq('invoice_id', initialDoc.id)
+        const updItems = lineItems.map(l => ({ ...l, invoice_id: initialDoc.id }))
+        if (updItems.length > 0) { const { error: le } = await supabase.from('invoice_line_items').insert(updItems); if (le) throw le }
+        toast.success(`Invoice ${initialDoc.invoice_number} updated`)
+        onSaved(); return
+      }
+      // ── CREATE ──
       const id = crypto.randomUUID()
       const invNum = await nextDocNumber(companyId, 'invoice').catch(() => `INV-${Date.now()}`)
       const { error } = await supabase.from('client_invoices').insert({
@@ -314,24 +369,20 @@ function CreateInvoiceModal({ companyId, session, onClose, onSaved }) {
         notes: form.notes.trim() || null, terms: form.terms.trim() || null, created_by: session.user.id,
       })
       if (error) throw error
-      const good = lines.filter(l => l.description.trim()).map((l, i) => ({
-        invoice_id: id, description: l.description.trim(), hsn_sac: l.hsn_sac?.trim() || null,
-        quantity: parseFloat(l.quantity) || 1, unit: l.unit,
-        rate: parseFloat(l.rate) || 0, amount: l.amount, sort_order: i,
-      }))
-      if (good.length > 0) { const { error: le } = await supabase.from('invoice_line_items').insert(good); if (le) throw le }
+      const items = lineItems.map(l => ({ ...l, invoice_id: id }))
+      if (items.length > 0) { const { error: le } = await supabase.from('invoice_line_items').insert(items); if (le) throw le }
       toast.success(`Invoice ${invNum} ${status === 'sent' ? 'created & sent' : 'saved as draft'}`)
       onSaved()
     } catch (e) { toast.error(e.message || 'Failed to save') } finally { setSaving(false) }
   }
 
   return (
-    <Modal title="New Invoice" onClose={onClose} wide
+    <Modal title={initialDoc ? `Edit Invoice · ${initialDoc.invoice_number}` : 'New Invoice'} onClose={onClose} wide
       footer={<>
         <button onClick={onClose} className="flex-1 btn-ghost">Cancel</button>
-        <button onClick={() => save('draft')} disabled={saving} className="flex-1 btn-secondary">Save Draft</button>
-        <button onClick={() => save('sent')}  disabled={saving} className="flex-1 btn-primary">
-          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save & Mark Sent'}
+        {!initialDoc && <button onClick={() => save('draft')} disabled={saving} className="flex-1 btn-secondary">Save Draft</button>}
+        <button onClick={() => save(initialDoc ? initialDoc.status : 'sent')} disabled={saving} className="flex-1 btn-primary">
+          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : initialDoc ? 'Update Invoice' : 'Save & Mark Sent'}
         </button>
       </>}>
       <SectionHead label="Client Details" />
@@ -362,9 +413,24 @@ function CreateInvoiceModal({ companyId, session, onClose, onSaved }) {
 
 function InvoicesTab({ companyId, session }) {
   const qc = useQueryClient()
+  const { company } = useAuth()
   const [showCreate, setShowCreate] = useState(false)
+  const [editingDoc, setEditingDoc] = useState(null)
   const [search, setSearch] = useState('')
   const [filterStatus, setFilterStatus] = useState('all')
+
+  const dlPDF = async (inv) => {
+    try {
+      const { data: ld } = await supabase.from('invoice_line_items').select('*').eq('invoice_id', inv.id).order('sort_order')
+      downloadInvoicePDF(inv, ld || [], company)
+    } catch(e) { toast.error(e.message) }
+  }
+  const dlXLSX = async (inv) => {
+    try {
+      const { data: ld } = await supabase.from('invoice_line_items').select('*').eq('invoice_id', inv.id).order('sort_order')
+      downloadInvoiceXLSX(inv, ld || [], company)
+    } catch(e) { toast.error(e.message) }
+  }
 
   const { data: invoices = [], isLoading } = useQuery({
     queryKey: ['sales_invoices', companyId],
@@ -380,6 +446,31 @@ function InvoicesTab({ companyId, session }) {
     await supabase.from('client_invoices').update({ status }).eq('id', id)
     qc.invalidateQueries(['sales_invoices', companyId])
     toast.success(`Marked as ${status}`)
+  }
+
+  const openEdit = async (inv) => {
+    const { data: ld } = await supabase.from('invoice_line_items').select('*').eq('invoice_id', inv.id).order('sort_order')
+    setEditingDoc({ ...inv, _lines: ld || [] })
+  }
+
+  const deleteInvoice = async (inv) => {
+    if (Number(inv.paid_amount) > 0) return toast.error('Cannot delete a paid invoice. Void it instead.')
+    if (!window.confirm(`Delete Invoice ${inv.invoice_number}?`)) return
+    try {
+      await supabase.from('invoice_line_items').delete().eq('invoice_id', inv.id)
+      const { error } = await supabase.from('client_invoices').delete().eq('id', inv.id)
+      if (error) throw error
+      toast.success(`Invoice ${inv.invoice_number} deleted`)
+      qc.invalidateQueries(['sales_invoices', companyId])
+    } catch (e) { toast.error(e.message) }
+  }
+
+  const voidInvoice = async (inv) => {
+    if (!window.confirm(`Void Invoice ${inv.invoice_number}?`)) return
+    const { error } = await supabase.from('client_invoices').update({ status: 'cancelled' }).eq('id', inv.id)
+    if (error) return toast.error(error.message)
+    toast.success(`Invoice ${inv.invoice_number} voided`)
+    qc.invalidateQueries(['sales_invoices', companyId])
   }
 
   const displayed = invoices.filter(i =>
@@ -435,31 +526,56 @@ function InvoicesTab({ companyId, session }) {
               </div>
               <div className="flex items-center justify-between mt-3">
                 <p className="text-xs text-slate-500">{fmtDate(inv.invoice_date)}{inv.due_date ? ` · Due ${fmtDate(inv.due_date)}` : ''}</p>
-                <div className="flex gap-1.5">
+                <div className="flex gap-1 items-center">
                   {inv.status === 'draft' && <button onClick={() => updateStatus(inv.id, 'sent')} className="text-xs px-2 py-1 rounded-lg border border-blue-700/40 text-blue-400 hover:bg-blue-900/20"><Send className="w-3 h-3 inline mr-1" />Mark Sent</button>}
                   {inv.status === 'sent' && <button onClick={() => updateStatus(inv.id, 'paid')} className="text-xs px-2 py-1 rounded-lg border border-emerald-700/40 text-emerald-400 hover:bg-emerald-900/20"><CheckCircle className="w-3 h-3 inline mr-1" />Mark Paid</button>}
                   {inv.status === 'overdue' && <button onClick={() => updateStatus(inv.id, 'paid')} className="text-xs px-2 py-1 rounded-lg border border-emerald-700/40 text-emerald-400 hover:bg-emerald-900/20"><CheckCircle className="w-3 h-3 inline mr-1" />Mark Paid</button>}
+                  {!['paid','cancelled'].includes(inv.status) && <button onClick={() => openEdit(inv)} className="p-1.5 rounded-lg text-slate-500 hover:text-blue-400 hover:bg-blue-900/20" title="Edit"><Edit2 className="w-3.5 h-3.5" /></button>}
+                  {!['paid','cancelled'].includes(inv.status) && <button onClick={() => voidInvoice(inv)} className="p-1.5 rounded-lg text-slate-500 hover:text-yellow-400 hover:bg-yellow-900/20" title="Void"><Ban className="w-3.5 h-3.5" /></button>}
+                  {inv.status !== 'paid' && <button onClick={() => deleteInvoice(inv)} className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-900/20" title="Delete"><Trash2 className="w-3.5 h-3.5" /></button>}
+                  <button onClick={() => dlPDF(inv)} className="p-1.5 rounded-lg text-slate-500 hover:text-emerald-400 hover:bg-emerald-900/20" title="Download PDF"><FileDown className="w-3.5 h-3.5" /></button>
+                  <button onClick={() => dlXLSX(inv)} className="p-1.5 rounded-lg text-slate-500 hover:text-teal-400 hover:bg-teal-900/20" title="Export Excel"><Sheet className="w-3.5 h-3.5" /></button>
                 </div>
               </div>
             </div>
           ))}
         </div>}
       </div>
-      {showCreate && <CreateInvoiceModal companyId={companyId} session={session} onClose={() => setShowCreate(false)} onSaved={() => { setShowCreate(false); qc.invalidateQueries(['sales_invoices', companyId]) }} />}
+      {(showCreate || editingDoc) && <CreateInvoiceModal companyId={companyId} session={session} initialDoc={editingDoc} onClose={() => { setShowCreate(false); setEditingDoc(null) }} onSaved={() => { setShowCreate(false); setEditingDoc(null); qc.invalidateQueries(['sales_invoices', companyId]) }} />}
     </div>
   )
 }
 
 // ── QUOTES TAB ────────────────────────────────────────────────────────────────
-function CreateQuoteModal({ companyId, session, onClose, onSaved }) {
+function CreateQuoteModal({ companyId, session, onClose, onSaved, initialDoc = null }) {
   const [saving, setSaving] = useState(false)
-  const [form, setForm] = useState({
+  const [form, setForm] = useState(() => initialDoc ? {
+    client_name: initialDoc.client_name || '',
+    client_address: initialDoc.client_address || '',
+    client_gstin: initialDoc.client_gstin || '',
+    project_name: initialDoc.project_name || '',
+    quote_date: initialDoc.quote_date || todayStr(),
+    valid_until: initialDoc.valid_until || '',
+    cgst_rate: initialDoc.cgst_rate ?? 9,
+    sgst_rate: initialDoc.sgst_rate ?? 9,
+    igst_rate: initialDoc.igst_rate ?? 18,
+    use_igst: (initialDoc.igst_rate || 0) > 0,
+    discount_amount: initialDoc.discount_amount || 0,
+    notes: initialDoc.notes || '',
+    terms: initialDoc.terms || 'Quote valid for 30 days.',
+    is_tax_invoice: initialDoc.is_tax_invoice !== false,
+  } : {
     client_name: '', client_address: '', client_gstin: '', project_name: '',
     quote_date: todayStr(), valid_until: '', cgst_rate: 9, sgst_rate: 9, igst_rate: 18,
     use_igst: false, discount_amount: 0, notes: '', terms: 'Quote valid for 30 days.',
     is_tax_invoice: true,
   })
-  const [lines, setLines] = useState([blankLine()])
+  const [lines, setLines] = useState(() => initialDoc?._lines?.length ? initialDoc._lines.map(l => ({
+    _id: Math.random().toString(36).slice(2), description: l.description || '',
+    hsn_sac: l.hsn_sac || '', quantity: l.quantity || 1, unit: l.unit || 'hrs',
+    rate: String(l.rate || ''), amount: l.amount || 0,
+    _gst_rate: null, _gst_desc: null, _hsn_open: false,
+  })) : [blankLine()])
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
   const subtotal = useMemo(() => lines.reduce((s, l) => s + (l.amount || 0), 0), [lines])
   const taxable  = subtotal - (parseFloat(form.discount_amount) || 0)
@@ -475,6 +591,32 @@ function CreateQuoteModal({ companyId, session, onClose, onSaved }) {
     if (lines.every(l => !l.description.trim())) return toast.error('Add at least one line item')
     setSaving(true)
     try {
+      const lineItems = lines.filter(l => l.description.trim()).map((l, i) => ({
+        description: l.description.trim(), hsn_sac: l.hsn_sac?.trim() || null,
+        quantity: parseFloat(l.quantity) || 1, unit: l.unit,
+        rate: parseFloat(l.rate) || 0, amount: l.amount, sort_order: i,
+      }))
+      if (initialDoc) {
+        // ── UPDATE ──
+        const { error } = await supabase.from('quotes').update({
+          quote_date: form.quote_date, valid_until: form.valid_until || null,
+          client_name: form.client_name.trim(), client_address: form.client_address.trim() || null,
+          client_gstin: form.client_gstin.trim() || null, project_name: form.project_name.trim() || null,
+          subtotal, discount_amount: parseFloat(form.discount_amount) || 0, taxable_amount: taxable,
+          cgst_rate: form.use_igst ? 0 : parseFloat(form.cgst_rate),
+          sgst_rate: form.use_igst ? 0 : parseFloat(form.sgst_rate),
+          igst_rate: form.use_igst ? parseFloat(form.igst_rate) : 0,
+          cgst_amount: cgst_amt, sgst_amount: sgst_amt, igst_amount: igst_amt,
+          total_amount: total, notes: form.notes || null, terms: form.terms || null,
+        }).eq('id', initialDoc.id)
+        if (error) throw error
+        await supabase.from('quote_line_items').delete().eq('quote_id', initialDoc.id)
+        const updItems = lineItems.map(l => ({ ...l, quote_id: initialDoc.id }))
+        if (updItems.length > 0) { const { error: le } = await supabase.from('quote_line_items').insert(updItems); if (le) throw le }
+        toast.success(`Quote ${initialDoc.quote_number} updated`)
+        onSaved(); return
+      }
+      // ── CREATE ──
       const id = crypto.randomUUID()
       const qNum = await nextDocNumber(companyId, 'quote').catch(() => `QT-${Date.now()}`)
       const { error } = await supabase.from('quotes').insert({
@@ -490,11 +632,7 @@ function CreateQuoteModal({ companyId, session, onClose, onSaved }) {
         created_by: session.user.id,
       })
       if (error) throw error
-      const items = lines.filter(l => l.description.trim()).map((l, i) => ({
-        quote_id: id, description: l.description.trim(), hsn_sac: l.hsn_sac?.trim() || null,
-        quantity: parseFloat(l.quantity) || 1, unit: l.unit,
-        rate: parseFloat(l.rate) || 0, amount: l.amount, sort_order: i,
-      }))
+      const items = lineItems.map(l => ({ ...l, quote_id: id }))
       if (items.length > 0) { const { error: le } = await supabase.from('quote_line_items').insert(items); if (le) throw le }
       toast.success(`Quote ${qNum} ${status === 'sent' ? 'created & sent' : 'saved as draft'}`)
       onSaved()
@@ -502,12 +640,12 @@ function CreateQuoteModal({ companyId, session, onClose, onSaved }) {
   }
 
   return (
-    <Modal title="New Quote" onClose={onClose} wide
+    <Modal title={initialDoc ? `Edit Quote · ${initialDoc.quote_number}` : 'New Quote'} onClose={onClose} wide
       footer={<>
         <button onClick={onClose} className="flex-1 btn-ghost">Cancel</button>
-        <button onClick={() => save('draft')} disabled={saving} className="flex-1 btn-secondary">Save Draft</button>
-        <button onClick={() => save('sent')}  disabled={saving} className="flex-1 btn-primary">
-          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save & Send'}
+        {!initialDoc && <button onClick={() => save('draft')} disabled={saving} className="flex-1 btn-secondary">Save Draft</button>}
+        <button onClick={() => save(initialDoc ? initialDoc.status : 'sent')} disabled={saving} className="flex-1 btn-primary">
+          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : initialDoc ? 'Update Quote' : 'Save & Send'}
         </button>
       </>}>
       <SectionHead label="Client Details" />
@@ -538,7 +676,9 @@ function CreateQuoteModal({ companyId, session, onClose, onSaved }) {
 
 function QuotesTab({ companyId, session }) {
   const qc = useQueryClient()
+  const { company } = useAuth()
   const [showCreate, setShowCreate] = useState(false)
+  const [editingDoc, setEditingDoc] = useState(null)
   const [search, setSearch] = useState('')
 
   const { data: quotes = [], isLoading } = useQuery({
@@ -554,6 +694,43 @@ function QuotesTab({ companyId, session }) {
     await supabase.from('quotes').update({ status }).eq('id', id)
     qc.invalidateQueries(['quotes', companyId])
     toast.success(`Quote ${status}`)
+  }
+
+  const openEdit = async (q) => {
+    const { data: ld } = await supabase.from('quote_line_items').select('*').eq('quote_id', q.id).order('sort_order')
+    setEditingDoc({ ...q, _lines: ld || [] })
+  }
+
+  const dlPDF = async (q) => {
+    try {
+      const { data: ld } = await supabase.from('quote_line_items').select('*').eq('quote_id', q.id).order('sort_order')
+      downloadQuotePDF(q, ld || [], company)
+    } catch(e) { toast.error(e.message) }
+  }
+  const dlXLSX = async (q) => {
+    try {
+      const { data: ld } = await supabase.from('quote_line_items').select('*').eq('quote_id', q.id).order('sort_order')
+      downloadQuoteXLSX(q, ld || [], company)
+    } catch(e) { toast.error(e.message) }
+  }
+
+  const deleteQuote = async (q) => {
+    if (!window.confirm(`Delete Quote ${q.quote_number}?`)) return
+    try {
+      await supabase.from('quote_line_items').delete().eq('quote_id', q.id)
+      const { error } = await supabase.from('quotes').delete().eq('id', q.id)
+      if (error) throw error
+      toast.success(`Quote ${q.quote_number} deleted`)
+      qc.invalidateQueries(['quotes', companyId])
+    } catch (e) { toast.error(e.message) }
+  }
+
+  const voidQuote = async (q) => {
+    if (!window.confirm(`Void Quote ${q.quote_number}?`)) return
+    const { error } = await supabase.from('quotes').update({ status: 'rejected' }).eq('id', q.id)
+    if (error) return toast.error(error.message)
+    toast.success(`Quote ${q.quote_number} voided`)
+    qc.invalidateQueries(['quotes', companyId])
   }
 
   const displayed = quotes.filter(q => !search || q.client_name?.toLowerCase().includes(search.toLowerCase()) || q.quote_number?.toLowerCase().includes(search.toLowerCase()))
@@ -590,19 +767,24 @@ function QuotesTab({ companyId, session }) {
               </div>
               <div className="flex items-center justify-between mt-3">
                 <p className="text-xs text-slate-500">{fmtDate(q.quote_date)}</p>
-                <div className="flex gap-1.5 flex-wrap justify-end">
+                <div className="flex gap-1 items-center flex-wrap justify-end">
                   {q.status === 'draft' && <button onClick={() => updateStatus(q.id, 'sent')} className="text-xs px-2 py-1 rounded-lg border border-blue-700/40 text-blue-400 hover:bg-blue-900/20">Mark Sent</button>}
                   {(q.status === 'sent' || q.status === 'draft') && <>
                     <button onClick={() => updateStatus(q.id, 'accepted')} className="text-xs px-2 py-1 rounded-lg border border-emerald-700/40 text-emerald-400 hover:bg-emerald-900/20">Accept</button>
                     <button onClick={() => updateStatus(q.id, 'rejected')} className="text-xs px-2 py-1 rounded-lg border border-red-700/40 text-red-400 hover:bg-red-900/20">Reject</button>
                   </>}
+                  {!['accepted','rejected'].includes(q.status) && <button onClick={() => openEdit(q)} className="p-1.5 rounded-lg text-slate-500 hover:text-blue-400 hover:bg-blue-900/20" title="Edit"><Edit2 className="w-3.5 h-3.5" /></button>}
+                  {!['accepted','rejected'].includes(q.status) && <button onClick={() => voidQuote(q)} className="p-1.5 rounded-lg text-slate-500 hover:text-yellow-400 hover:bg-yellow-900/20" title="Void"><Ban className="w-3.5 h-3.5" /></button>}
+                  <button onClick={() => deleteQuote(q)} className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-900/20" title="Delete"><Trash2 className="w-3.5 h-3.5" /></button>
+                  <button onClick={() => dlPDF(q)} className="p-1.5 rounded-lg text-slate-500 hover:text-emerald-400 hover:bg-emerald-900/20" title="Download PDF"><FileDown className="w-3.5 h-3.5" /></button>
+                  <button onClick={() => dlXLSX(q)} className="p-1.5 rounded-lg text-slate-500 hover:text-teal-400 hover:bg-teal-900/20" title="Export Excel"><Sheet className="w-3.5 h-3.5" /></button>
                 </div>
               </div>
             </div>
           ))}
         </div>}
       </div>
-      {showCreate && <CreateQuoteModal companyId={companyId} session={session} onClose={() => setShowCreate(false)} onSaved={() => { setShowCreate(false); qc.invalidateQueries(['quotes', companyId]) }} />}
+      {(showCreate || editingDoc) && <CreateQuoteModal companyId={companyId} session={session} initialDoc={editingDoc} onClose={() => { setShowCreate(false); setEditingDoc(null) }} onSaved={() => { setShowCreate(false); setEditingDoc(null); qc.invalidateQueries(['quotes', companyId]) }} />}
     </div>
   )
 }
@@ -610,11 +792,49 @@ function QuotesTab({ companyId, session }) {
 // ── SALES ORDERS TAB ──────────────────────────────────────────────────────────
 function SalesOrdersTab({ companyId, session }) {
   const qc = useQueryClient()
+  const { company } = useAuth()
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [form, setForm] = useState({ client_name: '', client_gstin: '', project_name: '', so_date: todayStr(), expected_delivery: '', notes: '', cgst_rate: 9, sgst_rate: 9, igst_rate: 18, use_igst: false, discount_amount: 0, is_tax_invoice: true })
+  const blankSOForm = () => ({ client_name: '', client_gstin: '', project_name: '', so_date: todayStr(), expected_delivery: '', notes: '', cgst_rate: 9, sgst_rate: 9, igst_rate: 18, use_igst: false, discount_amount: 0, is_tax_invoice: true })
+  const [form, setForm] = useState(blankSOForm())
   const [lines, setLines] = useState([blankLine()])
+  const [editing, setEditing] = useState(null)
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
+
+  const closeModal = () => { setShowCreate(false); setEditing(null); setForm(blankSOForm()); setLines([blankLine()]) }
+  const openCreate = () => { setEditing(null); setForm(blankSOForm()); setLines([blankLine()]); setShowCreate(true) }
+
+  const openEdit = async (o) => {
+    const { data: ld } = await supabase.from('so_line_items').select('*').eq('so_id', o.id).order('sort_order')
+    setEditing(o)
+    setForm({ client_name: o.client_name || '', client_gstin: o.client_gstin || '', project_name: o.project_name || '', so_date: o.so_date || todayStr(), expected_delivery: o.expected_delivery || '', notes: o.notes || '', cgst_rate: o.cgst_rate ?? 9, sgst_rate: o.sgst_rate ?? 9, igst_rate: o.igst_rate ?? 18, use_igst: (o.igst_rate || 0) > 0, discount_amount: o.discount_amount || 0, is_tax_invoice: o.is_tax_invoice !== false })
+    setLines(ld?.map(l => ({ _id: Math.random().toString(36).slice(2), description: l.description || '', hsn_sac: l.hsn_sac || '', quantity: l.quantity || 1, unit: l.unit || 'hrs', rate: String(l.rate || ''), amount: l.amount || 0, _gst_rate: null, _gst_desc: null, _hsn_open: false })) || [blankLine()])
+    setShowCreate(true)
+  }
+
+  const dlPDFso = async (o) => {
+    try { const { data: ld } = await supabase.from('so_line_items').select('*').eq('so_id', o.id).order('sort_order'); downloadSOPDF(o, ld||[], company) } catch(e) { toast.error(e.message) }
+  }
+  const dlXLSXso = async (o) => {
+    try { const { data: ld } = await supabase.from('so_line_items').select('*').eq('so_id', o.id).order('sort_order'); downloadSOXLSX(o, ld||[], company) } catch(e) { toast.error(e.message) }
+  }
+
+  const deleteSO = async (o) => {
+    if (!window.confirm(`Delete Sales Order ${o.so_number}?`)) return
+    try {
+      await supabase.from('so_line_items').delete().eq('so_id', o.id)
+      const { error } = await supabase.from('sales_orders').delete().eq('id', o.id)
+      if (error) throw error
+      toast.success(`SO ${o.so_number} deleted`); qc.invalidateQueries(['sales_orders', companyId])
+    } catch (e) { toast.error(e.message) }
+  }
+
+  const voidSO = async (o) => {
+    if (!window.confirm(`Void Sales Order ${o.so_number}?`)) return
+    const { error } = await supabase.from('sales_orders').update({ status: 'cancelled' }).eq('id', o.id)
+    if (error) return toast.error(error.message)
+    toast.success(`SO ${o.so_number} voided`); qc.invalidateQueries(['sales_orders', companyId])
+  }
 
   const { data: orders = [], isLoading } = useQuery({
     queryKey: ['sales_orders', companyId],
@@ -632,36 +852,47 @@ function SalesOrdersTab({ companyId, session }) {
     if (form.is_tax_invoice !== false && !form.client_gstin?.trim()) return toast.error('Client GSTIN is required for Tax Sales Order')
     setSaving(true)
     try {
-      const id = crypto.randomUUID()
-      const soNum = await nextDocNumber(companyId, 'sales_order').catch(() => `SO-${Date.now()}`)
       const taxable = subtotal - (parseFloat(form.discount_amount) || 0)
       const isTax = form.is_tax_invoice !== false
       const cgst = (isTax && !form.use_igst) ? taxable * (parseFloat(form.cgst_rate) || 0) / 100 : 0
       const sgst = (isTax && !form.use_igst) ? taxable * (parseFloat(form.sgst_rate) || 0) / 100 : 0
       const igst = (isTax && form.use_igst)  ? taxable * (parseFloat(form.igst_rate) || 0) / 100 : 0
       const total = taxable + cgst + sgst + igst
+      const validLines = lines.filter(l => l.description.trim())
+
+      if (editing) {
+        const { error } = await supabase.from('sales_orders').update({
+          so_date: form.so_date, expected_delivery: form.expected_delivery || null,
+          client_name: form.client_name.trim(), project_name: form.project_name || null,
+          subtotal, discount_amount: parseFloat(form.discount_amount) || 0, taxable_amount: taxable,
+          cgst_rate: parseFloat(form.cgst_rate), sgst_rate: parseFloat(form.sgst_rate), igst_rate: parseFloat(form.igst_rate),
+          cgst_amount: cgst, sgst_amount: sgst, igst_amount: igst,
+          total_amount: total, notes: form.notes || null,
+        }).eq('id', editing.id)
+        if (error) throw error
+        await supabase.from('so_line_items').delete().eq('so_id', editing.id)
+        const updItems = validLines.map((l, i) => ({ so_id: editing.id, description: l.description.trim(), hsn_sac: l.hsn_sac?.trim() || null, quantity: parseFloat(l.quantity) || 1, unit: l.unit, rate: parseFloat(l.rate) || 0, amount: l.amount, sort_order: i }))
+        if (updItems.length > 0) { const { error: le } = await supabase.from('so_line_items').insert(updItems); if (le) throw le }
+        toast.success(`SO ${editing.so_number} updated`)
+        closeModal(); qc.invalidateQueries(['sales_orders', companyId]); return
+      }
+
+      const id = crypto.randomUUID()
+      const soNum = await nextDocNumber(companyId, 'sales_order').catch(() => `SO-${Date.now()}`)
       const { error } = await supabase.from('sales_orders').insert({
         id, company_id: companyId, so_number: soNum,
         so_date: form.so_date, expected_delivery: form.expected_delivery || null,
         client_name: form.client_name.trim(), project_name: form.project_name || null,
         subtotal, discount_amount: parseFloat(form.discount_amount) || 0, taxable_amount: taxable,
-        cgst_rate: parseFloat(form.cgst_rate), sgst_rate: parseFloat(form.sgst_rate),
-        igst_rate: parseFloat(form.igst_rate),
+        cgst_rate: parseFloat(form.cgst_rate), sgst_rate: parseFloat(form.sgst_rate), igst_rate: parseFloat(form.igst_rate),
         cgst_amount: cgst, sgst_amount: sgst, igst_amount: igst,
         total_amount: total, status: 'confirmed', notes: form.notes || null, created_by: session.user.id,
       })
       if (error) throw error
-      const items = lines.filter(l => l.description.trim()).map((l, i) => ({
-        so_id: id, description: l.description.trim(), hsn_sac: l.hsn_sac?.trim() || null,
-        quantity: parseFloat(l.quantity) || 1, unit: l.unit,
-        rate: parseFloat(l.rate) || 0, amount: l.amount, sort_order: i,
-      }))
+      const items = validLines.map((l, i) => ({ so_id: id, description: l.description.trim(), hsn_sac: l.hsn_sac?.trim() || null, quantity: parseFloat(l.quantity) || 1, unit: l.unit, rate: parseFloat(l.rate) || 0, amount: l.amount, sort_order: i }))
       if (items.length > 0) { const { error: le } = await supabase.from('so_line_items').insert(items); if (le) throw le }
       toast.success(`Sales Order ${soNum} created`)
-      setShowCreate(false)
-      setForm({ client_name: '', client_gstin: '', project_name: '', so_date: todayStr(), expected_delivery: '', notes: '', cgst_rate: 9, sgst_rate: 9, igst_rate: 18, use_igst: false, discount_amount: 0, is_tax_invoice: true })
-      setLines([blankLine()])
-      qc.invalidateQueries(['sales_orders', companyId])
+      closeModal(); qc.invalidateQueries(['sales_orders', companyId])
     } catch (e) { toast.error(e.message) } finally { setSaving(false) }
   }
 
@@ -677,7 +908,7 @@ function SalesOrdersTab({ companyId, session }) {
     <div className="flex flex-col h-full">
       <div className="px-4 py-3 border-b border-dark-800 shrink-0 flex items-center justify-between">
         <div className="text-xs bg-dark-800 rounded-xl px-3 py-2"><span className="text-slate-500">Total SOs </span><span className="font-bold text-slate-200">{orders.length}</span></div>
-        <button onClick={() => setShowCreate(true)} className="btn-primary"><Plus className="w-4 h-4" /> New Sales Order</button>
+        <button onClick={openCreate} className="btn-primary"><Plus className="w-4 h-4" /> New Sales Order</button>
       </div>
       <div className="flex-1 overflow-y-auto px-4 pb-4 pt-3">
         {isLoading ? <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-primary-400" /></div>
@@ -699,20 +930,27 @@ function SalesOrdersTab({ companyId, session }) {
               </div>
               <div className="flex items-center justify-between mt-3">
                 <p className="text-xs text-slate-500">{fmtDate(o.so_date)}</p>
-                {o.status !== 'fulfilled' && o.status !== 'cancelled' && (
-                  <select value={o.status} onChange={e => updateStatus(o.id, e.target.value)}
-                    className="text-xs bg-dark-700 border border-dark-600 rounded-lg px-2 py-1 text-slate-300">
-                    {STATUS_OPTS.map(s => <option key={s} value={s}>{s.replace(/_/g,' ')}</option>)}
-                  </select>
-                )}
+                <div className="flex items-center gap-1">
+                  {o.status !== 'fulfilled' && o.status !== 'cancelled' && (
+                    <select value={o.status} onChange={e => updateStatus(o.id, e.target.value)}
+                      className="text-xs bg-dark-700 border border-dark-600 rounded-lg px-2 py-1 text-slate-300">
+                      {STATUS_OPTS.map(s => <option key={s} value={s}>{s.replace(/_/g,' ')}</option>)}
+                    </select>
+                  )}
+                  {!['fulfilled','cancelled'].includes(o.status) && <button onClick={() => openEdit(o)} className="p-1.5 rounded-lg text-slate-500 hover:text-blue-400 hover:bg-blue-900/20" title="Edit"><Edit2 className="w-3.5 h-3.5" /></button>}
+                  {!['fulfilled','cancelled'].includes(o.status) && <button onClick={() => voidSO(o)} className="p-1.5 rounded-lg text-slate-500 hover:text-yellow-400 hover:bg-yellow-900/20" title="Void"><Ban className="w-3.5 h-3.5" /></button>}
+                  {o.status !== 'fulfilled' && <button onClick={() => deleteSO(o)} className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-900/20" title="Delete"><Trash2 className="w-3.5 h-3.5" /></button>}
+                  <button onClick={() => dlPDFso(o)} className="p-1.5 rounded-lg text-slate-500 hover:text-emerald-400 hover:bg-emerald-900/20" title="Download PDF"><FileDown className="w-3.5 h-3.5" /></button>
+                  <button onClick={() => dlXLSXso(o)} className="p-1.5 rounded-lg text-slate-500 hover:text-teal-400 hover:bg-teal-900/20" title="Export Excel"><Sheet className="w-3.5 h-3.5" /></button>
+                </div>
               </div>
             </div>
           ))}
         </div>}
       </div>
       {showCreate && (
-        <Modal title="New Sales Order" onClose={() => setShowCreate(false)} wide
-          footer={<><button onClick={() => setShowCreate(false)} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Create Sales Order'}</button></>}>
+        <Modal title={editing ? `Edit SO · ${editing.so_number}` : 'New Sales Order'} onClose={closeModal} wide
+          footer={<><button onClick={closeModal} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : editing ? 'Update SO' : 'Create Sales Order'}</button></>}>
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2"><Field label="Client Name *"><input className={inp()} value={form.client_name} onChange={e => setF('client_name', e.target.value)} /></Field></div>
             <TaxTypeToggle isTax={form.is_tax_invoice !== false} onToggle={v => setF('is_tax_invoice', v)} label="Sales Order" />
@@ -740,11 +978,49 @@ function SalesOrdersTab({ companyId, session }) {
 // ── DELIVERY CHALLANS TAB ─────────────────────────────────────────────────────
 function DeliveryChallansTab({ companyId, session }) {
   const qc = useQueryClient()
+  const { company } = useAuth()
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [form, setForm] = useState({ client_name: '', delivery_address: '', vehicle_number: '', driver_name: '', dc_date: todayStr(), notes: '' })
+  const blankDCForm = () => ({ client_name: '', delivery_address: '', vehicle_number: '', driver_name: '', dc_date: todayStr(), notes: '' })
+  const [form, setForm] = useState(blankDCForm())
   const [lines, setLines] = useState([{ _id: Math.random().toString(36).slice(2), description: '', quantity: 1, unit: 'nos' }])
+  const [editing, setEditing] = useState(null)
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
+
+  const closeModal = () => { setShowCreate(false); setEditing(null); setForm(blankDCForm()); setLines([{ _id: Math.random().toString(36).slice(2), description: '', quantity: 1, unit: 'nos' }]) }
+  const openCreate = () => { setEditing(null); setForm(blankDCForm()); setLines([{ _id: Math.random().toString(36).slice(2), description: '', quantity: 1, unit: 'nos' }]); setShowCreate(true) }
+
+  const openEdit = async (dc) => {
+    const { data: ld } = await supabase.from('dc_line_items').select('*').eq('dc_id', dc.id).order('sort_order')
+    setEditing(dc)
+    setForm({ client_name: dc.client_name || '', delivery_address: dc.delivery_address || '', vehicle_number: dc.vehicle_number || '', driver_name: dc.driver_name || '', dc_date: dc.dc_date || todayStr(), notes: dc.notes || '' })
+    setLines(ld?.map(l => ({ _id: Math.random().toString(36).slice(2), description: l.description || '', quantity: l.quantity || 1, unit: l.unit || 'nos' })) || [{ _id: Math.random().toString(36).slice(2), description: '', quantity: 1, unit: 'nos' }])
+    setShowCreate(true)
+  }
+
+  const dlPDFdc = async (dc) => {
+    try { const { data: ld } = await supabase.from('dc_line_items').select('*').eq('dc_id', dc.id).order('sort_order'); downloadDCPDF(dc, ld||[], company) } catch(e) { toast.error(e.message) }
+  }
+  const dlXLSXdc = async (dc) => {
+    try { const { data: ld } = await supabase.from('dc_line_items').select('*').eq('dc_id', dc.id).order('sort_order'); downloadDCXLSX(dc, ld||[], company) } catch(e) { toast.error(e.message) }
+  }
+
+  const deleteDC = async (dc) => {
+    if (!window.confirm(`Delete Challan ${dc.dc_number}?`)) return
+    try {
+      await supabase.from('dc_line_items').delete().eq('dc_id', dc.id)
+      const { error } = await supabase.from('delivery_challans').delete().eq('id', dc.id)
+      if (error) throw error
+      toast.success(`Challan ${dc.dc_number} deleted`); qc.invalidateQueries(['delivery_challans', companyId])
+    } catch (e) { toast.error(e.message) }
+  }
+
+  const voidDC = async (dc) => {
+    if (!window.confirm(`Void Challan ${dc.dc_number}?`)) return
+    const { error } = await supabase.from('delivery_challans').update({ status: 'returned' }).eq('id', dc.id)
+    if (error) return toast.error(error.message)
+    toast.success(`Challan ${dc.dc_number} voided`); qc.invalidateQueries(['delivery_challans', companyId])
+  }
 
   const { data: challans = [], isLoading } = useQuery({
     queryKey: ['delivery_challans', companyId],
@@ -761,6 +1037,20 @@ function DeliveryChallansTab({ companyId, session }) {
     if (!form.client_name.trim()) return toast.error('Client name required')
     setSaving(true)
     try {
+      const validLines = lines.filter(l => l.description.trim())
+      if (editing) {
+        const { error } = await supabase.from('delivery_challans').update({
+          dc_date: form.dc_date, client_name: form.client_name.trim(),
+          delivery_address: form.delivery_address || null, vehicle_number: form.vehicle_number || null,
+          driver_name: form.driver_name || null, notes: form.notes || null,
+        }).eq('id', editing.id)
+        if (error) throw error
+        await supabase.from('dc_line_items').delete().eq('dc_id', editing.id)
+        const updItems = validLines.map((l, i) => ({ dc_id: editing.id, description: l.description.trim(), quantity: parseFloat(l.quantity) || 1, unit: l.unit, sort_order: i }))
+        if (updItems.length > 0) { const { error: le } = await supabase.from('dc_line_items').insert(updItems); if (le) throw le }
+        toast.success(`Challan ${editing.dc_number} updated`)
+        closeModal(); qc.invalidateQueries(['delivery_challans', companyId]); return
+      }
       const id = crypto.randomUUID()
       const dcNum = await nextDocNumber(companyId, 'challan').catch(() => `DC-${Date.now()}`)
       const { error } = await supabase.from('delivery_challans').insert({
@@ -770,13 +1060,10 @@ function DeliveryChallansTab({ companyId, session }) {
         status: 'dispatched', notes: form.notes || null, created_by: session.user.id,
       })
       if (error) throw error
-      const items = lines.filter(l => l.description.trim()).map((l, i) => ({
-        dc_id: id, description: l.description.trim(), quantity: parseFloat(l.quantity) || 1, unit: l.unit, sort_order: i,
-      }))
+      const items = validLines.map((l, i) => ({ dc_id: id, description: l.description.trim(), quantity: parseFloat(l.quantity) || 1, unit: l.unit, sort_order: i }))
       if (items.length > 0) { const { error: le } = await supabase.from('dc_line_items').insert(items); if (le) throw le }
       toast.success(`Delivery Challan ${dcNum} created`)
-      setShowCreate(false)
-      qc.invalidateQueries(['delivery_challans', companyId])
+      closeModal(); qc.invalidateQueries(['delivery_challans', companyId])
     } catch (e) { toast.error(e.message) } finally { setSaving(false) }
   }
 
@@ -790,7 +1077,7 @@ function DeliveryChallansTab({ companyId, session }) {
     <div className="flex flex-col h-full">
       <div className="px-4 py-3 border-b border-dark-800 shrink-0 flex items-center justify-between">
         <span className="text-xs bg-dark-800 rounded-xl px-3 py-2 text-slate-500">{challans.length} challans</span>
-        <button onClick={() => setShowCreate(true)} className="btn-primary"><Plus className="w-4 h-4" /> New Challan</button>
+        <button onClick={openCreate} className="btn-primary"><Plus className="w-4 h-4" /> New Challan</button>
       </div>
       <div className="flex-1 overflow-y-auto px-4 pb-4 pt-3">
         {isLoading ? <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-primary-400" /></div>
@@ -807,19 +1094,28 @@ function DeliveryChallansTab({ companyId, session }) {
                 </div>
                 <p className="text-xs text-slate-500 shrink-0">{fmtDate(dc.dc_date)}</p>
               </div>
-              {dc.status === 'dispatched' && (
-                <div className="flex gap-2 mt-3 justify-end">
-                  <button onClick={() => updateStatus(dc.id, 'delivered')} className="text-xs px-2 py-1 rounded-lg border border-emerald-700/40 text-emerald-400 hover:bg-emerald-900/20">Mark Delivered</button>
-                  <button onClick={() => updateStatus(dc.id, 'returned')} className="text-xs px-2 py-1 rounded-lg border border-orange-700/40 text-orange-400 hover:bg-orange-900/20">Mark Returned</button>
+              <div className="flex items-center justify-between mt-3">
+                <div className="flex gap-1.5">
+                  {dc.status === 'dispatched' && <>
+                    <button onClick={() => updateStatus(dc.id, 'delivered')} className="text-xs px-2 py-1 rounded-lg border border-emerald-700/40 text-emerald-400 hover:bg-emerald-900/20">Mark Delivered</button>
+                    <button onClick={() => updateStatus(dc.id, 'returned')} className="text-xs px-2 py-1 rounded-lg border border-orange-700/40 text-orange-400 hover:bg-orange-900/20">Mark Returned</button>
+                  </>}
                 </div>
-              )}
+                <div className="flex gap-1">
+                  {dc.status === 'dispatched' && <button onClick={() => openEdit(dc)} className="p-1.5 rounded-lg text-slate-500 hover:text-blue-400 hover:bg-blue-900/20" title="Edit"><Edit2 className="w-3.5 h-3.5" /></button>}
+                  {dc.status === 'dispatched' && <button onClick={() => voidDC(dc)} className="p-1.5 rounded-lg text-slate-500 hover:text-yellow-400 hover:bg-yellow-900/20" title="Void"><Ban className="w-3.5 h-3.5" /></button>}
+                  <button onClick={() => deleteDC(dc)} className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-900/20" title="Delete"><Trash2 className="w-3.5 h-3.5" /></button>
+                  <button onClick={() => dlPDFdc(dc)} className="p-1.5 rounded-lg text-slate-500 hover:text-emerald-400 hover:bg-emerald-900/20" title="Download PDF"><FileDown className="w-3.5 h-3.5" /></button>
+                  <button onClick={() => dlXLSXdc(dc)} className="p-1.5 rounded-lg text-slate-500 hover:text-teal-400 hover:bg-teal-900/20" title="Export Excel"><Sheet className="w-3.5 h-3.5" /></button>
+                </div>
+              </div>
             </div>
           ))}
         </div>}
       </div>
       {showCreate && (
-        <Modal title="New Delivery Challan" onClose={() => setShowCreate(false)}
-          footer={<><button onClick={() => setShowCreate(false)} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Create & Dispatch'}</button></>}>
+        <Modal title={editing ? `Edit Challan · ${editing.dc_number}` : 'New Delivery Challan'} onClose={closeModal}
+          footer={<><button onClick={closeModal} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : editing ? 'Update Challan' : 'Create & Dispatch'}</button></>}>
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2"><Field label="Client Name *"><input className={inp()} value={form.client_name} onChange={e => setF('client_name', e.target.value)} /></Field></div>
             <Field label="Delivery Address"><input className={inp()} value={form.delivery_address} onChange={e => setF('delivery_address', e.target.value)} /></Field>
@@ -852,11 +1148,49 @@ function DeliveryChallansTab({ companyId, session }) {
 // ── CREDIT NOTES TAB ──────────────────────────────────────────────────────────
 function CreditNotesTab({ companyId, session }) {
   const qc = useQueryClient()
+  const { company } = useAuth()
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [form, setForm] = useState({ client_name: '', client_gstin: '', reason: '', cn_date: todayStr(), cgst_rate: 9, sgst_rate: 9, notes: '', use_igst: false, igst_rate: 18, is_tax_invoice: true })
+  const blankCNForm = () => ({ client_name: '', client_gstin: '', reason: '', cn_date: todayStr(), cgst_rate: 9, sgst_rate: 9, notes: '', use_igst: false, igst_rate: 18, is_tax_invoice: true })
+  const [form, setForm] = useState(blankCNForm())
   const [lines, setLines] = useState([blankLine()])
+  const [editing, setEditing] = useState(null)
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
+
+  const closeModal = () => { setShowCreate(false); setEditing(null); setForm(blankCNForm()); setLines([blankLine()]) }
+  const openCreate = () => { setEditing(null); setForm(blankCNForm()); setLines([blankLine()]); setShowCreate(true) }
+
+  const openEdit = async (cn) => {
+    const { data: ld } = await supabase.from('cn_line_items').select('*').eq('cn_id', cn.id).order('sort_order')
+    setEditing(cn)
+    setForm({ client_name: cn.client_name || '', client_gstin: cn.client_gstin || '', reason: cn.reason || '', cn_date: cn.cn_date || todayStr(), cgst_rate: cn.cgst_rate ?? 9, sgst_rate: cn.sgst_rate ?? 9, notes: cn.notes || '', use_igst: (cn.igst_rate || 0) > 0, igst_rate: cn.igst_rate ?? 18, is_tax_invoice: cn.is_tax_invoice !== false })
+    setLines(ld?.map(l => ({ _id: Math.random().toString(36).slice(2), description: l.description || '', hsn_sac: l.hsn_sac || '', quantity: l.quantity || 1, unit: l.unit || 'hrs', rate: String(l.rate || ''), amount: l.amount || 0, _gst_rate: null, _gst_desc: null, _hsn_open: false })) || [blankLine()])
+    setShowCreate(true)
+  }
+
+  const dlPDFcn = async (cn) => {
+    try { const { data: ld } = await supabase.from('cn_line_items').select('*').eq('cn_id', cn.id).order('sort_order'); downloadCNPDF(cn, ld||[], company) } catch(e) { toast.error(e.message) }
+  }
+  const dlXLSXcn = async (cn) => {
+    try { const { data: ld } = await supabase.from('cn_line_items').select('*').eq('cn_id', cn.id).order('sort_order'); downloadCNXLSX(cn, ld||[], company) } catch(e) { toast.error(e.message) }
+  }
+
+  const deleteCN = async (cn) => {
+    if (!window.confirm(`Delete Credit Note ${cn.cn_number}?`)) return
+    try {
+      await supabase.from('cn_line_items').delete().eq('cn_id', cn.id)
+      const { error } = await supabase.from('credit_notes').delete().eq('id', cn.id)
+      if (error) throw error
+      toast.success(`Credit Note ${cn.cn_number} deleted`); qc.invalidateQueries(['credit_notes', companyId])
+    } catch (e) { toast.error(e.message) }
+  }
+
+  const voidCN = async (cn) => {
+    if (!window.confirm(`Void Credit Note ${cn.cn_number}?`)) return
+    const { error } = await supabase.from('credit_notes').update({ status: 'cancelled' }).eq('id', cn.id)
+    if (error) return toast.error(error.message)
+    toast.success(`Credit Note ${cn.cn_number} voided`); qc.invalidateQueries(['credit_notes', companyId])
+  }
 
   const { data: notes = [], isLoading } = useQuery({
     queryKey: ['credit_notes', companyId],
@@ -878,6 +1212,21 @@ function CreditNotesTab({ companyId, session }) {
     if (!form.client_name.trim()) return toast.error('Client name required')
     setSaving(true)
     try {
+      const validLines = lines.filter(l => l.description.trim())
+      if (editing) {
+        const { error } = await supabase.from('credit_notes').update({
+          cn_date: form.cn_date, client_name: form.client_name.trim(), reason: form.reason || null,
+          subtotal, cgst_rate: parseFloat(form.cgst_rate), sgst_rate: parseFloat(form.sgst_rate), igst_rate: parseFloat(form.igst_rate),
+          cgst_amount: cgst_amt, sgst_amount: sgst_amt, igst_amount: igst_amt,
+          total_amount: total, notes: form.notes || null,
+        }).eq('id', editing.id)
+        if (error) throw error
+        await supabase.from('cn_line_items').delete().eq('cn_id', editing.id)
+        const updItems = validLines.map((l, i) => ({ cn_id: editing.id, description: l.description.trim(), hsn_sac: l.hsn_sac?.trim() || null, quantity: parseFloat(l.quantity) || 1, unit: l.unit, rate: parseFloat(l.rate) || 0, amount: l.amount, sort_order: i }))
+        if (updItems.length > 0) { const { error: le } = await supabase.from('cn_line_items').insert(updItems); if (le) throw le }
+        toast.success(`Credit Note ${editing.cn_number} updated`)
+        closeModal(); qc.invalidateQueries(['credit_notes', companyId]); return
+      }
       const id = crypto.randomUUID()
       const cnNum = await nextDocNumber(companyId, 'credit_note').catch(() => `CN-${Date.now()}`)
       const { error } = await supabase.from('credit_notes').insert({
@@ -888,15 +1237,10 @@ function CreditNotesTab({ companyId, session }) {
         total_amount: total, status: 'issued', notes: form.notes || null, created_by: session.user.id,
       })
       if (error) throw error
-      const items = lines.filter(l => l.description.trim()).map((l, i) => ({
-        cn_id: id, description: l.description.trim(), hsn_sac: l.hsn_sac?.trim() || null,
-        quantity: parseFloat(l.quantity) || 1, unit: l.unit,
-        rate: parseFloat(l.rate) || 0, amount: l.amount, sort_order: i,
-      }))
+      const items = validLines.map((l, i) => ({ cn_id: id, description: l.description.trim(), hsn_sac: l.hsn_sac?.trim() || null, quantity: parseFloat(l.quantity) || 1, unit: l.unit, rate: parseFloat(l.rate) || 0, amount: l.amount, sort_order: i }))
       if (items.length > 0) { const { error: le } = await supabase.from('cn_line_items').insert(items); if (le) throw le }
       toast.success(`Credit Note ${cnNum} issued`)
-      setShowCreate(false)
-      qc.invalidateQueries(['credit_notes', companyId])
+      closeModal(); qc.invalidateQueries(['credit_notes', companyId])
     } catch (e) { toast.error(e.message) } finally { setSaving(false) }
   }
 
@@ -904,7 +1248,7 @@ function CreditNotesTab({ companyId, session }) {
     <div className="flex flex-col h-full">
       <div className="px-4 py-3 border-b border-dark-800 shrink-0 flex items-center justify-between">
         <span className="text-xs bg-dark-800 rounded-xl px-3 py-2 text-slate-500">{notes.length} credit notes</span>
-        <button onClick={() => setShowCreate(true)} className="btn-primary"><Plus className="w-4 h-4" /> New Credit Note</button>
+        <button onClick={openCreate} className="btn-primary"><Plus className="w-4 h-4" /> New Credit Note</button>
       </div>
       <div className="flex-1 overflow-y-auto px-4 pb-4 pt-3">
         {isLoading ? <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-primary-400" /></div>
@@ -923,13 +1267,20 @@ function CreditNotesTab({ companyId, session }) {
                   <p className="text-xs text-slate-500">{fmtDate(cn.cn_date)}</p>
                 </div>
               </div>
+              <div className="flex items-center gap-1 mt-2 pt-2 border-t border-dark-700">
+                {cn.status !== 'cancelled' && <button onClick={() => openEdit(cn)} className="p-1.5 rounded-lg text-slate-500 hover:text-blue-400 hover:bg-blue-900/20" title="Edit"><Pencil className="w-3.5 h-3.5" /></button>}
+                {cn.status !== 'cancelled' && <button onClick={() => voidCN(cn)} className="p-1.5 rounded-lg text-slate-500 hover:text-yellow-400 hover:bg-yellow-900/20" title="Void"><Ban className="w-3.5 h-3.5" /></button>}
+                <button onClick={() => deleteCN(cn)} className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-900/20" title="Delete"><Trash2 className="w-3.5 h-3.5" /></button>
+                <button onClick={() => dlPDFcn(cn)} className="p-1.5 rounded-lg text-slate-500 hover:text-emerald-400 hover:bg-emerald-900/20" title="Download PDF"><FileDown className="w-3.5 h-3.5" /></button>
+                <button onClick={() => dlXLSXcn(cn)} className="p-1.5 rounded-lg text-slate-500 hover:text-teal-400 hover:bg-teal-900/20" title="Export Excel"><Sheet className="w-3.5 h-3.5" /></button>
+              </div>
             </div>
           ))}
         </div>}
       </div>
-      {showCreate && (
-        <Modal title="New Credit Note" onClose={() => setShowCreate(false)} wide
-          footer={<><button onClick={() => setShowCreate(false)} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Issue Credit Note'}</button></>}>
+      {(showCreate || editing) && (
+        <Modal title={editing ? `Edit Credit Note · ${editing.cn_number}` : 'New Credit Note'} onClose={closeModal} wide
+          footer={<><button onClick={closeModal} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : editing ? 'Update Credit Note' : 'Issue Credit Note'}</button></>}>
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2"><Field label="Client Name *"><input className={inp()} value={form.client_name} onChange={e => setF('client_name', e.target.value)} /></Field></div>
             <TaxTypeToggle isTax={isTaxCN} onToggle={v => setF('is_tax_invoice', v)} label="Credit Note" />
@@ -970,10 +1321,30 @@ function CreditNotesTab({ companyId, session }) {
 // ── PAYMENTS RECEIVED TAB ─────────────────────────────────────────────────────
 function PaymentsReceivedTab({ companyId, session }) {
   const qc = useQueryClient()
+  const { company } = useAuth()
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [form, setForm] = useState({ client_name: '', amount: '', payment_date: todayStr(), payment_mode: 'bank', bank_reference: '', notes: '' })
+  const blankPRForm = () => ({ client_name: '', amount: '', payment_date: todayStr(), payment_mode: 'bank', bank_reference: '', notes: '' })
+  const [form, setForm] = useState(blankPRForm())
+  const [editing, setEditing] = useState(null)
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
+  const closeModal = () => { setShowCreate(false); setEditing(null); setForm(blankPRForm()); setInvoiceId('') }
+  const openCreate = () => { setEditing(null); setForm(blankPRForm()); setInvoiceId(''); setShowCreate(true) }
+  const openEdit = (p) => {
+    setEditing(p)
+    setForm({ client_name: p.client_name || '', amount: String(p.amount || ''), payment_date: p.payment_date || todayStr(), payment_mode: p.payment_mode || 'bank', bank_reference: p.bank_reference || '', notes: p.notes || '' })
+    setInvoiceId(p.invoice_id || '')
+    setShowCreate(true)
+  }
+  const deletePayment = async (p) => {
+    if (!window.confirm(`Delete Payment ${p.payment_number}?`)) return
+    try {
+      const { error } = await supabase.from('payments_received').delete().eq('id', p.id)
+      if (error) throw error
+      toast.success(`Payment ${p.payment_number} deleted`)
+      qc.invalidateQueries(['payments_received', companyId]); qc.invalidateQueries(['sales_invoices', companyId])
+    } catch (e) { toast.error(e.message) }
+  }
 
   const { data: payments = [], isLoading } = useQuery({
     queryKey: ['payments_received', companyId],
@@ -1001,6 +1372,17 @@ function PaymentsReceivedTab({ companyId, session }) {
     if (!form.amount || parseFloat(form.amount) <= 0) return toast.error('Enter valid amount')
     setSaving(true)
     try {
+      if (editing) {
+        const { error } = await supabase.from('payments_received').update({
+          payment_date: form.payment_date, invoice_id: invoiceId || null,
+          client_name: form.client_name.trim(), amount: parseFloat(form.amount),
+          payment_mode: form.payment_mode, bank_reference: form.bank_reference || null,
+          notes: form.notes || null,
+        }).eq('id', editing.id)
+        if (error) throw error
+        toast.success(`Payment ${editing.payment_number} updated`)
+        closeModal(); qc.invalidateQueries(['payments_received', companyId]); qc.invalidateQueries(['sales_invoices', companyId]); return
+      }
       const prNum = await nextDocNumber(companyId, 'payment_recv').catch(() => `PR-${Date.now()}`)
       const { error } = await supabase.from('payments_received').insert({
         company_id: companyId, payment_number: prNum,
@@ -1011,11 +1393,7 @@ function PaymentsReceivedTab({ companyId, session }) {
       })
       if (error) throw error
       toast.success(`Payment ${prNum} recorded — ${fmtINR(form.amount)}`)
-      setShowCreate(false)
-      setForm({ client_name: '', amount: '', payment_date: todayStr(), payment_mode: 'bank', bank_reference: '', notes: '' })
-      setInvoiceId('')
-      qc.invalidateQueries(['payments_received', companyId])
-      qc.invalidateQueries(['sales_invoices', companyId])
+      closeModal(); qc.invalidateQueries(['payments_received', companyId]); qc.invalidateQueries(['sales_invoices', companyId])
     } catch (e) { toast.error(e.message) } finally { setSaving(false) }
   }
 
@@ -1025,27 +1403,35 @@ function PaymentsReceivedTab({ companyId, session }) {
     <div className="flex flex-col h-full">
       <div className="px-4 py-3 border-b border-dark-800 shrink-0 flex items-center justify-between">
         <div className="bg-dark-800 rounded-xl px-3 py-2 text-xs"><span className="text-slate-500">Total Received </span><span className="font-bold text-emerald-400">{fmtINR(totalReceived)}</span></div>
-        <button onClick={() => setShowCreate(true)} className="btn-primary"><Plus className="w-4 h-4" /> Record Payment</button>
+        <button onClick={openCreate} className="btn-primary"><Plus className="w-4 h-4" /> Record Payment</button>
       </div>
       <div className="flex-1 overflow-y-auto px-4 pb-4 pt-3">
         {isLoading ? <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-primary-400" /></div>
         : payments.length === 0 ? <div className="flex flex-col items-center py-16 gap-2 text-slate-500"><ArrowDownCircle className="w-10 h-10 text-slate-700" /><p>No payments recorded yet</p></div>
         : <div className="space-y-2">
           {payments.map(p => (
-            <div key={p.id} className="bg-dark-800 border border-dark-700 rounded-xl p-4 flex items-center justify-between">
-              <div>
-                <p className="text-xs font-mono text-slate-500">{p.payment_number}</p>
-                <p className="font-semibold text-slate-100 text-sm">{p.client_name}</p>
-                <p className="text-xs text-slate-500">{fmtDate(p.payment_date)} · {p.payment_mode?.toUpperCase()}{p.bank_reference ? ` · ${p.bank_reference}` : ''}</p>
+            <div key={p.id} className="bg-dark-800 border border-dark-700 rounded-xl p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-mono text-slate-500">{p.payment_number}</p>
+                  <p className="font-semibold text-slate-100 text-sm">{p.client_name}</p>
+                  <p className="text-xs text-slate-500">{fmtDate(p.payment_date)} · {p.payment_mode?.toUpperCase()}{p.bank_reference ? ` · ${p.bank_reference}` : ''}</p>
+                </div>
+                <p className="text-xl font-black text-emerald-400 shrink-0">{fmtINR(p.amount)}</p>
               </div>
-              <p className="text-xl font-black text-emerald-400">{fmtINR(p.amount)}</p>
+              <div className="flex items-center gap-1 mt-2 pt-2 border-t border-dark-700">
+                <button onClick={() => openEdit(p)} className="p-1.5 rounded-lg text-slate-500 hover:text-blue-400 hover:bg-blue-900/20" title="Edit"><Pencil className="w-3.5 h-3.5" /></button>
+                <button onClick={() => deletePayment(p)} className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-900/20" title="Delete"><Trash2 className="w-3.5 h-3.5" /></button>
+                <button onClick={() => { downloadPaymentReceivedPDF(p, company) }} className="p-1.5 rounded-lg text-slate-500 hover:text-emerald-400 hover:bg-emerald-900/20" title="Download PDF"><FileDown className="w-3.5 h-3.5" /></button>
+                <button onClick={() => { downloadPaymentReceivedXLSX(p, company) }} className="p-1.5 rounded-lg text-slate-500 hover:text-teal-400 hover:bg-teal-900/20" title="Export Excel"><Sheet className="w-3.5 h-3.5" /></button>
+              </div>
             </div>
           ))}
         </div>}
       </div>
-      {showCreate && (
-        <Modal title="Record Payment" onClose={() => setShowCreate(false)}
-          footer={<><button onClick={() => setShowCreate(false)} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Record Payment'}</button></>}>
+      {(showCreate || editing) && (
+        <Modal title={editing ? `Edit Payment · ${editing.payment_number}` : 'Record Payment'} onClose={closeModal}
+          footer={<><button onClick={closeModal} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : editing ? 'Update Payment' : 'Record Payment'}</button></>}>
           <Field label="Client Name *"><input className={inp()} value={form.client_name} onChange={e => setF('client_name', e.target.value)} placeholder="Who paid?" /></Field>
           {invoices.length > 0 && <Field label="Link to Invoice (optional)">
             <select className={inp()} value={invoiceId} onChange={e => { setInvoiceId(e.target.value); const inv = invoices.find(i => i.id === e.target.value); if (inv) setF('client_name', inv.client_name) }}>

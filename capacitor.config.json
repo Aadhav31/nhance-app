@@ -1,0 +1,11 @@
+{
+  "appId": "com.nhance.operator",
+  "appName": "Nhance Operator",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "backgroundColor": "#0f172a"
+  }
+}
