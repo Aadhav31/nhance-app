@@ -41,76 +41,105 @@ serve(async (req: Request) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     )
 
-    // ── Delete in dependency order ─────────────────────────────────────────────
-    // 1. Invoice line items (depend on client_invoices)
-    const { data: invoices } = await admin
-      .from('client_invoices')
-      .select('id')
-      .eq('company_id', company_id)
+    // ── Helper: silent delete (ignore if table doesn't exist) ─────────────────
+    const del = (table: string) =>
+      admin.from(table).delete().eq('company_id', company_id).then(() => {})
 
-    if (invoices && invoices.length > 0) {
-      const invoiceIds = invoices.map((i: any) => i.id)
-      await admin.from('invoice_line_items').delete().in('invoice_id', invoiceIds)
+    // ── Delete in dependency order (children before parents) ──────────────────
+
+    // 1. Sales — line items first
+    const { data: invoices } = await admin.from('client_invoices').select('id').eq('company_id', company_id)
+    if (invoices?.length) await admin.from('invoice_line_items').delete().in('invoice_id', invoices.map((i:any)=>i.id))
+
+    const { data: quotes } = await admin.from('quotes').select('id').eq('company_id', company_id)
+    if (quotes?.length) await admin.from('quote_line_items').delete().in('quote_id', quotes.map((i:any)=>i.id))
+
+    const { data: sos } = await admin.from('sales_orders').select('id').eq('company_id', company_id)
+    if (sos?.length) await admin.from('so_line_items').delete().in('so_id', sos.map((i:any)=>i.id))
+
+    const { data: dcs } = await admin.from('delivery_challans').select('id').eq('company_id', company_id)
+    if (dcs?.length) await admin.from('dc_line_items').delete().in('dc_id', dcs.map((i:any)=>i.id))
+
+    const { data: cns } = await admin.from('credit_notes').select('id').eq('company_id', company_id)
+    if (cns?.length) await admin.from('cn_line_items').delete().in('cn_id', cns.map((i:any)=>i.id))
+
+    // 2. Purchase — line items first
+    const { data: bills } = await admin.from('bills').select('id').eq('company_id', company_id)
+    if (bills?.length) {
+      await admin.from('bill_line_items').delete().in('bill_id', bills.map((i:any)=>i.id))
+      await admin.from('stock_transactions').delete().in('bill_id', bills.map((i:any)=>i.id))
     }
 
-    // 2. Payment links (if table exists)
-    await admin.from('payment_links').delete().eq('company_id', company_id).then(() => {})
+    const { data: pos } = await admin.from('purchase_orders').select('id').eq('company_id', company_id)
+    if (pos?.length) await admin.from('po_line_items').delete().in('po_id', pos.map((i:any)=>i.id))
 
-    // 3. Invoices
-    await admin.from('client_invoices').delete().eq('company_id', company_id)
+    // 3. Payment records
+    await del('payments_received')
+    await del('payments_made')
+    await del('payment_links')
+    await del('vendor_credits')
 
-    // 4. Expenses
-    await admin.from('expenses').delete().eq('company_id', company_id)
+    // 4. Parent sales/purchase docs
+    await del('client_invoices')
+    await del('quotes')
+    await del('sales_orders')
+    await del('delivery_challans')
+    await del('credit_notes')
+    await del('bills')
+    await del('purchase_orders')
 
-    // 5. Projects (depends on clients)
-    await admin.from('projects').delete().eq('company_id', company_id)
+    // 5. Vendors
+    await del('vendors')
 
-    // 6. Clients
-    await admin.from('clients').delete().eq('company_id', company_id)
+    // 6. Stock
+    await del('stock_transactions')
+    await del('inventory_issues')
+    await del('inventory_items')
 
-    // 7. Equipment documents + attachments
-    const { data: equipment } = await admin
-      .from('equipment')
-      .select('id')
-      .eq('company_id', company_id)
+    // 7. Shifts
+    const { data: shifts } = await admin.from('shifts').select('id').eq('company_id', company_id)
+    if (shifts?.length) {
+      await admin.from('shift_fuel_entries').delete().in('shift_id', shifts.map((s:any)=>s.id))
+      await admin.from('shift_incidents').delete().in('shift_id', shifts.map((s:any)=>s.id))
+    }
+    await del('shifts')
 
-    if (equipment && equipment.length > 0) {
-      const eqIds = equipment.map((e: any) => e.id)
+    // 8. Expenses
+    await del('expenses')
+
+    // 9. Projects + Clients
+    await del('projects')
+    await del('clients')
+
+    // 10. Equipment
+    const { data: equipment } = await admin.from('equipment').select('id').eq('company_id', company_id)
+    if (equipment?.length) {
+      const eqIds = equipment.map((e:any)=>e.id)
       await admin.from('equipment_documents').delete().in('equipment_id', eqIds)
       await admin.from('equipment_attachments').delete().in('equipment_id', eqIds)
+      await admin.from('operator_assignments').delete().in('equipment_id', eqIds)
     }
+    await del('shift_log_entries')
+    await del('equipment_shifts')
+    await del('equipment_schedule')
+    await del('maintenance_records')
+    await del('equipment')
 
-    // 8. Shift log entries (depends on equipment_shifts)
-    await admin.from('shift_log_entries').delete().eq('company_id', company_id).then(() => {})
-    await admin.from('equipment_shifts').delete().eq('company_id', company_id).then(() => {})
-    await admin.from('equipment_schedule').delete().eq('company_id', company_id).then(() => {})
+    // 11. HR
+    await del('attendance_records')
+    await del('leave_requests')
+    await del('salary_records')
+    await del('hr_employees')
 
-    // 9. Maintenance records
-    await admin.from('maintenance_records').delete().eq('company_id', company_id).then(() => {})
-
-    // 10. Inventory
-    await admin.from('inventory_issues').delete().eq('company_id', company_id).then(() => {})
-    await admin.from('inventory_items').delete().eq('company_id', company_id).then(() => {})
-
-    // 11. Equipment
-    await admin.from('equipment').delete().eq('company_id', company_id)
-
-    // 12. HR employees
-    await admin.from('hr_employees').delete().eq('company_id', company_id)
-
-    // 13. User roles + profiles
+    // 12. Users
     await admin.from('user_roles').delete().eq('company_id', company_id)
     await admin.from('user_profiles').delete().eq('company_id', company_id)
 
-    // 14. Company modules
+    // 13. Company modules
     await admin.from('company_modules').delete().eq('company_id', company_id)
 
-    // 15. Finally, delete the company itself
-    const { error: companyErr } = await admin
-      .from('companies')
-      .delete()
-      .eq('id', company_id)
-
+    // 14. Finally the company itself
+    const { error: companyErr } = await admin.from('companies').delete().eq('id', company_id)
     if (companyErr) throw companyErr
 
     console.log(`✅ Company ${company_id} deleted by ${caller.email}`)
