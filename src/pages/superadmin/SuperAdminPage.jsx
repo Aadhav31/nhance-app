@@ -514,11 +514,8 @@ function CompanyDetail({ company: initialCompany, onClose }) {
     )) return
     setDeleting(true)
     try {
-      const { data, error } = await supabase.functions.invoke('delete-company', {
-        body: { company_id: company.id },
-      })
+      const { error } = await supabase.rpc('delete_company_cascade', { p_company_id: company.id })
       if (error) throw error
-      if (!data?.success) throw new Error(data?.error || 'Delete failed')
       toast.success(`"${company.name}" permanently deleted`)
       qc.invalidateQueries(['companies'])
       onClose()
