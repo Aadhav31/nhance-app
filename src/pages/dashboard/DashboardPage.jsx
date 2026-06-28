@@ -4,8 +4,8 @@ import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import {
   TrendingUp, TrendingDown, Truck, Users, FileText, ShoppingCart,
-  Clock, AlertCircle, CheckCircle, Activity, Wallet, ReceiptText,
-  CalendarCheck, Wrench, Package, BarChart3, ArrowUpRight, ArrowDownRight,
+  Clock, AlertCircle, CheckCircle, Activity, Wallet, Receipt,
+  Calendar, Wrench, Package, BarChart3, ArrowUpRight, ArrowDownRight,
 } from 'lucide-react'
 import { ROLES } from '../../lib/constants'
 
@@ -172,7 +172,7 @@ function FinancialsSection({ companyId, range }) {
     <div className="space-y-3">
       <Section icon={Wallet} title="Financials">
         <KpiCard icon={TrendingUp}    label="Revenue Collected"  value={fmtINRShort(revenue)}     sub={`of ${fmtINRShort(totalBilled)} billed`} color="green" />
-        <KpiCard icon={ReceiptText}   label="Outstanding"        value={fmtINRShort(outstanding)}  sub={overdue > 0 ? `${overdue} overdue` : 'invoices'} color={overdue > 0 ? 'red' : 'amber'} />
+        <KpiCard icon={Receipt}       label="Outstanding"        value={fmtINRShort(outstanding)}  sub={overdue > 0 ? `${overdue} overdue` : 'invoices'} color={overdue > 0 ? 'red' : 'amber'} />
         <KpiCard icon={ShoppingCart}  label="Bills Due"          value={fmtINRShort(billsDue)}     sub={`${bills.filter(b=>b.status!=='paid').length} pending bills`} color="amber" />
         <KpiCard icon={BarChart3}     label="Net"                value={fmtINRShort(revenue - billsDue)} sub="collected − bills due" color={revenue - billsDue >= 0 ? 'green' : 'red'} />
       </Section>
@@ -316,7 +316,7 @@ function HRSection({ companyId, range }) {
       <KpiCard icon={Users}        label="Total Employees"  value={active}                              sub="active headcount"           color="blue" />
       <KpiCard icon={CheckCircle}  label="Present Today"    value={present}                             sub={attendance.length > 0 ? `of ${attendance.length} marked` : 'not marked yet'} color="green" />
       <KpiCard icon={AlertCircle}  label="Absent / Leave"   value={absent + onLeave}                    sub={onLeave > 0 ? `${onLeave} on leave` : 'today'} color={absent + onLeave > 0 ? 'amber' : 'green'} />
-      <KpiCard icon={CalendarCheck} label="Leave Requests"  value={pending}                             sub="pending approval"           color={pending > 0 ? 'amber' : 'green'} />
+      <KpiCard icon={Calendar}      label="Leave Requests"  value={pending}                             sub="pending approval"           color={pending > 0 ? 'amber' : 'green'} />
     </Section>
   )
 }
