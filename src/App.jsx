@@ -77,7 +77,13 @@ function AppShell() {
     }
 
     switch (page) {
-      case 'dashboard':   return wrap(DashboardPage,   MODULES.CORE)
+      case 'dashboard':
+        if (hasModule && !hasModule(MODULES.CORE)) return <ComingSoon page="dashboard" />
+        return (
+          <Suspense fallback={<LoadingScreen message="Loading dashboard…" />}>
+            <DashboardPage onNavigate={handleNavigate} />
+          </Suspense>
+        )
       case 'fleet':       return wrap(FleetPage,       MODULES.FLEET)
       case 'operations':  return wrap(OperationsPage,  MODULES.OPERATIONS)
       case 'maintenance': return wrap(MaintenancePage, MODULES.MAINTENANCE)
