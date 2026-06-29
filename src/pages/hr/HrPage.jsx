@@ -807,69 +807,103 @@ function InviteAndLinkModal({ emp, companyId, onClose, onDone }) {
   )
 }
 
-// ── Set Password Modal (HR/Admin sets password, shares via WhatsApp) ───────────
-function SetPasswordModal({ emp, onClose }) {
+// ── Reset Credentials Modal — reset email and/or password via SQL RPC ──────────
+function SetPasswordModal({ emp, onClose, onDone: onDoneProp }) {
+  const [tab, setTab]           = useState('password')   // 'password' | 'email'
+  // Password state
   const [password, setPassword] = useState('')
-  const [saving, setSaving]     = useState(false)
-  const [done, setDone]         = useState(false)
-  const [copied, setCopied]     = useState(false)
   const [showPwd, setShowPwd]   = useState(false)
+  // Email state
+  const [newEmail, setNewEmail] = useState(emp.email || '')
+  // Shared
+  const [saving, setSaving]     = useState(false)
+  const [done, setDone]         = useState(null)   // null | 'password' | 'email'
+  const [copied, setCopied]     = useState(false)
 
-  // Auto-generate a simple password: Nhance + 4 random digits
   const generate = () => {
     const digits = Math.floor(1000 + Math.random() * 9000)
     setPassword(`Nhance@${digits}`)
     setShowPwd(true)
   }
 
-  const handleSave = async () => {
-    if (password.length < 6) return toast.error('Password must be at least 6 characters')
+  const savePassword = async () => {
     if (!emp.user_id) return toast.error('No login account linked to this employee')
+    if (password.length < 6) return toast.error('Password must be at least 6 characters')
     setSaving(true)
     try {
-      const { data, error } = await supabase.functions.invoke('set-employee-password', {
-        body: { user_id: emp.user_id, password },
+      const { error } = await supabase.rpc('reset_employee_password', {
+        p_user_id: emp.user_id,
+        p_new_password: password,
       })
       if (error) throw error
-      if (!data?.success) throw new Error(data?.error || 'Failed to set password')
-      setDone(true)
+      setDone('password')
+      toast.success('Password updated successfully')
     } catch (e) {
-      toast.error(e.message || 'Failed to set password')
-    } finally {
-      setSaving(false)
-    }
+      toast.error(e.message || 'Failed to reset password')
+    } finally { setSaving(false) }
+  }
+
+  const saveEmail = async () => {
+    if (!emp.user_id) return toast.error('No login account linked to this employee')
+    if (!newEmail.includes('@')) return toast.error('Enter a valid email address')
+    setSaving(true)
+    try {
+      const { error } = await supabase.rpc('reset_employee_email', {
+        p_user_id: emp.user_id,
+        p_new_email: newEmail.trim().toLowerCase(),
+      })
+      if (error) throw error
+      setDone('email')
+      toast.success('Email updated successfully')
+    } catch (e) {
+      toast.error(e.message || 'Failed to reset email')
+    } finally { setSaving(false) }
   }
 
   const copyWhatsApp = () => {
-    const msg = `Hi ${emp.name},\n\nYour Nhance login details:\nEmail: ${emp.email || '(your email)'}\nPassword: ${password}\n\nLogin at: https://nhance-app.vercel.app`
+    const emailLine = done === 'email' ? newEmail : (emp.email || '—')
+    const pwdLine   = done === 'password' ? password : '(unchanged)'
+    const msg = `Hi ${emp.name},\n\nYour updated Nhance login details:\nEmail: ${emailLine}\n${done === 'password' ? `Password: ${pwdLine}` : ''}\n\nLogin at: https://nhance-app.vercel.app`
     navigator.clipboard.writeText(msg)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
-    toast.success('WhatsApp message copied!')
+    toast.success('Copied to clipboard!')
   }
 
   return (
     <div className="fixed inset-0 z-[60] bg-black/70 flex items-center justify-center p-4">
       <div className="bg-dark-800 rounded-xl border border-dark-700 shadow-2xl w-full max-w-md">
+        {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-dark-700">
-          <h2 className="text-base font-bold text-slate-100">Set Login Password — {emp.name}</h2>
+          <div>
+            <h2 className="text-base font-bold text-slate-100">Reset Login Credentials</h2>
+            <p className="text-xs text-slate-500">{emp.name} · {emp.employee_number}</p>
+          </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-100"><X className="w-5 h-5" /></button>
         </div>
-        <div className="p-6 space-y-4">
-          {!done ? (
-            <>
-              {/* Employee info */}
-              <div className="bg-dark-700 rounded-xl p-3 space-y-1">
-                <div className="flex justify-between text-xs">
-                  <span className="text-slate-400">Login email</span>
-                  <span className="text-slate-200 font-mono">{emp.email || '—'}</span>
-                </div>
-                <div className="flex justify-between text-xs">
-                  <span className="text-slate-400">Employee</span>
-                  <span className="text-slate-200">{emp.name} · {emp.employee_number}</span>
-                </div>
-              </div>
 
+        {/* Current info */}
+        <div className="mx-6 mt-4 bg-dark-700/60 rounded-lg px-4 py-2.5 flex items-center justify-between text-xs">
+          <span className="text-slate-400">Current Email</span>
+          <span className="text-slate-200 font-mono">{emp.email || '—'}</span>
+        </div>
+
+        {/* Tabs */}
+        <div className="flex mx-6 mt-4 gap-1 bg-dark-900 rounded-lg p-1">
+          <button
+            onClick={() => { setTab('password'); setDone(null) }}
+            className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-all ${tab === 'password' ? 'bg-dark-700 text-slate-100' : 'text-slate-500 hover:text-slate-300'}`}
+          >Reset Password</button>
+          <button
+            onClick={() => { setTab('email'); setDone(null) }}
+            className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-all ${tab === 'email' ? 'bg-dark-700 text-slate-100' : 'text-slate-500 hover:text-slate-300'}`}
+          >Change Email</button>
+        </div>
+
+        <div className="p-6 space-y-4">
+          {/* PASSWORD TAB */}
+          {tab === 'password' && !done && (
+            <>
               <div>
                 <div className="flex items-center justify-between mb-1.5">
                   <label className="text-xs text-slate-400">New Password</label>
@@ -880,7 +914,7 @@ function SetPasswordModal({ emp, onClose }) {
                 <div className="relative">
                   <input
                     type={showPwd ? 'text' : 'password'}
-                    className="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 font-mono focus:outline-none focus:border-primary-500 pr-10"
+                    className="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 font-mono focus:outline-none focus:border-primary-500 pr-14"
                     placeholder="Min. 6 characters"
                     value={password}
                     onChange={e => setPassword(e.target.value)}
@@ -890,27 +924,58 @@ function SetPasswordModal({ emp, onClose }) {
                     {showPwd ? 'Hide' : 'Show'}
                   </button>
                 </div>
-                <p className="text-xs text-slate-500 mt-1">You'll share this with the employee via WhatsApp or phone call — no email needed.</p>
+                <p className="text-xs text-slate-500 mt-1.5">Share the new password with the employee directly or via WhatsApp.</p>
               </div>
-
               <div className="flex gap-3">
                 <button onClick={onClose} className="btn-ghost flex-1">Cancel</button>
-                <button onClick={handleSave} disabled={saving || password.length < 6} className="btn-primary flex-1">
-                  {saving ? <><Loader2 className="w-4 h-4 animate-spin" /> Setting…</> : 'Set Password'}
+                <button onClick={savePassword} disabled={saving || password.length < 6} className="btn-primary flex-1">
+                  {saving ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving…</> : 'Reset Password'}
                 </button>
               </div>
             </>
-          ) : (
+          )}
+
+          {/* EMAIL TAB */}
+          {tab === 'email' && !done && (
+            <>
+              <div>
+                <label className="text-xs text-slate-400 mb-1.5 block">New Email Address</label>
+                <input
+                  type="email"
+                  className="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
+                  placeholder="employee@example.com"
+                  value={newEmail}
+                  onChange={e => setNewEmail(e.target.value)}
+                />
+                <p className="text-xs text-slate-500 mt-1.5">The employee will use this new email to log in. It will be confirmed immediately.</p>
+              </div>
+              <div className="flex gap-3">
+                <button onClick={onClose} className="btn-ghost flex-1">Cancel</button>
+                <button onClick={saveEmail} disabled={saving || !newEmail.includes('@') || newEmail === emp.email} className="btn-primary flex-1">
+                  {saving ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving…</> : 'Update Email'}
+                </button>
+              </div>
+            </>
+          )}
+
+          {/* SUCCESS STATE */}
+          {done && (
             <>
               <div className="bg-emerald-900/20 border border-emerald-700/30 rounded-xl p-4 text-center">
-                <p className="text-emerald-400 font-semibold text-sm mb-1">✅ Password set successfully!</p>
-                <p className="text-xs text-slate-400">Share the login details with {emp.name} via WhatsApp.</p>
+                <p className="text-emerald-400 font-semibold text-sm mb-1">
+                  {done === 'password' ? '✅ Password reset successfully!' : '✅ Email updated successfully!'}
+                </p>
+                <p className="text-xs text-slate-400">
+                  {done === 'password'
+                    ? `Share the new password with ${emp.name}.`
+                    : `${emp.name} should now log in with ${newEmail}.`}
+                </p>
               </div>
 
-              <div className="bg-dark-700 rounded-xl p-3 space-y-2 font-mono text-xs text-slate-300">
-                <p className="text-slate-400 text-xs font-sans mb-1">WhatsApp message to send:</p>
-                <p>Email: <span className="text-slate-100">{emp.email}</span></p>
-                <p>Password: <span className="text-emerald-400 font-bold">{password}</span></p>
+              <div className="bg-dark-700 rounded-xl p-3 space-y-1.5 font-mono text-xs text-slate-300">
+                <p className="text-slate-400 text-xs font-sans mb-1">Updated login details:</p>
+                <p>Email: <span className="text-slate-100">{done === 'email' ? newEmail : (emp.email || '—')}</span></p>
+                {done === 'password' && <p>Password: <span className="text-emerald-400 font-bold">{password}</span></p>}
                 <p className="text-slate-500 text-xs font-sans">nhance-app.vercel.app</p>
               </div>
 
