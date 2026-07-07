@@ -21,7 +21,10 @@ import toast from 'react-hot-toast'
 import { format } from 'date-fns'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-const todayStr = () => new Date().toISOString().split('T')[0]
+const todayStr = () => {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
 const fmtINR   = n  => `₹${Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`
 const fmtDate  = d  => d ? format(new Date(d), 'dd MMM yyyy') : '—'
 const inp = (x = '') =>
@@ -383,7 +386,7 @@ function ExpenseForm({ companyId, userId, userRole, userName, onSuccess, onBack 
         <div className="bg-dark-800 border border-dark-700 rounded-2xl p-4 space-y-3">
           <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Basic Details</p>
           <div>
-            <label className="text-xs text-slate-400 mb-1 block">Date <span className="text-red-400">*</span></label>
+            <label className="text-xs text-slate-400 mb-1 block">Expense Date <span className="text-red-400">*</span> <span className="text-slate-600 font-normal">(past or future dates allowed)</span></label>
             <input type="date" className={inp()} value={form.expense_date} onChange={e => set('expense_date', e.target.value)} />
           </div>
           <div>
