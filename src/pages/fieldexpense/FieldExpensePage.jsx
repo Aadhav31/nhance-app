@@ -97,52 +97,51 @@ function PhotoCapture({ label, value, onChange }) {
 }
 
 // ── UPI Payment Flow ──────────────────────────────────────────────────────────
-function UpiFlow({ payeeUpi, payeeName, amount, description, txnRef, onTxnRefChange }) {
+function UpiFlow({ amount, description, txnRef, onTxnRefChange }) {
   const [launched, setLaunched] = useState(false)
 
   const launchUpi = () => {
-    if (!payeeUpi) return toast.error('Enter payee UPI ID first')
-    if (!amount || parseFloat(amount) <= 0) return toast.error('Enter valid amount first')
-    const note  = encodeURIComponent(description || 'Payment')
-    const name  = encodeURIComponent(payeeName || 'Payee')
-    const upiUrl = `upi://pay?pa=${payeeUpi}&pn=${name}&am=${amount}&cu=INR&tn=${note}`
+    if (!amount || parseFloat(amount) <= 0) return toast.error('Enter amount first')
+    // Opens UPI app chooser — user scans QR or picks payee inside their UPI app
+    const note   = encodeURIComponent(description || 'Field Payment')
+    const upiUrl = `upi://pay?am=${amount}&cu=INR&tn=${note}`
     window.location.href = upiUrl
-    setLaunched(true)
-    setTimeout(() => {
-      // If still on page after 3 seconds, show TxnID prompt
-      setLaunched(true)
-    }, 3000)
+    // Show TxnID field immediately — user pastes it after returning from UPI app
+    setTimeout(() => setLaunched(true), 1500)
   }
 
   return (
     <div className="space-y-3">
-      <div>
-        <label className="text-xs text-slate-400 mb-1 block">Payee UPI ID <span className="text-red-400">*</span></label>
-        <input
-          className={inp()}
-          placeholder="e.g. vendor@upi or 9876543210@paytm"
-          value={payeeUpi}
-          onChange={e => onTxnRefChange('payee_upi', e.target.value)}
-        />
-      </div>
       <button
         type="button"
         onClick={launchUpi}
-        className="w-full py-3 rounded-xl bg-violet-600 hover:bg-violet-500 text-white font-semibold text-sm flex items-center justify-center gap-2 transition-colors"
+        className="w-full py-3.5 rounded-xl bg-violet-600 hover:bg-violet-500 text-white font-bold text-sm flex items-center justify-center gap-2 transition-colors"
       >
         <Smartphone className="w-4 h-4" />
-        Open UPI App to Pay ₹{amount || '0'}
+        Open UPI App — Pay ₹{amount ? Number(amount).toLocaleString('en-IN') : '0'}
       </button>
+      <p className="text-[11px] text-slate-500 text-center">
+        Opens GPay / PhonePe / Paytm — scan QR or enter UPI ID inside the app
+      </p>
       {launched && (
         <div className="bg-violet-500/10 border border-violet-600/40 rounded-xl p-3 space-y-2">
-          <p className="text-xs text-violet-300 font-medium">After completing payment in UPI app:</p>
+          <p className="text-xs text-violet-300 font-semibold">Paid? Paste the Transaction ID:</p>
           <input
             className={inp()}
-            placeholder="Paste Transaction ID / UTR number"
+            placeholder="Transaction ID / UTR number"
             value={txnRef}
             onChange={e => onTxnRefChange('transaction_ref', e.target.value)}
           />
         </div>
+      )}
+      {!launched && (
+        <button
+          type="button"
+          onClick={() => setLaunched(true)}
+          className="w-full text-xs text-slate-500 hover:text-slate-300 py-1"
+        >
+          Already paid? Enter Transaction ID
+        </button>
       )}
     </div>
   )
@@ -553,8 +552,6 @@ function ExpenseForm({ companyId, userId, userRole, userName, onSuccess, onBack 
           {/* UPI deep-link flow */}
           {form.payment_mode === 'upi' && (
             <UpiFlow
-              payeeUpi={form.payee_upi}
-              payeeName={form.payee_name}
               amount={form.amount}
               description={form.description}
               txnRef={form.transaction_ref}
@@ -780,7 +777,9 @@ function ExpenseHistory({ companyId, userId, userRole }) {
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 export default function FieldExpensePage({ embedded = false, onBack }) {
-  const { session, role, companyId } = useAuth()
+  const { session, role, companyId, userProfile } = useAuth()
+  // Fallback: use userProfile.company_id if companyId from company object not yet resolved
+  const effectiveCompanyId = companyId || userProfile?.company_id
   const userId   = session?.user?.id
   const userRole = role
   const [tab, setTab] = useState('submit')
@@ -870,7 +869,7 @@ export default function FieldExpensePage({ embedded = false, onBack }) {
             )
             : (
               <ExpenseForm
-                companyId={companyId}
+                companyId={effectiveCompanyId}
                 userId={userId}
                 userRole={userRole}
                 userName={userName}
@@ -881,7 +880,7 @@ export default function FieldExpensePage({ embedded = false, onBack }) {
         )
         : (
           <ExpenseHistory
-            companyId={companyId}
+            companyId={effectiveCompanyId}
             userId={userId}
             userRole={userRole}
           />

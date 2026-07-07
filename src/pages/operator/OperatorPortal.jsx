@@ -618,7 +618,7 @@ function EndShiftSheet({ open, onClose, shift, companyId, employeeId, mode, onEn
     } finally { setSaving(false) }
   }
 
-  const meterPreview = meter && shift.start_meter ? Math.max(0, Number(meter) - Number(shift.start_meter)).toFixed(1) : null
+  const meterDelta = meter && shift.start_meter ? Math.max(0, Number(meter) - Number(shift.start_meter)).toFixed(1) : null
   const clockPreview = (() => {
     if (!shift.start_time) return null
     const [sh, sm] = shift.start_time.split(':').map(Number)
@@ -651,7 +651,7 @@ function EndShiftSheet({ open, onClose, shift, companyId, employeeId, mode, onEn
           <FL>End Hour Meter Reading *</FL>
           <input type="number" className={bigNum} value={meter} onChange={e => setMeter(e.target.value)}
             placeholder="0000.0" step="0.1" min={shift.start_meter||0} inputMode="decimal" />
-          {meterPreview && <p className="text-center text-sm text-primary-400 font-semibold mt-2">{meterPreview} working hrs (meter)</p>}
+          {meterDelta && <p className="text-center text-sm text-primary-400 font-semibold mt-2">{meterDelta} working hrs (meter)</p>}
         </div>
 
         {/* Required photos */}
