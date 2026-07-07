@@ -179,6 +179,66 @@ function InfoRow({ label, value, accent }) {
   )
 }
 
+// ─── Notification helpers ─────────────────────────────────────────────────────
+
+function requestNotificationPermission() {
+  if (!('Notification' in window)) return
+  if (Notification.permission === 'default') {
+    Notification.requestPermission()
+  }
+}
+
+function fireNotification(title, body, tag) {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return
+  try {
+    new Notification(title, {
+      body,
+      tag,                   // deduplicates — replaces existing same-tag notification
+      requireInteraction: true,
+      icon: '/nhance-icon.png',
+      badge: '/nhance-icon.png',
+    })
+  } catch (_) {}
+}
+
+// ─── Shift Alarm Banner ───────────────────────────────────────────────────────
+
+function ShiftAlarmBanner({ type, elapsedHrs, onEndNow, onDismiss }) {
+  if (type === 'overdue') {
+    return (
+      <div className="fixed top-0 left-0 right-0 z-[100] max-w-lg mx-auto animate-pulse">
+        <div className="bg-red-600 border-b-2 border-red-400 px-4 py-3 flex items-center gap-3 shadow-2xl">
+          <span className="text-2xl shrink-0">🚨</span>
+          <div className="flex-1 min-w-0">
+            <p className="text-white font-bold text-sm leading-tight">Shift Overdue — {Number(elapsedHrs).toFixed(1)} hrs running</p>
+            <p className="text-red-100 text-xs mt-0.5">Please close your shift immediately</p>
+          </div>
+          <button onClick={onEndNow}
+            className="shrink-0 bg-white text-red-700 font-bold text-xs px-3 py-1.5 rounded-lg active:scale-95">
+            End Now
+          </button>
+          <button onClick={onDismiss} className="shrink-0 text-red-200 hover:text-white text-xl leading-none px-1">×</button>
+        </div>
+      </div>
+    )
+  }
+  if (type === 'login_reminder') {
+    return (
+      <div className="fixed top-0 left-0 right-0 z-[100] max-w-lg mx-auto">
+        <div className="bg-amber-600 border-b-2 border-amber-400 px-4 py-3 flex items-center gap-3 shadow-2xl">
+          <span className="text-2xl shrink-0">⏰</span>
+          <div className="flex-1 min-w-0">
+            <p className="text-white font-bold text-sm leading-tight">Shift Window is Open</p>
+            <p className="text-amber-100 text-xs mt-0.5">Don't forget to start your shift!</p>
+          </div>
+          <button onClick={onDismiss} className="shrink-0 text-amber-200 hover:text-white text-xl leading-none px-1">×</button>
+        </div>
+      </div>
+    )
+  }
+  return null
+}
+
 // ─── SHIFT MODULE ─────────────────────────────────────────────────────────────
 
 function ShiftWindowBanner({ check }) {
@@ -233,27 +293,38 @@ function AssignedEquipmentCard({ equipment, project }) {
 }
 
 function StartShiftForm({ companyId, operatorId, employeeId, equipment, project, mode, onStarted }) {
-  const [meter, setMeter]     = useState('')
-  const [photoFile, setPhoto] = useState(null)
-  const [photoPreview, setPP] = useState(null)
-  const [saving, setSaving]   = useState(false)
+  const [meter,        setMeter]     = useState('')
+  const [meterFile,    setMeterFile] = useState(null)
+  const [meterPreview, setMeterPrev] = useState(null)
+  const [loginFile,    setLoginFile] = useState(null)
+  const [loginPreview, setLoginPrev] = useState(null)
+  const [saving, setSaving]          = useState(false)
 
   const check = checkShiftWindow(project, equipment)
 
-  const handlePhoto = f => { setPhoto(f); setPP(URL.createObjectURL(f)) }
+  const handleMeterPhoto = f => { setMeterFile(f); setMeterPrev(URL.createObjectURL(f)) }
+  const handleLoginPhoto = f => { setLoginFile(f); setLoginPrev(URL.createObjectURL(f)) }
+
+  const canSubmit = check.allowed && meter && meterFile && loginFile
 
   const handleStart = async () => {
     if (!check.allowed) return toast.error(check.reason || 'Outside shift window')
     if (!meter)     return toast.error('Enter hour meter reading')
-    if (!photoFile) return toast.error('Take a photo of the hour meter')
+    if (!meterFile) return toast.error('Take a photo of the hour meter')
+    if (!loginFile) return toast.error('Take a login / presence photo')
     setSaving(true)
     try {
-      const label = `${equipment.equipment_number} — Shift Start`
-      const { url, location } = await stampAndUpload(photoFile, label)
+      const meterLabel = `${equipment.equipment_number} — Meter Start`
+      const loginLabel = `${equipment.equipment_number} — Login`
+      const [{ url: meterUrl, location }, { url: loginUrl }] = await Promise.all([
+        stampAndUpload(meterFile, meterLabel),
+        stampAndUpload(loginFile, loginLabel),
+      ])
       const { data, error } = await supabase.from('shifts').insert({
         company_id: companyId, equipment_id: equipment.id, operator_id: employeeId,
         shift_date: today(), shift_type: check.shiftType, start_time: nowTime(),
-        start_meter: Number(meter), start_meter_photo: url, start_location: location,
+        start_meter: Number(meter), start_meter_photo: meterUrl,
+        login_photo_url: loginUrl, start_location: location,
         project_id: project?.id || null, status: 'open',
       }).select().single()
       if (error) throw error
@@ -274,12 +345,40 @@ function StartShiftForm({ companyId, operatorId, employeeId, equipment, project,
         )}
       </div>
 
-      <PhotoCapture label="Hour Meter Photo — date/time/GPS stamped automatically" onCapture={handlePhoto} preview={photoPreview} />
+      {/* Required photos — both must be taken */}
+      <div className="space-y-3 bg-dark-800 border border-dark-600 rounded-2xl p-4">
+        <p className="text-xs text-amber-400 font-semibold uppercase tracking-wide">📷 Required Photos — both must be taken</p>
+
+        {/* Photo 1: Meter */}
+        <div className={`rounded-xl border-2 p-3 transition-all ${meterFile ? 'border-green-600/60 bg-green-900/10' : 'border-dashed border-dark-500'}`}>
+          <div className="flex items-center gap-2 mb-2">
+            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${meterFile ? 'bg-green-700/30 text-green-400' : 'bg-red-900/30 text-red-400'}`}>
+              {meterFile ? '✓ Done' : 'Required'}
+            </span>
+            <span className="text-xs text-slate-300">Meter Reading Photo</span>
+          </div>
+          <PhotoCapture label="" onCapture={handleMeterPhoto} preview={meterPreview} />
+        </div>
+
+        {/* Photo 2: Login / Presence */}
+        <div className={`rounded-xl border-2 p-3 transition-all ${loginFile ? 'border-green-600/60 bg-green-900/10' : 'border-dashed border-dark-500'}`}>
+          <div className="flex items-center gap-2 mb-2">
+            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${loginFile ? 'bg-green-700/30 text-green-400' : 'bg-red-900/30 text-red-400'}`}>
+              {loginFile ? '✓ Done' : 'Required'}
+            </span>
+            <span className="text-xs text-slate-300">Login / Presence Photo</span>
+          </div>
+          <p className="text-[11px] text-slate-500 mb-2">Take a selfie or photo at the site to confirm your presence</p>
+          <PhotoCapture label="" onCapture={handleLoginPhoto} preview={loginPreview} />
+        </div>
+      </div>
 
       {!check.allowed ? (
         <ShiftWindowBanner check={check} />
       ) : (
-        <Btn onClick={handleStart} loading={saving}>🚀 Start Shift</Btn>
+        <Btn onClick={handleStart} loading={saving} disabled={!canSubmit}>
+          {canSubmit ? '🚀 Start Shift' : `Complete ${!meter ? 'meter reading' : !meterFile ? 'meter photo' : 'login photo'} first`}
+        </Btn>
       )}
     </div>
   )
@@ -446,24 +545,33 @@ function RecordIncidentSheet({ open, onClose, shift, companyId, mode }) {
 }
 
 function EndShiftSheet({ open, onClose, shift, companyId, employeeId, mode, onEnded }) {
-  const [meter, setMeter]         = useState('')
-  const [idleHrs, setIdleHrs]     = useState('')
-  const [breakdownType, setBdType]= useState('')
-  const [workDesc, setWorkDesc]   = useState('')
-  const [notes, setNotes]         = useState('')
-  const [photoFile, setPhoto]     = useState(null)
-  const [photoPreview, setPP]     = useState(null)
-  const [saving, setSaving]       = useState(false)
+  const [meter,         setMeter]     = useState('')
+  const [idleHrs,       setIdleHrs]   = useState('')
+  const [breakdownType, setBdType]    = useState('')
+  const [workDesc,      setWorkDesc]  = useState('')
+  const [notes,         setNotes]     = useState('')
+  const [meterFile,     setMeterFile] = useState(null)
+  const [meterPreview,  setMeterPrev] = useState(null)
+  const [logoutFile,    setLogoutFile]= useState(null)
+  const [logoutPreview, setLogoutPrev]= useState(null)
+  const [saving, setSaving]           = useState(false)
 
-  const handlePhoto = f => { setPhoto(f); setPP(URL.createObjectURL(f)) }
+  const handleMeterPhoto  = f => { setMeterFile(f);  setMeterPrev(URL.createObjectURL(f)) }
+  const handleLogoutPhoto = f => { setLogoutFile(f); setLogoutPrev(URL.createObjectURL(f)) }
+
+  const canSubmit = meter && meterFile && logoutFile
 
   const handleEnd = async () => {
-    if (!meter)     return toast.error('Enter end hour meter reading')
-    if (!photoFile) return toast.error('Take a photo of the hour meter')
+    if (!meter)      return toast.error('Enter end hour meter reading')
+    if (!meterFile)  return toast.error('Take a photo of the closing meter')
+    if (!logoutFile) return toast.error('Take a logout / presence photo')
     setSaving(true)
     try {
       const endTime = nowTime()
-      const { url, location } = await stampAndUpload(photoFile, 'Shift End — Hour Meter')
+      const [{ url: meterUrl, location }, { url: logoutUrl }] = await Promise.all([
+        stampAndUpload(meterFile,  'Shift End — Hour Meter'),
+        stampAndUpload(logoutFile, 'Logout — Presence'),
+      ])
       const startM   = Number(shift.start_meter) || 0
       const endM     = Number(meter)
       const meterHrs = endM > startM ? endM - startM : 0
@@ -472,7 +580,8 @@ function EndShiftSheet({ open, onClose, shift, companyId, employeeId, mode, onEn
       const clockHrs = Math.max(0, ((eh * 60 + em) - (sh * 60 + sm)) / 60)
 
       const { error } = await supabase.from('shifts').update({
-        end_time: endTime, end_meter: endM, end_meter_photo: url,
+        end_time: endTime, end_meter: endM, end_meter_photo: meterUrl,
+        logout_photo_url: logoutUrl,
         end_location: location, working_hours: meterHrs,
         idle_hours: idleHrs ? Number(idleHrs) : 0,
         notes: [workDesc ? `Work: ${workDesc}` : '', notes ? `Handover: ${notes}` : ''].filter(Boolean).join(' | ') || null,
@@ -544,7 +653,31 @@ function EndShiftSheet({ open, onClose, shift, companyId, employeeId, mode, onEn
           {meterPreview && <p className="text-center text-sm text-primary-400 font-semibold mt-2">{meterPreview} working hrs (meter)</p>}
         </div>
 
-        <PhotoCapture label="End Meter Photo (Required — date/time/GPS stamped)" onCapture={handlePhoto} preview={photoPreview} />
+        {/* Required photos */}
+        <div className="space-y-3 bg-dark-800 border border-dark-600 rounded-2xl p-4">
+          <p className="text-xs text-amber-400 font-semibold uppercase tracking-wide">📷 Required Photos — both must be taken</p>
+
+          <div className={`rounded-xl border-2 p-3 transition-all ${meterFile ? 'border-green-600/60 bg-green-900/10' : 'border-dashed border-dark-500'}`}>
+            <div className="flex items-center gap-2 mb-2">
+              <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${meterFile ? 'bg-green-700/30 text-green-400' : 'bg-red-900/30 text-red-400'}`}>
+                {meterFile ? '✓ Done' : 'Required'}
+              </span>
+              <span className="text-xs text-slate-300">Closing Meter Photo</span>
+            </div>
+            <PhotoCapture label="" onCapture={handleMeterPhoto} preview={meterPreview} />
+          </div>
+
+          <div className={`rounded-xl border-2 p-3 transition-all ${logoutFile ? 'border-green-600/60 bg-green-900/10' : 'border-dashed border-dark-500'}`}>
+            <div className="flex items-center gap-2 mb-2">
+              <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${logoutFile ? 'bg-green-700/30 text-green-400' : 'bg-red-900/30 text-red-400'}`}>
+                {logoutFile ? '✓ Done' : 'Required'}
+              </span>
+              <span className="text-xs text-slate-300">Logout / Presence Photo</span>
+            </div>
+            <p className="text-[11px] text-slate-500 mb-2">Selfie or site photo confirming your end-of-shift presence</p>
+            <PhotoCapture label="" onCapture={handleLogoutPhoto} preview={logoutPreview} />
+          </div>
+        </div>
 
         {/* Advanced mode extra fields */}
         {mode === 'advanced' && (
@@ -581,7 +714,9 @@ function EndShiftSheet({ open, onClose, shift, companyId, employeeId, mode, onEn
           <p className="text-[11px] text-blue-400">📋 Attendance auto-marked on submit: ≥4 clock hrs = Present · &lt;4 hrs = Half Day</p>
         </div>
 
-        <Btn onClick={handleEnd} loading={saving}>🏁 End Shift & Record Attendance</Btn>
+        <Btn onClick={handleEnd} loading={saving} disabled={!canSubmit}>
+          {canSubmit ? '🏁 End Shift & Record Attendance' : `Complete ${!meter ? 'meter reading' : !meterFile ? 'meter photo' : 'logout photo'} first`}
+        </Btn>
       </div>
     </Sheet>
   )
@@ -600,9 +735,12 @@ function ActionBtn({ icon, label, onClick, color }) {
 
 function ShiftModule({ companyId, operatorId, employeeId, employeeName, mode }) {
   const qc = useQueryClient()
-  const [fuelOpen, setFuelOpen] = useState(false)
-  const [incOpen, setIncOpen]   = useState(false)
-  const [endOpen, setEndOpen]   = useState(false)
+  const [fuelOpen,     setFuelOpen]   = useState(false)
+  const [incOpen,      setIncOpen]    = useState(false)
+  const [endOpen,      setEndOpen]    = useState(false)
+  const [alarmType,    setAlarmType]  = useState(null)   // 'overdue' | 'login_reminder' | null
+  const [alarmDismiss, setDismissed]  = useState(false)
+  const [elapsedHrs,   setElapsed]    = useState(0)
 
   // Equipment lookup — SECURITY DEFINER RPC bypasses RLS, uses auth.uid() server-side
   const { data: assignedEq, isLoading: eqLoading } = useQuery({
@@ -660,6 +798,47 @@ function ShiftModule({ companyId, operatorId, employeeId, employeeName, mode }) 
       .subscribe()
     return () => { supabase.removeChannel(channel) }
   }, [companyId, employeeId])
+
+  // Alarm / reminder system — checks every 60 s
+  useEffect(() => {
+    const OVERDUE_HRS = 10   // fire alarm if shift > 10 hrs
+
+    const check = () => {
+      if (activeShift) {
+        const [sh, sm] = (activeShift.start_time || '00:00').split(':').map(Number)
+        const now = new Date()
+        const hrs = ((now.getHours() * 60 + now.getMinutes()) - (sh * 60 + sm)) / 60
+        setElapsed(Math.max(0, hrs))
+        if (hrs > OVERDUE_HRS) {
+          if (!alarmDismiss) setAlarmType('overdue')
+          fireNotification(
+            '🚨 Shift Overdue',
+            `Your shift has been running for ${hrs.toFixed(1)} hours. Please close your shift!`,
+            'shift-overdue'
+          )
+        } else {
+          setAlarmType(null)
+        }
+      } else if (assignedEq && project) {
+        // Check if within shift window but no shift started
+        const { allowed } = checkShiftWindow(project, assignedEq)
+        if (allowed) {
+          if (!alarmDismiss) setAlarmType('login_reminder')
+          fireNotification(
+            '⏰ Shift Reminder',
+            'Your shift window is open. Don\'t forget to start your shift!',
+            'shift-login-reminder'
+          )
+        } else {
+          setAlarmType(null)
+        }
+      }
+    }
+
+    check()   // run immediately
+    const timer = setInterval(check, 60_000)   // then every 60 s
+    return () => clearInterval(timer)
+  }, [activeShift, assignedEq, project, alarmDismiss])
 
   // Fuel entries
   const { data: fuelEntries = [] } = useQuery({
@@ -723,11 +902,28 @@ function ShiftModule({ companyId, operatorId, employeeId, employeeName, mode }) 
   const eq = activeShift.equipment
   const [sh, sm] = (activeShift.start_time||'00:00').split(':').map(Number)
   const now = new Date()
-  const elapsedHrs = ((now.getHours()*60+now.getMinutes()) - (sh*60+sm)) / 60
-  const isHalfDaySoFar = elapsedHrs < 4
+  const currentElapsed = ((now.getHours()*60+now.getMinutes()) - (sh*60+sm)) / 60
+  const isHalfDaySoFar = currentElapsed < 4
+
+  const handleDismissAlarm = () => {
+    setDismissed(true)
+    setAlarmType(null)
+    // Re-enable alarm after 30 min so it fires again
+    setTimeout(() => setDismissed(false), 30 * 60 * 1000)
+  }
 
   return (
     <div className="space-y-4">
+      {/* Alarm / reminder banner */}
+      {alarmType && (
+        <ShiftAlarmBanner
+          type={alarmType}
+          elapsedHrs={elapsedHrs}
+          onEndNow={() => { setEndOpen(true); handleDismissAlarm() }}
+          onDismiss={handleDismissAlarm}
+        />
+      )}
+
       {/* Active shift card */}
       <div className="bg-gradient-to-br from-primary-900/40 to-dark-800 border border-primary-700/30 rounded-2xl p-4">
         <div className="flex items-start justify-between mb-3">
@@ -737,7 +933,7 @@ function ShiftModule({ companyId, operatorId, employeeId, employeeName, mode }) 
             <p className="text-slate-500 text-xs">{eq?.equipment_number}</p>
           </div>
           <div className="text-right">
-            <p className="text-2xl font-bold text-primary-300">{Math.max(0,elapsedHrs).toFixed(1)}</p>
+            <p className="text-2xl font-bold text-primary-300">{Math.max(0,currentElapsed).toFixed(1)}</p>
             <p className={`text-[10px] font-semibold ${isHalfDaySoFar ? 'text-yellow-400' : 'text-green-400'}`}>
               hrs · {isHalfDaySoFar ? 'Half Day so far' : 'Full Day ✓'}
             </p>
@@ -1217,6 +1413,9 @@ export default function OperatorPortal() {
   const { userProfile, company, companyId, signOut } = useAuth()
   const [tab, setTab]   = useState('shift')
   const [mode, setMode] = useState('basic')
+
+  // Request notification permission once on portal load
+  useEffect(() => { requestNotificationPermission() }, [])
 
   const { data: employee } = useQuery({
     queryKey: ['op_employee_record', userProfile?.id],
