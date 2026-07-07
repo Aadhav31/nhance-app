@@ -35,12 +35,13 @@ const inp = (x = '') =>
 // Purchase (spares, equipment, maintenance) → handled in Purchase module
 // Salary, EMI, financial → handled in Accounts module
 const CATEGORIES = [
-  { value: 'fuel',           label: 'Fuel',             icon: Fuel,        color: 'text-amber-400',   bg: 'bg-amber-500/10 border-amber-600/40'  },
-  { value: 'food',           label: 'Food / Catering',  icon: Utensils,    color: 'text-pink-400',    bg: 'bg-pink-500/10 border-pink-600/40'    },
-  { value: 'travel',         label: 'Travel',           icon: Car,         color: 'text-blue-400',    bg: 'bg-blue-500/10 border-blue-600/40'    },
-  { value: 'accommodation',  label: 'Accommodation',    icon: Home,        color: 'text-cyan-400',    bg: 'bg-cyan-500/10 border-cyan-600/40'    },
-  { value: 'medical',        label: 'Medical / Emergency', icon: HeartPulse, color: 'text-red-400',  bg: 'bg-red-500/10 border-red-600/40'      },
-  { value: 'site_allowance', label: 'Site Allowance',   icon: Building2,   color: 'text-teal-400',    bg: 'bg-teal-500/10 border-teal-600/40'   },
+  { value: 'fuel',            label: 'Fuel',                  icon: Fuel,       color: 'text-amber-400',  bg: 'bg-amber-500/10 border-amber-600/40'   },
+  { value: 'food',            label: 'Food / Catering',       icon: Utensils,   color: 'text-pink-400',   bg: 'bg-pink-500/10 border-pink-600/40'     },
+  { value: 'travel',          label: 'Travel',                icon: Car,        color: 'text-blue-400',   bg: 'bg-blue-500/10 border-blue-600/40'     },
+  { value: 'accommodation',   label: 'Accommodation',         icon: Home,       color: 'text-cyan-400',   bg: 'bg-cyan-500/10 border-cyan-600/40'     },
+  { value: 'medical',         label: 'Medical / Emergency',   icon: HeartPulse, color: 'text-red-400',    bg: 'bg-red-500/10 border-red-600/40'       },
+  { value: 'site_allowance',  label: 'Site Allowance',        icon: Building2,  color: 'text-teal-400',   bg: 'bg-teal-500/10 border-teal-600/40'     },
+  { value: 'spares_purchase', label: 'Spares (Breakdown)',    icon: Wrench,     color: 'text-orange-400', bg: 'bg-orange-500/10 border-orange-600/40', inv: true },
 ]
 const CAT_MAP = Object.fromEntries(CATEGORIES.map(c => [c.value, c]))
 
