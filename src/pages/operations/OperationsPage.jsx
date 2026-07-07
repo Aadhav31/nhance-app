@@ -7,7 +7,7 @@ import {
   Truck, Plus, Fuel, AlertTriangle, X, Loader2, CheckCircle,
   Gauge, User, Mic, MicOff, MapPin, Camera,
   Clock, Activity, PlayCircle, StopCircle, ChevronRight, Lock, Bell,
-  ExternalLink, ZoomIn,
+  ExternalLink, ZoomIn, Edit2,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format } from 'date-fns'
@@ -1501,7 +1501,7 @@ function PhotoThumb({ url, label, onView }) {
 }
 
 // ── Shift Detail Modal ─────────────────────────────────────────────────────────
-function ShiftDetailModal({ shift, onClose }) {
+function ShiftDetailModal({ shift, onClose, isAdmin, onEdit }) {
   const [lightboxUrl, setLightboxUrl] = useState(null)
   const mt = shift.equipment?.meter_type
 
@@ -1553,9 +1553,17 @@ function ShiftDetailModal({ shift, onClose }) {
                 </span>
               </div>
             </div>
-            <button onClick={onClose} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-dark-700 shrink-0">
-              <X className="w-5 h-5" />
-            </button>
+            <div className="flex items-center gap-1.5 shrink-0">
+              {isAdmin && onEdit && (
+                <button onClick={() => onEdit(shift)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary-500/10 border border-primary-500/30 text-primary-400 hover:bg-primary-500/20 text-xs font-medium transition-all">
+                  <Edit2 className="w-3.5 h-3.5" /> Edit
+                </button>
+              )}
+              <button onClick={onClose} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-dark-700">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
           </div>
 
           {/* Body */}
@@ -1973,12 +1981,231 @@ function IncidentDetailModal({ incident, onClose, onResolve }) {
   )
 }
 
+// ── Edit Shift Modal (Admin only) ─────────────────────────────────────────────
+function EditShiftModal({ shift, companyId, onClose, onSaved }) {
+  const qc = useQueryClient()
+  const mt = shift.equipment?.meter_type
+
+  const { data: empList = [] } = useQuery({
+    queryKey: ['hr_emp_names', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('hr_employees')
+        .select('id, name, designation, employee_number')
+        .eq('company_id', companyId).eq('is_active', true).order('name')
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+
+  const [form, setForm] = useState({
+    shift_date:         shift.shift_date || '',
+    shift_type:         shift.shift_type || 'day',
+    operator_name:      shift.operator_name || '',
+    site_incharge_name: shift.site_incharge_name || '',
+    start_time:         shift.start_time || '',
+    end_time:           shift.end_time   || '',
+    start_meter:        shift.start_meter != null ? String(shift.start_meter) : '',
+    end_meter:          shift.end_meter   != null ? String(shift.end_meter)   : '',
+    start_km:           shift.start_km    != null ? String(shift.start_km)    : '',
+    end_km:             shift.end_km      != null ? String(shift.end_km)      : '',
+    working_hours:      shift.working_hours   != null ? String(shift.working_hours)   : '',
+    idle_hours:         shift.idle_hours      != null ? String(shift.idle_hours)      : '0',
+    breakdown_hours:    shift.breakdown_hours != null ? String(shift.breakdown_hours) : '0',
+    notes:              shift.notes          || '',
+    work_done:          shift.work_done      || '',
+    handover_notes:     shift.handover_notes || '',
+  })
+  const [saving, setSaving] = useState(false)
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+
+  const handleSave = async () => {
+    if (!form.operator_name.trim()) { toast.error('Operator name required'); return }
+    setSaving(true)
+    try {
+      // Resolve operator_id if name changed
+      let newOperatorId = shift.operator_id
+      if (form.operator_name !== shift.operator_name) {
+        const emp = empList.find(e => e.name === form.operator_name)
+        newOperatorId = emp?.id || null
+      }
+      const payload = {
+        shift_date:         form.shift_date,
+        shift_type:         form.shift_type,
+        operator_name:      form.operator_name.trim(),
+        operator_id:        newOperatorId,
+        site_incharge_name: form.site_incharge_name || null,
+        start_time:         form.start_time || null,
+        end_time:           form.end_time   || null,
+        start_meter:        form.start_meter   ? Number(form.start_meter)   : null,
+        end_meter:          form.end_meter     ? Number(form.end_meter)     : null,
+        start_km:           form.start_km      ? Number(form.start_km)      : null,
+        end_km:             form.end_km        ? Number(form.end_km)        : null,
+        working_hours:      form.working_hours   ? Number(form.working_hours)   : null,
+        idle_hours:         form.idle_hours      ? Number(form.idle_hours)      : 0,
+        breakdown_hours:    form.breakdown_hours ? Number(form.breakdown_hours) : 0,
+        notes:              form.notes          || null,
+        work_done:          form.work_done      || null,
+        handover_notes:     form.handover_notes || null,
+      }
+      const { error } = await supabase.from('shifts').update(payload).eq('id', shift.id)
+      if (error) throw error
+      toast.success('Shift updated')
+      qc.invalidateQueries(['all_shifts',  companyId])
+      qc.invalidateQueries(['today_ops',   companyId])
+      qc.invalidateQueries(['active_shift', shift.equipment_id])
+      onSaved()
+    } catch (e) {
+      toast.error(e.message || 'Failed to update shift')
+    } finally { setSaving(false) }
+  }
+
+  const i = (extra = '') => `w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500 ${extra}`
+  const lbl = 'text-xs text-slate-400 mb-1 block'
+
+  return (
+    <div className="fixed inset-0 z-[60] bg-black/80 flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div className="w-full max-w-lg bg-dark-800 sm:rounded-2xl border-t sm:border border-dark-600 shadow-2xl flex flex-col max-h-[92vh]">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-dark-700 shrink-0 bg-dark-800 sm:rounded-t-2xl">
+          <div>
+            <p className="font-bold text-slate-100">Edit Shift</p>
+            <p className="text-xs text-slate-400">{shift.equipment?.name} · {shift.shift_date}</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-dark-700"><X className="w-5 h-5" /></button>
+        </div>
+
+        <div className="overflow-y-auto flex-1 px-4 py-4 space-y-4">
+          {/* Date + Type */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={lbl}>Shift Date</label>
+              <input type="date" className={i()} value={form.shift_date} onChange={e => set('shift_date', e.target.value)} />
+            </div>
+            <div>
+              <label className={lbl}>Shift Type</label>
+              <select className={i()} value={form.shift_type} onChange={e => set('shift_type', e.target.value)}>
+                <option value="day">☀️ Day</option>
+                <option value="night">🌙 Night</option>
+                <option value="double">🔄 Double</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Operator */}
+          <div>
+            <label className={lbl}>Operator / Driver *</label>
+            {empList.length > 0 ? (
+              <select className={i()} value={form.operator_name} onChange={e => set('operator_name', e.target.value)}>
+                <option value="">Select operator…</option>
+                {empList.map(e => (
+                  <option key={e.id} value={e.name}>{e.name}{e.employee_number ? ` (${e.employee_number})` : ''}</option>
+                ))}
+                {/* Keep current value even if not in list */}
+                {form.operator_name && !empList.find(e => e.name === form.operator_name) && (
+                  <option value={form.operator_name}>{form.operator_name} (current)</option>
+                )}
+              </select>
+            ) : (
+              <input className={i()} value={form.operator_name} onChange={e => set('operator_name', e.target.value)} placeholder="Operator name" />
+            )}
+          </div>
+
+          {/* Site Incharge */}
+          <div>
+            <label className={lbl}>Site Incharge</label>
+            <input className={i()} value={form.site_incharge_name} onChange={e => set('site_incharge_name', e.target.value)} placeholder="Supervisor / incharge name" />
+          </div>
+
+          {/* Times */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={lbl}>Start Time</label>
+              <input type="time" className={i()} value={form.start_time} onChange={e => set('start_time', e.target.value)} />
+            </div>
+            <div>
+              <label className={lbl}>End Time</label>
+              <input type="time" className={i()} value={form.end_time} onChange={e => set('end_time', e.target.value)} />
+            </div>
+          </div>
+
+          {/* Meter readings */}
+          {(mt === 'hours' || mt === 'both' || !mt) && (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className={lbl}>Opening Meter (hrs)</label>
+                <input type="number" className={i()} value={form.start_meter} onChange={e => set('start_meter', e.target.value)} step="0.1" placeholder="e.g. 4250" />
+              </div>
+              <div>
+                <label className={lbl}>Closing Meter (hrs)</label>
+                <input type="number" className={i()} value={form.end_meter} onChange={e => set('end_meter', e.target.value)} step="0.1" placeholder="e.g. 4258" />
+              </div>
+            </div>
+          )}
+          {(mt === 'kilometers' || mt === 'both') && (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className={lbl}>Opening Odometer (km)</label>
+                <input type="number" className={i()} value={form.start_km} onChange={e => set('start_km', e.target.value)} />
+              </div>
+              <div>
+                <label className={lbl}>Closing Odometer (km)</label>
+                <input type="number" className={i()} value={form.end_km} onChange={e => set('end_km', e.target.value)} />
+              </div>
+            </div>
+          )}
+
+          {/* Hours */}
+          <div className="grid grid-cols-3 gap-2">
+            <div>
+              <label className={lbl}>Working Hrs</label>
+              <input type="number" className={i('text-center')} value={form.working_hours} onChange={e => set('working_hours', e.target.value)} step="0.1" placeholder="0" />
+            </div>
+            <div>
+              <label className={lbl}>Idle Hrs</label>
+              <input type="number" className={i('text-center')} value={form.idle_hours} onChange={e => set('idle_hours', e.target.value)} step="0.1" placeholder="0" />
+            </div>
+            <div>
+              <label className={lbl}>Breakdown Hrs</label>
+              <input type="number" className={i('text-center')} value={form.breakdown_hours} onChange={e => set('breakdown_hours', e.target.value)} step="0.1" placeholder="0" />
+            </div>
+          </div>
+
+          {/* Notes */}
+          <div>
+            <label className={lbl}>Start Remarks</label>
+            <textarea className={i('resize-none')} rows={2} value={form.notes} onChange={e => set('notes', e.target.value)} placeholder="Shift start notes…" />
+          </div>
+          <div>
+            <label className={lbl}>Work Done</label>
+            <textarea className={i('resize-none')} rows={2} value={form.work_done} onChange={e => set('work_done', e.target.value)} placeholder="What was accomplished…" />
+          </div>
+          <div>
+            <label className={lbl}>Handover Notes</label>
+            <textarea className={i('resize-none')} rows={2} value={form.handover_notes} onChange={e => set('handover_notes', e.target.value)} placeholder="Notes to next shift…" />
+          </div>
+        </div>
+
+        <div className="flex gap-3 px-4 py-3 border-t border-dark-700 shrink-0">
+          <button onClick={onClose} className="flex-1 btn-secondary">Cancel</button>
+          <button onClick={handleSave} disabled={saving} className="flex-1 btn-primary">
+            {saving ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving…</> : 'Save Changes'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Shifts Tab — Daily Operations Log ─────────────────────────────────────────
 function ShiftsTab({ companyId }) {
+  const { role } = useAuth()
+  const isAdmin  = ['admin', 'superadmin'].includes(role)
+  const qc       = useQueryClient()
+
   const [dateFrom,      setDateFrom]      = useState(today())
   const [dateTo,        setDateTo]        = useState(today())
   const [equipFilter,   setEquipFilter]   = useState('all')
   const [selectedShift, setSelectedShift] = useState(null)
+  const [editShift,     setEditShift]     = useState(null)
 
   // Equipment list for filter dropdown
   const { data: equipList = [] } = useQuery({
@@ -2028,18 +2255,39 @@ function ShiftsTab({ companyId }) {
       }
 
       // ── Resolve HR operator for each shift ───────────────────────────────────
-      // operator_id links shifts → hr_employees (added by operator_fk_schema.sql)
+      // Pass 1: resolve by operator_id (set when operator role starts shift)
       const allOperatorIds = [...new Set(shifts.map(s => s.operator_id).filter(Boolean))]
+      const eById = {}
       if (allOperatorIds.length > 0) {
         const { data: employees } = await supabase.from('hr_employees')
           .select('id, name, designation, employee_number').in('id', allOperatorIds)
-        if (employees) {
-          const eMap = Object.fromEntries(employees.map(e => [e.id, e]))
-          shifts.forEach(s => {
-            s._operator = s.operator_id ? (eMap[s.operator_id] || null) : null
-          })
-        }
+        if (employees) employees.forEach(e => { eById[e.id] = e })
       }
+
+      // Pass 2: resolve by operator_name for shifts without operator_id
+      const unlinkedNames = [...new Set(
+        shifts.filter(s => !s.operator_id && s.operator_name).map(s => s.operator_name)
+      )]
+      const eByName = {}
+      if (unlinkedNames.length > 0) {
+        const { data: empsByName } = await supabase.from('hr_employees')
+          .select('id, name, designation, employee_number')
+          .eq('company_id', companyId)
+          .in('name', unlinkedNames)
+        if (empsByName) empsByName.forEach(e => { eByName[e.name.toLowerCase()] = e })
+      }
+
+      shifts.forEach(s => {
+        if (s.operator_id && eById[s.operator_id]) {
+          s._operator = eById[s.operator_id]
+          // If operator_name was blank or shows employee number, correct it
+          if (!s.operator_name || s.operator_name === s._operator.employee_number) {
+            s.operator_name = s._operator.name
+          }
+        } else if (s.operator_name) {
+          s._operator = eByName[s.operator_name.toLowerCase()] || null
+        }
+      })
 
       return shifts
     },
@@ -2310,7 +2558,22 @@ function ShiftsTab({ companyId }) {
         )}
       </div>
 
-      {selectedShift && <ShiftDetailModal shift={selectedShift} onClose={() => setSelectedShift(null)} />}
+      {selectedShift && !editShift && (
+        <ShiftDetailModal
+          shift={selectedShift}
+          onClose={() => setSelectedShift(null)}
+          isAdmin={isAdmin}
+          onEdit={(s) => { setSelectedShift(null); setEditShift(s) }}
+        />
+      )}
+      {editShift && (
+        <EditShiftModal
+          shift={editShift}
+          companyId={companyId}
+          onClose={() => setEditShift(null)}
+          onSaved={() => setEditShift(null)}
+        />
+      )}
     </div>
   )
 }
