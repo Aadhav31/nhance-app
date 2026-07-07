@@ -605,7 +605,7 @@ function ExpensesTab({ companyId, session }) {
     queryKey: ['expenses', companyId],
     queryFn: async () => {
       const { data } = await supabase.from('account_transactions').select('*')
-        .eq('company_id', companyId).eq('type', 'expense').order('transaction_date', { ascending: false }).limit(200)
+        .eq('company_id', companyId).eq('type', 'expense').order('txn_date', { ascending: false }).limit(200)
       return data || []
     },
     enabled: !!companyId,
@@ -633,7 +633,7 @@ function ExpensesTab({ companyId, session }) {
       const { error } = await supabase.from('account_transactions').insert({
         company_id: companyId, type: 'expense',
         description: form.description.trim(), amount: parseFloat(form.amount),
-        transaction_date: form.expense_date, category: form.category,
+        txn_date: form.expense_date, category: form.category,
         payment_mode: form.payment_mode, reference_number: form.reference || null,
         vendor_id: form.vendor_id || null, notes: form.notes || null,
         created_by: session.user.id,
