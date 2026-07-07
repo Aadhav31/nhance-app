@@ -1325,6 +1325,213 @@ function InvoicesTab({ companyId, session }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Expense Detail Modal
+// ─────────────────────────────────────────────────────────────────────────────
+function ExpenseDetailModal({ exp, equipmentList, onClose, onEdit, onDelete }) {
+  const ci = EXPENSE_CATS.find(c => c.value === exp.category) || { icon: '📦', label: exp.category }
+  const isField = exp.source === 'field_expense'
+
+  const Row = ({ label, value }) => value ? (
+    <div className="flex justify-between items-start gap-4 py-2.5 border-b border-dark-700/60 last:border-0">
+      <span className="text-xs text-slate-500 shrink-0">{label}</span>
+      <span className="text-xs text-slate-200 text-right">{value}</span>
+    </div>
+  ) : null
+
+  return (
+    <Modal title="Expense Details" onClose={onClose}>
+      <div className="space-y-4">
+        {/* Header */}
+        <div className={`rounded-xl p-4 flex items-center gap-4 ${isField ? 'bg-blue-900/20 border border-blue-700/30' : 'bg-dark-700'}`}>
+          <div className="text-4xl">{ci.icon}</div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <p className="font-bold text-slate-100">{exp.description}</p>
+              {isField && (
+                <span className="text-[10px] font-bold bg-blue-900/40 border border-blue-700/50 text-blue-400 px-1.5 py-0.5 rounded-md">
+                  📱 Field Exp
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-slate-400 mt-0.5">{ci.label} · {fmtDate(exp.expense_date)}</p>
+          </div>
+          <div className="text-right shrink-0">
+            <p className="text-2xl font-mono font-bold text-red-400">{fmt(exp.amount)}</p>
+            {exp.gst_amount > 0 && <p className="text-xs text-slate-500">+{fmt(exp.gst_amount)} GST</p>}
+          </div>
+        </div>
+
+        {/* Details */}
+        <div className="bg-dark-700/50 rounded-xl px-4">
+          <Row label="Date"          value={fmtDate(exp.expense_date)} />
+          <Row label="Category"      value={`${ci.icon} ${ci.label}`} />
+          <Row label="Vendor / Payee" value={exp.vendor_name} />
+          <Row label="Payment Mode"  value={exp.payment_mode ? exp.payment_mode.charAt(0).toUpperCase() + exp.payment_mode.slice(1) : null} />
+          <Row label="Bill / Ref No" value={exp.bank_reference} />
+          <Row label="Equipment"     value={exp.equipment?.name ? `${exp.equipment.name}${exp.equipment.equipment_number ? ` · ${exp.equipment.equipment_number}` : ''}` : null} />
+          <Row label="Total Amount"  value={fmt(exp.total_amount || exp.amount)} />
+          {exp.gst_amount > 0 && <Row label="GST Amount" value={fmt(exp.gst_amount)} />}
+          <Row label="Notes"         value={exp.notes} />
+          <Row label="Source"        value={isField ? 'Recorded via Field Expenses / APK' : 'Manually entered'} />
+          {exp.created_at && <Row label="Created" value={(() => { try { return format(new Date(exp.created_at), 'dd MMM yyyy, hh:mm a') } catch { return exp.created_at } })()} />}
+        </div>
+
+        {isField && (
+          <div className="bg-blue-950/30 border border-blue-800/40 rounded-lg px-3 py-2 text-xs text-blue-400">
+            This expense was recorded via the Field Expenses module. To edit it, go to Field Expenses and update it there — changes will reflect here automatically.
+          </div>
+        )}
+
+        {/* Actions */}
+        <div className="flex gap-3 pt-1">
+          <button onClick={onClose} className="btn-ghost flex-1">Close</button>
+          {!isField && (
+            <>
+              <button onClick={onDelete}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-red-900/20 border border-red-800/40 text-red-400 hover:bg-red-900/40 text-sm font-semibold transition-colors">
+                <Trash2 className="w-4 h-4" /> Delete
+              </button>
+              <button onClick={onEdit}
+                className="btn-primary flex-1 flex items-center gap-1.5">
+                <Pencil className="w-4 h-4" /> Edit
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Edit Expense Modal
+// ─────────────────────────────────────────────────────────────────────────────
+function EditExpenseModal({ exp, companyId, equipmentList, onClose, onSaved }) {
+  const [saving, setSaving] = useState(false)
+  const [form, setForm] = useState({
+    expense_date:  exp.expense_date || today(),
+    category:      exp.category || 'fuel',
+    description:   exp.description || '',
+    vendor_name:   exp.vendor_name || '',
+    amount:        String(exp.amount || ''),
+    gst_amount:    String(exp.gst_amount || ''),
+    payment_mode:  exp.payment_mode || 'cash',
+    bank_reference: exp.bank_reference || '',
+    equipment_id:  exp.equipment_id || '',
+    notes:         exp.notes || '',
+  })
+  const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
+
+  const handleSave = async () => {
+    if (!form.description.trim()) return toast.error('Description required')
+    const amount = parseFloat(form.amount)
+    if (!amount || amount <= 0) return toast.error('Enter valid amount')
+    setSaving(true)
+    try {
+      const gst_amount = parseFloat(form.gst_amount) || 0
+      const total_amount = amount + gst_amount
+
+      // Update expenses record
+      const { error: ee } = await supabase.from('expenses').update({
+        expense_date:   form.expense_date,
+        category:       form.category,
+        description:    form.description.trim(),
+        vendor_name:    form.vendor_name.trim() || null,
+        amount,
+        gst_amount,
+        total_amount,
+        payment_mode:   form.payment_mode,
+        bank_reference: form.bank_reference.trim() || null,
+        equipment_id:   form.equipment_id || null,
+        notes:          form.notes.trim() || null,
+      }).eq('id', exp.id)
+      if (ee) throw ee
+
+      // Also update the linked account_transaction
+      await supabase.from('account_transactions').update({
+        txn_date:       form.expense_date,
+        description:    form.description.trim(),
+        amount,
+        gst_amount,
+        payment_mode:   form.payment_mode,
+        bank_reference: form.bank_reference.trim() || null,
+        equipment_id:   form.equipment_id || null,
+        notes:          form.notes.trim() || null,
+      }).eq('reference_type', 'expense').eq('reference_id', exp.id)
+
+      toast.success('Expense updated')
+      onSaved()
+    } catch (e) {
+      toast.error(e.message || 'Failed to update')
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <Modal title="Edit Expense" onClose={onClose}>
+      <div className="space-y-4">
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-xs text-slate-400 mb-1 block">Date</label>
+            <input type="date" className={inp()} value={form.expense_date} onChange={e => setF('expense_date', e.target.value)} />
+          </div>
+          <div>
+            <label className="text-xs text-slate-400 mb-1 block">Category</label>
+            <select className={inp()} value={form.category} onChange={e => setF('category', e.target.value)}>
+              {EXPENSE_CATS.map(c => <option key={c.value} value={c.value}>{c.icon} {c.label}</option>)}
+            </select>
+          </div>
+          <div className="col-span-2">
+            <label className="text-xs text-slate-400 mb-1 block">Description *</label>
+            <input className={inp()} value={form.description} onChange={e => setF('description', e.target.value)} />
+          </div>
+          <div>
+            <label className="text-xs text-slate-400 mb-1 block">Vendor / Supplier</label>
+            <input className={inp()} value={form.vendor_name} onChange={e => setF('vendor_name', e.target.value)} placeholder="Optional" />
+          </div>
+          <div>
+            <label className="text-xs text-slate-400 mb-1 block">Amount (₹) *</label>
+            <input type="number" className={inp()} value={form.amount} onChange={e => setF('amount', e.target.value)} min="0" step="0.01" />
+          </div>
+          <div>
+            <label className="text-xs text-slate-400 mb-1 block">GST Amount (₹)</label>
+            <input type="number" className={inp()} value={form.gst_amount} onChange={e => setF('gst_amount', e.target.value)} min="0" step="0.01" placeholder="0.00" />
+          </div>
+          <div>
+            <label className="text-xs text-slate-400 mb-1 block">Payment Mode</label>
+            <select className={inp()} value={form.payment_mode} onChange={e => setF('payment_mode', e.target.value)}>
+              {PAYMENT_MODES.map(m => <option key={m} value={m}>{m.charAt(0).toUpperCase() + m.slice(1)}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-xs text-slate-400 mb-1 block">Bill / Ref No</label>
+            <input className={inp()} value={form.bank_reference} onChange={e => setF('bank_reference', e.target.value)} placeholder="Optional" />
+          </div>
+          <div className="col-span-2">
+            <label className="text-xs text-slate-400 mb-1 block">Equipment (optional)</label>
+            <select className={inp()} value={form.equipment_id} onChange={e => setF('equipment_id', e.target.value)}>
+              <option value="">— No specific equipment —</option>
+              {(equipmentList || []).map(eq => (
+                <option key={eq.id} value={eq.id}>{eq.name}{eq.equipment_number ? ` (${eq.equipment_number})` : ''}</option>
+              ))}
+            </select>
+          </div>
+          <div className="col-span-2">
+            <label className="text-xs text-slate-400 mb-1 block">Notes</label>
+            <input className={inp()} value={form.notes} onChange={e => setF('notes', e.target.value)} placeholder="Optional" />
+          </div>
+        </div>
+        <div className="flex gap-3 pt-2">
+          <button onClick={onClose} className="btn-ghost flex-1">Cancel</button>
+          <button onClick={handleSave} disabled={saving} className="btn-primary flex-1">
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save Changes'}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Expenses Tab
 // ─────────────────────────────────────────────────────────────────────────────
 function ExpensesTab({ companyId, session, equipmentList }) {
@@ -1332,6 +1539,8 @@ function ExpensesTab({ companyId, session, equipmentList }) {
   const [catFilter, setCatFilter] = useState('all')
   const [month, setMonth] = useState(curMonth())
   const [showAdd, setShowAdd] = useState(false)
+  const [detailExp, setDetailExp] = useState(null)
+  const [editExp, setEditExp] = useState(null)
 
   const { data: expenses = [], isLoading } = useQuery({
     queryKey: ['expenses', companyId, month],
@@ -1409,7 +1618,9 @@ function ExpensesTab({ companyId, session, equipmentList }) {
             : filtered.map(exp => {
                 const ci = EXPENSE_CATS.find(c => c.value === exp.category) || { icon: '📦', label: exp.category }
                 return (
-                  <div key={exp.id} className={`bg-dark-800 rounded-xl border p-4 flex items-start gap-3 ${exp.source === 'field_expense' ? 'border-blue-700/40' : 'border-dark-700'}`}>
+                  <div key={exp.id}
+                    onClick={() => setDetailExp(exp)}
+                    className={`bg-dark-800 rounded-xl border p-4 flex items-start gap-3 cursor-pointer hover:border-primary-600/50 transition-colors ${exp.source === 'field_expense' ? 'border-blue-700/40 hover:border-blue-500/60' : 'border-dark-700'}`}>
                     <div className="text-2xl mt-0.5">{ci.icon}</div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-start justify-between gap-2">
@@ -1436,11 +1647,7 @@ function ExpensesTab({ companyId, session, equipmentList }) {
                         </div>
                       </div>
                     </div>
-                    <button onClick={() => handleDelete(exp)}
-                      className={`transition-colors mt-0.5 ${exp.source === 'field_expense' ? 'text-blue-700 hover:text-blue-400' : 'text-slate-600 hover:text-red-400'}`}
-                      title={exp.source === 'field_expense' ? 'Recorded from Field Expenses — delete from there' : 'Delete expense'}>
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                    <ChevronRight className="w-4 h-4 text-slate-600 mt-1 shrink-0" />
                   </div>
                 )
               })
@@ -1450,6 +1657,26 @@ function ExpensesTab({ companyId, session, equipmentList }) {
       {showAdd && (
         <AddExpenseModal companyId={companyId} session={session} equipmentList={equipmentList}
           onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); refresh() }} />
+      )}
+
+      {detailExp && !editExp && (
+        <ExpenseDetailModal
+          exp={detailExp}
+          equipmentList={equipmentList}
+          onClose={() => setDetailExp(null)}
+          onEdit={() => setEditExp(detailExp)}
+          onDelete={() => { handleDelete(detailExp); setDetailExp(null) }}
+        />
+      )}
+
+      {editExp && (
+        <EditExpenseModal
+          exp={editExp}
+          companyId={companyId}
+          equipmentList={equipmentList}
+          onClose={() => setEditExp(null)}
+          onSaved={() => { setEditExp(null); setDetailExp(null); refresh() }}
+        />
       )}
     </div>
   )
