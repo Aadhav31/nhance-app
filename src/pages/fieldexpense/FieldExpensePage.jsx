@@ -15,7 +15,7 @@ import {
   ArrowLeft, Plus, AlertCircle, IndianRupee, Smartphone,
   Banknote, CreditCard, FileText, Search, Filter, Download,
   Package, Wrench, Droplets, Users, Home, Utensils, Fuel,
-  Building2, Zap, MoreHorizontal, Eye, Trash2, Clock,
+  Building2, Zap, MoreHorizontal, Eye, Trash2, Clock, Car, HeartPulse,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format } from 'date-fns'
@@ -28,17 +28,16 @@ const inp = (x = '') =>
   `w-full bg-dark-700 border border-dark-600 rounded-xl px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-primary-500 placeholder-slate-600 ${x}`
 
 // ── Expense Categories ────────────────────────────────────────────────────────
+// Field Expenses = daily site operational expenses only
+// Purchase (spares, equipment, maintenance) → handled in Purchase module
+// Salary, EMI, financial → handled in Accounts module
 const CATEGORIES = [
-  { value: 'spares_purchase',  label: 'Spares / Parts',   icon: Wrench,    color: 'text-blue-400',    bg: 'bg-blue-500/10 border-blue-600/40',    inv: true },
-  { value: 'fuel',             label: 'Fuel',             icon: Fuel,      color: 'text-amber-400',   bg: 'bg-amber-500/10 border-amber-600/40',  inv: false },
-  { value: 'maintenance',      label: 'Maintenance',      icon: Wrench,    color: 'text-orange-400',  bg: 'bg-orange-500/10 border-orange-600/40',inv: false },
-  { value: 'salary_payment',   label: 'Salary Payment',   icon: Users,     color: 'text-emerald-400', bg: 'bg-emerald-500/10 border-emerald-600/40', inv: false },
-  { value: 'invoice_payment',  label: 'Invoice Payment',  icon: Receipt,   color: 'text-violet-400',  bg: 'bg-violet-500/10 border-violet-600/40',inv: false },
-  { value: 'accommodation',    label: 'Accommodation',    icon: Home,      color: 'text-cyan-400',    bg: 'bg-cyan-500/10 border-cyan-600/40',    inv: false },
-  { value: 'food',             label: 'Food / Catering',  icon: Utensils,  color: 'text-pink-400',    bg: 'bg-pink-500/10 border-pink-600/40',    inv: false },
-  { value: 'site_allowance',   label: 'Site Allowance',   icon: Building2, color: 'text-teal-400',    bg: 'bg-teal-500/10 border-teal-600/40',    inv: false },
-  { value: 'lubricants',       label: 'Lubricants / Oil', icon: Droplets,  color: 'text-sky-400',     bg: 'bg-sky-500/10 border-sky-600/40',      inv: true },
-  { value: 'other',            label: 'Other',            icon: MoreHorizontal, color: 'text-slate-400', bg: 'bg-slate-500/10 border-slate-600/40', inv: false },
+  { value: 'fuel',           label: 'Fuel',             icon: Fuel,        color: 'text-amber-400',   bg: 'bg-amber-500/10 border-amber-600/40'  },
+  { value: 'food',           label: 'Food / Catering',  icon: Utensils,    color: 'text-pink-400',    bg: 'bg-pink-500/10 border-pink-600/40'    },
+  { value: 'travel',         label: 'Travel',           icon: Car,         color: 'text-blue-400',    bg: 'bg-blue-500/10 border-blue-600/40'    },
+  { value: 'accommodation',  label: 'Accommodation',    icon: Home,        color: 'text-cyan-400',    bg: 'bg-cyan-500/10 border-cyan-600/40'    },
+  { value: 'medical',        label: 'Medical / Emergency', icon: HeartPulse, color: 'text-red-400',  bg: 'bg-red-500/10 border-red-600/40'      },
+  { value: 'site_allowance', label: 'Site Allowance',   icon: Building2,   color: 'text-teal-400',    bg: 'bg-teal-500/10 border-teal-600/40'   },
 ]
 const CAT_MAP = Object.fromEntries(CATEGORIES.map(c => [c.value, c]))
 

@@ -14,17 +14,17 @@ import { format, startOfMonth, endOfMonth, parseISO } from 'date-fns'
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
+// Accounts Expenses = financial / overhead expenses only.
+// Field operational expenses → Field Expenses module (APK/web, synced here with 📱 badge)
+// Purchase of materials / equipment / maintenance → Purchase module
 const EXPENSE_CATS = [
-  { value: 'fuel',      label: 'Fuel & HSD',           icon: '⛽' },
-  { value: 'repair',    label: 'Repair & Maintenance',  icon: '🔧' },
-  { value: 'tyre',      label: 'Tyres & Spares',        icon: '🔩' },
-  { value: 'wages',     label: 'Operator Wages',        icon: '👷' },
-  { value: 'insurance', label: 'Insurance',             icon: '🛡'  },
-  { value: 'admin',     label: 'Admin & Office',        icon: '📋' },
-  { value: 'vehicle',   label: 'Vehicle Running',       icon: '🚗' },
-  { value: 'salary',    label: 'Staff Salary',          icon: '💼' },
-  { value: 'bank',      label: 'Bank Charges',          icon: '🏦' },
-  { value: 'other',     label: 'Miscellaneous',         icon: '📦' },
+  { value: 'salary',   label: 'Salary & Wages',         icon: '💼' },
+  { value: 'emi',      label: 'EMI Payment',            icon: '🏦' },
+  { value: 'interest', label: 'Interest / Finance',     icon: '📈' },
+  { value: 'rent',     label: 'Rent',                   icon: '🏢' },
+  { value: 'insurance',label: 'Insurance',              icon: '🛡'  },
+  { value: 'admin',    label: 'Admin & Office',         icon: '📋' },
+  { value: 'misc',     label: 'Miscellaneous',          icon: '📦' },
 ]
 
 const PAYMENT_MODES = ['cash', 'bank', 'upi', 'cheque']
@@ -722,7 +722,7 @@ function RecordPaymentModal({ invoice, companyId, session, onClose, onSaved }) {
 function AddExpenseModal({ companyId, session, equipmentList, onClose, onSaved }) {
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState({
-    expense_date: today(), category: 'fuel', description: '',
+    expense_date: today(), category: 'salary', description: '',
     vendor_name: '', amount: '', gst_amount: '',
     vendor_gstin: '', payment_mode: 'cash', bank_reference: '',
     equipment_id: '', notes: '',

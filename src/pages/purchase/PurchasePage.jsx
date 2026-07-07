@@ -598,7 +598,7 @@ function ExpensesTab({ companyId, session }) {
   const qc = useQueryClient()
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [form, setForm] = useState({ description: '', amount: '', expense_date: todayStr(), category: 'operational', vendor_id: '', payment_mode: 'cash', reference: '', notes: '' })
+  const [form, setForm] = useState({ description: '', amount: '', expense_date: todayStr(), category: 'spares', vendor_id: '', payment_mode: 'cash', reference: '', notes: '' })
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
 
   const { data: expenses = [], isLoading } = useQuery({
@@ -620,7 +620,14 @@ function ExpensesTab({ companyId, session }) {
     enabled: !!companyId && showCreate,
   })
 
-  const CATEGORIES = ['fuel','lubricants','tyres','spare_parts','maintenance','labour','rental','transport','site','admin','misc','operational']
+  const CATEGORIES = [
+    { value: 'equipment_purchase', label: 'Equipment Purchase' },
+    { value: 'spares',             label: 'Spares & Parts' },
+    { value: 'lubricants',         label: 'Lubricants & Oil' },
+    { value: 'maintenance_service',label: 'Maintenance / Service' },
+    { value: 'invoice_payment',    label: 'Invoice Payment' },
+    { value: 'other',              label: 'Other' },
+  ]
   const MODES = ['cash','bank','upi','cheque','neft','rtgs']
 
   const totalExpenses = expenses.reduce((s, e) => s + Number(e.amount || 0), 0)
@@ -679,7 +686,7 @@ function ExpensesTab({ companyId, session }) {
             <Field label="Date"><input type="date" className={inp()} value={form.expense_date} onChange={e => setF('expense_date', e.target.value)} /></Field>
             <Field label="Category">
               <select className={inp()} value={form.category} onChange={e => setF('category', e.target.value)}>
-                {CATEGORIES.map(c => <option key={c} value={c}>{c.replace(/_/g,' ')}</option>)}
+                {CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
               </select>
             </Field>
             <Field label="Payment Mode">
