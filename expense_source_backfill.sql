@@ -25,56 +25,10 @@ WHERE source IS NULL
   AND (field_expense_id IS NULL)
   AND category IN ('spares','equipment_purchase','lubricants','maintenance_service','invoice_payment','other','operational');
 
--- Step 4: Backfill purchase account_transactions into expenses table
--- Old purchase entries only exist in account_transactions — copy them to expenses
--- so the Purchase module can display them
-DO $$
-DECLARE
-  r   RECORD;
-  eid uuid;
-BEGIN
-  FOR r IN
-    SELECT at.*
-    FROM account_transactions at
-    WHERE at.type = 'expense'
-      AND (at.reference_type IS NULL OR at.reference_type != 'expense')
-      AND at.category IN ('spares','equipment_purchase','lubricants',
-                          'maintenance_service','invoice_payment','other','operational')
-  LOOP
-    -- Check not already backfilled
-    IF NOT EXISTS (
-      SELECT 1 FROM expenses
-      WHERE company_id   = r.company_id
-        AND expense_date = r.txn_date
-        AND description  = r.description
-        AND amount       = r.amount
-        AND source       = 'purchase'
-    ) THEN
-      INSERT INTO expenses (
-        company_id, expense_date, category, description,
-        amount, total_amount, gst_amount,
-        payment_mode, bank_reference,
-        source, created_by
-      ) VALUES (
-        r.company_id, r.txn_date,
-        COALESCE(r.category, 'other'),
-        r.description,
-        r.amount, r.amount,
-        COALESCE(r.gst_amount, 0),
-        r.payment_mode,
-        r.bank_reference,
-        'purchase',
-        r.created_by
-      ) RETURNING id INTO eid;
-
-      -- Link account_transaction back to the new expenses row
-      UPDATE account_transactions
-      SET reference_type = 'expense', reference_id = eid
-      WHERE id = r.id;
-    END IF;
-  END LOOP;
-END;
-$$;
+-- Step 4: (skipped)
+-- account_transactions has no category column so old purchase-only entries
+-- cannot be identified and backfilled. They still count in P&L totals.
+-- New purchase entries going forward are written to both tables.
 
 -- Confirmation
 SELECT
