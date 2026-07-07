@@ -13,6 +13,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import toast from 'react-hot-toast'
+import FieldExpensePage from '../fieldexpense/FieldExpensePage'
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
@@ -1407,6 +1408,7 @@ const TABS = [
   { id:'shift',      icon:'⚙️', label:'Shift'      },
   { id:'attendance', icon:'📅', label:'Attendance'  },
   { id:'hr',         icon:'👤', label:'HR & Pay'    },
+  { id:'expenses',   icon:'🧾', label:'Expenses'    },
 ]
 
 export default function OperatorPortal() {
@@ -1437,6 +1439,7 @@ export default function OperatorPortal() {
       case 'shift':      return <ShiftModule      {...props} />
       case 'attendance': return <AttendanceModule {...props} />
       case 'hr':         return <HRModule         {...props} />
+      case 'expenses':   return <FieldExpensePage embedded={true} />
       default:           return null
     }
   }
@@ -1463,19 +1466,29 @@ export default function OperatorPortal() {
       )}
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto">
-        <div className="p-4 pb-28">
-          <div className="flex items-center gap-2 mb-5">
-            {TABS.map(t => (
-              <button key={t.id} onClick={() => setTab(t.id)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${tab===t.id ? 'bg-primary-600 text-white' : 'bg-dark-800 text-slate-400 border border-dark-600'}`}>
-                {t.icon} {t.label}
-              </button>
-            ))}
+      {tab === 'expenses'
+        ? (
+          /* Expenses: full-height, no extra padding — FieldExpensePage handles its own layout */
+          <div className="flex-1 overflow-hidden flex flex-col pb-16">
+            <FieldExpensePage embedded={true} />
           </div>
-          {content()}
-        </div>
-      </div>
+        )
+        : (
+          <div className="flex-1 overflow-y-auto">
+            <div className="p-4 pb-28">
+              <div className="flex items-center gap-2 mb-5">
+                {TABS.map(t => (
+                  <button key={t.id} onClick={() => setTab(t.id)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${tab===t.id ? 'bg-primary-600 text-white' : 'bg-dark-800 text-slate-400 border border-dark-600'}`}>
+                    {t.icon} {t.label}
+                  </button>
+                ))}
+              </div>
+              {content()}
+            </div>
+          </div>
+        )
+      }
 
       {/* Bottom nav */}
       <div className="shrink-0 fixed bottom-0 left-0 right-0 max-w-lg mx-auto bg-dark-800/95 backdrop-blur border-t border-dark-700">

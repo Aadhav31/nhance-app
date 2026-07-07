@@ -113,6 +113,11 @@ export const PERMISSIONS = {
   'projects.view':     [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN],
   'projects.create':   [ROLES.MANAGER, ROLES.ADMIN],
 
+  // Field Expenses
+  'fieldexpense.submit': [ROLES.OPERATOR, ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN],
+  'fieldexpense.view':   [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN],
+  'fieldexpense.delete': [ROLES.MANAGER, ROLES.ADMIN],
+
   // Accounts
   'invoice.view':      [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN],
   'invoice.create':    [ROLES.ACCOUNTS, ROLES.ADMIN],
@@ -153,7 +158,9 @@ export const NAV_ITEMS = [
         roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
       { key: 'maintenance',label: 'Maintenance',       icon: 'Wrench',        module: MODULES.MAINTENANCE,
         roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ADMIN] },
-      { key: 'inventory',  label: 'Inventory',         icon: 'Package',       module: MODULES.INVENTORY,
+      { key: 'inventory',    label: 'Inventory',         icon: 'Package',       module: MODULES.INVENTORY,
+        roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
+      { key: 'fieldexpense', label: 'Field Expenses',   icon: 'Receipt',       module: MODULES.OPERATIONS,
         roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
     ],
   },
