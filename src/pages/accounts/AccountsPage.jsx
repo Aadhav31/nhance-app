@@ -814,7 +814,7 @@ function AddExpenseModal({ companyId, session, equipmentList, onClose, onSaved }
             <select className={inp()} value={form.equipment_id} onChange={e => setF('equipment_id', e.target.value)}>
               <option value="">— No specific equipment —</option>
               {(equipmentList || []).map(eq => (
-                <option key={eq.id} value={eq.id}>{eq.name}{eq.reg_number ? ` (${eq.reg_number})` : ''}</option>
+                <option key={eq.id} value={eq.id}>{eq.name}{eq.equipment_number ? ` (${eq.equipment_number})` : ''}</option>
               ))}
             </select>
           </div>
@@ -1338,7 +1338,7 @@ function ExpensesTab({ companyId, session, equipmentList }) {
     queryFn: async () => {
       const { from, to } = monthRange(month)
       const { data, error } = await supabase.from('expenses')
-        .select('*, equipment:equipment_id(name, reg_number)')
+        .select('*, equipment:equipment_id(name, equipment_number)')
         .eq('company_id', companyId).gte('expense_date', from).lte('expense_date', to)
         .order('expense_date', { ascending: false })
       if (error) throw error; return data
@@ -1569,7 +1569,7 @@ export default function AccountsPage() {
   const { data: equipmentList = [] } = useQuery({
     queryKey: ['equipment_list_accts', companyId],
     queryFn: async () => {
-      const { data, error } = await supabase.from('equipment').select('id, name, reg_number')
+      const { data, error } = await supabase.from('equipment').select('id, name, equipment_number')
         .eq('company_id', companyId).eq('status', 'active').order('name')
       if (error) throw error; return data
     },
