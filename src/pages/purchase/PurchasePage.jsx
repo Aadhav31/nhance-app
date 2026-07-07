@@ -602,10 +602,12 @@ function ExpensesTab({ companyId, session }) {
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
 
   const { data: expenses = [], isLoading } = useQuery({
-    queryKey: ['expenses', companyId],
+    queryKey: ['purchase_expenses', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('account_transactions').select('*')
-        .eq('company_id', companyId).eq('type', 'expense').order('txn_date', { ascending: false }).limit(200)
+      const { data } = await supabase.from('expenses').select('*')
+        .eq('company_id', companyId)
+        .eq('source', 'purchase')
+        .order('expense_date', { ascending: false }).limit(200)
       return data || []
     },
     enabled: !!companyId,
@@ -637,19 +639,45 @@ function ExpensesTab({ companyId, session }) {
     if (!form.amount || parseFloat(form.amount) <= 0) return toast.error('Enter valid amount')
     setSaving(true)
     try {
-      const { error } = await supabase.from('account_transactions').insert({
-        company_id: companyId, type: 'expense',
-        description: form.description.trim(), amount: parseFloat(form.amount),
-        txn_date: form.expense_date, category: form.category,
-        payment_mode: form.payment_mode, reference_number: form.reference || null,
-        vendor_id: form.vendor_id || null, notes: form.notes || null,
-        created_by: session.user.id,
+      const amt = parseFloat(form.amount)
+      // 1. Write to expenses table (source of truth for purchase ledger)
+      const { data: exp, error: ee } = await supabase.from('expenses').insert({
+        company_id:    companyId,
+        expense_date:  form.expense_date,
+        category:      form.category,
+        description:   form.description.trim(),
+        amount:        amt,
+        total_amount:  amt,
+        gst_amount:    0,
+        payment_mode:  form.payment_mode,
+        bank_reference: form.reference || null,
+        vendor_name:   null,
+        source:        'purchase',
+        created_by:    session.user.id,
+      }).select('id').single()
+      if (ee) throw ee
+
+      // 2. Write to account_transactions for P&L / Overview
+      const { error: te } = await supabase.from('account_transactions').insert({
+        company_id:     companyId,
+        type:           'expense',
+        description:    form.description.trim(),
+        amount:         amt,
+        gst_amount:     0,
+        txn_date:       form.expense_date,
+        payment_mode:   form.payment_mode,
+        bank_reference: form.reference || null,
+        reference_type: 'expense',
+        reference_id:   exp.id,
+        notes:          form.notes || null,
+        created_by:     session.user.id,
       })
-      if (error) throw error
+      if (te) throw te
+
       toast.success('Expense recorded')
       setShowCreate(false)
-      setForm({ description: '', amount: '', expense_date: todayStr(), category: 'operational', vendor_id: '', payment_mode: 'cash', reference: '', notes: '' })
-      qc.invalidateQueries(['expenses', companyId])
+      setForm({ description: '', amount: '', expense_date: todayStr(), category: 'spares', vendor_id: '', payment_mode: 'cash', reference: '', notes: '' })
+      qc.invalidateQueries(['purchase_expenses', companyId])
     } catch (e) { toast.error(e.message) } finally { setSaving(false) }
   }
 
@@ -668,7 +696,7 @@ function ExpensesTab({ companyId, session }) {
               <div>
                 <p className="font-semibold text-slate-100 text-sm">{e.description}</p>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  {fmtDate(e.transaction_date)} · <span className="capitalize">{e.category?.replace(/_/g,' ')}</span>
+                  {fmtDate(e.expense_date)} · <span className="capitalize">{e.category?.replace(/_/g,' ')}</span>
                   {e.payment_mode ? ` · ${e.payment_mode.toUpperCase()}` : ''}
                 </p>
               </div>

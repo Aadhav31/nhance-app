@@ -740,14 +740,17 @@ function AddExpenseModal({ companyId, session, equipmentList, onClose, onSaved }
         company_id: companyId, expense_date: form.expense_date,
         category: form.category, description: form.description.trim(),
         vendor_name: form.vendor_name.trim() || null,
-        amount, gst_amount, vendor_gstin: form.vendor_gstin.trim() || null,
+        amount, gst_amount, total_amount: amount + gst_amount,
+        vendor_gstin: form.vendor_gstin.trim() || null,
         payment_mode: form.payment_mode,
         bank_reference: form.bank_reference.trim() || null,
-        equipment_id: form.equipment_id || null, created_by: session.user.id,
+        equipment_id: form.equipment_id || null,
+        source: 'manual',
+        created_by: session.user.id,
       }).select().single()
       if (ee) throw ee
 
-      const { data: txn, error: te } = await supabase.from('account_transactions').insert({
+      const { error: te } = await supabase.from('account_transactions').insert({
         company_id: companyId, txn_date: form.expense_date, type: 'expense',
         description: form.description.trim(), amount, gst_amount,
         payment_mode: form.payment_mode,
@@ -755,10 +758,9 @@ function AddExpenseModal({ companyId, session, equipmentList, onClose, onSaved }
         reference_type: 'expense', reference_id: exp.id,
         equipment_id: form.equipment_id || null,
         notes: form.notes.trim() || null, created_by: session.user.id,
-      }).select().single()
+      })
       if (te) throw te
 
-      await supabase.from('expenses').update({ transaction_id: txn.id }).eq('id', exp.id)
       toast.success('Expense recorded')
       onSaved()
     } catch (e) { toast.error(e.message || 'Failed to save expense')
@@ -889,6 +891,7 @@ function DashboardTab({ companyId, onNavigate }) {
       const { data, error } = await supabase.from('expenses')
         .select('category, amount').eq('company_id', companyId)
         .gte('expense_date', thisMonth.from).lte('expense_date', thisMonth.to)
+        .in('category', ['salary','emi','interest','rent','insurance','admin','misc'])
       if (error) throw error; return data
     },
     enabled: !!companyId,
@@ -1548,7 +1551,9 @@ function ExpensesTab({ companyId, session, equipmentList }) {
       const { from, to } = monthRange(month)
       const { data, error } = await supabase.from('expenses')
         .select('*, equipment:equipment_id(name, equipment_number)')
-        .eq('company_id', companyId).gte('expense_date', from).lte('expense_date', to)
+        .eq('company_id', companyId)
+        .gte('expense_date', from).lte('expense_date', to)
+        .in('category', ['salary','emi','interest','rent','insurance','admin','misc'])
         .order('expense_date', { ascending: false })
       if (error) throw error; return data
     },
