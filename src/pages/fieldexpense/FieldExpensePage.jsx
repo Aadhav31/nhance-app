@@ -317,7 +317,7 @@ function ExpenseForm({ companyId, userId, userRole, userName, onSuccess, onBack 
         company_id:      companyId,
         expense_date:    form.expense_date,
         equipment_id:    form.equipment_id || null,
-        equipment_name:  selEq?.name || null,
+        equipment_name:  selEq?.equipment_name || null,
         project_id:      form.project_id || null,
         project_name:    selPrj?.project_name || null,
         category:        form.category,
@@ -616,7 +616,9 @@ function EditFieldExpenseModal({ exp, companyId, onClose, onSaved }) {
     equipment_id:    exp.equipment_id || '',
     project_id:      exp.project_id || '',
     category:        exp.category || '',
+    payee_type:      exp.payee_type || 'vendor',
     payee_name:      exp.payee_name || '',
+    payee_id:        exp.payee_id || '',
     bill_number:     exp.bill_number || '',
     description:     exp.description || '',
     amount:          exp.amount ? String(exp.amount) : '',
@@ -641,6 +643,14 @@ function EditFieldExpenseModal({ exp, companyId, onClose, onSaved }) {
     },
     enabled: !!companyId,
   })
+  const { data: employees = [] } = useQuery({
+    queryKey: ['fe_employees', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('hr_employees').select('id, name, employee_number').eq('company_id', companyId).eq('is_active', true).order('name')
+      return data || []
+    },
+    enabled: !!companyId && form.payee_type === 'operator',
+  })
 
   const handleSave = async () => {
     if (!form.category)           return toast.error('Select a category')
@@ -659,7 +669,9 @@ function EditFieldExpenseModal({ exp, companyId, onClose, onSaved }) {
         project_id:      form.project_id || null,
         project_name:    selPrj?.project_name || null,
         category:        form.category,
+        payee_type:      form.payee_type,
         payee_name:      form.payee_name.trim(),
+        payee_id:        form.payee_id || null,
         bill_number:     form.bill_number || null,
         description:     form.description || null,
         amount:          parseFloat(form.amount),
@@ -768,10 +780,43 @@ function EditFieldExpenseModal({ exp, companyId, onClose, onSaved }) {
             </div>
           </div>
 
-          {/* Payee */}
+          {/* Payee type toggle */}
           <div>
-            <label className="text-xs text-slate-400 mb-1 block">Payee Name</label>
-            <input className={inp()} value={form.payee_name} onChange={e => set('payee_name', e.target.value)} />
+            <label className="text-xs text-slate-400 mb-1.5 block">Payee Type</label>
+            <div className="flex rounded-xl border border-dark-600 overflow-hidden text-xs font-medium">
+              {[{ v: 'operator', l: 'Operator' }, { v: 'vendor', l: 'Vendor' }, { v: 'direct', l: 'Direct' }].map(t => (
+                <button key={t.v} type="button"
+                  onClick={() => { set('payee_type', t.v); set('payee_name', ''); set('payee_id', '') }}
+                  className={`flex-1 py-2.5 transition-colors ${form.payee_type === t.v ? 'bg-primary-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}>
+                  {t.l}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Payee name / employee picker */}
+          <div>
+            <label className="text-xs text-slate-400 mb-1 block">
+              {form.payee_type === 'operator' ? 'Select Operator *' : 'Payee Name *'}
+            </label>
+            {form.payee_type === 'operator' ? (
+              <select className={inp()} value={form.payee_id}
+                onChange={e => {
+                  const emp = employees.find(x => x.id === e.target.value)
+                  set('payee_id', e.target.value)
+                  set('payee_name', emp?.name || '')
+                }}>
+                <option value="">— Select operator —</option>
+                {employees.map(emp => (
+                  <option key={emp.id} value={emp.id}>{emp.name} ({emp.employee_number})</option>
+                ))}
+              </select>
+            ) : (
+              <input className={inp()}
+                placeholder={form.payee_type === 'vendor' ? 'Vendor name *' : 'Payee name *'}
+                value={form.payee_name}
+                onChange={e => set('payee_name', e.target.value)} />
+            )}
           </div>
 
           {/* Bill + Description */}
