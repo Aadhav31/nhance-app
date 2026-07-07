@@ -314,7 +314,7 @@ function ExpenseForm({ companyId, userId, userRole, userName, onSuccess, onBack 
         company_id:      companyId,
         expense_date:    form.expense_date,
         equipment_id:    form.equipment_id || null,
-        equipment_name:  selEq?.equipment_name || null,
+        equipment_name:  selEq?.name || null,
         project_id:      form.project_id || null,
         project_name:    selPrj?.project_name || null,
         category:        form.category,
@@ -345,14 +345,29 @@ function ExpenseForm({ companyId, userId, userRole, userName, onSuccess, onBack 
         await createInventoryEntry(expense.id, form.amount)
       }
 
+      // Fetch the payment voucher auto-created by the DB trigger
+      let voucher = null
+      if (expense?.id) {
+        const { data: v } = await supabase
+          .from('payment_vouchers')
+          .select('voucher_number, amount, payment_mode, payee_name')
+          .eq('expense_id', expense.id)
+          .single()
+        voucher = v
+      }
+
       qc.invalidateQueries({ queryKey: ['field_expenses'] })
       qc.invalidateQueries({ queryKey: ['inv_items'] })
       qc.invalidateQueries({ queryKey: ['inv_stock'] })
 
-      toast.success('Expense recorded!')
+      if (voucher?.voucher_number) {
+        toast.success(`Expense recorded · Voucher ${voucher.voucher_number}`, { duration: 5000 })
+      } else {
+        toast.success('Expense recorded!')
+      }
       setForm(INIT)
       setBillPhoto(null)
-      onSuccess?.()
+      onSuccess?.(voucher)
     } catch (err) {
       console.error(err)
       toast.error('Failed to save: ' + (err.message || 'Unknown error'))

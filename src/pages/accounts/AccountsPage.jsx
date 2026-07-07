@@ -1360,9 +1360,16 @@ function ExpensesTab({ companyId, session, equipmentList }) {
     qc.invalidateQueries({ queryKey: ['acct_exp_dash'] })
   }
 
-  const handleDelete = async (id) => {
+  const handleDelete = async (exp) => {
+    if (exp.source === 'field_expense') {
+      toast('This expense was recorded from the Field Expenses module.\nTo delete it, go to Field Expenses → find the entry → delete it there.\nThis keeps your accounting and field records in sync.', {
+        duration: 6000,
+        icon: '⚠️',
+      })
+      return
+    }
     if (!window.confirm('Delete this expense? This will also remove the ledger entry.')) return
-    await supabase.from('expenses').delete().eq('id', id)
+    await supabase.from('expenses').delete().eq('id', exp.id)
     toast.success('Deleted'); refresh()
   }
 
@@ -1402,12 +1409,19 @@ function ExpensesTab({ companyId, session, equipmentList }) {
             : filtered.map(exp => {
                 const ci = EXPENSE_CATS.find(c => c.value === exp.category) || { icon: '📦', label: exp.category }
                 return (
-                  <div key={exp.id} className="bg-dark-800 rounded-xl border border-dark-700 p-4 flex items-start gap-3">
+                  <div key={exp.id} className={`bg-dark-800 rounded-xl border p-4 flex items-start gap-3 ${exp.source === 'field_expense' ? 'border-blue-700/40' : 'border-dark-700'}`}>
                     <div className="text-2xl mt-0.5">{ci.icon}</div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
-                          <p className="text-sm font-semibold text-slate-200">{exp.description}</p>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <p className="text-sm font-semibold text-slate-200">{exp.description}</p>
+                            {exp.source === 'field_expense' && (
+                              <span className="text-[10px] font-bold bg-blue-900/40 border border-blue-700/50 text-blue-400 px-1.5 py-0.5 rounded-md whitespace-nowrap">
+                                📱 Field Exp
+                              </span>
+                            )}
+                          </div>
                           <p className="text-xs text-slate-500 mt-0.5">
                             {fmtDate(exp.expense_date)}
                             {exp.vendor_name && ` · ${exp.vendor_name}`}
@@ -1422,7 +1436,9 @@ function ExpensesTab({ companyId, session, equipmentList }) {
                         </div>
                       </div>
                     </div>
-                    <button onClick={() => handleDelete(exp.id)} className="text-slate-600 hover:text-red-400 transition-colors mt-0.5">
+                    <button onClick={() => handleDelete(exp)}
+                      className={`transition-colors mt-0.5 ${exp.source === 'field_expense' ? 'text-blue-700 hover:text-blue-400' : 'text-slate-600 hover:text-red-400'}`}
+                      title={exp.source === 'field_expense' ? 'Recorded from Field Expenses — delete from there' : 'Delete expense'}>
                       <Trash2 className="w-4 h-4" />
                     </button>
                   </div>
