@@ -201,7 +201,7 @@ function ExpenseForm({ companyId, userId, userRole, userName, onSuccess, onBack 
   const { data: employees = [] } = useQuery({
     queryKey: ['fe_employees', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('hr_employees').select('id, name, employee_number').eq('company_id', companyId).neq('is_active', false).order('name')
+      const { data } = await supabase.from('hr_employees').select('id, name, employee_number').eq('company_id', companyId).order('name')
       return data || []
     },
     enabled: !!companyId && form.payee_type === 'operator',
@@ -646,7 +646,7 @@ function EditFieldExpenseModal({ exp, companyId, onClose, onSaved }) {
   const { data: employees = [] } = useQuery({
     queryKey: ['fe_employees', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('hr_employees').select('id, name, employee_number').eq('company_id', companyId).neq('is_active', false).order('name')
+      const { data } = await supabase.from('hr_employees').select('id, name, employee_number').eq('company_id', companyId).order('name')
       return data || []
     },
     enabled: !!companyId && form.payee_type === 'operator',
