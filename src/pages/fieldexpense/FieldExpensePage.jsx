@@ -41,7 +41,8 @@ const CATEGORIES = [
   { value: 'accommodation',   label: 'Accommodation',         icon: Home,       color: 'text-cyan-400',   bg: 'bg-cyan-500/10 border-cyan-600/40'     },
   { value: 'medical',         label: 'Medical / Emergency',   icon: HeartPulse, color: 'text-red-400',    bg: 'bg-red-500/10 border-red-600/40'       },
   { value: 'site_allowance',  label: 'Site Allowance',        icon: Building2,  color: 'text-teal-400',   bg: 'bg-teal-500/10 border-teal-600/40'     },
-  { value: 'spares_purchase', label: 'Spares (Breakdown)',    icon: Wrench,     color: 'text-orange-400', bg: 'bg-orange-500/10 border-orange-600/40', inv: true },
+  { value: 'spares_purchase',      label: 'Spares (Breakdown)',     icon: Wrench,     color: 'text-orange-400', bg: 'bg-orange-500/10 border-orange-600/40', inv: true },
+  { value: 'repairs_maintenance',  label: 'Repairs & Maintenance',  icon: Wrench,     color: 'text-yellow-400', bg: 'bg-yellow-500/10 border-yellow-600/40'                  },
 ]
 const CAT_MAP = Object.fromEntries(CATEGORIES.map(c => [c.value, c]))
 
