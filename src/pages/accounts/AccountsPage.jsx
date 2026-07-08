@@ -135,7 +135,7 @@ function CreateInvoiceModal({ companyId, session, invoiceCount, onClose, onSaved
       // Generate UUID client-side so we never need to read it back (avoids RLS SELECT issues)
       const invoiceId = crypto.randomUUID()
 
-      const { error: invErr } = await supabase.from('client_invoices').insert({
+      const { data: newInv, error: invErr } = await supabase.from('client_invoices').insert({
         id: invoiceId,
         company_id: companyId, invoice_number: invNum,
         invoice_date: form.invoice_date, due_date: form.due_date || null,
@@ -151,11 +151,13 @@ function CreateInvoiceModal({ companyId, session, invoiceCount, onClose, onSaved
         total_amount: total, paid_amount: 0, balance_due: total,
         status, notes: form.notes.trim() || null, terms: form.terms.trim() || null,
         created_by: session.user.id,
-      })
+      }).select('id').single()
       if (invErr) throw invErr
+      // Guard: if RLS silently blocked the insert, data will be null
+      if (!newInv?.id) throw new Error('Invoice could not be saved — please check your account permissions.')
 
       const linePayload = lines.filter(l => l.description.trim()).map((l, i) => ({
-        invoice_id: invoiceId, company_id: companyId, description: l.description.trim(),
+        invoice_id: newInv.id, company_id: companyId, description: l.description.trim(),
         quantity: parseFloat(l.quantity) || 1, unit: l.unit,
         rate: parseFloat(l.rate) || 0, amount: l.amount, sort_order: i,
         equipment_id: l.equipment_id || null,
