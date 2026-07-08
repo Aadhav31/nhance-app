@@ -105,15 +105,15 @@ function CreateInvoiceModal({ companyId, session, invoiceCount, onClose, onSaved
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
 
   // Registered clients for auto-fill
-  const { data: clientList = [] } = useQuery({
+  const { data: clientList = [], error: clientFetchError } = useQuery({
     queryKey: ['clients_invoice_picker', companyId],
     queryFn: async () => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('clients')
-        .select('id, display_name, business_name, gstin, registered_address, city, state, pincode, payment_terms, is_active')
+        .select('id, display_name, business_name, gstin, registered_address, city, state, pincode, payment_terms')
         .eq('company_id', companyId)
-        .neq('is_active', false)
-        .order('display_name')
+        .order('business_name')   // business_name is always NOT NULL
+      if (error) throw error
       return data || []
     },
     enabled: !!companyId,
@@ -147,12 +147,13 @@ function CreateInvoiceModal({ companyId, session, invoiceCount, onClose, onSaved
   }
 
   const filteredClients = useMemo(() => {
-    if (!clientSearch.trim()) return clientList.slice(0, 8)
-    const q = clientSearch.toLowerCase()
-    return clientList.filter(c =>
-      (c.display_name || c.business_name || '').toLowerCase().includes(q) ||
-      (c.gstin || '').toLowerCase().includes(q)
-    ).slice(0, 8)
+    const q = clientSearch.trim().toLowerCase()
+    if (!q) return clientList.slice(0, 10)
+    return clientList.filter(c => {
+      const name = (c.display_name || c.business_name || '').toLowerCase()
+      const gstin = (c.gstin || '').toLowerCase()
+      return name.includes(q) || gstin.includes(q)
+    }).slice(0, 10)
   }, [clientList, clientSearch])
 
   // Equipment list for line item linking
@@ -253,9 +254,13 @@ function CreateInvoiceModal({ companyId, session, invoiceCount, onClose, onSaved
         {/* Client Picker — always visible */}
         <div>
           <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Select Registered Client</p>
-          {clientList.length === 0 ? (
-            <div className="bg-dark-700/50 border border-dark-600 rounded-xl px-4 py-3 text-xs text-slate-500">
-              No registered clients found. Add clients in the <span className="text-primary-400 font-semibold">Clients</span> module, then they'll appear here for quick selection.
+          {clientFetchError ? (
+            <div className="bg-red-500/10 border border-red-700/50 rounded-xl px-4 py-3 text-xs text-red-400">
+              Could not load clients: {clientFetchError.message}
+            </div>
+          ) : clientList.length === 0 ? (
+            <div className="bg-dark-700/50 border border-dark-600 rounded-xl px-4 py-3 text-xs text-slate-400">
+              No clients registered yet. Go to the <span className="text-primary-400 font-semibold">Clients</span> module to add your clients — they'll appear here for one-click auto-fill.
             </div>
           ) : (
             <>
