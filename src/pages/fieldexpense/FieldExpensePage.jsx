@@ -181,7 +181,7 @@ function ExpenseForm({ companyId, userId, userRole, userName, onSuccess, onBack 
   const { data: equipment = [] } = useQuery({
     queryKey: ['fe_equipment', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('equipment').select('id, equipment_name, equipment_number').eq('company_id', companyId).order('equipment_name')
+      const { data } = await supabase.from('equipment').select('id, name, equipment_number').eq('company_id', companyId).order('name')
       return data || []
     },
     enabled: !!companyId,
@@ -201,7 +201,7 @@ function ExpenseForm({ companyId, userId, userRole, userName, onSuccess, onBack 
   const { data: employees = [] } = useQuery({
     queryKey: ['fe_employees', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('hr_employees').select('id, name, employee_number').eq('company_id', companyId).eq('is_active', true).order('name')
+      const { data } = await supabase.from('hr_employees').select('id, name, employee_number').eq('company_id', companyId).neq('is_active', false).order('name')
       return data || []
     },
     enabled: !!companyId && form.payee_type === 'operator',
@@ -317,7 +317,7 @@ function ExpenseForm({ companyId, userId, userRole, userName, onSuccess, onBack 
         company_id:      companyId,
         expense_date:    form.expense_date,
         equipment_id:    form.equipment_id || null,
-        equipment_name:  selEq?.equipment_name || null,
+        equipment_name:  selEq?.name || null,
         project_id:      form.project_id || null,
         project_name:    selPrj?.project_name || null,
         category:        form.category,
@@ -395,7 +395,7 @@ function ExpenseForm({ companyId, userId, userRole, userName, onSuccess, onBack 
             <select className={inp()} value={form.equipment_id} onChange={e => set('equipment_id', e.target.value)}>
               <option value="">— Select equipment (optional) —</option>
               {equipment.map(eq => (
-                <option key={eq.id} value={eq.id}>{eq.equipment_name} {eq.equipment_number ? `(${eq.equipment_number})` : ''}</option>
+                <option key={eq.id} value={eq.id}>{eq.name} {eq.equipment_number ? `(${eq.equipment_number})` : ''}</option>
               ))}
             </select>
           </div>
@@ -630,7 +630,7 @@ function EditFieldExpenseModal({ exp, companyId, onClose, onSaved }) {
   const { data: equipment = [] } = useQuery({
     queryKey: ['fe_equipment', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('equipment').select('id, equipment_name, equipment_number').eq('company_id', companyId).order('equipment_name')
+      const { data } = await supabase.from('equipment').select('id, name, equipment_number').eq('company_id', companyId).order('name')
       return data || []
     },
     enabled: !!companyId,
@@ -646,7 +646,7 @@ function EditFieldExpenseModal({ exp, companyId, onClose, onSaved }) {
   const { data: employees = [] } = useQuery({
     queryKey: ['fe_employees', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('hr_employees').select('id, name, employee_number').eq('company_id', companyId).eq('is_active', true).order('name')
+      const { data } = await supabase.from('hr_employees').select('id, name, employee_number').eq('company_id', companyId).neq('is_active', false).order('name')
       return data || []
     },
     enabled: !!companyId && form.payee_type === 'operator',
@@ -665,7 +665,7 @@ function EditFieldExpenseModal({ exp, companyId, onClose, onSaved }) {
       const { error } = await supabase.from('field_expenses').update({
         expense_date:    form.expense_date,
         equipment_id:    form.equipment_id || null,
-        equipment_name:  selEq?.equipment_name || null,
+        equipment_name:  selEq?.name || null,
         project_id:      form.project_id || null,
         project_name:    selPrj?.project_name || null,
         category:        form.category,
@@ -746,7 +746,7 @@ function EditFieldExpenseModal({ exp, companyId, onClose, onSaved }) {
             <select className={inp()} value={form.equipment_id} onChange={e => set('equipment_id', e.target.value)}>
               <option value="">— None —</option>
               {equipment.map(eq => (
-                <option key={eq.id} value={eq.id}>{eq.equipment_name} {eq.equipment_number ? `(${eq.equipment_number})` : ''}</option>
+                <option key={eq.id} value={eq.id}>{eq.name} {eq.equipment_number ? `(${eq.equipment_number})` : ''}</option>
               ))}
             </select>
           </div>
