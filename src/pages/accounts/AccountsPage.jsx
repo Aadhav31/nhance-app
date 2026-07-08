@@ -1800,17 +1800,82 @@ const daySuffix = n => n === 1 || n === 21 || n === 31 ? 'st' : n === 2 || n ===
 const PAY_MODES_FE = ['cash', 'bank_transfer', 'upi', 'cheque', 'card']
 const PAY_LABELS_FE = { cash: 'Cash', bank_transfer: 'Bank Transfer', upi: 'UPI', cheque: 'Cheque', card: 'Card' }
 
+const RECURRENCE_TYPES = [
+  { value: 'monthly',     label: 'Monthly',     desc: 'Every month on a fixed day' },
+  { value: 'quarterly',   label: 'Quarterly',   desc: 'Every 3 months from start date' },
+  { value: 'half_yearly', label: 'Half-Yearly', desc: 'Every 6 months from start date' },
+  { value: 'yearly',      label: 'Yearly',      desc: 'Once a year on anniversary' },
+  { value: 'custom_days', label: 'Custom',      desc: 'Recurring every N days' },
+]
+const recurrenceLabel = (t) => {
+  if (!t) return 'Monthly'
+  if (t.recurrence_type === 'monthly' || !t.recurrence_type) return `Every month · day ${t.due_day}`
+  if (t.recurrence_type === 'quarterly')   return `Quarterly from ${t.start_date || '—'}`
+  if (t.recurrence_type === 'half_yearly') return `Half-yearly from ${t.start_date || '—'}`
+  if (t.recurrence_type === 'yearly')      return `Yearly on ${t.start_date || '—'}`
+  if (t.recurrence_type === 'custom_days') return `Every ${t.recurrence_days || '?'} days from ${t.start_date || '—'}`
+  return ''
+}
+
+// Given a template and a target month (year, month 1-12), returns the ISO due date
+// or null if no occurrence falls in that month
+function computeDueDate(template, year, month) {
+  const maxDay = new Date(year, month, 0).getDate()
+  const { recurrence_type, due_day, start_date, recurrence_days } = template
+
+  if (!recurrence_type || recurrence_type === 'monthly') {
+    const d = Math.min(due_day || 1, maxDay)
+    return `${year}-${String(month).padStart(2,'0')}-${String(d).padStart(2,'0')}`
+  }
+
+  if (!start_date) return null
+  const sd = new Date(start_date + 'T00:00:00')
+  const sdY = sd.getFullYear(), sdM = sd.getMonth() + 1, sdD = sd.getDate()
+  const monthsDiff = (year - sdY) * 12 + (month - sdM)
+  if (monthsDiff < 0) return null
+
+  if (recurrence_type === 'quarterly') {
+    if (monthsDiff % 3 !== 0) return null
+    return `${year}-${String(month).padStart(2,'0')}-${String(Math.min(sdD, maxDay)).padStart(2,'0')}`
+  }
+  if (recurrence_type === 'half_yearly') {
+    if (monthsDiff % 6 !== 0) return null
+    return `${year}-${String(month).padStart(2,'0')}-${String(Math.min(sdD, maxDay)).padStart(2,'0')}`
+  }
+  if (recurrence_type === 'yearly') {
+    if (sdM !== month) return null
+    return `${year}-${String(month).padStart(2,'0')}-${String(Math.min(sdD, maxDay)).padStart(2,'0')}`
+  }
+  if (recurrence_type === 'custom_days' && recurrence_days > 0) {
+    const startMs    = sd.getTime()
+    const monthStart = new Date(year, month - 1, 1).getTime()
+    const monthEnd   = new Date(year, month, 0).getTime()
+    const intMs      = recurrence_days * 86400000
+    if (startMs > monthEnd) return null
+    if (startMs >= monthStart) return start_date  // start itself is in this month
+    const occ = Math.ceil((monthStart - startMs) / intMs)
+    const occDate = new Date(startMs + occ * intMs)
+    if (occDate.getTime() <= monthEnd)
+      return `${year}-${String(month).padStart(2,'0')}-${String(Math.min(occDate.getDate(), maxDay)).padStart(2,'0')}`
+    return null
+  }
+  return null
+}
+
 // ── Template Modal (Add / Edit) ───────────────────────────────────────────────
 function FixedExpenseTemplateModal({ companyId, template, onClose, onSaved }) {
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState({
-    name:        template?.name || '',
-    category:    template?.category || 'emi',
-    amount:      template?.amount ? String(template.amount) : '',
-    due_day:     template?.due_day ? String(template.due_day) : '1',
-    payee_name:  template?.payee_name || '',
-    employee_id: template?.employee_id || '',
-    description: template?.description || '',
+    name:            template?.name || '',
+    category:        template?.category || 'emi',
+    amount:          template?.amount ? String(template.amount) : '',
+    recurrence_type: template?.recurrence_type || 'monthly',
+    due_day:         template?.due_day ? String(template.due_day) : '1',
+    start_date:      template?.start_date || '',
+    recurrence_days: template?.recurrence_days ? String(template.recurrence_days) : '',
+    payee_name:      template?.payee_name || '',
+    employee_id:     template?.employee_id || '',
+    description:     template?.description || '',
   })
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
@@ -1837,22 +1902,30 @@ function FixedExpenseTemplateModal({ companyId, template, onClose, onSaved }) {
   }
 
   const handleSave = async () => {
-    if (!form.name.trim())           return toast.error('Enter a name')
+    if (!form.name.trim()) return toast.error('Enter a name')
     if (!form.amount || parseFloat(form.amount) <= 0) return toast.error('Enter a valid amount')
-    if (!form.due_day || +form.due_day < 1 || +form.due_day > 31) return toast.error('Due day must be 1–31')
+    if (form.recurrence_type === 'monthly' && (+form.due_day < 1 || +form.due_day > 31))
+      return toast.error('Due day must be 1–31')
+    if (form.recurrence_type !== 'monthly' && !form.start_date)
+      return toast.error('Select a start date')
+    if (form.recurrence_type === 'custom_days' && +form.recurrence_days < 1)
+      return toast.error('Enter number of days (≥ 1)')
 
     setSaving(true)
     try {
       const payload = {
-        company_id:  companyId,
-        name:        form.name.trim(),
-        category:    form.category,
-        amount:      parseFloat(form.amount),
-        due_day:     parseInt(form.due_day),
-        payee_name:  form.payee_name.trim() || null,
-        employee_id: form.category === 'salary' && form.employee_id ? form.employee_id : null,
-        description: form.description.trim() || null,
-        is_active:   true,
+        company_id:      companyId,
+        name:            form.name.trim(),
+        category:        form.category,
+        amount:          parseFloat(form.amount),
+        recurrence_type: form.recurrence_type,
+        due_day:         form.recurrence_type === 'monthly' ? parseInt(form.due_day) : null,
+        start_date:      form.recurrence_type !== 'monthly' ? form.start_date : null,
+        recurrence_days: form.recurrence_type === 'custom_days' ? parseInt(form.recurrence_days) : null,
+        payee_name:      form.payee_name.trim() || null,
+        employee_id:     form.category === 'salary' && form.employee_id ? form.employee_id : null,
+        description:     form.description.trim() || null,
+        is_active:       true,
       }
       const { error } = template
         ? await supabase.from('fixed_expenses').update(payload).eq('id', template.id)
@@ -1911,16 +1984,52 @@ function FixedExpenseTemplateModal({ companyId, template, onClose, onSaved }) {
             </div>
           )}
 
-          {/* Amount + Due Day */}
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs text-slate-400 mb-1 block">Amount (₹) *</label>
-              <input className={inp()} type="number" value={form.amount} onChange={e => set('amount', e.target.value)} placeholder="0" />
+          {/* Amount */}
+          <div>
+            <label className="text-xs text-slate-400 mb-1 block">Amount (₹) *</label>
+            <input className={inp()} type="number" value={form.amount} onChange={e => set('amount', e.target.value)} placeholder="0" />
+          </div>
+
+          {/* Recurrence type */}
+          <div>
+            <label className="text-xs text-slate-400 mb-2 block">Recurrence *</label>
+            <div className="grid grid-cols-3 gap-1.5 mb-3">
+              {RECURRENCE_TYPES.map(r => (
+                <button key={r.value} type="button" onClick={() => set('recurrence_type', r.value)}
+                  className={`py-2 px-1 rounded-lg border text-[11px] font-semibold text-center transition-all ${form.recurrence_type === r.value ? 'bg-primary-600/20 border-primary-500 text-primary-300' : 'bg-dark-700 border-dark-600 text-slate-400 hover:border-dark-500'}`}>
+                  {r.label}
+                </button>
+              ))}
             </div>
-            <div>
-              <label className="text-xs text-slate-400 mb-1 block">Due Day *</label>
-              <input className={inp()} type="number" min="1" max="31" value={form.due_day} onChange={e => set('due_day', e.target.value)} placeholder="1–31" />
-            </div>
+
+            {/* Monthly: due day */}
+            {form.recurrence_type === 'monthly' && (
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Due Day of Month *</label>
+                <input className={inp()} type="number" min="1" max="31" value={form.due_day}
+                  onChange={e => set('due_day', e.target.value)} placeholder="1 – 31" />
+              </div>
+            )}
+
+            {/* Non-monthly: start date */}
+            {form.recurrence_type !== 'monthly' && (
+              <div className={`grid gap-3 ${form.recurrence_type === 'custom_days' ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                <div>
+                  <label className="text-xs text-slate-400 mb-1 block">
+                    {form.recurrence_type === 'yearly' ? 'Anniversary Date *' : 'Start Date *'}
+                  </label>
+                  <input type="date" className={inp()} value={form.start_date}
+                    onChange={e => set('start_date', e.target.value)} />
+                </div>
+                {form.recurrence_type === 'custom_days' && (
+                  <div>
+                    <label className="text-xs text-slate-400 mb-1 block">Every N Days *</label>
+                    <input className={inp()} type="number" min="1" value={form.recurrence_days}
+                      onChange={e => set('recurrence_days', e.target.value)} placeholder="e.g. 45" />
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Description */}
@@ -2112,14 +2221,19 @@ function FixedExpensesTab({ companyId }) {
 
     const toCreate = templates
       .filter(t => !payments.find(p => p.fixed_expense_id === t.id))
-      .map(t => ({
-        fixed_expense_id: t.id,
-        company_id:       companyId,
-        due_date:         `${year}-${String(month).padStart(2,'0')}-${String(Math.min(t.due_day, maxDay)).padStart(2,'0')}`,
-        period_month:     currentMonth,
-        amount:           t.amount,
-        status:           'pending',
-      }))
+      .map(t => {
+        const dueDate = computeDueDate(t, year, month)
+        if (!dueDate) return null   // not due this month (quarterly/yearly etc.)
+        return {
+          fixed_expense_id: t.id,
+          company_id:       companyId,
+          due_date:         dueDate,
+          period_month:     currentMonth,
+          amount:           t.amount,
+          status:           'pending',
+        }
+      })
+      .filter(Boolean)
 
     if (toCreate.length > 0) {
       supabase.from('fixed_expense_payments')
@@ -2269,7 +2383,8 @@ function FixedExpensesTab({ companyId }) {
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-semibold text-slate-100 truncate">{t.name}</p>
                         <p className="text-xs text-slate-500">
-                          Due {t.due_day}{daySuffix(t.due_day)} · {t.payee_name || t.hr_employees?.name || ''}
+                          {recurrenceLabel(t)}
+                          {(t.payee_name || t.hr_employees?.name) ? ` · ${t.payee_name || t.hr_employees?.name}` : ''}
                           {t.description ? ` · ${t.description}` : ''}
                         </p>
                       </div>
