@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
+import { generateInvoicePDF } from '../../lib/invoicePDF'
 import {
   Receipt, Plus, X, Loader2, Trash2, Pencil,
   TrendingUp, TrendingDown, Clock, Search, Banknote,
@@ -83,7 +84,8 @@ function Modal({ title, onClose, children, wide = false }) {
 // ─────────────────────────────────────────────────────────────────────────────
 const blankLine = () => ({
   _id: Math.random().toString(36).slice(2),
-  description: '', quantity: 1, unit: 'hrs', rate: '', amount: 0, equipment_id: '',
+  description: '', item_code: '', sac_hsn_code: '',
+  quantity: 1, unit: 'hrs', rate: '', amount: 0, equipment_id: '',
 })
 
 function CreateInvoiceModal({ companyId, session, invoiceCount, onClose, onSaved }) {
@@ -91,6 +93,10 @@ function CreateInvoiceModal({ companyId, session, invoiceCount, onClose, onSaved
   const [form, setForm] = useState({
     client_name: '', client_address: '', client_gstin: '',
     project_name: '', invoice_date: today(), due_date: '',
+    // GST supply details
+    work_order_number: '', work_order_date: '',
+    work_done_from: '', work_done_to: '',
+    nature_of_supply: '', place_of_supply: '', place_of_supply_address: '',
     cgst_rate: 9, sgst_rate: 9, igst_rate: 18, use_igst: false,
     discount_amount: 0, notes: '', terms: 'Payment due within 30 days.',
   })
@@ -135,6 +141,10 @@ function CreateInvoiceModal({ companyId, session, invoiceCount, onClose, onSaved
       // Generate UUID client-side so we never need to read it back (avoids RLS SELECT issues)
       const invoiceId = crypto.randomUUID()
 
+      const invGSTRate = form.use_igst
+        ? parseFloat(form.igst_rate)
+        : (parseFloat(form.cgst_rate) + parseFloat(form.sgst_rate))
+
       const { data: newInv, error: invErr } = await supabase.from('client_invoices').insert({
         id: invoiceId,
         company_id: companyId, invoice_number: invNum,
@@ -143,6 +153,14 @@ function CreateInvoiceModal({ companyId, session, invoiceCount, onClose, onSaved
         client_address: form.client_address.trim() || null,
         client_gstin: form.client_gstin.trim() || null,
         project_name: form.project_name.trim() || null,
+        // GST supply details
+        work_order_number:       form.work_order_number.trim() || null,
+        work_order_date:         form.work_order_date || null,
+        work_done_from:          form.work_done_from || null,
+        work_done_to:            form.work_done_to || null,
+        nature_of_supply:        form.nature_of_supply.trim() || null,
+        place_of_supply:         form.place_of_supply.trim() || null,
+        place_of_supply_address: form.place_of_supply_address.trim() || null,
         subtotal, discount_amount: parseFloat(form.discount_amount) || 0, taxable_amount: taxable,
         cgst_rate: form.use_igst ? 0 : parseFloat(form.cgst_rate),
         sgst_rate: form.use_igst ? 0 : parseFloat(form.sgst_rate),
@@ -157,7 +175,11 @@ function CreateInvoiceModal({ companyId, session, invoiceCount, onClose, onSaved
       if (!newInv?.id) throw new Error('Invoice could not be saved — please check your account permissions.')
 
       const linePayload = lines.filter(l => l.description.trim()).map((l, i) => ({
-        invoice_id: newInv.id, company_id: companyId, description: l.description.trim(),
+        invoice_id: newInv.id, company_id: companyId,
+        description: l.description.trim(),
+        item_code:    l.item_code?.trim() || null,
+        sac_hsn_code: l.sac_hsn_code?.trim() || null,
+        gst_rate:     invGSTRate,
         quantity: parseFloat(l.quantity) || 1, unit: l.unit,
         rate: parseFloat(l.rate) || 0, amount: l.amount, sort_order: i,
         equipment_id: l.equipment_id || null,
@@ -183,13 +205,13 @@ function CreateInvoiceModal({ companyId, session, invoiceCount, onClose, onSaved
               <label className="text-xs text-slate-400 mb-1 block">Client / Company Name *</label>
               <input className={inp()} value={form.client_name} onChange={e => setF('client_name', e.target.value)} placeholder="e.g. Infra Builders Pvt Ltd" />
             </div>
+            <div className="col-span-2">
+              <label className="text-xs text-slate-400 mb-1 block">Client Address</label>
+              <input className={inp()} value={form.client_address} onChange={e => setF('client_address', e.target.value)} placeholder="Full billing address" />
+            </div>
             <div>
               <label className="text-xs text-slate-400 mb-1 block">Client GSTIN</label>
               <input className={inp()} value={form.client_gstin} onChange={e => setF('client_gstin', e.target.value.toUpperCase())} placeholder="22AAAAA0000A1Z5" />
-            </div>
-            <div>
-              <label className="text-xs text-slate-400 mb-1 block">Project / Work Order</label>
-              <input className={inp()} value={form.project_name} onChange={e => setF('project_name', e.target.value)} placeholder="Optional" />
             </div>
             <div>
               <label className="text-xs text-slate-400 mb-1 block">Invoice Date</label>
@@ -198,6 +220,45 @@ function CreateInvoiceModal({ companyId, session, invoiceCount, onClose, onSaved
             <div>
               <label className="text-xs text-slate-400 mb-1 block">Due Date</label>
               <input type="date" className={inp()} value={form.due_date} onChange={e => setF('due_date', e.target.value)} />
+            </div>
+            <div>
+              <label className="text-xs text-slate-400 mb-1 block">Project Reference</label>
+              <input className={inp()} value={form.project_name} onChange={e => setF('project_name', e.target.value)} placeholder="Optional" />
+            </div>
+          </div>
+        </div>
+
+        {/* Invoice & Supply Details */}
+        <div>
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Work Order & Supply Details</p>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-slate-400 mb-1 block">Work Order No.</label>
+              <input className={inp()} value={form.work_order_number} onChange={e => setF('work_order_number', e.target.value)} placeholder="e.g. WO/2026/001" />
+            </div>
+            <div>
+              <label className="text-xs text-slate-400 mb-1 block">Work Order Date</label>
+              <input type="date" className={inp()} value={form.work_order_date} onChange={e => setF('work_order_date', e.target.value)} />
+            </div>
+            <div>
+              <label className="text-xs text-slate-400 mb-1 block">Work Done From</label>
+              <input type="date" className={inp()} value={form.work_done_from} onChange={e => setF('work_done_from', e.target.value)} />
+            </div>
+            <div>
+              <label className="text-xs text-slate-400 mb-1 block">Work Done To</label>
+              <input type="date" className={inp()} value={form.work_done_to} onChange={e => setF('work_done_to', e.target.value)} />
+            </div>
+            <div className="col-span-2">
+              <label className="text-xs text-slate-400 mb-1 block">Nature of Supply</label>
+              <input className={inp()} value={form.nature_of_supply} onChange={e => setF('nature_of_supply', e.target.value)} placeholder="e.g. Hiring of Backhoe Loader with Operator" />
+            </div>
+            <div>
+              <label className="text-xs text-slate-400 mb-1 block">Place of Supply (State)</label>
+              <input className={inp()} value={form.place_of_supply} onChange={e => setF('place_of_supply', e.target.value)} placeholder="e.g. Tamil Nadu" />
+            </div>
+            <div>
+              <label className="text-xs text-slate-400 mb-1 block">Place of Supply Address</label>
+              <input className={inp()} value={form.place_of_supply_address} onChange={e => setF('place_of_supply_address', e.target.value)} placeholder="Site / project address" />
             </div>
           </div>
         </div>
@@ -213,17 +274,17 @@ function CreateInvoiceModal({ companyId, session, invoiceCount, onClose, onSaved
           </div>
           <div className="space-y-2">
             <div className="hidden lg:grid grid-cols-12 gap-2 text-[10px] text-slate-500 font-bold uppercase px-1">
-              <div className="col-span-5">Description</div>
+              <div className="col-span-4">Description</div>
               <div className="col-span-2">Qty</div>
               <div className="col-span-1">Unit</div>
               <div className="col-span-2">Rate (₹)</div>
               <div className="col-span-1 text-right">Amount</div>
-              <div className="col-span-1" />
+              <div className="col-span-2" />
             </div>
             {lines.map(l => (
-              <div key={l._id} className="space-y-1">
+              <div key={l._id} className="space-y-1 bg-dark-700/30 rounded-lg p-2">
                 <div className="grid grid-cols-12 gap-2 items-center">
-                  <div className="col-span-5">
+                  <div className="col-span-4">
                     <input className={inp('text-xs')} value={l.description}
                       onChange={e => updateLine(l._id, 'description', e.target.value)} placeholder="Service description…" />
                   </div>
@@ -241,27 +302,31 @@ function CreateInvoiceModal({ companyId, session, invoiceCount, onClose, onSaved
                       onChange={e => updateLine(l._id, 'rate', e.target.value)} placeholder="0" min="0" />
                   </div>
                   <div className="col-span-1 text-right text-xs text-slate-300 font-mono">{fmt(l.amount)}</div>
-                  <div className="col-span-1 text-right">
+                  <div className="col-span-2 flex justify-end">
                     <button onClick={() => lines.length > 1 && setLines(p => p.filter(x => x._id !== l._id))}
                       className="text-slate-600 hover:text-red-400 transition-colors">
                       <X className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 </div>
-                {/* Equipment tag — optional link to fleet asset */}
-                {equipList.length > 0 && (
-                  <div className="pl-0">
-                    <select className="bg-dark-800 border border-dark-600 rounded-lg px-2 py-1 text-[10px] text-slate-400 focus:outline-none focus:border-primary-500 w-full max-w-xs"
+                {/* Item code + SAC/HSN + Equipment — secondary row */}
+                <div className="grid grid-cols-3 gap-2">
+                  <input className="bg-dark-800 border border-dark-600 rounded-lg px-2 py-1 text-[10px] text-slate-400 focus:outline-none focus:border-primary-500"
+                    value={l.item_code} onChange={e => updateLine(l._id, 'item_code', e.target.value)} placeholder="Item code (optional)" />
+                  <input className="bg-dark-800 border border-dark-600 rounded-lg px-2 py-1 text-[10px] text-slate-400 focus:outline-none focus:border-primary-500"
+                    value={l.sac_hsn_code} onChange={e => updateLine(l._id, 'sac_hsn_code', e.target.value)} placeholder="SAC / HSN code" />
+                  {equipList.length > 0 && (
+                    <select className="bg-dark-800 border border-dark-600 rounded-lg px-2 py-1 text-[10px] text-slate-400 focus:outline-none focus:border-primary-500"
                       value={l.equipment_id || ''} onChange={e => updateLine(l._id, 'equipment_id', e.target.value)}>
-                      <option value="">— Link equipment (optional) —</option>
+                      <option value="">— Link equipment —</option>
                       {equipList.map(eq => (
                         <option key={eq.id} value={eq.id}>
                           {eq.equipment_number ? `${eq.equipment_number} · ` : ''}{eq.name}
                         </option>
                       ))}
                     </select>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
             ))}
           </div>
@@ -349,19 +414,26 @@ function EditInvoiceModal({ invoice, companyId, session, onClose, onSaved }) {
   const [saving, setSaving] = useState(false)
   const [loadingLines, setLoadingLines] = useState(true)
   const [form, setForm] = useState({
-    client_name:     invoice.client_name || '',
-    client_address:  invoice.client_address || '',
-    client_gstin:    invoice.client_gstin || '',
-    project_name:    invoice.project_name || '',
-    invoice_date:    invoice.invoice_date || today(),
-    due_date:        invoice.due_date || '',
-    cgst_rate:       invoice.cgst_rate ?? 9,
-    sgst_rate:       invoice.sgst_rate ?? 9,
-    igst_rate:       invoice.igst_rate ?? 18,
-    use_igst:        (invoice.igst_rate > 0 && !invoice.cgst_rate),
-    discount_amount: invoice.discount_amount || 0,
-    notes:           invoice.notes || '',
-    terms:           invoice.terms || 'Payment due within 30 days.',
+    client_name:             invoice.client_name || '',
+    client_address:          invoice.client_address || '',
+    client_gstin:            invoice.client_gstin || '',
+    project_name:            invoice.project_name || '',
+    invoice_date:            invoice.invoice_date || today(),
+    due_date:                invoice.due_date || '',
+    work_order_number:       invoice.work_order_number || '',
+    work_order_date:         invoice.work_order_date || '',
+    work_done_from:          invoice.work_done_from || '',
+    work_done_to:            invoice.work_done_to || '',
+    nature_of_supply:        invoice.nature_of_supply || '',
+    place_of_supply:         invoice.place_of_supply || '',
+    place_of_supply_address: invoice.place_of_supply_address || '',
+    cgst_rate:               invoice.cgst_rate ?? 9,
+    sgst_rate:               invoice.sgst_rate ?? 9,
+    igst_rate:               invoice.igst_rate ?? 18,
+    use_igst:                (invoice.igst_rate > 0 && !invoice.cgst_rate),
+    discount_amount:         invoice.discount_amount || 0,
+    notes:                   invoice.notes || '',
+    terms:                   invoice.terms || 'Payment due within 30 days.',
   })
   const [lines, setLines] = useState([blankLine()])
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
@@ -385,6 +457,7 @@ function EditInvoiceModal({ invoice, companyId, session, onClose, onSaved }) {
         if (data && data.length > 0) {
           setLines(data.map(l => ({
             _id: l.id, description: l.description,
+            item_code: l.item_code || '', sac_hsn_code: l.sac_hsn_code || '',
             quantity: l.quantity, unit: l.unit, rate: l.rate, amount: l.amount,
             equipment_id: l.equipment_id || '',
           })))
@@ -418,6 +491,10 @@ function EditInvoiceModal({ invoice, companyId, session, onClose, onSaved }) {
     try {
       // Update invoice header
       const newBalance = Math.max(0, total - (invoice.paid_amount || 0))
+      const editGSTRate = form.use_igst
+        ? parseFloat(form.igst_rate)
+        : (parseFloat(form.cgst_rate) + parseFloat(form.sgst_rate))
+
       const { error: invErr } = await supabase.from('client_invoices').update({
         invoice_date:    form.invoice_date,
         due_date:        form.due_date || null,
@@ -425,6 +502,13 @@ function EditInvoiceModal({ invoice, companyId, session, onClose, onSaved }) {
         client_address:  form.client_address.trim() || null,
         client_gstin:    form.client_gstin.trim() || null,
         project_name:    form.project_name.trim() || null,
+        work_order_number:       form.work_order_number.trim() || null,
+        work_order_date:         form.work_order_date || null,
+        work_done_from:          form.work_done_from || null,
+        work_done_to:            form.work_done_to || null,
+        nature_of_supply:        form.nature_of_supply.trim() || null,
+        place_of_supply:         form.place_of_supply.trim() || null,
+        place_of_supply_address: form.place_of_supply_address.trim() || null,
         subtotal, discount_amount: parseFloat(form.discount_amount) || 0, taxable_amount: taxable,
         cgst_rate: form.use_igst ? 0 : parseFloat(form.cgst_rate),
         sgst_rate: form.use_igst ? 0 : parseFloat(form.sgst_rate),
@@ -439,7 +523,11 @@ function EditInvoiceModal({ invoice, companyId, session, onClose, onSaved }) {
       // Replace line items: delete old, insert new
       await supabase.from('invoice_line_items').delete().eq('invoice_id', invoice.id)
       const linePayload = lines.filter(l => l.description.trim()).map((l, i) => ({
-        invoice_id: invoice.id, company_id: companyId, description: l.description.trim(),
+        invoice_id: invoice.id, company_id: companyId,
+        description:  l.description.trim(),
+        item_code:    l.item_code?.trim() || null,
+        sac_hsn_code: l.sac_hsn_code?.trim() || null,
+        gst_rate:     editGSTRate,
         quantity: parseFloat(l.quantity) || 1, unit: l.unit,
         rate: parseFloat(l.rate) || 0, amount: l.amount, sort_order: i,
         equipment_id: l.equipment_id || null,
@@ -468,13 +556,13 @@ function EditInvoiceModal({ invoice, companyId, session, onClose, onSaved }) {
                 <label className="text-xs text-slate-400 mb-1 block">Client / Company Name *</label>
                 <input className={inp()} value={form.client_name} onChange={e => setF('client_name', e.target.value)} />
               </div>
+              <div className="col-span-2">
+                <label className="text-xs text-slate-400 mb-1 block">Client Address</label>
+                <input className={inp()} value={form.client_address} onChange={e => setF('client_address', e.target.value)} placeholder="Full billing address" />
+              </div>
               <div>
                 <label className="text-xs text-slate-400 mb-1 block">Client GSTIN</label>
                 <input className={inp()} value={form.client_gstin} onChange={e => setF('client_gstin', e.target.value.toUpperCase())} placeholder="22AAAAA0000A1Z5" />
-              </div>
-              <div>
-                <label className="text-xs text-slate-400 mb-1 block">Project / Work Order</label>
-                <input className={inp()} value={form.project_name} onChange={e => setF('project_name', e.target.value)} placeholder="Optional" />
               </div>
               <div>
                 <label className="text-xs text-slate-400 mb-1 block">Invoice Date</label>
@@ -483,6 +571,45 @@ function EditInvoiceModal({ invoice, companyId, session, onClose, onSaved }) {
               <div>
                 <label className="text-xs text-slate-400 mb-1 block">Due Date</label>
                 <input type="date" className={inp()} value={form.due_date} onChange={e => setF('due_date', e.target.value)} />
+              </div>
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Project Reference</label>
+                <input className={inp()} value={form.project_name} onChange={e => setF('project_name', e.target.value)} placeholder="Optional" />
+              </div>
+            </div>
+          </div>
+
+          {/* Work Order & Supply Details */}
+          <div>
+            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Work Order & Supply Details</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Work Order No.</label>
+                <input className={inp()} value={form.work_order_number} onChange={e => setF('work_order_number', e.target.value)} placeholder="e.g. WO/2026/001" />
+              </div>
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Work Order Date</label>
+                <input type="date" className={inp()} value={form.work_order_date} onChange={e => setF('work_order_date', e.target.value)} />
+              </div>
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Work Done From</label>
+                <input type="date" className={inp()} value={form.work_done_from} onChange={e => setF('work_done_from', e.target.value)} />
+              </div>
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Work Done To</label>
+                <input type="date" className={inp()} value={form.work_done_to} onChange={e => setF('work_done_to', e.target.value)} />
+              </div>
+              <div className="col-span-2">
+                <label className="text-xs text-slate-400 mb-1 block">Nature of Supply</label>
+                <input className={inp()} value={form.nature_of_supply} onChange={e => setF('nature_of_supply', e.target.value)} placeholder="e.g. Hiring of Backhoe Loader with Operator" />
+              </div>
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Place of Supply (State)</label>
+                <input className={inp()} value={form.place_of_supply} onChange={e => setF('place_of_supply', e.target.value)} placeholder="e.g. Tamil Nadu" />
+              </div>
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Place of Supply Address</label>
+                <input className={inp()} value={form.place_of_supply_address} onChange={e => setF('place_of_supply_address', e.target.value)} placeholder="Site / project address" />
               </div>
             </div>
           </div>
@@ -498,17 +625,17 @@ function EditInvoiceModal({ invoice, companyId, session, onClose, onSaved }) {
             </div>
             <div className="space-y-2">
               <div className="hidden lg:grid grid-cols-12 gap-2 text-[10px] text-slate-500 font-bold uppercase px-1">
-                <div className="col-span-5">Description</div>
+                <div className="col-span-4">Description</div>
                 <div className="col-span-2">Qty</div>
                 <div className="col-span-1">Unit</div>
                 <div className="col-span-2">Rate (₹)</div>
                 <div className="col-span-1 text-right">Amount</div>
-                <div className="col-span-1" />
+                <div className="col-span-2" />
               </div>
               {lines.map(l => (
-                <div key={l._id} className="space-y-1">
+                <div key={l._id} className="space-y-1 bg-dark-700/30 rounded-lg p-2">
                   <div className="grid grid-cols-12 gap-2 items-center">
-                    <div className="col-span-5">
+                    <div className="col-span-4">
                       <input className={inp('text-xs')} value={l.description}
                         onChange={e => updateLine(l._id, 'description', e.target.value)} placeholder="Service description…" />
                     </div>
@@ -526,27 +653,30 @@ function EditInvoiceModal({ invoice, companyId, session, onClose, onSaved }) {
                         onChange={e => updateLine(l._id, 'rate', e.target.value)} placeholder="0" min="0" />
                     </div>
                     <div className="col-span-1 text-right text-xs text-slate-300 font-mono">{fmt(l.amount)}</div>
-                    <div className="col-span-1 text-right">
+                    <div className="col-span-2 flex justify-end">
                       <button onClick={() => lines.length > 1 && setLines(p => p.filter(x => x._id !== l._id))}
                         className="text-slate-600 hover:text-red-400 transition-colors">
                         <X className="w-3.5 h-3.5" />
                       </button>
                     </div>
                   </div>
-                  {/* Equipment tag — optional link to fleet asset */}
-                  {equipList.length > 0 && (
-                    <div className="pl-0">
-                      <select className="bg-dark-800 border border-dark-600 rounded-lg px-2 py-1 text-[10px] text-slate-400 focus:outline-none focus:border-primary-500 w-full max-w-xs"
+                  <div className="grid grid-cols-3 gap-2">
+                    <input className="bg-dark-800 border border-dark-600 rounded-lg px-2 py-1 text-[10px] text-slate-400 focus:outline-none focus:border-primary-500"
+                      value={l.item_code} onChange={e => updateLine(l._id, 'item_code', e.target.value)} placeholder="Item code (optional)" />
+                    <input className="bg-dark-800 border border-dark-600 rounded-lg px-2 py-1 text-[10px] text-slate-400 focus:outline-none focus:border-primary-500"
+                      value={l.sac_hsn_code} onChange={e => updateLine(l._id, 'sac_hsn_code', e.target.value)} placeholder="SAC / HSN code" />
+                    {equipList.length > 0 && (
+                      <select className="bg-dark-800 border border-dark-600 rounded-lg px-2 py-1 text-[10px] text-slate-400 focus:outline-none focus:border-primary-500"
                         value={l.equipment_id || ''} onChange={e => updateLine(l._id, 'equipment_id', e.target.value)}>
-                        <option value="">— Link equipment (optional) —</option>
+                        <option value="">— Link equipment —</option>
                         {equipList.map(eq => (
                           <option key={eq.id} value={eq.id}>
                             {eq.equipment_number ? `${eq.equipment_number} · ` : ''}{eq.name}
                           </option>
                         ))}
                       </select>
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
@@ -1032,6 +1162,7 @@ function DashboardTab({ companyId, onNavigate }) {
 // ─────────────────────────────────────────────────────────────────────────────
 function InvoicesTab({ companyId, session }) {
   const qc = useQueryClient()
+  const { company } = useAuth()
   const [statusFilter, setStatusFilter] = useState('all')
   const [search, setSearch] = useState('')
   const [showCreate, setShowCreate] = useState(false)
@@ -1039,6 +1170,25 @@ function InvoicesTab({ companyId, session }) {
   const [editTarget, setEditTarget] = useState(null)
   const [expandedId, setExpandedId] = useState(null)
   const [generatingLink, setGeneratingLink] = useState(null) // invoice id being processed
+  const [downloadingId, setDownloadingId] = useState(null)
+
+  // ── Download GST-compliant PDF ────────────────────────────────────────────
+  const handleDownloadPDF = async (inv) => {
+    setDownloadingId(inv.id)
+    try {
+      const { data: lineItems, error } = await supabase
+        .from('invoice_line_items')
+        .select('*')
+        .eq('invoice_id', inv.id)
+        .order('sort_order')
+      if (error) throw error
+      generateInvoicePDF(inv, lineItems || [], company)
+    } catch (e) {
+      toast.error(e.message || 'Failed to generate PDF')
+    } finally {
+      setDownloadingId(null)
+    }
+  }
 
   // ── Generate Razorpay payment link ────────────────────────────────────────
   const generatePaymentLink = async (inv) => {
@@ -1199,6 +1349,16 @@ function InvoicesTab({ companyId, session }) {
                         </div>
                         {inv.notes && <p className="text-xs text-slate-400 mb-3 bg-dark-700 rounded-lg px-3 py-2">📝 {inv.notes}</p>}
                         <div className="flex gap-2 flex-wrap">
+                          {/* Download GST Invoice PDF */}
+                          <button
+                            onClick={() => handleDownloadPDF(inv)}
+                            disabled={downloadingId === inv.id}
+                            className="btn-ghost text-xs py-1.5 border-emerald-700/50 text-emerald-400 hover:bg-emerald-500/10 disabled:opacity-50">
+                            {downloadingId === inv.id
+                              ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Generating…</>
+                              : <><Download className="w-3.5 h-3.5" /> Download PDF</>
+                            }
+                          </button>
                           {inv.status === 'draft' && (
                             <button onClick={() => handleStatus(inv.id, 'sent')} className="btn-ghost text-xs py-1.5 border-blue-700 text-blue-400 hover:bg-blue-500/10">
                               Mark as Sent
