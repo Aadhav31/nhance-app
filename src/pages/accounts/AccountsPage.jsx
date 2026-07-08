@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
@@ -6,7 +6,7 @@ import {
   Receipt, Plus, X, Loader2, Trash2, Pencil,
   TrendingUp, TrendingDown, Clock, Search, Banknote,
   ArrowUpCircle, ArrowDownCircle, ChevronRight, ChevronDown,
-  Link, Copy, ExternalLink, Share2,
+  Link, Copy, ExternalLink, Share2, Bell, AlertTriangle, CheckCircle2,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format, startOfMonth, endOfMonth, parseISO } from 'date-fns'
@@ -1786,16 +1786,554 @@ function LedgerTab({ companyId }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // AccountsPage — main export
 // ─────────────────────────────────────────────────────────────────────────────
+// ── Fixed Expenses ────────────────────────────────────────────────────────────
+const FIXED_CATS = [
+  { value: 'salary',    label: 'Salary',            icon: '👤' },
+  { value: 'emi',       label: 'EMI / Loan',        icon: '🏦' },
+  { value: 'rent',      label: 'Rent',              icon: '🏠' },
+  { value: 'insurance', label: 'Insurance',         icon: '🛡️' },
+  { value: 'interest',  label: 'Interest / Finance',icon: '📈' },
+  { value: 'admin',     label: 'Admin / Office',    icon: '📋' },
+  { value: 'misc',      label: 'Miscellaneous',     icon: '📦' },
+]
+const daySuffix = n => n === 1 || n === 21 || n === 31 ? 'st' : n === 2 || n === 22 ? 'nd' : n === 3 || n === 23 ? 'rd' : 'th'
+const PAY_MODES_FE = ['cash', 'bank_transfer', 'upi', 'cheque', 'card']
+const PAY_LABELS_FE = { cash: 'Cash', bank_transfer: 'Bank Transfer', upi: 'UPI', cheque: 'Cheque', card: 'Card' }
+
+// ── Template Modal (Add / Edit) ───────────────────────────────────────────────
+function FixedExpenseTemplateModal({ companyId, template, onClose, onSaved }) {
+  const [saving, setSaving] = useState(false)
+  const [form, setForm] = useState({
+    name:        template?.name || '',
+    category:    template?.category || 'emi',
+    amount:      template?.amount ? String(template.amount) : '',
+    due_day:     template?.due_day ? String(template.due_day) : '1',
+    payee_name:  template?.payee_name || '',
+    employee_id: template?.employee_id || '',
+    description: template?.description || '',
+  })
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+
+  const { data: employees = [] } = useQuery({
+    queryKey: ['fe_emp_all', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('hr_employees')
+        .select('id, name, employee_number, salary, basic_salary')
+        .eq('company_id', companyId).order('name')
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+
+  // When selecting employee for salary, auto-fill amount + name
+  const onEmpChange = (empId) => {
+    set('employee_id', empId)
+    const emp = employees.find(e => e.id === empId)
+    if (emp) {
+      set('name', `Salary – ${emp.name}`)
+      set('payee_name', emp.name)
+      set('amount', String(emp.salary || emp.basic_salary || ''))
+    }
+  }
+
+  const handleSave = async () => {
+    if (!form.name.trim())           return toast.error('Enter a name')
+    if (!form.amount || parseFloat(form.amount) <= 0) return toast.error('Enter a valid amount')
+    if (!form.due_day || +form.due_day < 1 || +form.due_day > 31) return toast.error('Due day must be 1–31')
+
+    setSaving(true)
+    try {
+      const payload = {
+        company_id:  companyId,
+        name:        form.name.trim(),
+        category:    form.category,
+        amount:      parseFloat(form.amount),
+        due_day:     parseInt(form.due_day),
+        payee_name:  form.payee_name.trim() || null,
+        employee_id: form.category === 'salary' && form.employee_id ? form.employee_id : null,
+        description: form.description.trim() || null,
+        is_active:   true,
+      }
+      const { error } = template
+        ? await supabase.from('fixed_expenses').update(payload).eq('id', template.id)
+        : await supabase.from('fixed_expenses').insert(payload)
+      if (error) throw error
+      toast.success(template ? 'Template updated' : 'Fixed expense added')
+      onSaved()
+    } catch (err) {
+      toast.error(err.message)
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 p-0 sm:p-4" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="w-full sm:max-w-md bg-dark-800 border border-dark-700 rounded-t-3xl sm:rounded-2xl overflow-hidden flex flex-col max-h-[90vh]">
+        <div className="shrink-0 px-5 py-4 border-b border-dark-700 flex items-center justify-between">
+          <p className="text-sm font-bold text-slate-100">{template ? 'Edit Fixed Expense' : 'Add Fixed Expense'}</p>
+          <button onClick={onClose} className="text-slate-500 hover:text-slate-300"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+          {/* Category */}
+          <div>
+            <label className="text-xs text-slate-400 mb-2 block">Category *</label>
+            <div className="grid grid-cols-2 gap-2">
+              {FIXED_CATS.map(c => (
+                <button key={c.value} type="button" onClick={() => { set('category', c.value); if (c.value !== 'salary') set('employee_id', '') }}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-xs text-left transition-all ${form.category === c.value ? 'bg-primary-600/20 border-primary-500 text-primary-300 font-semibold' : 'bg-dark-700 border-dark-600 text-slate-400 hover:border-dark-500'}`}>
+                  <span>{c.icon}</span>{c.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Employee picker (salary only) */}
+          {form.category === 'salary' && (
+            <div>
+              <label className="text-xs text-slate-400 mb-1 block">Select Employee *</label>
+              <select className={inp()} value={form.employee_id} onChange={e => onEmpChange(e.target.value)}>
+                <option value="">— Pick employee —</option>
+                {employees.map(e => <option key={e.id} value={e.id}>{e.name} ({e.employee_number})</option>)}
+              </select>
+            </div>
+          )}
+
+          {/* Name */}
+          <div>
+            <label className="text-xs text-slate-400 mb-1 block">Name / Label *</label>
+            <input className={inp()} value={form.name} onChange={e => set('name', e.target.value)} placeholder="e.g. HDFC Car Loan EMI" />
+          </div>
+
+          {/* Payee */}
+          {form.category !== 'salary' && (
+            <div>
+              <label className="text-xs text-slate-400 mb-1 block">Payee / Lender / Landlord</label>
+              <input className={inp()} value={form.payee_name} onChange={e => set('payee_name', e.target.value)} placeholder="Bank / vendor name" />
+            </div>
+          )}
+
+          {/* Amount + Due Day */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-slate-400 mb-1 block">Amount (₹) *</label>
+              <input className={inp()} type="number" value={form.amount} onChange={e => set('amount', e.target.value)} placeholder="0" />
+            </div>
+            <div>
+              <label className="text-xs text-slate-400 mb-1 block">Due Day *</label>
+              <input className={inp()} type="number" min="1" max="31" value={form.due_day} onChange={e => set('due_day', e.target.value)} placeholder="1–31" />
+            </div>
+          </div>
+
+          {/* Description */}
+          <div>
+            <label className="text-xs text-slate-400 mb-1 block">Notes (optional)</label>
+            <input className={inp()} value={form.description} onChange={e => set('description', e.target.value)} placeholder="Loan account, policy number, etc." />
+          </div>
+        </div>
+        <div className="shrink-0 px-5 py-4 border-t border-dark-700 flex gap-3">
+          <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-dark-600 text-slate-400 text-sm font-semibold hover:bg-dark-700">Cancel</button>
+          <button onClick={handleSave} disabled={saving} className="flex-1 py-2.5 rounded-xl bg-primary-600 hover:bg-primary-500 disabled:opacity-50 text-white text-sm font-bold flex items-center justify-center gap-2">
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+            {template ? 'Save Changes' : 'Add'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Mark as Paid Modal ────────────────────────────────────────────────────────
+function MarkPaidModal({ companyId, payment, onClose, onSaved }) {
+  const [saving, setSaving] = useState(false)
+  const todayStr = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}` }
+  const [form, setForm] = useState({
+    paid_date:       todayStr(),
+    paid_amount:     String(payment.amount),
+    payment_mode:    'bank_transfer',
+    transaction_ref: '',
+    notes:           '',
+  })
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+  const fe = payment.fixed_expenses
+
+  const handlePay = async () => {
+    if (!form.paid_amount || parseFloat(form.paid_amount) <= 0) return toast.error('Enter amount')
+    setSaving(true)
+    try {
+      const amt = parseFloat(form.paid_amount)
+
+      // 1. Mark instance as paid
+      const { error: pe } = await supabase.from('fixed_expense_payments').update({
+        status:          'paid',
+        paid_date:       form.paid_date,
+        paid_amount:     amt,
+        payment_mode:    form.payment_mode,
+        transaction_ref: form.transaction_ref || null,
+        notes:           form.notes || null,
+        updated_at:      new Date().toISOString(),
+      }).eq('id', payment.id)
+      if (pe) throw pe
+
+      // 2. Write to expenses ledger
+      const { data: exp, error: ee } = await supabase.from('expenses').insert({
+        company_id:    companyId,
+        expense_date:  form.paid_date,
+        category:      fe?.category || 'misc',
+        description:   fe?.name || 'Fixed expense',
+        vendor_name:   fe?.payee_name || null,
+        amount:        amt,
+        total_amount:  amt,
+        payment_mode:  form.payment_mode,
+        bank_reference:form.transaction_ref || null,
+        source:        'manual',
+      }).select('id').single()
+      if (ee) throw ee
+
+      // 3. Write to account_transactions for P&L
+      const { error: te } = await supabase.from('account_transactions').insert({
+        company_id:      companyId,
+        txn_date:        form.paid_date,
+        type:            'expense',
+        description:     `${fe?.name || 'Fixed expense'} – ${payment.period_month}`,
+        amount:          amt,
+        payment_mode:    form.payment_mode,
+        bank_reference:  form.transaction_ref || null,
+        reference_type:  'fixed_expense',
+        reference_id:    exp?.id || null,
+      })
+      if (te) throw te
+
+      toast.success(`${fe?.name || 'Payment'} marked as paid`)
+      onSaved()
+    } catch (err) {
+      console.error(err)
+      toast.error(err.message || 'Save failed')
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 p-0 sm:p-4" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="w-full sm:max-w-sm bg-dark-800 border border-dark-700 rounded-t-3xl sm:rounded-2xl overflow-hidden flex flex-col">
+        <div className="shrink-0 px-5 py-4 border-b border-dark-700 flex items-center justify-between">
+          <div>
+            <p className="text-sm font-bold text-slate-100">Mark as Paid</p>
+            <p className="text-xs text-slate-500">{fe?.name}</p>
+          </div>
+          <button onClick={onClose} className="text-slate-500 hover:text-slate-300"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="px-5 py-4 space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-slate-400 mb-1 block">Payment Date</label>
+              <input type="date" className={inp()} value={form.paid_date} onChange={e => set('paid_date', e.target.value)} />
+            </div>
+            <div>
+              <label className="text-xs text-slate-400 mb-1 block">Amount (₹)</label>
+              <input type="number" className={inp()} value={form.paid_amount} onChange={e => set('paid_amount', e.target.value)} />
+            </div>
+          </div>
+          <div>
+            <label className="text-xs text-slate-400 mb-1.5 block">Payment Mode</label>
+            <div className="flex gap-1.5 flex-wrap">
+              {PAY_MODES_FE.map(m => (
+                <button key={m} type="button" onClick={() => set('payment_mode', m)}
+                  className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${form.payment_mode === m ? 'bg-primary-600 text-white' : 'bg-dark-700 border border-dark-600 text-slate-400'}`}>
+                  {PAY_LABELS_FE[m]}
+                </button>
+              ))}
+            </div>
+          </div>
+          {form.payment_mode !== 'cash' && (
+            <div>
+              <label className="text-xs text-slate-400 mb-1 block">UTR / Reference</label>
+              <input className={inp()} value={form.transaction_ref} onChange={e => set('transaction_ref', e.target.value)} placeholder="Transaction ID / cheque no." />
+            </div>
+          )}
+          <div>
+            <label className="text-xs text-slate-400 mb-1 block">Notes</label>
+            <input className={inp()} value={form.notes} onChange={e => set('notes', e.target.value)} placeholder="Optional" />
+          </div>
+        </div>
+        <div className="shrink-0 px-5 py-4 border-t border-dark-700 flex gap-3">
+          <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-dark-600 text-slate-400 text-sm font-semibold hover:bg-dark-700">Cancel</button>
+          <button onClick={handlePay} disabled={saving}
+            className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-bold flex items-center justify-center gap-2">
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+            {saving ? 'Saving…' : 'Confirm Payment'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Fixed Expenses Tab ────────────────────────────────────────────────────────
+function FixedExpensesTab({ companyId }) {
+  const qc = useQueryClient()
+  const [view, setView] = useState('monthly')         // 'monthly' | 'templates'
+  const [showAdd, setShowAdd] = useState(false)
+  const [editTpl, setEditTpl] = useState(null)
+  const [payModal, setPayModal] = useState(null)
+
+  const now        = new Date()
+  const currentMonth = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`
+  const warnDate   = new Date(now); warnDate.setDate(warnDate.getDate() + 3)
+  const todayDate  = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+
+  // Load active templates
+  const { data: templates = [] } = useQuery({
+    queryKey: ['fixed_expenses', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('fixed_expenses')
+        .select('*, hr_employees(name, employee_number)')
+        .eq('company_id', companyId).eq('is_active', true).order('category').order('name')
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+
+  // Load this month's payment instances
+  const { data: payments = [], refetch: refetchPayments } = useQuery({
+    queryKey: ['fixed_expense_payments', companyId, currentMonth],
+    queryFn: async () => {
+      const { data } = await supabase.from('fixed_expense_payments')
+        .select('*, fixed_expenses(name, category, payee_name, description, hr_employees(name))')
+        .eq('company_id', companyId).eq('period_month', currentMonth).order('due_date')
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+
+  // Auto-generate instances for current month when templates change
+  useEffect(() => {
+    if (!companyId || templates.length === 0) return
+    const year  = now.getFullYear()
+    const month = now.getMonth() + 1
+    const maxDay = new Date(year, month, 0).getDate()
+
+    const toCreate = templates
+      .filter(t => !payments.find(p => p.fixed_expense_id === t.id))
+      .map(t => ({
+        fixed_expense_id: t.id,
+        company_id:       companyId,
+        due_date:         `${year}-${String(month).padStart(2,'0')}-${String(Math.min(t.due_day, maxDay)).padStart(2,'0')}`,
+        period_month:     currentMonth,
+        amount:           t.amount,
+        status:           'pending',
+      }))
+
+    if (toCreate.length > 0) {
+      supabase.from('fixed_expense_payments')
+        .upsert(toCreate, { onConflict: 'fixed_expense_id,period_month' })
+        .then(() => refetchPayments())
+    }
+  }, [templates, companyId]) // eslint-disable-line
+
+  const deleteTemplate = async (id) => {
+    if (!confirm('Delete this fixed expense? Future months will not be generated.')) return
+    await supabase.from('fixed_expenses').update({ is_active: false }).eq('id', id)
+    qc.invalidateQueries({ queryKey: ['fixed_expenses', companyId] })
+    toast.success('Removed')
+  }
+
+  // ── Derived stats ──────────────────────────────────────────────────────────
+  const pending   = payments.filter(p => p.status === 'pending')
+  const paid      = payments.filter(p => p.status === 'paid')
+  const overdue   = pending.filter(p => new Date(p.due_date) < todayDate)
+  const dueSoon   = pending.filter(p => { const d = new Date(p.due_date); return d >= todayDate && d <= warnDate })
+  const totalDue  = pending.reduce((s, p) => s + Number(p.amount), 0)
+  const totalPaid = paid.reduce((s, p) => s + Number(p.paid_amount || p.amount), 0)
+
+  const catIcon = (cat) => FIXED_CATS.find(c => c.value === cat)?.icon || '📦'
+
+  return (
+    <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      {/* Alert banner */}
+      {(overdue.length > 0 || dueSoon.length > 0) && (
+        <div className={`rounded-xl border p-4 flex gap-3 ${overdue.length > 0 ? 'bg-red-950/40 border-red-700' : 'bg-amber-950/40 border-amber-700'}`}>
+          <AlertTriangle className={`w-5 h-5 shrink-0 mt-0.5 ${overdue.length > 0 ? 'text-red-400' : 'text-amber-400'}`} />
+          <div className="space-y-0.5">
+            {overdue.length > 0 && (
+              <p className="text-sm font-bold text-red-300">
+                {overdue.length} overdue payment{overdue.length > 1 ? 's' : ''} — {fmt(overdue.reduce((s,p)=>s+Number(p.amount),0))} pending
+              </p>
+            )}
+            {dueSoon.length > 0 && (
+              <p className="text-sm font-semibold text-amber-300">
+                {dueSoon.length} payment{dueSoon.length > 1 ? 's' : ''} due within 3 days — {fmt(dueSoon.reduce((s,p)=>s+Number(p.amount),0))}
+              </p>
+            )}
+            <p className="text-xs text-slate-500 mt-1">Review and mark paid in "This Month" view below</p>
+          </div>
+        </div>
+      )}
+
+      {/* Stats */}
+      <div className="grid grid-cols-3 gap-3">
+        <div className="bg-dark-800 border border-dark-700 rounded-xl p-3 text-center">
+          <p className="text-[10px] text-slate-500 mb-1 uppercase tracking-wide">Due</p>
+          <p className="text-base font-black text-red-400">{fmt(totalDue)}</p>
+          <p className="text-[10px] text-slate-600">{pending.length} pending</p>
+        </div>
+        <div className="bg-dark-800 border border-dark-700 rounded-xl p-3 text-center">
+          <p className="text-[10px] text-slate-500 mb-1 uppercase tracking-wide">Paid</p>
+          <p className="text-base font-black text-emerald-400">{fmt(totalPaid)}</p>
+          <p className="text-[10px] text-slate-600">{paid.length} done</p>
+        </div>
+        <div className="bg-dark-800 border border-dark-700 rounded-xl p-3 text-center">
+          <p className="text-[10px] text-slate-500 mb-1 uppercase tracking-wide">Overdue</p>
+          <p className={`text-base font-black ${overdue.length > 0 ? 'text-red-400' : 'text-slate-500'}`}>{overdue.length}</p>
+          <p className="text-[10px] text-slate-600">items</p>
+        </div>
+      </div>
+
+      {/* View toggle */}
+      <div className="flex gap-2 bg-dark-800 border border-dark-700 rounded-xl p-1">
+        {[['monthly','📅 This Month'],['templates','⚙️ Templates']].map(([v,l]) => (
+          <button key={v} onClick={() => setView(v)}
+            className={`flex-1 py-2 rounded-lg text-xs font-semibold transition-all ${view === v ? 'bg-primary-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}>
+            {l}
+          </button>
+        ))}
+      </div>
+
+      {/* ── MONTHLY VIEW ── */}
+      {view === 'monthly' && (
+        <div className="space-y-2">
+          {payments.length === 0 && (
+            <div className="text-center py-12 text-slate-500">
+              <Bell className="w-8 h-8 mx-auto mb-3 opacity-30" />
+              <p className="text-sm">No fixed expenses this month.</p>
+              <p className="text-xs mt-1">Add templates in the Templates tab.</p>
+            </div>
+          )}
+          {payments.map(p => {
+            const fe       = p.fixed_expenses
+            const isOverdue = p.status === 'pending' && new Date(p.due_date) < todayDate
+            const isSoon    = p.status === 'pending' && new Date(p.due_date) >= todayDate && new Date(p.due_date) <= warnDate
+            const daysLate  = isOverdue ? Math.floor((todayDate - new Date(p.due_date)) / 86400000) : 0
+            return (
+              <div key={p.id}
+                className={`bg-dark-800 border rounded-xl p-3.5 ${isOverdue ? 'border-red-700/60' : isSoon ? 'border-amber-700/60' : p.status === 'paid' ? 'border-emerald-800/40' : 'border-dark-700'}`}>
+                <div className="flex items-start gap-3">
+                  <span className="text-xl mt-0.5">{catIcon(fe?.category)}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-slate-100 truncate">{fe?.name}</p>
+                    <p className="text-xs text-slate-500">
+                      Due {fmtDate(p.due_date)}
+                      {(fe?.payee_name || fe?.hr_employees?.name) && ` · ${fe?.payee_name || fe?.hr_employees?.name}`}
+                    </p>
+                    {isOverdue  && <p className="text-xs text-red-400 font-semibold mt-0.5">⚠ Overdue by {daysLate} day{daysLate !== 1 ? 's' : ''}</p>}
+                    {isSoon     && <p className="text-xs text-amber-400 font-semibold mt-0.5">⏰ Due soon</p>}
+                    {p.status === 'paid' && <p className="text-xs text-emerald-400 mt-0.5">✓ Paid {fmtDate(p.paid_date)} · {fmt(p.paid_amount)} · {PAY_LABELS_FE[p.payment_mode] || p.payment_mode}</p>}
+                  </div>
+                  <div className="text-right shrink-0">
+                    <p className="text-sm font-bold text-slate-100">{fmt(p.amount)}</p>
+                    {p.status === 'pending' && (
+                      <button onClick={() => setPayModal(p)}
+                        className="mt-1.5 px-3 py-1 bg-primary-600 hover:bg-primary-500 text-white text-[10px] font-bold rounded-lg transition-colors">
+                        Mark Paid
+                      </button>
+                    )}
+                    {p.status === 'paid' && (
+                      <span className="mt-1.5 inline-block px-2 py-0.5 bg-emerald-900/30 text-emerald-400 text-[10px] font-bold rounded-lg border border-emerald-800">PAID</span>
+                    )}
+                  </div>
+                </div>
+                {p.notes && <p className="text-xs text-slate-600 mt-2 pl-9">{p.notes}</p>}
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {/* ── TEMPLATES VIEW ── */}
+      {view === 'templates' && (
+        <div className="space-y-3">
+          <button onClick={() => setShowAdd(true)}
+            className="w-full py-3 rounded-xl border border-dashed border-primary-500/40 text-primary-400 text-sm font-semibold hover:bg-primary-600/10 flex items-center justify-center gap-2">
+            <Plus className="w-4 h-4" /> Add Fixed Expense
+          </button>
+
+          {/* Group by category */}
+          {FIXED_CATS.map(cat => {
+            const items = templates.filter(t => t.category === cat.value)
+            if (items.length === 0) return null
+            return (
+              <div key={cat.value}>
+                <p className="text-[11px] text-slate-500 font-bold uppercase tracking-widest mb-2 flex items-center gap-1.5">
+                  <span>{cat.icon}</span> {cat.label}
+                </p>
+                <div className="space-y-2">
+                  {items.map(t => (
+                    <div key={t.id} className="bg-dark-800 border border-dark-700 rounded-xl px-4 py-3 flex items-center gap-3">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-slate-100 truncate">{t.name}</p>
+                        <p className="text-xs text-slate-500">
+                          Due {t.due_day}{daySuffix(t.due_day)} · {t.payee_name || t.hr_employees?.name || ''}
+                          {t.description ? ` · ${t.description}` : ''}
+                        </p>
+                      </div>
+                      <p className="text-sm font-bold text-slate-100 shrink-0">{fmt(t.amount)}</p>
+                      <button onClick={() => setEditTpl(t)} className="text-slate-500 hover:text-slate-300 p-1">
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
+                      <button onClick={() => deleteTemplate(t.id)} className="text-slate-500 hover:text-red-400 p-1">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )
+          })}
+
+          {templates.length === 0 && (
+            <p className="text-center text-slate-500 text-sm py-8">No fixed expenses set up yet</p>
+          )}
+        </div>
+      )}
+
+      {/* Modals */}
+      {(showAdd || editTpl) && (
+        <FixedExpenseTemplateModal
+          companyId={companyId}
+          template={editTpl}
+          onClose={() => { setShowAdd(false); setEditTpl(null) }}
+          onSaved={() => {
+            setShowAdd(false); setEditTpl(null)
+            qc.invalidateQueries({ queryKey: ['fixed_expenses', companyId] })
+            qc.invalidateQueries({ queryKey: ['fixed_expense_payments', companyId, currentMonth] })
+          }}
+        />
+      )}
+      {payModal && (
+        <MarkPaidModal
+          companyId={companyId}
+          payment={payModal}
+          onClose={() => setPayModal(null)}
+          onSaved={() => {
+            setPayModal(null)
+            qc.invalidateQueries({ queryKey: ['fixed_expense_payments', companyId, currentMonth] })
+            qc.invalidateQueries({ queryKey: ['acct_dashboard', companyId] })
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
 const TABS = [
   { key: 'dashboard', label: 'Dashboard', icon: '📊' },
   { key: 'invoices',  label: 'Invoices',  icon: '📄' },
   { key: 'expenses',  label: 'Expenses',  icon: '💸' },
+  { key: 'fixed',     label: 'Fixed',     icon: '📌' },
   { key: 'ledger',    label: 'Ledger',    icon: '📒' },
 ]
 
 export default function AccountsPage() {
   const { companyId, session } = useAuth()
   const [activeTab, setActiveTab] = useState('dashboard')
+  const [alertDismissed, setAlertDismissed] = useState(false)
 
   // Equipment list — shared across tabs (expense tagging)
   const { data: equipmentList = [] } = useQuery({
@@ -1808,12 +2346,38 @@ export default function AccountsPage() {
     enabled: !!companyId,
   })
 
+  // Fixed expense alert — overdue or due within 3 days
+  const alertCutoff = new Date(); alertCutoff.setDate(alertCutoff.getDate() + 3)
+  const alertCutoffStr = `${alertCutoff.getFullYear()}-${String(alertCutoff.getMonth()+1).padStart(2,'0')}-${String(alertCutoff.getDate()).padStart(2,'0')}`
+  const { data: alertItems = [] } = useQuery({
+    queryKey: ['fixed_alert', companyId, alertCutoffStr],
+    queryFn: async () => {
+      const { data } = await supabase.from('fixed_expense_payments')
+        .select('id, due_date, amount, status, fixed_expenses(name)')
+        .eq('company_id', companyId).eq('status', 'pending')
+        .lte('due_date', alertCutoffStr).order('due_date')
+      return data || []
+    },
+    enabled: !!companyId,
+    refetchOnWindowFocus: true,
+  })
+
+  const todayStr2 = `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}-${String(new Date().getDate()).padStart(2,'0')}`
+  const overdueAlerts = alertItems.filter(a => a.due_date < todayStr2)
+  const soonAlerts    = alertItems.filter(a => a.due_date >= todayStr2)
+  const showAlert     = alertItems.length > 0 && !alertDismissed
+
   return (
     <div className="flex flex-col h-full overflow-hidden bg-dark-900">
       {/* Page header */}
       <div className="flex items-center gap-3 px-5 py-3 border-b border-dark-700 flex-shrink-0">
         <Receipt className="w-5 h-5 text-primary-400" />
         <h1 className="text-base font-bold text-slate-100">Accounts</h1>
+        {alertItems.length > 0 && (
+          <span className="w-5 h-5 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+            {alertItems.length}
+          </span>
+        )}
         <div className="flex-1" />
         {/* Tabs */}
         <div className="flex gap-1 bg-dark-800 rounded-xl p-1 border border-dark-700">
@@ -1827,11 +2391,37 @@ export default function AccountsPage() {
         </div>
       </div>
 
+      {/* Fixed expense alert banner */}
+      {showAlert && (
+        <div className={`shrink-0 flex items-start gap-3 px-4 py-3 border-b ${overdueAlerts.length > 0 ? 'bg-red-950/40 border-red-800' : 'bg-amber-950/40 border-amber-800'}`}>
+          <AlertTriangle className={`w-4 h-4 shrink-0 mt-0.5 ${overdueAlerts.length > 0 ? 'text-red-400' : 'text-amber-400'}`} />
+          <div className="flex-1 min-w-0">
+            {overdueAlerts.length > 0 && (
+              <p className="text-xs font-bold text-red-300">
+                {overdueAlerts.length} overdue fixed expense{overdueAlerts.length > 1 ? 's' : ''}: {overdueAlerts.map(a => a.fixed_expenses?.name).join(', ')}
+              </p>
+            )}
+            {soonAlerts.length > 0 && (
+              <p className="text-xs text-amber-300">
+                Due within 3 days: {soonAlerts.map(a => a.fixed_expenses?.name).join(', ')}
+              </p>
+            )}
+            <button onClick={() => setActiveTab('fixed')} className="text-[11px] text-primary-400 hover:text-primary-300 underline mt-0.5">
+              Review in Fixed Expenses →
+            </button>
+          </div>
+          <button onClick={() => setAlertDismissed(true)} className="text-slate-500 hover:text-slate-300 shrink-0">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {/* Tab content */}
       <div className="flex-1 overflow-hidden">
         {activeTab === 'dashboard' && <DashboardTab companyId={companyId} onNavigate={setActiveTab} />}
         {activeTab === 'invoices'  && <InvoicesTab  companyId={companyId} session={session} />}
         {activeTab === 'expenses'  && <ExpensesTab  companyId={companyId} session={session} equipmentList={equipmentList} />}
+        {activeTab === 'fixed'     && <FixedExpensesTab companyId={companyId} />}
         {activeTab === 'ledger'    && <LedgerTab    companyId={companyId} />}
       </div>
     </div>
