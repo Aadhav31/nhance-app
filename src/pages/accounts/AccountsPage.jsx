@@ -228,8 +228,8 @@ function CreateInvoiceModal({ companyId, session, invoiceCount, onClose, onSaved
       if (!newInv?.id) throw new Error('Invoice could not be saved — please check your account permissions.')
 
       const linePayload = lines.filter(l => l.description.trim()).map((l, i) => ({
-        invoice_id: newInv.id, company_id: companyId,
-        description: l.description.trim(),
+        invoice_id:   invoiceId,   // use our known UUID directly — no dependency on newInv
+        description:  l.description.trim(),
         item_code:    l.item_code?.trim() || null,
         sac_hsn_code: l.sac_hsn_code?.trim() || null,
         gst_rate:     invGSTRate,
@@ -551,12 +551,12 @@ function EditInvoiceModal({ invoice, companyId, session, onClose, onSaved }) {
   const { data: clientList = [] } = useQuery({
     queryKey: ['clients_invoice_picker', companyId],
     queryFn: async () => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('clients')
-        .select('id, display_name, business_name, gstin, registered_address, city, state, pincode, payment_terms, is_active')
+        .select('id, display_name, business_name, gstin, registered_address, city, state, pincode, payment_terms')
         .eq('company_id', companyId)
-        .neq('is_active', false)
-        .order('display_name')
+        .order('business_name')
+      if (error) throw error
       return data || []
     },
     enabled: !!companyId,
@@ -599,7 +599,7 @@ function EditInvoiceModal({ invoice, companyId, session, onClose, onSaved }) {
   })
 
   // Load existing line items
-  useState(() => {
+  useEffect(() => {
     supabase.from('invoice_line_items')
       .select('*').eq('invoice_id', invoice.id).order('sort_order')
       .then(({ data }) => {
@@ -613,7 +613,7 @@ function EditInvoiceModal({ invoice, companyId, session, onClose, onSaved }) {
         }
         setLoadingLines(false)
       })
-  })
+  }, [invoice.id])
 
   const updateLine = (id, key, val) => {
     setLines(prev => prev.map(l => {
@@ -672,7 +672,7 @@ function EditInvoiceModal({ invoice, companyId, session, onClose, onSaved }) {
       // Replace line items: delete old, insert new
       await supabase.from('invoice_line_items').delete().eq('invoice_id', invoice.id)
       const linePayload = lines.filter(l => l.description.trim()).map((l, i) => ({
-        invoice_id: invoice.id, company_id: companyId,
+        invoice_id:   invoice.id,
         description:  l.description.trim(),
         item_code:    l.item_code?.trim() || null,
         sac_hsn_code: l.sac_hsn_code?.trim() || null,
