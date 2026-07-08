@@ -1825,7 +1825,19 @@ function LedgerTab({ companyId }) {
         .eq('company_id', companyId)
         .gte('txn_date', fromDate).lte('txn_date', toDate)
         .order('txn_date', { ascending: true })
-      if (error) throw error; return data
+      if (error) throw error
+      const rows = data || []
+      // Enrich expense rows with actual sub-category from the expenses table
+      const expIds = rows.filter(t => t.reference_type === 'expense' && t.reference_id).map(t => t.reference_id)
+      if (expIds.length > 0) {
+        const { data: cats } = await supabase.from('expenses').select('id, category').in('id', expIds)
+        const catMap = Object.fromEntries((cats || []).map(e => [e.id, e.category]))
+        return rows.map(t => ({
+          ...t,
+          expense_category: t.reference_type === 'expense' ? (catMap[t.reference_id] || null) : null,
+        }))
+      }
+      return rows
     },
     enabled: !!companyId,
   })
@@ -1842,12 +1854,21 @@ function LedgerTab({ companyId }) {
   const income  = useMemo(() => filtered.filter(t => t.type === 'income').reduce((s, t) => s + Number(t.amount), 0), [filtered])
   const expense = useMemo(() => filtered.filter(t => t.type === 'expense').reduce((s, t) => s + Number(t.amount), 0), [filtered])
 
-  // Summary: group by reference_type/category
+  // Category label helper
+  const catLabel = (t) => {
+    if (t.expense_category) return t.expense_category.replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase())
+    if (t.reference_type === 'invoice_payment') return 'Invoice Payment'
+    if (t.reference_type === 'income') return 'Income'
+    return (t.reference_type || 'manual').replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase())
+  }
+
+  // Summary: group by actual expense category
   const summary = useMemo(() => {
     const map = {}
     filtered.forEach(t => {
-      const key = `${t.type}__${t.reference_type || 'manual'}`
-      if (!map[key]) map[key] = { type: t.type, category: t.reference_type || 'manual', total: 0, count: 0 }
+      const cat = t.expense_category || t.reference_type || 'manual'
+      const key = `${t.type}__${cat}`
+      if (!map[key]) map[key] = { type: t.type, category: cat, total: 0, count: 0 }
       map[key].total += Number(t.amount); map[key].count++
     })
     return Object.values(map).sort((a,b) => b.total - a.total)
@@ -1978,57 +1999,72 @@ function LedgerTab({ companyId }) {
         autoTable(doc, {
           startY: 47,
           margin: { left: M, right: M },
-          head: [['Date', 'Description', 'Category', 'Mode', 'Reference', 'Debit (₹)', 'Credit (₹)']],
+          head: [['Date', 'Description', 'Expense Category', 'Mode', 'Ref / Voucher', 'Debit (₹)', 'Credit (₹)']],
           body: filtered.map(t => [
             fmtDateShort(t.txn_date),
             t.description || '',
-            (t.reference_type || 'manual').replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase()),
+            // Actual expense sub-category (salary / fuel / travel etc.) — not just "expense"
+            t.expense_category
+              ? t.expense_category.replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase())
+              : (t.reference_type === 'invoice_payment' ? 'Invoice Payment'
+                : t.type === 'income' ? 'Income'
+                : (t.reference_type || '').replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase())),
             (t.payment_mode || '—').toUpperCase(),
             t.bank_reference || '—',
             t.type === 'expense' ? fmtINRLedger(t.amount) : '',
             t.type === 'income'  ? fmtINRLedger(t.amount) : '',
           ]),
+          // ── Column totals in the footer row ──
+          foot: [['', '', '', '', 'TOTAL', fmtINRLedger(expense), fmtINRLedger(income)]],
+          showFoot: 'lastPage',
           styles: baseStyles,
           headStyles: headSt,
+          footStyles: {
+            fillColor: [229, 231, 235], textColor: [15, 23, 42],
+            fontStyle: 'bold', fontSize: 8.5,
+          },
           alternateRowStyles: { fillColor: [249, 250, 251] },
           bodyStyles:         { fillColor: [255, 255, 255] },
           columnStyles: {
             0: { cellWidth: 22 },
-            2: { cellWidth: 30 },
-            3: { cellWidth: 18, halign: 'center' },
-            4: { cellWidth: 28 },
-            5: { halign: 'right', cellWidth: 32, fontStyle: 'bold' },
-            6: { halign: 'right', cellWidth: 32, fontStyle: 'bold' },
+            2: { cellWidth: 34 },
+            3: { cellWidth: 16, halign: 'center' },
+            4: { cellWidth: 26 },
+            5: { halign: 'right', cellWidth: 30, fontStyle: 'bold' },
+            6: { halign: 'right', cellWidth: 30, fontStyle: 'bold' },
           },
           didParseCell: (d) => {
-            if (d.section !== 'body') return
-            if (d.column.index === 5 && d.cell.raw) d.cell.styles.textColor = [220, 38, 38]
-            if (d.column.index === 6 && d.cell.raw) d.cell.styles.textColor = [22, 163, 74]
+            if (d.section === 'body') {
+              if (d.column.index === 5 && d.cell.raw) d.cell.styles.textColor = [220, 38, 38]
+              if (d.column.index === 6 && d.cell.raw) d.cell.styles.textColor = [22, 163, 74]
+            }
+            if (d.section === 'foot') {
+              if (d.column.index === 5) d.cell.styles.textColor = [220, 38, 38]
+              if (d.column.index === 6) d.cell.styles.textColor = [22, 163, 74]
+              d.cell.styles.halign = d.column.index >= 5 ? 'right' : 'left'
+            }
           },
         })
 
-        // Totals block — two separate lines, well spaced
-        const tY = doc.lastAutoTable.finalY + 3
-        // light separator line
-        doc.setDrawColor(200, 200, 200); doc.setLineWidth(0.3)
-        doc.line(M, tY, W - M, tY)
+        // ── Summary block — LEFT side, one line each ──────────────────────────
+        const tY = doc.lastAutoTable.finalY + 6
+        doc.setDrawColor(220, 220, 220); doc.setLineWidth(0.2)
+        doc.line(M, tY - 2, M + 90, tY - 2)   // short line only under summary
 
-        // Debit total — left-anchored in the debit column area
-        doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5)
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(9)
+
         doc.setTextColor(220, 38, 38)
-        doc.text(`Total Debit :`, M + 4, tY + 6)
-        doc.text(`₹${fmtINRLedger(expense)}`, W - M - 34, tY + 6, { align: 'right' })
+        doc.text(`Total Debit (Expense)  :   ₹${fmtINRLedger(expense)}`, M + 2, tY + 5)
 
-        // Credit total — right-anchored
         doc.setTextColor(22, 163, 74)
-        doc.text(`Total Credit :`, M + 4, tY + 12)
-        doc.text(`₹${fmtINRLedger(income)}`, W - M, tY + 12, { align: 'right' })
+        doc.text(`Total Credit (Income)  :   ₹${fmtINRLedger(income)}`, M + 2, tY + 13)
 
-        // Net
         const netPos = income - expense >= 0
         doc.setTextColor(netPos ? 22 : 220, netPos ? 163 : 38, netPos ? 74 : 38)
-        doc.text(`Net Balance :`, M + 4, tY + 18)
-        doc.text(`₹${fmtINRLedger(Math.abs(income-expense))} ${netPos?'Cr':'Dr'}`, W - M, tY + 18, { align: 'right' })
+        doc.text(
+          `Net Balance               :   ₹${fmtINRLedger(Math.abs(income - expense))} ${netPos ? 'Cr' : 'Dr'}`,
+          M + 2, tY + 21
+        )
       }
 
       // ─── PAGE FOOTER ────────────────────────────────────────────────────────
@@ -2278,9 +2314,13 @@ function LedgerTab({ companyId }) {
                     {filtered.map(t => (
                       <tr key={t.id} className="border-b border-dark-700/50 hover:bg-dark-800 transition-colors">
                         <td className="px-4 py-3 text-slate-400 whitespace-nowrap">{fmtDateShort(t.txn_date)}</td>
-                        <td className="px-4 py-3 text-slate-300 max-w-[220px]"><span className="truncate block">{t.description}</span></td>
-                        <td className="px-4 py-3 text-slate-500 capitalize hidden md:table-cell">{(t.reference_type || 'manual').replace(/_/g,' ')}</td>
-                        <td className="px-4 py-3 text-slate-500 capitalize hidden md:table-cell">{t.payment_mode || '—'}</td>
+                        <td className="px-4 py-3 text-slate-300 max-w-[200px]"><span className="truncate block">{t.description}</span></td>
+                        <td className="px-4 py-3 hidden md:table-cell">
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-dark-700 text-slate-300 font-medium whitespace-nowrap">
+                            {catLabel(t)}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-slate-500 uppercase text-xs hidden md:table-cell">{t.payment_mode || '—'}</td>
                         <td className="px-4 py-3 text-slate-500 hidden lg:table-cell">{t.bank_reference || '—'}</td>
                         <td className="px-4 py-3 text-right font-mono font-bold text-red-400 whitespace-nowrap">
                           {t.type === 'expense' ? fmt(t.amount) : ''}
