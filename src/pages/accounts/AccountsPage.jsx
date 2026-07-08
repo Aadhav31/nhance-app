@@ -1811,7 +1811,8 @@ function getLedgerPresets() {
   const now = new Date()
   const y   = now.getFullYear()
   const m   = now.getMonth()  // 0-indexed
-  const iso = d => d.toISOString().split('T')[0]
+  // Use LOCAL date parts — toISOString() converts to UTC and shifts the date in IST (UTC+5:30)
+  const iso = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
   const today = iso(now)
 
   // FY: Apr 1 – Mar 31; if month < 3 (Jan-Mar) we're in previous calendar year's FY
@@ -1845,8 +1846,9 @@ function getLedgerPresets() {
 // ── LedgerTab ─────────────────────────────────────────────────────────────────
 function LedgerTab({ companyId }) {
   const _today    = new Date()
-  const firstDay  = new Date(_today.getFullYear(), _today.getMonth(), 1).toISOString().split('T')[0]
-  const todayISO  = _today.toISOString().split('T')[0]   // default to: today, not end-of-month
+  const _isoLocal = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+  const firstDay  = _isoLocal(new Date(_today.getFullYear(), _today.getMonth(), 1))
+  const todayISO  = _isoLocal(_today)
 
   const [fromDate, setFromDate]   = useState(firstDay)
   const [toDate,   setToDate]     = useState(todayISO)
