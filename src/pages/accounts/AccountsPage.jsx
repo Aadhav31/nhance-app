@@ -7,6 +7,7 @@ import {
   TrendingUp, TrendingDown, Clock, Search, Banknote,
   ArrowUpCircle, ArrowDownCircle, ChevronRight, ChevronDown,
   Link, Copy, ExternalLink, Share2, Bell, AlertTriangle, CheckCircle2,
+  Download, FileText, FileSpreadsheet, ToggleLeft, ToggleRight, CalendarRange,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format, startOfMonth, endOfMonth, parseISO } from 'date-fns'
@@ -1690,18 +1691,148 @@ function ExpensesTab({ companyId, session, equipmentList }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Ledger Tab (all transactions)
 // ─────────────────────────────────────────────────────────────────────────────
+// ── Ledger export helpers ─────────────────────────────────────────────────────
+const fmtINRLedger = n =>
+  Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+const fmtDateShort = d => {
+  if (!d) return '—'
+  const dt = new Date(d)
+  return `${String(dt.getDate()).padStart(2,'0')}/${String(dt.getMonth()+1).padStart(2,'0')}/${dt.getFullYear()}`
+}
+
+const tallyDate = d => {
+  if (!d) return ''
+  const dt = new Date(d)
+  return `${dt.getFullYear()}${String(dt.getMonth()+1).padStart(2,'0')}${String(dt.getDate()).padStart(2,'0')}`
+}
+
+const tallyLedgerName = (txn) => {
+  const CAT_MAP = {
+    salary: 'Salary Expenses', emi: 'EMI / Loan Repayment', rent: 'Rent Expenses',
+    insurance: 'Insurance Expenses', interest: 'Interest & Finance Charges',
+    admin: 'Administrative Expenses', misc: 'Miscellaneous Expenses',
+    fuel: 'Fuel Expenses', food: 'Food & Catering', travel: 'Travel Expenses',
+    accommodation: 'Accommodation Expenses', medical: 'Medical Expenses',
+    site_allowance: 'Site Allowance', spares_purchase: 'Spares & Parts',
+    repairs_maintenance: 'Repairs & Maintenance', invoice_payment: 'Creditors',
+    other: 'Miscellaneous Expenses',
+  }
+  if (txn.type === 'income') return CAT_MAP[txn.reference_type] || 'Sales / Income'
+  return CAT_MAP[txn.reference_type] || 'General Expenses'
+}
+
+const paymentLedgerName = (mode) => {
+  const MAP = { cash: 'Cash', upi: 'UPI Payable', bank_transfer: 'Bank Account', cheque: 'Bank Account', card: 'Bank Account' }
+  return MAP[mode] || 'Cash'
+}
+
+function generateTallyXML(txns, company) {
+  const vouchers = txns.map(t => {
+    const vchType = t.type === 'income' ? 'Receipt' : 'Payment'
+    const isIncome = t.type === 'income'
+    const amt = Math.abs(Number(t.amount || 0))
+    const ledger = tallyLedgerName(t)
+    const payLedger = paymentLedgerName(t.payment_mode)
+    return `        <TALLYMESSAGE xmlns:UDF="TallyUDF">
+          <VOUCHER REMOTEID="${t.id}" VCHTYPE="${vchType}" ACTION="Create" OBJVIEW="Accounting Voucher View">
+            <DATE>${tallyDate(t.txn_date)}</DATE>
+            <NARRATION>${(t.description || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</NARRATION>
+            <VOUCHERTYPENAME>${vchType}</VOUCHERTYPENAME>
+            <VOUCHERNUMBER>${t.bank_reference || t.id.slice(0,8).toUpperCase()}</VOUCHERNUMBER>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>${isIncome ? payLedger : ledger}</LEDGERNAME>
+              <ISDEEMEDPOSITIVE>${isIncome ? 'Yes' : 'No'}</ISDEEMEDPOSITIVE>
+              <AMOUNT>${isIncome ? amt : -amt}</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>${isIncome ? ledger : payLedger}</LEDGERNAME>
+              <ISDEEMEDPOSITIVE>${isIncome ? 'No' : 'Yes'}</ISDEEMEDPOSITIVE>
+              <AMOUNT>${isIncome ? -amt : amt}</AMOUNT>
+            </ALLLEDGERENTRIES.LIST>
+          </VOUCHER>
+        </TALLYMESSAGE>`
+  }).join('\n')
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<ENVELOPE>
+  <HEADER>
+    <TALLYREQUEST>Import Data</TALLYREQUEST>
+  </HEADER>
+  <BODY>
+    <IMPORTDATA>
+      <REQUESTDESC>
+        <REPORTNAME>Vouchers</REPORTNAME>
+        <STATICVARIABLES>
+          <SVCURRENTCOMPANY>${(company?.name || '').replace(/&/g,'&amp;')}</SVCURRENTCOMPANY>
+        </STATICVARIABLES>
+      </REQUESTDESC>
+      <REQUESTDATA>
+${vouchers}
+      </REQUESTDATA>
+    </IMPORTDATA>
+  </BODY>
+</ENVELOPE>`
+}
+
+function generateCSV(txns, company, fromDate, toDate) {
+  const header = [
+    `"${company?.name || 'Company'}"`, '', '', '', '', '',
+    `"Period: ${fromDate} to ${toDate}"`,
+  ].join(',')
+  const cols = ['Date','Description','Type','Category','Payment Mode','Reference','Amount (INR)']
+  const rows = txns.map(t => [
+    fmtDateShort(t.txn_date),
+    `"${(t.description || '').replace(/"/g,'""')}"`,
+    t.type === 'income' ? 'Income' : 'Expense',
+    t.reference_type || 'manual',
+    t.payment_mode || '',
+    t.bank_reference || '',
+    (t.type === 'income' ? '' : '-') + fmtINRLedger(t.amount),
+  ].join(','))
+  return [header, cols.join(','), ...rows].join('\n')
+}
+
+function downloadFile(content, filename, mime) {
+  const blob = new Blob([content], { type: mime })
+  const url  = URL.createObjectURL(blob)
+  const a    = document.createElement('a')
+  a.href = url; a.download = filename; a.click()
+  URL.revokeObjectURL(url)
+}
+
+// ── LedgerTab ─────────────────────────────────────────────────────────────────
 function LedgerTab({ companyId }) {
-  const [month, setMonth] = useState(curMonth())
+  const today     = new Date()
+  const firstDay  = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0]
+  const lastDay   = new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().split('T')[0]
+
+  const [fromDate, setFromDate]   = useState(firstDay)
+  const [toDate,   setToDate]     = useState(lastDay)
   const [typeFilter, setTypeFilter] = useState('all')
-  const [search, setSearch] = useState('')
+  const [search,   setSearch]     = useState('')
+  const [detailed, setDetailed]   = useState(true)
+  const [exporting, setExporting] = useState(null)
+  const [showExport, setShowExport] = useState(false)
+
+  // Company info for export headers
+  const { data: company } = useQuery({
+    queryKey: ['ledger_company', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('companies')
+        .select('name, address, gstin, phone, email').eq('id', companyId).single()
+      return data || {}
+    },
+    enabled: !!companyId,
+  })
 
   const { data: txns = [], isLoading } = useQuery({
-    queryKey: ['acct_txns_ledger', companyId, month],
+    queryKey: ['acct_txns_ledger', companyId, fromDate, toDate],
     queryFn: async () => {
-      const { from, to } = monthRange(month)
       const { data, error } = await supabase.from('account_transactions').select('*')
-        .eq('company_id', companyId).gte('txn_date', from).lte('txn_date', to)
-        .order('txn_date', { ascending: false })
+        .eq('company_id', companyId)
+        .gte('txn_date', fromDate).lte('txn_date', toDate)
+        .order('txn_date', { ascending: true })
       if (error) throw error; return data
     },
     enabled: !!companyId,
@@ -1711,72 +1842,378 @@ function LedgerTab({ companyId }) {
     if (typeFilter !== 'all' && t.type !== typeFilter) return false
     if (search.trim()) {
       const q = search.toLowerCase()
-      return t.description.toLowerCase().includes(q) || (t.bank_reference || '').toLowerCase().includes(q)
+      return (t.description || '').toLowerCase().includes(q) || (t.bank_reference || '').toLowerCase().includes(q)
     }
     return true
   }), [txns, typeFilter, search])
 
-  const income  = useMemo(() => txns.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0), [txns])
-  const expense = useMemo(() => txns.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0), [txns])
+  const income  = useMemo(() => filtered.filter(t => t.type === 'income').reduce((s, t) => s + Number(t.amount), 0), [filtered])
+  const expense = useMemo(() => filtered.filter(t => t.type === 'expense').reduce((s, t) => s + Number(t.amount), 0), [filtered])
+
+  // Summary: group by reference_type/category
+  const summary = useMemo(() => {
+    const map = {}
+    filtered.forEach(t => {
+      const key = `${t.type}__${t.reference_type || 'manual'}`
+      if (!map[key]) map[key] = { type: t.type, category: t.reference_type || 'manual', total: 0, count: 0 }
+      map[key].total += Number(t.amount); map[key].count++
+    })
+    return Object.values(map).sort((a,b) => b.total - a.total)
+  }, [filtered])
+
+  // Quick month preset
+  const setMonth = (m) => {
+    const [y, mo] = m.split('-').map(Number)
+    const f = new Date(y, mo - 1, 1).toISOString().split('T')[0]
+    const l = new Date(y, mo, 0).toISOString().split('T')[0]
+    setFromDate(f); setToDate(l)
+  }
+
+  const periodLabel = `${fmtDateShort(fromDate)} – ${fmtDateShort(toDate)}`
+
+  // ── Export functions ──────────────────────────────────────────────────────
+  const exportPDF = async () => {
+    setExporting('pdf')
+    try {
+      const { default: jsPDF } = await import('jspdf')
+      const { default: autoTable } = await import('jspdf-autotable')
+      const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+      const W = doc.internal.pageSize.getWidth()
+
+      // ── Company header
+      doc.setFillColor(15, 23, 42); doc.rect(0, 0, W, 38, 'F')
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(14); doc.setTextColor(255,255,255)
+      doc.text(company?.name || 'Company', 14, 13)
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(180,190,210)
+      let y = 20
+      if (company?.address) { doc.text(company.address, 14, y); y += 5 }
+      if (company?.gstin)   { doc.text(`GSTIN: ${company.gstin}`, 14, y); y += 5 }
+      if (company?.phone)   { doc.text(`Phone: ${company.phone}`, 14, y) }
+      // Period
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(96,165,250)
+      doc.text('ACCOUNT LEDGER', W - 14, 13, { align: 'right' })
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(150,160,180)
+      doc.text(`Period: ${periodLabel}`, W - 14, 20, { align: 'right' })
+      doc.text(`Generated: ${new Date().toLocaleString('en-IN')}`, W - 14, 26, { align: 'right' })
+
+      // ── Summary strip
+      doc.setFillColor(30, 41, 59); doc.rect(0, 38, W, 14, 'F')
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(9)
+      doc.setTextColor(52, 211, 153)
+      doc.text(`Total Income: ₹${fmtINRLedger(income)}`, 14, 47)
+      doc.setTextColor(248, 113, 113)
+      doc.text(`Total Expense: ₹${fmtINRLedger(expense)}`, W / 2 - 20, 47)
+      doc.setTextColor(income - expense >= 0 ? 52 : 248, income - expense >= 0 ? 211 : 113, income - expense >= 0 ? 153 : 113)
+      doc.text(`Net: ₹${fmtINRLedger(Math.abs(income - expense))} ${income - expense >= 0 ? 'Cr' : 'Dr'}`, W - 14, 47, { align: 'right' })
+
+      if (!detailed) {
+        // Summary table
+        autoTable(doc, {
+          startY: 56,
+          head: [['Type', 'Category', 'Transactions', 'Amount (₹)']],
+          body: summary.map(s => [
+            s.type === 'income' ? 'Income' : 'Expense',
+            s.category,
+            s.count,
+            (s.type === 'income' ? '' : '-') + fmtINRLedger(s.total),
+          ]),
+          styles: { fontSize: 8, cellPadding: 3 },
+          headStyles: { fillColor: [30,41,59], textColor: [148,163,184], fontStyle: 'bold' },
+          alternateRowStyles: { fillColor: [15,23,42] },
+          bodyStyles: { textColor: [203,213,225] },
+          columnStyles: { 3: { halign: 'right', fontStyle: 'bold' } },
+        })
+      } else {
+        // Detailed table
+        autoTable(doc, {
+          startY: 56,
+          head: [['Date', 'Description', 'Category', 'Mode', 'Reference', 'Debit (₹)', 'Credit (₹)']],
+          body: filtered.map(t => [
+            fmtDateShort(t.txn_date),
+            t.description || '',
+            t.reference_type || 'manual',
+            t.payment_mode || '—',
+            t.bank_reference || '—',
+            t.type === 'expense' ? fmtINRLedger(t.amount) : '',
+            t.type === 'income'  ? fmtINRLedger(t.amount) : '',
+          ]),
+          styles: { fontSize: 7.5, cellPadding: 2.5, overflow: 'ellipsize' },
+          headStyles: { fillColor: [30,41,59], textColor: [148,163,184], fontStyle: 'bold' },
+          alternateRowStyles: { fillColor: [15,23,42] },
+          bodyStyles: { textColor: [203,213,225] },
+          columnStyles: {
+            1: { cellWidth: 55 },
+            5: { halign: 'right', textColor: [248,113,113] },
+            6: { halign: 'right', textColor: [52,211,153] },
+          },
+        })
+        // Totals row
+        const finalY = doc.lastAutoTable.finalY + 6
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(9)
+        doc.setTextColor(248, 113, 113)
+        doc.text(`Total Debit: ₹${fmtINRLedger(expense)}`, W - 14, finalY, { align: 'right' })
+        doc.setTextColor(52, 211, 153)
+        doc.text(`Total Credit: ₹${fmtINRLedger(income)}`, W - 80, finalY, { align: 'right' })
+      }
+
+      doc.save(`Ledger_${company?.name || 'Nhance'}_${fromDate}_${toDate}.pdf`)
+      toast.success('PDF downloaded')
+    } catch (e) { console.error(e); toast.error('PDF export failed') }
+    finally { setExporting(null); setShowExport(false) }
+  }
+
+  const exportExcel = async () => {
+    setExporting('excel')
+    try {
+      const XLSX = await import('xlsx')
+      const wb   = XLSX.utils.book_new()
+
+      // Info sheet
+      const infoData = [
+        ['Company', company?.name || ''],
+        ['Address', company?.address || ''],
+        ['GSTIN', company?.gstin || ''],
+        ['Phone', company?.phone || ''],
+        ['Period', periodLabel],
+        ['Generated', new Date().toLocaleString('en-IN')],
+        [],
+        ['Total Income', income],
+        ['Total Expense', expense],
+        ['Net', income - expense],
+      ]
+      const wsInfo = XLSX.utils.aoa_to_sheet(infoData)
+      XLSX.utils.book_append_sheet(wb, wsInfo, 'Summary Info')
+
+      if (detailed) {
+        // Detailed sheet
+        const rows = [
+          ['Date','Description','Type','Category','Payment Mode','Reference','Debit','Credit','Balance'],
+        ]
+        let balance = 0
+        filtered.forEach(t => {
+          const dr = t.type === 'expense' ? Number(t.amount) : 0
+          const cr = t.type === 'income'  ? Number(t.amount) : 0
+          balance += cr - dr
+          rows.push([
+            fmtDateShort(t.txn_date), t.description || '', t.type,
+            t.reference_type || 'manual', t.payment_mode || '', t.bank_reference || '',
+            dr || '', cr || '', balance,
+          ])
+        })
+        rows.push(['','','','','','','Total Debit →', expense, ''])
+        rows.push(['','','','','','','Total Credit →', '', income])
+        const ws = XLSX.utils.aoa_to_sheet(rows)
+        ws['!cols'] = [{ wch:12 },{ wch:40 },{ wch:10 },{ wch:18 },{ wch:14 },{ wch:18 },{ wch:14 },{ wch:14 },{ wch:14 }]
+        XLSX.utils.book_append_sheet(wb, ws, 'Ledger Detail')
+      }
+
+      // Summary sheet
+      const sumRows = [['Type','Category','Count','Amount']]
+      summary.forEach(s => sumRows.push([
+        s.type === 'income' ? 'Income' : 'Expense', s.category, s.count,
+        s.type === 'income' ? s.total : -s.total,
+      ]))
+      const wsSum = XLSX.utils.aoa_to_sheet(sumRows)
+      wsSum['!cols'] = [{ wch:10 },{ wch:24 },{ wch:8 },{ wch:14 }]
+      XLSX.utils.book_append_sheet(wb, wsSum, 'Category Summary')
+
+      XLSX.writeFile(wb, `Ledger_${company?.name || 'Nhance'}_${fromDate}_${toDate}.xlsx`)
+      toast.success('Excel downloaded')
+    } catch (e) { console.error(e); toast.error('Excel export failed') }
+    finally { setExporting(null); setShowExport(false) }
+  }
+
+  const exportTally = () => {
+    setExporting('tally')
+    try {
+      const xml = generateTallyXML(filtered, company)
+      downloadFile(xml, `Tally_${company?.name || 'Nhance'}_${fromDate}_${toDate}.xml`, 'application/xml')
+      toast.success('Tally XML downloaded — import via Gateway of Tally → Import Data → Vouchers')
+    } catch (e) { console.error(e); toast.error('Tally export failed') }
+    finally { setExporting(null); setShowExport(false) }
+  }
+
+  const exportCSV = () => {
+    setExporting('csv')
+    try {
+      const csv = generateCSV(filtered, company, fromDate, toDate)
+      downloadFile(csv, `Ledger_${company?.name || 'Nhance'}_${fromDate}_${toDate}.csv`, 'text/csv')
+      toast.success('CSV downloaded')
+    } catch (e) { console.error(e); toast.error('CSV export failed') }
+    finally { setExporting(null); setShowExport(false) }
+  }
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      <div className="flex items-center gap-3 p-4 border-b border-dark-700 flex-shrink-0 flex-wrap gap-y-2">
-        <input type="month" className="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
-          value={month} onChange={e => setMonth(e.target.value)} />
-        <div className="flex gap-1">
-          {['all', 'income', 'expense'].map(t => (
-            <button key={t} onClick={() => setTypeFilter(t)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold capitalize transition-all ${typeFilter === t ? 'bg-primary-600 text-white' : 'text-slate-400 hover:text-slate-200 hover:bg-dark-700'}`}>
-              {t === 'all' ? 'All' : t === 'income' ? '📈 Income' : '📉 Expense'}
+
+      {/* ── Top controls ───────────────────────────────────────────────────── */}
+      <div className="p-4 border-b border-dark-700 flex-shrink-0 space-y-3">
+
+        {/* Row 1: Date range + type filter */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <CalendarRange className="w-4 h-4 text-slate-500 shrink-0" />
+          <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)}
+            className="bg-dark-700 border border-dark-600 rounded-lg px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus:border-primary-500" />
+          <span className="text-slate-500 text-xs">to</span>
+          <input type="date" value={toDate} onChange={e => setToDate(e.target.value)}
+            className="bg-dark-700 border border-dark-600 rounded-lg px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus:border-primary-500" />
+          {/* Quick month jump */}
+          <input type="month" onChange={e => setMonth(e.target.value)}
+            className="bg-dark-700 border border-dark-600 rounded-lg px-3 py-1.5 text-sm text-slate-500 focus:outline-none focus:border-primary-500"
+            title="Quick month select" />
+          <div className="flex gap-1 ml-2">
+            {['all','income','expense'].map(t => (
+              <button key={t} onClick={() => setTypeFilter(t)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold capitalize transition-all ${typeFilter === t ? 'bg-primary-600 text-white' : 'text-slate-400 hover:text-slate-200 hover:bg-dark-700'}`}>
+                {t === 'all' ? 'All' : t === 'income' ? '📈 Income' : '📉 Expense'}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Row 2: Search + toggles + summary + export */}
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="relative">
+            <Search className="absolute left-3 top-2.5 w-3.5 h-3.5 text-slate-500" />
+            <input className="bg-dark-700 border border-dark-600 rounded-lg pl-8 pr-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500 w-44"
+              placeholder="Search…" value={search} onChange={e => setSearch(e.target.value)} />
+          </div>
+
+          {/* Detailed toggle */}
+          <button onClick={() => setDetailed(d => !d)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-dark-600 text-xs font-semibold transition-all hover:border-primary-500"
+            title="Toggle detailed/summary view">
+            {detailed
+              ? <ToggleRight className="w-4 h-4 text-primary-400" />
+              : <ToggleLeft  className="w-4 h-4 text-slate-500" />}
+            <span className={detailed ? 'text-primary-400' : 'text-slate-400'}>
+              {detailed ? 'Detailed' : 'Summary'}
+            </span>
+          </button>
+
+          {/* Net summary */}
+          <div className="flex gap-4 text-xs ml-auto flex-wrap">
+            <span className="text-slate-400">In: <span className="text-emerald-400 font-mono font-bold">{fmt(income)}</span></span>
+            <span className="text-slate-400">Out: <span className="text-red-400 font-mono font-bold">{fmt(expense)}</span></span>
+            <span className={`font-mono font-bold text-xs ${income - expense >= 0 ? 'text-primary-400' : 'text-red-400'}`}>
+              Net: {fmt(Math.abs(income - expense))} {income - expense >= 0 ? 'Cr' : 'Dr'}
+            </span>
+          </div>
+
+          {/* Export dropdown */}
+          <div className="relative">
+            <button onClick={() => setShowExport(s => !s)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary-600 hover:bg-primary-500 text-white text-xs font-semibold transition-all">
+              <Download className="w-3.5 h-3.5" />
+              Export
             </button>
-          ))}
-        </div>
-        <div className="relative">
-          <Search className="absolute left-3 top-2.5 w-3.5 h-3.5 text-slate-500" />
-          <input className="bg-dark-700 border border-dark-600 rounded-lg pl-8 pr-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500 w-44"
-            placeholder="Search…" value={search} onChange={e => setSearch(e.target.value)} />
-        </div>
-        <div className="flex-1 flex justify-end gap-4 text-xs flex-wrap">
-          <span className="text-slate-400">In: <span className="text-emerald-400 font-mono font-bold">{fmt(income)}</span></span>
-          <span className="text-slate-400">Out: <span className="text-red-400 font-mono font-bold">{fmt(expense)}</span></span>
-          <span className="text-slate-400">Net: <span className={`font-mono font-bold ${income - expense >= 0 ? 'text-primary-400' : 'text-red-400'}`}>{fmt(Math.abs(income - expense))}</span></span>
+            {showExport && (
+              <div className="absolute right-0 top-full mt-1 z-30 bg-dark-800 border border-dark-600 rounded-xl shadow-2xl w-52 py-1">
+                <p className="px-3 py-1.5 text-[10px] text-slate-500 font-semibold uppercase tracking-wide border-b border-dark-700">
+                  {filtered.length} transactions · {periodLabel}
+                </p>
+                {[
+                  { key:'pdf',   icon:'📄', label:'PDF Report',     sub:'Formatted, printable',   fn: exportPDF   },
+                  { key:'excel', icon:'📊', label:'Excel (.xlsx)',   sub:'Multi-sheet workbook',   fn: exportExcel },
+                  { key:'tally', icon:'🔷', label:'Tally XML',       sub:'Import into Tally ERP',  fn: exportTally },
+                  { key:'csv',   icon:'📋', label:'CSV',             sub:'Universal spreadsheet',  fn: exportCSV   },
+                ].map(({ key, icon, label, sub, fn }) => (
+                  <button key={key} onClick={fn} disabled={!!exporting}
+                    className="w-full text-left px-3 py-2.5 hover:bg-dark-700 flex items-center gap-3 transition-colors disabled:opacity-50">
+                    <span className="text-base">{icon}</span>
+                    <div>
+                      <p className="text-sm font-semibold text-slate-200">
+                        {exporting === key ? <Loader2 className="w-3.5 h-3.5 animate-spin inline mr-1" /> : null}
+                        {label}
+                      </p>
+                      <p className="text-[11px] text-slate-500">{sub}</p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto">
+      {/* ── Content ─────────────────────────────────────────────────────────── */}
+      <div className="flex-1 overflow-y-auto" onClick={() => showExport && setShowExport(false)}>
         {isLoading
           ? <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-primary-400" /></div>
           : filtered.length === 0
             ? <div className="text-center py-12 text-slate-500 text-sm">No transactions for this period</div>
-            : (
-              <table className="w-full text-xs">
-                <thead className="sticky top-0 bg-dark-900 z-10">
-                  <tr className="text-slate-500 border-b border-dark-700">
-                    <th className="text-left px-4 py-3 font-semibold">Date</th>
-                    <th className="text-left px-4 py-3 font-semibold">Description</th>
-                    <th className="text-left px-4 py-3 font-semibold hidden md:table-cell">Source</th>
-                    <th className="text-left px-4 py-3 font-semibold hidden md:table-cell">Mode</th>
-                    <th className="text-left px-4 py-3 font-semibold hidden lg:table-cell">Ref</th>
-                    <th className="text-right px-4 py-3 font-semibold">Amount</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filtered.map(t => (
-                    <tr key={t.id} className="border-b border-dark-700/50 hover:bg-dark-800 transition-colors">
-                      <td className="px-4 py-3 text-slate-400 whitespace-nowrap">{fmtDate(t.txn_date)}</td>
-                      <td className="px-4 py-3 text-slate-300 max-w-[220px]"><span className="truncate block">{t.description}</span></td>
-                      <td className="px-4 py-3 text-slate-500 capitalize hidden md:table-cell">{t.reference_type || 'manual'}</td>
-                      <td className="px-4 py-3 text-slate-500 capitalize hidden md:table-cell">{t.payment_mode || '—'}</td>
-                      <td className="px-4 py-3 text-slate-500 hidden lg:table-cell">{t.bank_reference || '—'}</td>
-                      <td className={`px-4 py-3 text-right font-mono font-bold whitespace-nowrap ${t.type === 'income' ? 'text-emerald-400' : 'text-red-400'}`}>
-                        {t.type === 'income' ? '+' : '−'}{fmt(t.amount)}
-                      </td>
+            : !detailed
+              /* ── Summary view ── */
+              ? (
+                <div className="p-4 space-y-2">
+                  {['income','expense'].map(type => {
+                    const rows = summary.filter(s => s.type === type)
+                    if (!rows.length) return null
+                    const total = rows.reduce((s,r) => s + r.total, 0)
+                    return (
+                      <div key={type} className="bg-dark-800 border border-dark-700 rounded-xl overflow-hidden">
+                        <div className={`px-4 py-2 flex items-center justify-between text-xs font-bold uppercase tracking-wide ${type === 'income' ? 'bg-emerald-900/30 text-emerald-400 border-b border-emerald-800/40' : 'bg-red-900/30 text-red-400 border-b border-red-800/40'}`}>
+                          <span>{type === 'income' ? '📈 Income' : '📉 Expense'}</span>
+                          <span className="font-mono">{fmt(total)}</span>
+                        </div>
+                        {rows.map(r => (
+                          <div key={r.category} className="px-4 py-2.5 flex items-center justify-between border-b border-dark-700/50 last:border-0">
+                            <div>
+                              <p className="text-sm text-slate-200 capitalize">{r.category.replace(/_/g,' ')}</p>
+                              <p className="text-[11px] text-slate-500">{r.count} transaction{r.count !== 1 ? 's' : ''}</p>
+                            </div>
+                            <span className={`font-mono font-bold text-sm ${type === 'income' ? 'text-emerald-400' : 'text-red-400'}`}>
+                              {fmt(r.total)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )
+                  })}
+                </div>
+              )
+              /* ── Detailed view ── */
+              : (
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-dark-900 z-10">
+                    <tr className="text-slate-500 border-b border-dark-700">
+                      <th className="text-left px-4 py-3 font-semibold">Date</th>
+                      <th className="text-left px-4 py-3 font-semibold">Description</th>
+                      <th className="text-left px-4 py-3 font-semibold hidden md:table-cell">Category</th>
+                      <th className="text-left px-4 py-3 font-semibold hidden md:table-cell">Mode</th>
+                      <th className="text-left px-4 py-3 font-semibold hidden lg:table-cell">Reference</th>
+                      <th className="text-right px-4 py-3 font-semibold text-red-400">Debit</th>
+                      <th className="text-right px-4 py-3 font-semibold text-emerald-400">Credit</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            )
+                  </thead>
+                  <tbody>
+                    {filtered.map(t => (
+                      <tr key={t.id} className="border-b border-dark-700/50 hover:bg-dark-800 transition-colors">
+                        <td className="px-4 py-3 text-slate-400 whitespace-nowrap">{fmtDateShort(t.txn_date)}</td>
+                        <td className="px-4 py-3 text-slate-300 max-w-[220px]"><span className="truncate block">{t.description}</span></td>
+                        <td className="px-4 py-3 text-slate-500 capitalize hidden md:table-cell">{(t.reference_type || 'manual').replace(/_/g,' ')}</td>
+                        <td className="px-4 py-3 text-slate-500 capitalize hidden md:table-cell">{t.payment_mode || '—'}</td>
+                        <td className="px-4 py-3 text-slate-500 hidden lg:table-cell">{t.bank_reference || '—'}</td>
+                        <td className="px-4 py-3 text-right font-mono font-bold text-red-400 whitespace-nowrap">
+                          {t.type === 'expense' ? fmt(t.amount) : ''}
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono font-bold text-emerald-400 whitespace-nowrap">
+                          {t.type === 'income' ? fmt(t.amount) : ''}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot className="sticky bottom-0 bg-dark-900 border-t-2 border-dark-600">
+                    <tr>
+                      <td colSpan={5} className="px-4 py-3 text-xs font-bold text-slate-400">
+                        {filtered.length} transactions · {periodLabel}
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono font-bold text-red-400">{fmt(expense)}</td>
+                      <td className="px-4 py-3 text-right font-mono font-bold text-emerald-400">{fmt(income)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              )
         }
       </div>
     </div>
