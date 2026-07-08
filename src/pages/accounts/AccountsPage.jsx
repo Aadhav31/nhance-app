@@ -1883,21 +1883,31 @@ function FixedExpenseTemplateModal({ companyId, template, onClose, onSaved }) {
     queryKey: ['fe_emp_all', companyId],
     queryFn: async () => {
       const { data } = await supabase.from('hr_employees')
-        .select('id, name, employee_number, salary, basic_salary')
+        .select('id, name, employee_number')
         .eq('company_id', companyId).order('name')
       return data || []
     },
     enabled: !!companyId,
   })
 
-  // When selecting employee for salary, auto-fill amount + name
-  const onEmpChange = (empId) => {
+  // When selecting employee for salary, auto-fill name then fetch salary structure
+  const onEmpChange = async (empId) => {
     set('employee_id', empId)
     const emp = employees.find(e => e.id === empId)
     if (emp) {
       set('name', `Salary – ${emp.name}`)
       set('payee_name', emp.name)
-      set('amount', String(emp.salary || emp.basic_salary || ''))
+      // Fetch latest salary from hr_salary_structure
+      const { data: sal } = await supabase.from('hr_salary_structure')
+        .select('basic_salary, hra, special_allowance, other_allowance')
+        .eq('employee_id', empId)
+        .order('effective_from', { ascending: false })
+        .limit(1).maybeSingle()
+      if (sal) {
+        const gross = (Number(sal.basic_salary || 0) + Number(sal.hra || 0) +
+          Number(sal.special_allowance || 0) + Number(sal.other_allowance || 0))
+        set('amount', String(gross || ''))
+      }
     }
   }
 
