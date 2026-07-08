@@ -1875,88 +1875,165 @@ function LedgerTab({ companyId }) {
   const exportPDF = async () => {
     setExporting('pdf')
     try {
+      // Always fetch company data fresh inside export — don't rely on cached query
+      const { data: co } = await supabase.from('companies')
+        .select('name, address, gstin, phone, email').eq('id', companyId).single()
+      const coName = co?.name || 'Company'
+
       const { default: jsPDF } = await import('jspdf')
       const { default: autoTable } = await import('jspdf-autotable')
-      const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+
+      // Landscape for detailed (7 cols), portrait for summary (4 cols)
+      const orientation = detailed ? 'landscape' : 'portrait'
+      const doc = new jsPDF({ orientation, unit: 'mm', format: 'a4' })
       const W = doc.internal.pageSize.getWidth()
+      const M = 10 // 10 mm margin all sides
 
-      // ── Company header
-      doc.setFillColor(15, 23, 42); doc.rect(0, 0, W, 38, 'F')
-      doc.setFont('helvetica', 'bold'); doc.setFontSize(14); doc.setTextColor(255,255,255)
-      doc.text(company?.name || 'Company', 14, 13)
-      doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(180,190,210)
-      let y = 20
-      if (company?.address) { doc.text(company.address, 14, y); y += 5 }
-      if (company?.gstin)   { doc.text(`GSTIN: ${company.gstin}`, 14, y); y += 5 }
-      if (company?.phone)   { doc.text(`Phone: ${company.phone}`, 14, y) }
-      // Period
-      doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(96,165,250)
-      doc.text('ACCOUNT LEDGER', W - 14, 13, { align: 'right' })
-      doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(150,160,180)
-      doc.text(`Period: ${periodLabel}`, W - 14, 20, { align: 'right' })
-      doc.text(`Generated: ${new Date().toLocaleString('en-IN')}`, W - 14, 26, { align: 'right' })
+      // ── Page background white (default in jsPDF)
+      // ── Company header block ────────────────────────────────────────────
+      // Left: company name + details
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(13); doc.setTextColor(15, 23, 42)
+      doc.text(coName, M, M + 7)
 
-      // ── Summary strip
-      doc.setFillColor(30, 41, 59); doc.rect(0, 38, W, 14, 'F')
-      doc.setFont('helvetica', 'bold'); doc.setFontSize(9)
-      doc.setTextColor(52, 211, 153)
-      doc.text(`Total Income: ₹${fmtINRLedger(income)}`, 14, 47)
-      doc.setTextColor(248, 113, 113)
-      doc.text(`Total Expense: ₹${fmtINRLedger(expense)}`, W / 2 - 20, 47)
-      doc.setTextColor(income - expense >= 0 ? 52 : 248, income - expense >= 0 ? 211 : 113, income - expense >= 0 ? 153 : 113)
-      doc.text(`Net: ₹${fmtINRLedger(Math.abs(income - expense))} ${income - expense >= 0 ? 'Cr' : 'Dr'}`, W - 14, 47, { align: 'right' })
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(80, 80, 80)
+      let ly = M + 13
+      if (co?.address) { doc.text(co.address, M, ly); ly += 5 }
+      const gst  = co?.gstin ? `GSTIN: ${co.gstin}` : ''
+      const ph   = co?.phone ? `Phone: ${co.phone}`  : ''
+      const gstPh = [gst, ph].filter(Boolean).join('   |   ')
+      if (gstPh) { doc.text(gstPh, M, ly); ly += 5 }
+      if (co?.email) { doc.text(co.email, M, ly) }
+
+      // Right: title + period
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(30, 64, 175)
+      doc.text('ACCOUNT LEDGER', W - M, M + 7, { align: 'right' })
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(80, 80, 80)
+      doc.text(`Period: ${periodLabel}`, W - M, M + 14, { align: 'right' })
+      doc.text(`Generated: ${new Date().toLocaleString('en-IN')}`, W - M, M + 20, { align: 'right' })
+
+      // Divider line
+      const headerH = Math.max(ly + 2, M + 25)
+      doc.setDrawColor(200, 200, 200); doc.setLineWidth(0.4)
+      doc.line(M, headerH, W - M, headerH)
+
+      // ── Summary strip (light grey background) ─────────────────────────
+      const stripY = headerH + 1
+      doc.setFillColor(243, 244, 246); doc.rect(M, stripY, W - 2 * M, 10, 'F')
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5)
+      // Income
+      doc.setTextColor(22, 163, 74)
+      doc.text(`Total Credit (Income): ₹${fmtINRLedger(income)}`, M + 4, stripY + 6.5)
+      // Expense
+      doc.setTextColor(220, 38, 38)
+      doc.text(`Total Debit (Expense): ₹${fmtINRLedger(expense)}`, W / 2 - 10, stripY + 6.5)
+      // Net
+      const isCredit = income - expense >= 0
+      doc.setTextColor(isCredit ? 22 : 220, isCredit ? 163 : 38, isCredit ? 74 : 38)
+      doc.text(`Net: ₹${fmtINRLedger(Math.abs(income - expense))} ${isCredit ? 'Cr' : 'Dr'}`, W - M - 4, stripY + 6.5, { align: 'right' })
+
+      const tableY = stripY + 13
+
+      // ── Table ─────────────────────────────────────────────────────────
+      const baseStyles = {
+        fontSize: 8, cellPadding: 2.5, overflow: 'ellipsize',
+        textColor: [30, 30, 30], lineColor: [220, 220, 220], lineWidth: 0.2,
+      }
+      const headSt = {
+        fillColor: [229, 231, 235], textColor: [30, 30, 30],
+        fontStyle: 'bold', fontSize: 8.5,
+      }
+      const altRow  = { fillColor: [249, 250, 251] }
+      const whitRow = { fillColor: [255, 255, 255] }
 
       if (!detailed) {
-        // Summary table
         autoTable(doc, {
-          startY: 56,
+          startY: tableY,
+          margin: { left: M, right: M },
           head: [['Type', 'Category', 'Transactions', 'Amount (₹)']],
           body: summary.map(s => [
             s.type === 'income' ? 'Income' : 'Expense',
-            s.category,
-            s.count,
-            (s.type === 'income' ? '' : '-') + fmtINRLedger(s.total),
+            s.category.replace(/_/g,' '),
+            String(s.count),
+            fmtINRLedger(s.total),
           ]),
-          styles: { fontSize: 8, cellPadding: 3 },
-          headStyles: { fillColor: [30,41,59], textColor: [148,163,184], fontStyle: 'bold' },
-          alternateRowStyles: { fillColor: [15,23,42] },
-          bodyStyles: { textColor: [203,213,225] },
-          columnStyles: { 3: { halign: 'right', fontStyle: 'bold' } },
+          styles: baseStyles,
+          headStyles: headSt,
+          alternateRowStyles: altRow,
+          bodyStyles: whitRow,
+          columnStyles: {
+            0: { cellWidth: 24 },
+            2: { halign: 'center', cellWidth: 28 },
+            3: { halign: 'right',  fontStyle: 'bold', cellWidth: 34 },
+          },
+          didParseCell: (data) => {
+            if (data.section === 'body' && data.column.index === 3) {
+              const rowIdx = data.row.index
+              const s = summary[rowIdx]
+              if (s) data.cell.styles.textColor = s.type === 'income' ? [22,163,74] : [220,38,38]
+            }
+            if (data.section === 'body' && data.column.index === 0) {
+              const rowIdx = data.row.index
+              const s = summary[rowIdx]
+              if (s) data.cell.styles.textColor = s.type === 'income' ? [22,163,74] : [220,38,38]
+            }
+          },
         })
       } else {
-        // Detailed table
         autoTable(doc, {
-          startY: 56,
+          startY: tableY,
+          margin: { left: M, right: M },
           head: [['Date', 'Description', 'Category', 'Mode', 'Reference', 'Debit (₹)', 'Credit (₹)']],
           body: filtered.map(t => [
             fmtDateShort(t.txn_date),
             t.description || '',
-            t.reference_type || 'manual',
+            (t.reference_type || 'manual').replace(/_/g,' '),
             t.payment_mode || '—',
             t.bank_reference || '—',
             t.type === 'expense' ? fmtINRLedger(t.amount) : '',
             t.type === 'income'  ? fmtINRLedger(t.amount) : '',
           ]),
-          styles: { fontSize: 7.5, cellPadding: 2.5, overflow: 'ellipsize' },
-          headStyles: { fillColor: [30,41,59], textColor: [148,163,184], fontStyle: 'bold' },
-          alternateRowStyles: { fillColor: [15,23,42] },
-          bodyStyles: { textColor: [203,213,225] },
+          styles: baseStyles,
+          headStyles: headSt,
+          alternateRowStyles: altRow,
+          bodyStyles: whitRow,
           columnStyles: {
-            1: { cellWidth: 55 },
-            5: { halign: 'right', textColor: [248,113,113] },
-            6: { halign: 'right', textColor: [52,211,153] },
+            0: { cellWidth: 22 },
+            2: { cellWidth: 28 },
+            3: { cellWidth: 20 },
+            4: { cellWidth: 28 },
+            5: { halign: 'right', cellWidth: 30, fontStyle: 'bold', textColor: [220,38,38]  },
+            6: { halign: 'right', cellWidth: 30, fontStyle: 'bold', textColor: [22,163,74]  },
+          },
+          didParseCell: (data) => {
+            if (data.section === 'body') {
+              if (data.column.index === 5 && data.cell.raw)
+                data.cell.styles.textColor = [220, 38, 38]  // red debit
+              if (data.column.index === 6 && data.cell.raw)
+                data.cell.styles.textColor = [22, 163, 74]  // green credit
+            }
           },
         })
-        // Totals row
+        // Totals footer line
         const finalY = doc.lastAutoTable.finalY + 6
-        doc.setFont('helvetica', 'bold'); doc.setFontSize(9)
-        doc.setTextColor(248, 113, 113)
-        doc.text(`Total Debit: ₹${fmtINRLedger(expense)}`, W - 14, finalY, { align: 'right' })
-        doc.setTextColor(52, 211, 153)
-        doc.text(`Total Credit: ₹${fmtINRLedger(income)}`, W - 80, finalY, { align: 'right' })
+        doc.setDrawColor(180,180,180); doc.line(M, finalY - 2, W - M, finalY - 2)
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5)
+        doc.setTextColor(220, 38, 38)
+        doc.text(`Total Debit: ₹${fmtINRLedger(expense)}`, W - M - 34, finalY + 4, { align: 'right' })
+        doc.setTextColor(22, 163, 74)
+        doc.text(`Total Credit: ₹${fmtINRLedger(income)}`, W - M, finalY + 4, { align: 'right' })
       }
 
-      doc.save(`Ledger_${company?.name || 'Nhance'}_${fromDate}_${toDate}.pdf`)
+      // Page number footer
+      const pageCount = doc.internal.getNumberOfPages()
+      for (let i = 1; i <= pageCount; i++) {
+        doc.setPage(i)
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(150,150,150)
+        doc.text(`Page ${i} of ${pageCount}`, W / 2, doc.internal.pageSize.getHeight() - 5, { align: 'center' })
+        doc.text(coName, M, doc.internal.pageSize.getHeight() - 5)
+        doc.text(`Period: ${periodLabel}`, W - M, doc.internal.pageSize.getHeight() - 5, { align: 'right' })
+      }
+
+      doc.save(`Ledger_${coName}_${fromDate}_${toDate}.pdf`)
       toast.success('PDF downloaded')
     } catch (e) { console.error(e); toast.error('PDF export failed') }
     finally { setExporting(null); setShowExport(false) }
@@ -1965,15 +2042,17 @@ function LedgerTab({ companyId }) {
   const exportExcel = async () => {
     setExporting('excel')
     try {
+      const { data: co } = await supabase.from('companies')
+        .select('name, address, gstin, phone, email').eq('id', companyId).single()
       const XLSX = await import('xlsx')
       const wb   = XLSX.utils.book_new()
 
       // Info sheet
       const infoData = [
-        ['Company', company?.name || ''],
-        ['Address', company?.address || ''],
-        ['GSTIN', company?.gstin || ''],
-        ['Phone', company?.phone || ''],
+        ['Company', co?.name || ''],
+        ['Address', co?.address || ''],
+        ['GSTIN', co?.gstin || ''],
+        ['Phone', co?.phone || ''],
         ['Period', periodLabel],
         ['Generated', new Date().toLocaleString('en-IN')],
         [],
@@ -2017,27 +2096,31 @@ function LedgerTab({ companyId }) {
       wsSum['!cols'] = [{ wch:10 },{ wch:24 },{ wch:8 },{ wch:14 }]
       XLSX.utils.book_append_sheet(wb, wsSum, 'Category Summary')
 
-      XLSX.writeFile(wb, `Ledger_${company?.name || 'Nhance'}_${fromDate}_${toDate}.xlsx`)
+      XLSX.writeFile(wb, `Ledger_${co?.name || 'Nhance'}_${fromDate}_${toDate}.xlsx`)
       toast.success('Excel downloaded')
     } catch (e) { console.error(e); toast.error('Excel export failed') }
     finally { setExporting(null); setShowExport(false) }
   }
 
-  const exportTally = () => {
+  const exportTally = async () => {
     setExporting('tally')
     try {
-      const xml = generateTallyXML(filtered, company)
-      downloadFile(xml, `Tally_${company?.name || 'Nhance'}_${fromDate}_${toDate}.xml`, 'application/xml')
+      const { data: co } = await supabase.from('companies')
+        .select('name, address, gstin').eq('id', companyId).single()
+      const xml = generateTallyXML(filtered, co)
+      downloadFile(xml, `Tally_${co?.name || 'Nhance'}_${fromDate}_${toDate}.xml`, 'application/xml')
       toast.success('Tally XML downloaded — import via Gateway of Tally → Import Data → Vouchers')
     } catch (e) { console.error(e); toast.error('Tally export failed') }
     finally { setExporting(null); setShowExport(false) }
   }
 
-  const exportCSV = () => {
+  const exportCSV = async () => {
     setExporting('csv')
     try {
-      const csv = generateCSV(filtered, company, fromDate, toDate)
-      downloadFile(csv, `Ledger_${company?.name || 'Nhance'}_${fromDate}_${toDate}.csv`, 'text/csv')
+      const { data: co } = await supabase.from('companies')
+        .select('name').eq('id', companyId).single()
+      const csv = generateCSV(filtered, co, fromDate, toDate)
+      downloadFile(csv, `Ledger_${co?.name || 'Nhance'}_${fromDate}_${toDate}.csv`, 'text/csv')
       toast.success('CSV downloaded')
     } catch (e) { console.error(e); toast.error('CSV export failed') }
     finally { setExporting(null); setShowExport(false) }
