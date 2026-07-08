@@ -1815,16 +1815,8 @@ function LedgerTab({ companyId }) {
   const [exporting, setExporting] = useState(null)
   const [showExport, setShowExport] = useState(false)
 
-  // Company info for export headers
-  const { data: company } = useQuery({
-    queryKey: ['ledger_company', companyId],
-    queryFn: async () => {
-      const { data } = await supabase.from('companies')
-        .select('name, address, gstin, phone, email').eq('id', companyId).single()
-      return data || {}
-    },
-    enabled: !!companyId,
-  })
+  // Company info — comes from AuthContext (already fetched at login, always available)
+  const { company } = useAuth()
 
   const { data: txns = [], isLoading } = useQuery({
     queryKey: ['acct_txns_ledger', companyId, fromDate, toDate],
@@ -1875,165 +1867,184 @@ function LedgerTab({ companyId }) {
   const exportPDF = async () => {
     setExporting('pdf')
     try {
-      // Always fetch company data fresh inside export — don't rely on cached query
-      const { data: co } = await supabase.from('companies')
-        .select('name, address, gstin, phone, email').eq('id', companyId).single()
-      const coName = co?.name || 'Company'
+      // company comes from useAuth() — always populated after login
+      const coName    = company?.name    || ''
+      const coAddress = company?.address || ''
+      const coGST     = company?.gstin   || ''
+      const coPhone   = company?.phone   || ''
+      const coEmail   = company?.email   || ''
 
       const { default: jsPDF } = await import('jspdf')
       const { default: autoTable } = await import('jspdf-autotable')
 
-      // Landscape for detailed (7 cols), portrait for summary (4 cols)
+      // Landscape for detailed view (7 columns), portrait for summary (4 columns)
       const orientation = detailed ? 'landscape' : 'portrait'
       const doc = new jsPDF({ orientation, unit: 'mm', format: 'a4' })
       const W = doc.internal.pageSize.getWidth()
-      const M = 10 // 10 mm margin all sides
+      const H = doc.internal.pageSize.getHeight()
+      const M = 10   // 10 mm margin all sides
 
-      // ── Page background white (default in jsPDF)
-      // ── Company header block ────────────────────────────────────────────
-      // Left: company name + details
-      doc.setFont('helvetica', 'bold'); doc.setFontSize(13); doc.setTextColor(15, 23, 42)
-      doc.text(coName, M, M + 7)
+      // ─── HEADER ────────────────────────────────────────────────────────────
+      // Top dark band
+      doc.setFillColor(17, 24, 39)   // near-black
+      doc.rect(0, 0, W, 30, 'F')
 
-      doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(80, 80, 80)
-      let ly = M + 13
-      if (co?.address) { doc.text(co.address, M, ly); ly += 5 }
-      const gst  = co?.gstin ? `GSTIN: ${co.gstin}` : ''
-      const ph   = co?.phone ? `Phone: ${co.phone}`  : ''
-      const gstPh = [gst, ph].filter(Boolean).join('   |   ')
-      if (gstPh) { doc.text(gstPh, M, ly); ly += 5 }
-      if (co?.email) { doc.text(co.email, M, ly) }
+      // Company name — white, bold
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(14)
+      doc.setTextColor(255, 255, 255)
+      doc.text(coName || 'Your Company', M, 12)
 
-      // Right: title + period
-      doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(30, 64, 175)
-      doc.text('ACCOUNT LEDGER', W - M, M + 7, { align: 'right' })
-      doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(80, 80, 80)
-      doc.text(`Period: ${periodLabel}`, W - M, M + 14, { align: 'right' })
-      doc.text(`Generated: ${new Date().toLocaleString('en-IN')}`, W - M, M + 20, { align: 'right' })
+      // Company details — light grey under name
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(7.5)
+      doc.setTextColor(180, 188, 200)
+      const details = [coAddress, coGST ? `GSTIN: ${coGST}` : '', coPhone ? `Ph: ${coPhone}` : '', coEmail]
+        .filter(Boolean).join('   ·   ')
+      if (details) doc.text(details, M, 20, { maxWidth: W / 2 - M })
 
-      // Divider line
-      const headerH = Math.max(ly + 2, M + 25)
-      doc.setDrawColor(200, 200, 200); doc.setLineWidth(0.4)
-      doc.line(M, headerH, W - M, headerH)
+      // Right side: title + period
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(13)
+      doc.setTextColor(96, 165, 250)   // blue-400
+      doc.text('ACCOUNT LEDGER', W - M, 12, { align: 'right' })
 
-      // ── Summary strip (light grey background) ─────────────────────────
-      const stripY = headerH + 1
-      doc.setFillColor(243, 244, 246); doc.rect(M, stripY, W - 2 * M, 10, 'F')
-      doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5)
-      // Income
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(8)
+      doc.setTextColor(180, 188, 200)
+      doc.text(`Period : ${periodLabel}`, W - M, 20, { align: 'right' })
+      doc.text(`Generated : ${new Date().toLocaleString('en-IN')}`, W - M, 26, { align: 'right' })
+
+      // ─── SUMMARY ROW ───────────────────────────────────────────────────────
+      doc.setFillColor(243, 244, 246)   // pale grey
+      doc.rect(M, 34, W - 2 * M, 10, 'F')
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(8)
+
+      const colW  = (W - 2 * M) / 3
+      // Credit
       doc.setTextColor(22, 163, 74)
-      doc.text(`Total Credit (Income): ₹${fmtINRLedger(income)}`, M + 4, stripY + 6.5)
-      // Expense
+      doc.text(`Total Credit (Income) :  ₹${fmtINRLedger(income)}`, M + 3, 40.5)
+      // Debit
       doc.setTextColor(220, 38, 38)
-      doc.text(`Total Debit (Expense): ₹${fmtINRLedger(expense)}`, W / 2 - 10, stripY + 6.5)
+      doc.text(`Total Debit (Expense) :  ₹${fmtINRLedger(expense)}`, M + colW + 3, 40.5)
       // Net
-      const isCredit = income - expense >= 0
-      doc.setTextColor(isCredit ? 22 : 220, isCredit ? 163 : 38, isCredit ? 74 : 38)
-      doc.text(`Net: ₹${fmtINRLedger(Math.abs(income - expense))} ${isCredit ? 'Cr' : 'Dr'}`, W - M - 4, stripY + 6.5, { align: 'right' })
+      const isPos = income - expense >= 0
+      doc.setTextColor(isPos ? 22 : 220, isPos ? 163 : 38, isPos ? 74 : 38)
+      doc.text(
+        `Net Balance :  ₹${fmtINRLedger(Math.abs(income - expense))} ${isPos ? 'Cr' : 'Dr'}`,
+        M + 2 * colW + 3, 40.5
+      )
 
-      const tableY = stripY + 13
-
-      // ── Table ─────────────────────────────────────────────────────────
+      // ─── TABLE ─────────────────────────────────────────────────────────────
       const baseStyles = {
-        fontSize: 8, cellPadding: 2.5, overflow: 'ellipsize',
-        textColor: [30, 30, 30], lineColor: [220, 220, 220], lineWidth: 0.2,
+        fontSize: 8, cellPadding: { top: 3, bottom: 3, left: 3, right: 3 },
+        overflow: 'ellipsize', textColor: [30, 30, 30],
+        lineColor: [220, 220, 220], lineWidth: 0.2,
       }
       const headSt = {
-        fillColor: [229, 231, 235], textColor: [30, 30, 30],
-        fontStyle: 'bold', fontSize: 8.5,
+        fillColor: [229, 231, 235], textColor: [15, 23, 42],
+        fontStyle: 'bold', fontSize: 8.5, halign: 'left',
       }
-      const altRow  = { fillColor: [249, 250, 251] }
-      const whitRow = { fillColor: [255, 255, 255] }
 
       if (!detailed) {
         autoTable(doc, {
-          startY: tableY,
+          startY: 47,
           margin: { left: M, right: M },
-          head: [['Type', 'Category', 'Transactions', 'Amount (₹)']],
+          head: [['Type', 'Category', 'Txns', 'Amount (₹)']],
           body: summary.map(s => [
             s.type === 'income' ? 'Income' : 'Expense',
-            s.category.replace(/_/g,' '),
+            s.category.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
             String(s.count),
             fmtINRLedger(s.total),
           ]),
           styles: baseStyles,
           headStyles: headSt,
-          alternateRowStyles: altRow,
-          bodyStyles: whitRow,
+          alternateRowStyles: { fillColor: [249, 250, 251] },
+          bodyStyles:         { fillColor: [255, 255, 255] },
           columnStyles: {
-            0: { cellWidth: 24 },
-            2: { halign: 'center', cellWidth: 28 },
-            3: { halign: 'right',  fontStyle: 'bold', cellWidth: 34 },
+            0: { cellWidth: 26 },
+            2: { halign: 'center', cellWidth: 18 },
+            3: { halign: 'right',  fontStyle: 'bold', cellWidth: 36 },
           },
-          didParseCell: (data) => {
-            if (data.section === 'body' && data.column.index === 3) {
-              const rowIdx = data.row.index
-              const s = summary[rowIdx]
-              if (s) data.cell.styles.textColor = s.type === 'income' ? [22,163,74] : [220,38,38]
-            }
-            if (data.section === 'body' && data.column.index === 0) {
-              const rowIdx = data.row.index
-              const s = summary[rowIdx]
-              if (s) data.cell.styles.textColor = s.type === 'income' ? [22,163,74] : [220,38,38]
-            }
+          didParseCell: (d) => {
+            if (d.section !== 'body') return
+            const s = summary[d.row.index]
+            if (!s) return
+            const clr = s.type === 'income' ? [22,163,74] : [220,38,38]
+            if (d.column.index === 0 || d.column.index === 3) d.cell.styles.textColor = clr
           },
         })
       } else {
         autoTable(doc, {
-          startY: tableY,
+          startY: 47,
           margin: { left: M, right: M },
           head: [['Date', 'Description', 'Category', 'Mode', 'Reference', 'Debit (₹)', 'Credit (₹)']],
           body: filtered.map(t => [
             fmtDateShort(t.txn_date),
             t.description || '',
-            (t.reference_type || 'manual').replace(/_/g,' '),
-            t.payment_mode || '—',
+            (t.reference_type || 'manual').replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase()),
+            (t.payment_mode || '—').toUpperCase(),
             t.bank_reference || '—',
             t.type === 'expense' ? fmtINRLedger(t.amount) : '',
             t.type === 'income'  ? fmtINRLedger(t.amount) : '',
           ]),
           styles: baseStyles,
           headStyles: headSt,
-          alternateRowStyles: altRow,
-          bodyStyles: whitRow,
+          alternateRowStyles: { fillColor: [249, 250, 251] },
+          bodyStyles:         { fillColor: [255, 255, 255] },
           columnStyles: {
             0: { cellWidth: 22 },
-            2: { cellWidth: 28 },
-            3: { cellWidth: 20 },
+            2: { cellWidth: 30 },
+            3: { cellWidth: 18, halign: 'center' },
             4: { cellWidth: 28 },
-            5: { halign: 'right', cellWidth: 30, fontStyle: 'bold', textColor: [220,38,38]  },
-            6: { halign: 'right', cellWidth: 30, fontStyle: 'bold', textColor: [22,163,74]  },
+            5: { halign: 'right', cellWidth: 32, fontStyle: 'bold' },
+            6: { halign: 'right', cellWidth: 32, fontStyle: 'bold' },
           },
-          didParseCell: (data) => {
-            if (data.section === 'body') {
-              if (data.column.index === 5 && data.cell.raw)
-                data.cell.styles.textColor = [220, 38, 38]  // red debit
-              if (data.column.index === 6 && data.cell.raw)
-                data.cell.styles.textColor = [22, 163, 74]  // green credit
-            }
+          didParseCell: (d) => {
+            if (d.section !== 'body') return
+            if (d.column.index === 5 && d.cell.raw) d.cell.styles.textColor = [220, 38, 38]
+            if (d.column.index === 6 && d.cell.raw) d.cell.styles.textColor = [22, 163, 74]
           },
         })
-        // Totals footer line
-        const finalY = doc.lastAutoTable.finalY + 6
-        doc.setDrawColor(180,180,180); doc.line(M, finalY - 2, W - M, finalY - 2)
+
+        // Totals block — two separate lines, well spaced
+        const tY = doc.lastAutoTable.finalY + 3
+        // light separator line
+        doc.setDrawColor(200, 200, 200); doc.setLineWidth(0.3)
+        doc.line(M, tY, W - M, tY)
+
+        // Debit total — left-anchored in the debit column area
         doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5)
         doc.setTextColor(220, 38, 38)
-        doc.text(`Total Debit: ₹${fmtINRLedger(expense)}`, W - M - 34, finalY + 4, { align: 'right' })
+        doc.text(`Total Debit :`, M + 4, tY + 6)
+        doc.text(`₹${fmtINRLedger(expense)}`, W - M - 34, tY + 6, { align: 'right' })
+
+        // Credit total — right-anchored
         doc.setTextColor(22, 163, 74)
-        doc.text(`Total Credit: ₹${fmtINRLedger(income)}`, W - M, finalY + 4, { align: 'right' })
+        doc.text(`Total Credit :`, M + 4, tY + 12)
+        doc.text(`₹${fmtINRLedger(income)}`, W - M, tY + 12, { align: 'right' })
+
+        // Net
+        const netPos = income - expense >= 0
+        doc.setTextColor(netPos ? 22 : 220, netPos ? 163 : 38, netPos ? 74 : 38)
+        doc.text(`Net Balance :`, M + 4, tY + 18)
+        doc.text(`₹${fmtINRLedger(Math.abs(income-expense))} ${netPos?'Cr':'Dr'}`, W - M, tY + 18, { align: 'right' })
       }
 
-      // Page number footer
+      // ─── PAGE FOOTER ────────────────────────────────────────────────────────
       const pageCount = doc.internal.getNumberOfPages()
       for (let i = 1; i <= pageCount; i++) {
         doc.setPage(i)
-        doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(150,150,150)
-        doc.text(`Page ${i} of ${pageCount}`, W / 2, doc.internal.pageSize.getHeight() - 5, { align: 'center' })
-        doc.text(coName, M, doc.internal.pageSize.getHeight() - 5)
-        doc.text(`Period: ${periodLabel}`, W - M, doc.internal.pageSize.getHeight() - 5, { align: 'right' })
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(150, 150, 150)
+        doc.text(coName, M, H - 5)
+        doc.text(`Page ${i} of ${pageCount}`, W / 2, H - 5, { align: 'center' })
+        doc.text(`Period: ${periodLabel}`, W - M, H - 5, { align: 'right' })
+        // footer line
+        doc.setDrawColor(220,220,220); doc.setLineWidth(0.2)
+        doc.line(M, H - 8, W - M, H - 8)
       }
 
-      doc.save(`Ledger_${coName}_${fromDate}_${toDate}.pdf`)
+      doc.save(`Ledger_${coName || 'Nhance'}_${fromDate}_${toDate}.pdf`)
       toast.success('PDF downloaded')
     } catch (e) { console.error(e); toast.error('PDF export failed') }
     finally { setExporting(null); setShowExport(false) }
@@ -2042,17 +2053,15 @@ function LedgerTab({ companyId }) {
   const exportExcel = async () => {
     setExporting('excel')
     try {
-      const { data: co } = await supabase.from('companies')
-        .select('name, address, gstin, phone, email').eq('id', companyId).single()
       const XLSX = await import('xlsx')
       const wb   = XLSX.utils.book_new()
 
       // Info sheet
       const infoData = [
-        ['Company', co?.name || ''],
-        ['Address', co?.address || ''],
-        ['GSTIN', co?.gstin || ''],
-        ['Phone', co?.phone || ''],
+        ['Company', company?.name || ''],
+        ['Address', company?.address || ''],
+        ['GSTIN', company?.gstin || ''],
+        ['Phone', company?.phone || ''],
         ['Period', periodLabel],
         ['Generated', new Date().toLocaleString('en-IN')],
         [],
@@ -2096,31 +2105,27 @@ function LedgerTab({ companyId }) {
       wsSum['!cols'] = [{ wch:10 },{ wch:24 },{ wch:8 },{ wch:14 }]
       XLSX.utils.book_append_sheet(wb, wsSum, 'Category Summary')
 
-      XLSX.writeFile(wb, `Ledger_${co?.name || 'Nhance'}_${fromDate}_${toDate}.xlsx`)
+      XLSX.writeFile(wb, `Ledger_${company?.name || 'Nhance'}_${fromDate}_${toDate}.xlsx`)
       toast.success('Excel downloaded')
     } catch (e) { console.error(e); toast.error('Excel export failed') }
     finally { setExporting(null); setShowExport(false) }
   }
 
-  const exportTally = async () => {
+  const exportTally = () => {
     setExporting('tally')
     try {
-      const { data: co } = await supabase.from('companies')
-        .select('name, address, gstin').eq('id', companyId).single()
-      const xml = generateTallyXML(filtered, co)
-      downloadFile(xml, `Tally_${co?.name || 'Nhance'}_${fromDate}_${toDate}.xml`, 'application/xml')
+      const xml = generateTallyXML(filtered, company)
+      downloadFile(xml, `Tally_${company?.name || 'Nhance'}_${fromDate}_${toDate}.xml`, 'application/xml')
       toast.success('Tally XML downloaded — import via Gateway of Tally → Import Data → Vouchers')
     } catch (e) { console.error(e); toast.error('Tally export failed') }
     finally { setExporting(null); setShowExport(false) }
   }
 
-  const exportCSV = async () => {
+  const exportCSV = () => {
     setExporting('csv')
     try {
-      const { data: co } = await supabase.from('companies')
-        .select('name').eq('id', companyId).single()
-      const csv = generateCSV(filtered, co, fromDate, toDate)
-      downloadFile(csv, `Ledger_${co?.name || 'Nhance'}_${fromDate}_${toDate}.csv`, 'text/csv')
+      const csv = generateCSV(filtered, company, fromDate, toDate)
+      downloadFile(csv, `Ledger_${company?.name || 'Nhance'}_${fromDate}_${toDate}.csv`, 'text/csv')
       toast.success('CSV downloaded')
     } catch (e) { console.error(e); toast.error('CSV export failed') }
     finally { setExporting(null); setShowExport(false) }
