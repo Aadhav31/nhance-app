@@ -90,6 +90,7 @@ const blankLine = () => ({
 
 function CreateInvoiceModal({ companyId, session, invoiceCount, onClose, onSaved }) {
   const [saving, setSaving] = useState(false)
+  const [clientSearch, setClientSearch] = useState('')
   const [form, setForm] = useState({
     client_name: '', client_address: '', client_gstin: '',
     project_name: '', invoice_date: today(), due_date: '',
@@ -102,6 +103,57 @@ function CreateInvoiceModal({ companyId, session, invoiceCount, onClose, onSaved
   })
   const [lines, setLines] = useState([blankLine()])
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
+
+  // Registered clients for auto-fill
+  const { data: clientList = [] } = useQuery({
+    queryKey: ['clients_invoice_picker', companyId],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('clients')
+        .select('id, display_name, business_name, gstin, registered_address, city, state, pincode, payment_terms, is_active')
+        .eq('company_id', companyId)
+        .neq('is_active', false)
+        .order('display_name')
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+
+  // Auto-fill invoice fields from a selected client
+  const applyClient = (client) => {
+    if (!client) return
+    const name = client.display_name || client.business_name || ''
+    const addrParts = [client.registered_address, client.city, client.state, client.pincode].filter(Boolean)
+    const address = addrParts.join(', ')
+    // Determine due date from payment_terms (e.g. "Net 30")
+    let dueDate = ''
+    if (client.payment_terms) {
+      const days = parseInt(client.payment_terms.replace(/\D/g, ''), 10)
+      if (!isNaN(days) && days > 0) {
+        const d = new Date(); d.setDate(d.getDate() + days)
+        dueDate = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+      }
+    }
+    setForm(p => ({
+      ...p,
+      client_name:             name,
+      client_address:          address,
+      client_gstin:            client.gstin || '',
+      place_of_supply:         client.state || '',
+      place_of_supply_address: address,
+      due_date:                dueDate || p.due_date,
+    }))
+    setClientSearch('')
+  }
+
+  const filteredClients = useMemo(() => {
+    if (!clientSearch.trim()) return clientList.slice(0, 8)
+    const q = clientSearch.toLowerCase()
+    return clientList.filter(c =>
+      (c.display_name || c.business_name || '').toLowerCase().includes(q) ||
+      (c.gstin || '').toLowerCase().includes(q)
+    ).slice(0, 8)
+  }, [clientList, clientSearch])
 
   // Equipment list for line item linking
   const { data: equipList = [] } = useQuery({
@@ -197,6 +249,45 @@ function CreateInvoiceModal({ companyId, session, invoiceCount, onClose, onSaved
   return (
     <Modal title={`New Invoice — ${invNum}`} onClose={onClose} wide>
       <div className="space-y-5">
+        {/* Client Picker — select from registered clients */}
+        {clientList.length > 0 && (
+          <div>
+            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Select Registered Client</p>
+            <div className="relative">
+              <Search className="absolute left-3 top-2.5 w-3.5 h-3.5 text-slate-500 pointer-events-none" />
+              <input
+                className={inp('pl-8 text-sm')}
+                placeholder="Search client name or GSTIN…"
+                value={clientSearch}
+                onChange={e => setClientSearch(e.target.value)}
+              />
+            </div>
+            {clientSearch.trim() && filteredClients.length > 0 && (
+              <div className="mt-1 bg-dark-700 border border-dark-600 rounded-xl overflow-hidden shadow-xl">
+                {filteredClients.map(c => {
+                  const name = c.display_name || c.business_name || ''
+                  const addrShort = [c.city, c.state].filter(Boolean).join(', ')
+                  return (
+                    <button key={c.id} onClick={() => applyClient(c)}
+                      className="w-full flex items-start gap-3 px-4 py-3 hover:bg-dark-600 transition-colors text-left border-b border-dark-600 last:border-0">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-slate-100 truncate">{name}</p>
+                        <p className="text-xs text-slate-500">{addrShort}{c.gstin ? ` · GSTIN: ${c.gstin}` : ''}</p>
+                      </div>
+                      <span className="text-[10px] text-primary-400 font-semibold mt-1 shrink-0">Select →</span>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+            {form.client_name && (
+              <p className="text-xs text-emerald-400 mt-1.5 flex items-center gap-1">
+                <CheckCircle2 className="w-3.5 h-3.5" /> Client details filled from registry — edit below if needed
+              </p>
+            )}
+          </div>
+        )}
+
         {/* Client details */}
         <div>
           <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Client Details</p>
@@ -413,6 +504,7 @@ function CreateInvoiceModal({ companyId, session, invoiceCount, onClose, onSaved
 function EditInvoiceModal({ invoice, companyId, session, onClose, onSaved }) {
   const [saving, setSaving] = useState(false)
   const [loadingLines, setLoadingLines] = useState(true)
+  const [clientSearch, setClientSearch] = useState('')
   const [form, setForm] = useState({
     client_name:             invoice.client_name || '',
     client_address:          invoice.client_address || '',
@@ -437,6 +529,46 @@ function EditInvoiceModal({ invoice, companyId, session, onClose, onSaved }) {
   })
   const [lines, setLines] = useState([blankLine()])
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
+
+  // Registered clients for re-selecting / changing client
+  const { data: clientList = [] } = useQuery({
+    queryKey: ['clients_invoice_picker', companyId],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('clients')
+        .select('id, display_name, business_name, gstin, registered_address, city, state, pincode, payment_terms, is_active')
+        .eq('company_id', companyId)
+        .neq('is_active', false)
+        .order('display_name')
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+
+  const applyClientEdit = (client) => {
+    if (!client) return
+    const name = client.display_name || client.business_name || ''
+    const addrParts = [client.registered_address, client.city, client.state, client.pincode].filter(Boolean)
+    const address = addrParts.join(', ')
+    setForm(p => ({
+      ...p,
+      client_name:             name,
+      client_address:          address,
+      client_gstin:            client.gstin || '',
+      place_of_supply:         client.state || '',
+      place_of_supply_address: address,
+    }))
+    setClientSearch('')
+  }
+
+  const filteredClientsEdit = useMemo(() => {
+    if (!clientSearch.trim()) return clientList.slice(0, 8)
+    const q = clientSearch.toLowerCase()
+    return clientList.filter(c =>
+      (c.display_name || c.business_name || '').toLowerCase().includes(q) ||
+      (c.gstin || '').toLowerCase().includes(q)
+    ).slice(0, 8)
+  }, [clientList, clientSearch])
 
   // Equipment list for line item linking
   const { data: equipList = [] } = useQuery({
@@ -548,6 +680,40 @@ function EditInvoiceModal({ invoice, companyId, session, onClose, onSaved }) {
         <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-primary-400" /></div>
       ) : (
         <div className="space-y-5">
+          {/* Client Picker — change client on edit */}
+          {clientList.length > 0 && (
+            <div>
+              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Change Client</p>
+              <div className="relative">
+                <Search className="absolute left-3 top-2.5 w-3.5 h-3.5 text-slate-500 pointer-events-none" />
+                <input
+                  className={inp('pl-8 text-sm')}
+                  placeholder="Search to change client…"
+                  value={clientSearch}
+                  onChange={e => setClientSearch(e.target.value)}
+                />
+              </div>
+              {clientSearch.trim() && filteredClientsEdit.length > 0 && (
+                <div className="mt-1 bg-dark-700 border border-dark-600 rounded-xl overflow-hidden shadow-xl">
+                  {filteredClientsEdit.map(c => {
+                    const name = c.display_name || c.business_name || ''
+                    const addrShort = [c.city, c.state].filter(Boolean).join(', ')
+                    return (
+                      <button key={c.id} onClick={() => applyClientEdit(c)}
+                        className="w-full flex items-start gap-3 px-4 py-3 hover:bg-dark-600 transition-colors text-left border-b border-dark-600 last:border-0">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold text-slate-100 truncate">{name}</p>
+                          <p className="text-xs text-slate-500">{addrShort}{c.gstin ? ` · GSTIN: ${c.gstin}` : ''}</p>
+                        </div>
+                        <span className="text-[10px] text-primary-400 font-semibold mt-1 shrink-0">Select →</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Client details */}
           <div>
             <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Client Details</p>
