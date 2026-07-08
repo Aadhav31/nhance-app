@@ -1584,6 +1584,11 @@ function ExpensesTab({ companyId, session, equipmentList }) {
       return
     }
     if (!window.confirm('Delete this expense? This will also remove the ledger entry.')) return
+    // Delete the linked account_transactions row first, then the expense
+    await supabase.from('account_transactions')
+      .delete()
+      .eq('reference_type', 'expense')
+      .eq('reference_id', exp.id)
     await supabase.from('expenses').delete().eq('id', exp.id)
     toast.success('Deleted'); refresh()
   }
