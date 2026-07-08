@@ -9,7 +9,8 @@ import './index.css'
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 1000 * 60 * 5, // 5 minutes
+      staleTime:            0,      // always refetch when invalidated
+      refetchOnWindowFocus: true,   // refresh when user switches back to tab
       retry: 1,
     },
   },

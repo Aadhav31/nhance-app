@@ -8,6 +8,7 @@ import Sidebar from './components/layout/Sidebar'
 import TopBar from './components/layout/TopBar'
 import { MODULES, ROLES } from './lib/constants'
 import OperatorPortal from './pages/operator/OperatorPortal'
+import { useRealtimeSync } from './hooks/useRealtimeSync'
 import {
   LayoutDashboard, Receipt, ClipboardList, BarChart3,
   Users, Wallet, Package, X, Truck, Wrench, FolderOpen,
@@ -177,6 +178,9 @@ function AppShell() {
   const { loading, session, role, hasModule, isSuperAdmin } = useAuth()
   const [activePage, setActivePage] = useState('dashboard')
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+
+  // Live sync — invalidates React Query cache the moment any table row changes
+  useRealtimeSync()
 
   if (loading) return <LoadingScreen />
   if (!session) return <LoginPage />
