@@ -1806,14 +1806,50 @@ function downloadFile(content, filename, mime) {
   URL.revokeObjectURL(url)
 }
 
+// ── Period presets (Indian financial year: Apr 1 – Mar 31) ───────────────────
+function getLedgerPresets() {
+  const now = new Date()
+  const y   = now.getFullYear()
+  const m   = now.getMonth()  // 0-indexed
+  const iso = d => d.toISOString().split('T')[0]
+  const today = iso(now)
+
+  // FY: Apr 1 – Mar 31; if month < 3 (Jan-Mar) we're in previous calendar year's FY
+  const fyY     = m >= 3 ? y : y - 1
+  const fyStart = iso(new Date(fyY,     3, 1))
+  const fyEnd   = iso(new Date(fyY + 1, 2, 31))
+  const pfyStart= iso(new Date(fyY - 1, 3, 1))
+  const pfyEnd  = iso(new Date(fyY,     2, 31))
+
+  // Current quarter (FY basis): Q1 Apr-Jun, Q2 Jul-Sep, Q3 Oct-Dec, Q4 Jan-Mar
+  let qS, qE, pqS, pqE
+  if (m >= 3 && m <= 5)       { qS=new Date(y,3,1);  qE=new Date(y,5,30);  pqS=new Date(y,0,1);   pqE=new Date(y,2,31)  }
+  else if (m >= 6 && m <= 8)  { qS=new Date(y,6,1);  qE=new Date(y,8,30);  pqS=new Date(y,3,1);   pqE=new Date(y,5,30)  }
+  else if (m >= 9 && m <= 11) { qS=new Date(y,9,1);  qE=new Date(y,11,31); pqS=new Date(y,6,1);   pqE=new Date(y,8,30)  }
+  else                         { qS=new Date(y,0,1);  qE=new Date(y,2,31);  pqS=new Date(y-1,9,1); pqE=new Date(y-1,11,31) }
+
+  // Last month
+  const lmStart = iso(new Date(y, m - 1, 1))
+  const lmEnd   = iso(new Date(y, m, 0))
+
+  return [
+    { label: 'This Month', from: iso(new Date(y, m, 1)),  to: today     },
+    { label: 'Last Month', from: lmStart,                 to: lmEnd     },
+    { label: 'This Qtr',   from: iso(qS),                 to: iso(qE)   },
+    { label: 'Last Qtr',   from: iso(pqS),                to: iso(pqE)  },
+    { label: 'This FY',    from: fyStart,                  to: today     },
+    { label: 'Last FY',    from: pfyStart,                 to: pfyEnd    },
+  ]
+}
+
 // ── LedgerTab ─────────────────────────────────────────────────────────────────
 function LedgerTab({ companyId }) {
-  const today     = new Date()
-  const firstDay  = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0]
-  const lastDay   = new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().split('T')[0]
+  const _today    = new Date()
+  const firstDay  = new Date(_today.getFullYear(), _today.getMonth(), 1).toISOString().split('T')[0]
+  const todayISO  = _today.toISOString().split('T')[0]   // default to: today, not end-of-month
 
   const [fromDate, setFromDate]   = useState(firstDay)
-  const [toDate,   setToDate]     = useState(lastDay)
+  const [toDate,   setToDate]     = useState(todayISO)
   const [typeFilter, setTypeFilter] = useState('all')
   const [search,   setSearch]     = useState('')
   const [detailed, setDetailed]   = useState(true)
@@ -1879,13 +1915,10 @@ function LedgerTab({ companyId }) {
     return Object.values(map).sort((a,b) => b.total - a.total)
   }, [filtered])
 
-  // Quick month preset
-  const setMonth = (m) => {
-    const [y, mo] = m.split('-').map(Number)
-    const f = new Date(y, mo - 1, 1).toISOString().split('T')[0]
-    const l = new Date(y, mo, 0).toISOString().split('T')[0]
-    setFromDate(f); setToDate(l)
-  }
+  const presets = getLedgerPresets()
+  const activePreset = presets.find(p => p.from === fromDate && p.to === toDate)?.label || null
+
+  const applyPreset = (p) => { setFromDate(p.from); setToDate(p.to) }
 
   const periodLabel = `${fmtDateShort(fromDate)} – ${fmtDateShort(toDate)}`
 
@@ -2179,18 +2212,30 @@ function LedgerTab({ companyId }) {
       <div className="p-4 border-b border-dark-700 flex-shrink-0 space-y-3">
 
         {/* Row 1: Date range + type filter */}
-        <div className="flex items-center gap-2 flex-wrap">
-          <CalendarRange className="w-4 h-4 text-slate-500 shrink-0" />
+        {/* Row 1: Period presets */}
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <CalendarRange className="w-4 h-4 text-slate-500 shrink-0 mr-1" />
+          {presets.map(p => (
+            <button key={p.label} onClick={() => applyPreset(p)}
+              className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all border ${
+                activePreset === p.label
+                  ? 'bg-primary-600 border-primary-500 text-white'
+                  : 'bg-dark-700 border-dark-600 text-slate-400 hover:text-slate-200 hover:border-dark-500'
+              }`}>
+              {p.label}
+            </button>
+          ))}
+          <span className="text-dark-600 text-xs mx-1">|</span>
           <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)}
-            className="bg-dark-700 border border-dark-600 rounded-lg px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus:border-primary-500" />
-          <span className="text-slate-500 text-xs">to</span>
+            className="bg-dark-700 border border-dark-600 rounded-lg px-2 py-1 text-xs text-slate-100 focus:outline-none focus:border-primary-500" />
+          <span className="text-slate-500 text-xs">–</span>
           <input type="date" value={toDate} onChange={e => setToDate(e.target.value)}
-            className="bg-dark-700 border border-dark-600 rounded-lg px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus:border-primary-500" />
-          {/* Quick month jump */}
-          <input type="month" onChange={e => setMonth(e.target.value)}
-            className="bg-dark-700 border border-dark-600 rounded-lg px-3 py-1.5 text-sm text-slate-500 focus:outline-none focus:border-primary-500"
-            title="Quick month select" />
-          <div className="flex gap-1 ml-2">
+            className="bg-dark-700 border border-dark-600 rounded-lg px-2 py-1 text-xs text-slate-100 focus:outline-none focus:border-primary-500" />
+        </div>
+
+        {/* Row 2: Type filter + search + toggles + summary + export */}
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex gap-1">
             {['all','income','expense'].map(t => (
               <button key={t} onClick={() => setTypeFilter(t)}
                 className={`px-3 py-1.5 rounded-lg text-xs font-semibold capitalize transition-all ${typeFilter === t ? 'bg-primary-600 text-white' : 'text-slate-400 hover:text-slate-200 hover:bg-dark-700'}`}>
@@ -2198,10 +2243,6 @@ function LedgerTab({ companyId }) {
               </button>
             ))}
           </div>
-        </div>
-
-        {/* Row 2: Search + toggles + summary + export */}
-        <div className="flex items-center gap-3 flex-wrap">
           <div className="relative">
             <Search className="absolute left-3 top-2.5 w-3.5 h-3.5 text-slate-500" />
             <input className="bg-dark-700 border border-dark-600 rounded-lg pl-8 pr-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500 w-44"
