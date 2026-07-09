@@ -480,16 +480,22 @@ function ExpenseForm({ companyId, userId, userRole, userName, onSuccess, onBack 
                     value={form.inv_item_name}
                     onChange={e => set('inv_item_name', e.target.value)}
                   />
-                  <div className="flex gap-2">
+                  <div className="grid grid-cols-5 gap-2">
                     <input
-                      className={inp('flex-1')}
+                      className={`col-span-3 bg-dark-700 border border-dark-600 rounded-xl px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-primary-500 placeholder-slate-600 w-full`}
                       type="number"
                       inputMode="decimal"
                       placeholder="Quantity *"
+                      min="0"
+                      step="any"
                       value={form.inv_quantity}
                       onChange={e => set('inv_quantity', e.target.value)}
                     />
-                    <select className={inp('w-28')} value={form.inv_unit} onChange={e => set('inv_unit', e.target.value)}>
+                    <select
+                      className={`col-span-2 bg-dark-700 border border-dark-600 rounded-xl px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-primary-500 w-full`}
+                      value={form.inv_unit}
+                      onChange={e => set('inv_unit', e.target.value)}
+                    >
                       {INV_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
                     </select>
                   </div>
