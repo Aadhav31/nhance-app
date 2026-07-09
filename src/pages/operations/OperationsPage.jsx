@@ -160,6 +160,60 @@ function GPSField({ location, loading }) {
 }
 
 // ── Shared UI ─────────────────────────────────────────────────────────────────
+// ─── Backup helper ────────────────────────────────────────────────────────────
+// Saves a full JSON snapshot to deleted_operations_backup before deleting.
+// Throws if the backup itself fails — so we never delete without a backup.
+async function backupRecord(companyId, userId, recordType, recordId, recordData, relatedData = null) {
+  const expires = new Date()
+  expires.setDate(expires.getDate() + 30)
+  const { error } = await supabase.from('deleted_operations_backup').insert({
+    company_id:   companyId,
+    record_type:  recordType,
+    record_id:    recordId,
+    record_data:  recordData,
+    related_data: relatedData,
+    deleted_by:   userId || null,
+    deleted_at:   new Date().toISOString(),
+    expires_at:   expires.toISOString(),
+  })
+  if (error) throw new Error(`Backup failed — delete aborted. (${error.message})`)
+}
+
+// ─── Delete Confirm Modal ─────────────────────────────────────────────────────
+function DeleteConfirmModal({ title, description, onConfirm, onCancel, isDeleting }) {
+  return (
+    <div className="fixed inset-0 z-[70] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="w-full max-w-sm bg-dark-900 rounded-2xl border border-red-700/50 shadow-2xl p-5 space-y-4">
+        <div className="flex flex-col items-center text-center gap-3">
+          <div className="w-14 h-14 rounded-full bg-red-900/30 border border-red-700/40 flex items-center justify-center">
+            <Trash2 className="w-7 h-7 text-red-400" />
+          </div>
+          <div>
+            <p className="font-bold text-slate-100 text-base">{title}</p>
+            {description && <p className="text-sm text-slate-400 mt-1">{description}</p>}
+          </div>
+        </div>
+        <div className="bg-amber-900/20 border border-amber-700/30 rounded-xl px-3 py-2.5 space-y-1">
+          <p className="text-xs font-semibold text-amber-400">⚠ This action is permanent</p>
+          <p className="text-xs text-amber-200/60">A full backup will be stored for 30 days. Contact your admin to restore if needed.</p>
+        </div>
+        <div className="flex gap-2 pt-1">
+          <button onClick={onCancel} disabled={isDeleting}
+            className="flex-1 py-2.5 rounded-xl border border-dark-600 text-slate-300 hover:bg-dark-700 text-sm font-medium transition-colors disabled:opacity-50">
+            Cancel
+          </button>
+          <button onClick={onConfirm} disabled={isDeleting}
+            className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white text-sm font-bold transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50">
+            {isDeleting
+              ? <Loader2 className="w-4 h-4 animate-spin" />
+              : <><Trash2 className="w-4 h-4" /> Yes, Delete</>}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function Modal({ title, onClose, children, footer }) {
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm p-4">
@@ -1502,8 +1556,10 @@ function PhotoThumb({ url, label, onView }) {
 }
 
 // ── Shift Detail Modal ─────────────────────────────────────────────────────────
-function ShiftDetailModal({ shift, onClose, isAdmin, onEdit }) {
-  const [lightboxUrl, setLightboxUrl] = useState(null)
+function ShiftDetailModal({ shift, onClose, isAdmin, onEdit, onDelete }) {
+  const [lightboxUrl,  setLightboxUrl]  = useState(null)
+  const [showDelModal, setShowDelModal] = useState(false)
+  const [isDeleting,   setIsDeleting]   = useState(false)
   const mt = shift.equipment?.meter_type
 
   const { data: fuelEntries = [] } = useQuery({
@@ -1559,6 +1615,12 @@ function ShiftDetailModal({ shift, onClose, isAdmin, onEdit }) {
                 <button onClick={() => onEdit(shift)}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary-500/10 border border-primary-500/30 text-primary-400 hover:bg-primary-500/20 text-xs font-medium transition-all">
                   <Edit2 className="w-3.5 h-3.5" /> Edit
+                </button>
+              )}
+              {isAdmin && onDelete && (
+                <button onClick={() => setShowDelModal(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 hover:bg-red-500/20 text-xs font-medium transition-all">
+                  <Trash2 className="w-3.5 h-3.5" /> Delete
                 </button>
               )}
               <button onClick={onClose} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-dark-700">
@@ -1788,13 +1850,27 @@ function ShiftDetailModal({ shift, onClose, isAdmin, onEdit }) {
         </div>
       </div>
       {lightboxUrl && <PhotoLightbox url={lightboxUrl} onClose={() => setLightboxUrl(null)} />}
+      {showDelModal && (
+        <DeleteConfirmModal
+          title={`Delete Shift — ${shift.equipment?.name || ''}`}
+          description={`${format(new Date(shift.shift_date + 'T00:00:00'), 'dd MMM yyyy')} · ${shift.operator_name || 'Unknown operator'} · ${shift.working_hours || 0} hrs`}
+          isDeleting={isDeleting}
+          onCancel={() => setShowDelModal(false)}
+          onConfirm={async () => {
+            setIsDeleting(true)
+            try { await onDelete(shift) } finally { setIsDeleting(false) }
+          }}
+        />
+      )}
     </>
   )
 }
 
 // ── Fuel Detail Modal ──────────────────────────────────────────────────────────
-function FuelDetailModal({ entry, onClose }) {
-  const [lightboxUrl, setLightboxUrl] = useState(null)
+function FuelDetailModal({ entry, onClose, isAdmin, onDelete }) {
+  const [lightboxUrl,  setLightboxUrl]  = useState(null)
+  const [showDelModal, setShowDelModal] = useState(false)
+  const [isDeleting,   setIsDeleting]   = useState(false)
   const mt = entry.equipment?.meter_type
   const mapsUrl = entry.location_lat ? `https://maps.google.com/?q=${entry.location_lat},${entry.location_lng}` : null
 
@@ -1807,7 +1883,15 @@ function FuelDetailModal({ entry, onClose }) {
               <p className="font-bold text-slate-100">{entry.equipment?.name || 'Fuel Entry'}</p>
               <p className="text-xs text-slate-400">{format(new Date(entry.created_at), 'dd MMM yyyy, HH:mm')}</p>
             </div>
-            <button onClick={onClose} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-dark-700 shrink-0"><X className="w-5 h-5" /></button>
+            <div className="flex items-center gap-1.5 shrink-0">
+              {isAdmin && onDelete && (
+                <button onClick={() => setShowDelModal(true)}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 hover:bg-red-500/20 text-xs font-medium transition-all">
+                  <Trash2 className="w-3.5 h-3.5" /> Delete
+                </button>
+              )}
+              <button onClick={onClose} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-dark-700"><X className="w-5 h-5" /></button>
+            </div>
           </div>
           <div className="overflow-y-auto flex-1 px-4 py-3 space-y-3">
             {/* Big fuel stat */}
@@ -1878,12 +1962,26 @@ function FuelDetailModal({ entry, onClose }) {
         </div>
       </div>
       {lightboxUrl && <PhotoLightbox url={lightboxUrl} onClose={() => setLightboxUrl(null)} />}
+      {showDelModal && (
+        <DeleteConfirmModal
+          title={`Delete Fuel Entry — ${entry.equipment?.name || ''}`}
+          description={`${entry.quantity_liters} L · ${format(new Date(entry.created_at), 'dd MMM yyyy, HH:mm')}`}
+          isDeleting={isDeleting}
+          onCancel={() => setShowDelModal(false)}
+          onConfirm={async () => {
+            setIsDeleting(true)
+            try { await onDelete(entry) } finally { setIsDeleting(false) }
+          }}
+        />
+      )}
     </>
   )
 }
 
 // ── Incident Detail Modal ──────────────────────────────────────────────────────
-function IncidentDetailModal({ incident, onClose, onResolve }) {
+function IncidentDetailModal({ incident, onClose, onResolve, isAdmin, onDelete }) {
+  const [showDelModal, setShowDelModal] = useState(false)
+  const [isDeleting,   setIsDeleting]   = useState(false)
   const opt = INCIDENT_OPTIONS.find(o => o.value === incident.incident_type)
   const mapsUrl = incident.location_lat ? `https://maps.google.com/?q=${incident.location_lat},${incident.location_lng}` : null
   const severityColor = { high: 'text-red-400', medium: 'text-orange-400', low: 'text-yellow-400' }[incident.severity] || 'text-slate-400'
@@ -1969,16 +2067,36 @@ function IncidentDetailModal({ incident, onClose, onResolve }) {
           )}
         </div>
 
-        {!incident.resolved && onResolve && (
-          <div className="px-4 py-3 border-t border-dark-700 shrink-0">
-            <button onClick={() => { onResolve(incident.id); onClose() }}
-              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold transition-colors">
-              <CheckCircle className="w-4 h-4" /> Mark as Resolved
-            </button>
+        {(!incident.resolved && onResolve) || (isAdmin && onDelete) ? (
+          <div className="px-4 py-3 border-t border-dark-700 shrink-0 flex gap-2">
+            {!incident.resolved && onResolve && (
+              <button onClick={() => { onResolve(incident.id); onClose() }}
+                className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold transition-colors">
+                <CheckCircle className="w-4 h-4" /> Mark as Resolved
+              </button>
+            )}
+            {isAdmin && onDelete && (
+              <button onClick={() => setShowDelModal(true)}
+                className="flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 hover:bg-red-500/20 text-sm font-medium transition-all">
+                <Trash2 className="w-4 h-4" /> Delete
+              </button>
+            )}
           </div>
-        )}
+        ) : null}
       </div>
     </div>
+    {showDelModal && (
+      <DeleteConfirmModal
+        title={`Delete Incident — ${incident.equipment?.name || incident.incident_type}`}
+        description={`${incident.incident_type} · ${format(new Date(incident.created_at), 'dd MMM yyyy, HH:mm')}`}
+        isDeleting={isDeleting}
+        onCancel={() => setShowDelModal(false)}
+        onConfirm={async () => {
+          setIsDeleting(true)
+          try { await onDelete(incident) } finally { setIsDeleting(false) }
+        }}
+      />
+    )}
   )
 }
 
@@ -2198,7 +2316,7 @@ function EditShiftModal({ shift, companyId, onClose, onSaved }) {
 
 // ── Shifts Tab — Daily Operations Log ─────────────────────────────────────────
 function ShiftsTab({ companyId }) {
-  const { role } = useAuth()
+  const { role, session } = useAuth()
   const isAdmin  = ['admin', 'superadmin'].includes(role)
   const qc       = useQueryClient()
 
@@ -2207,6 +2325,27 @@ function ShiftsTab({ companyId }) {
   const [equipFilter,   setEquipFilter]   = useState('all')
   const [selectedShift, setSelectedShift] = useState(null)
   const [editShift,     setEditShift]     = useState(null)
+
+  const deleteShift = async (shift) => {
+    try {
+      // 1. Fetch related data for the backup snapshot
+      const [{ data: fuelData }, { data: incidentData }] = await Promise.all([
+        supabase.from('shift_fuel_entries').select('*').eq('shift_id', shift.id),
+        supabase.from('shift_incidents').select('*').eq('shift_id', shift.id),
+      ])
+      // 2. Backup everything first — aborts if backup fails
+      await backupRecord(companyId, session?.user?.id, 'shift', shift.id, shift,
+        { fuel_entries: fuelData || [], incidents: incidentData || [] })
+      // 3. Delete children then parent
+      await supabase.from('shift_fuel_entries').delete().eq('shift_id', shift.id)
+      await supabase.from('shift_incidents').delete().eq('shift_id', shift.id)
+      const { error } = await supabase.from('shifts').delete().eq('id', shift.id)
+      if (error) throw error
+      toast.success('Shift deleted — backup kept for 30 days')
+      setSelectedShift(null)
+      qc.invalidateQueries(['all_shifts', companyId])
+    } catch (e) { toast.error(e.message) }
+  }
 
   // Equipment list for filter dropdown
   const { data: equipList = [] } = useQuery({
@@ -2565,6 +2704,7 @@ function ShiftsTab({ companyId }) {
           onClose={() => setSelectedShift(null)}
           isAdmin={isAdmin}
           onEdit={(s) => { setSelectedShift(null); setEditShift(s) }}
+          onDelete={isAdmin ? deleteShift : undefined}
         />
       )}
       {editShift && (
@@ -2581,8 +2721,22 @@ function ShiftsTab({ companyId }) {
 
 // ── Fuel Tab ──────────────────────────────────────────────────────────────────
 function FuelTab({ companyId }) {
+  const { role, session } = useAuth()
+  const isAdmin  = ['admin', 'superadmin'].includes(role)
+  const qc       = useQueryClient()
   const [filterDate,   setFilterDate]   = useState('')
   const [selectedFuel, setSelectedFuel] = useState(null)
+
+  const deleteFuel = async (entry) => {
+    try {
+      await backupRecord(companyId, session?.user?.id, 'fuel_entry', entry.id, entry)
+      const { error } = await supabase.from('shift_fuel_entries').delete().eq('id', entry.id)
+      if (error) throw error
+      toast.success('Fuel entry deleted — backup kept for 30 days')
+      setSelectedFuel(null)
+      qc.invalidateQueries(['all_fuel', companyId])
+    } catch (e) { toast.error(e.message) }
+  }
 
   const { data: entries = [], isLoading } = useQuery({
     queryKey: ['all_fuel', companyId, filterDate],
@@ -2666,16 +2820,36 @@ function FuelTab({ companyId }) {
           </div>
         )}
       </div>
-      {selectedFuel && <FuelDetailModal entry={selectedFuel} onClose={() => setSelectedFuel(null)} />}
+      {selectedFuel && (
+        <FuelDetailModal
+          entry={selectedFuel}
+          onClose={() => setSelectedFuel(null)}
+          isAdmin={isAdmin}
+          onDelete={isAdmin ? deleteFuel : undefined}
+        />
+      )}
     </div>
   )
 }
 
 // ── Incidents Tab ─────────────────────────────────────────────────────────────
 function IncidentsTab({ companyId }) {
+  const { role, session } = useAuth()
+  const isAdmin = ['admin', 'superadmin'].includes(role)
   const qc = useQueryClient()
   const [selectedIncident, setSelectedIncident] = useState(null)
   const [showResolved, setShowResolved] = useState(false)
+
+  const deleteIncident = async (incident) => {
+    try {
+      await backupRecord(companyId, session?.user?.id, 'incident', incident.id, incident)
+      const { error } = await supabase.from('shift_incidents').delete().eq('id', incident.id)
+      if (error) throw error
+      toast.success('Incident deleted — backup kept for 30 days')
+      setSelectedIncident(null)
+      qc.invalidateQueries(['all_incidents', companyId])
+    } catch (e) { toast.error(e.message) }
+  }
 
   const { data: incidents = [], isLoading } = useQuery({
     queryKey: ['all_incidents', companyId],
@@ -2751,6 +2925,8 @@ function IncidentsTab({ companyId }) {
           incident={selectedIncident}
           onClose={() => setSelectedIncident(null)}
           onResolve={resolveIncident}
+          isAdmin={isAdmin}
+          onDelete={isAdmin ? deleteIncident : undefined}
         />
       )}
     </div>
