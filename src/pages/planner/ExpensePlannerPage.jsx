@@ -86,9 +86,19 @@ function fixedMonthlyAmount(fe) {
 // Does a fixed expense apply to this month?
 function fixedOccursInMonth(fe, year, month) {
   if (!fe.is_active) return false
-  const start = new Date(fe.start_date)
-  const sY = start.getFullYear(), sM = start.getMonth()
-  return !(year < sY || (year === sY && month < sM))
+  // Check start_date (only for non-monthly — monthly has no start_date)
+  if (fe.start_date) {
+    const start = new Date(fe.start_date)
+    const sY = start.getFullYear(), sM = start.getMonth()
+    if (year < sY || (year === sY && month < sM)) return false
+  }
+  // Check end_date
+  if (fe.end_date) {
+    const end = new Date(fe.end_date)
+    const eY = end.getFullYear(), eM = end.getMonth()
+    if (year > eY || (year === eY && month > eM)) return false
+  }
+  return true
 }
 
 // ── Category dot ──────────────────────────────────────────────────────────────
@@ -444,7 +454,7 @@ export default function ExpensePlannerPage() {
     queryKey: ['fixed_expenses_planner', companyId],
     queryFn: async () => {
       const { data, error } = await supabase.from('fixed_expenses')
-        .select('id,name,category,amount,recurrence_type,recurrence_days,due_day,start_date,payee_name,description')
+        .select('id,name,category,amount,recurrence_type,recurrence_days,due_day,start_date,end_date,payee_name,description')
         .eq('company_id', companyId)
         .eq('is_active', true)
         .order('name', { ascending: true })
@@ -604,6 +614,7 @@ export default function ExpensePlannerPage() {
                           : `Every ${fe.recurrence_days} days`}
                       </span>
                       {fe.payee_name && <><span className="text-slate-600">·</span><span className="text-xs text-slate-500">{fe.payee_name}</span></>}
+                      {fe.end_date && <><span className="text-slate-600">·</span><span className="text-xs text-amber-400">ends {fe.end_date}</span></>}
                     </div>
                   </div>
                 </div>

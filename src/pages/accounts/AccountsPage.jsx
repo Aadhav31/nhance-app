@@ -3324,7 +3324,13 @@ const recurrenceLabel = (t) => {
 // or null if no occurrence falls in that month
 function computeDueDate(template, year, month) {
   const maxDay = new Date(year, month, 0).getDate()
-  const { recurrence_type, due_day, start_date, recurrence_days } = template
+  const { recurrence_type, due_day, start_date, recurrence_days, end_date } = template
+
+  // Skip if past end date
+  if (end_date) {
+    const ed = new Date(end_date + 'T00:00:00')
+    if (year > ed.getFullYear() || (year === ed.getFullYear() && month > ed.getMonth() + 1)) return null
+  }
 
   if (!recurrence_type || recurrence_type === 'monthly') {
     const d = Math.min(due_day || 1, maxDay)
@@ -3375,6 +3381,7 @@ function FixedExpenseTemplateModal({ companyId, template, onClose, onSaved }) {
     recurrence_type: template?.recurrence_type || 'monthly',
     due_day:         template?.due_day ? String(template.due_day) : '1',
     start_date:      template?.start_date || '',
+    end_date:        template?.end_date || '',
     recurrence_days: template?.recurrence_days ? String(template.recurrence_days) : '',
     payee_name:      template?.payee_name || '',
     employee_id:     template?.employee_id || '',
@@ -3434,6 +3441,7 @@ function FixedExpenseTemplateModal({ companyId, template, onClose, onSaved }) {
         recurrence_type: form.recurrence_type,
         due_day:         form.recurrence_type === 'monthly' ? parseInt(form.due_day) : null,
         start_date:      form.recurrence_type !== 'monthly' ? form.start_date : null,
+        end_date:        form.end_date || null,
         recurrence_days: form.recurrence_type === 'custom_days' ? parseInt(form.recurrence_days) : null,
         payee_name:      form.payee_name.trim() || null,
         employee_id:     form.category === 'salary' && form.employee_id ? form.employee_id : null,
@@ -3542,6 +3550,18 @@ function FixedExpenseTemplateModal({ companyId, template, onClose, onSaved }) {
                   </div>
                 )}
               </div>
+            )}
+          </div>
+
+          {/* End Date */}
+          <div>
+            <label className="text-xs text-slate-400 mb-1 block">
+              End Date <span className="text-slate-600">(optional — leave blank if ongoing)</span>
+            </label>
+            <input type="date" className={inp()} value={form.end_date}
+              onChange={e => set('end_date', e.target.value)} />
+            {form.end_date && (
+              <p className="text-[10px] text-amber-400 mt-1">Expense will stop recurring after this date</p>
             )}
           </div>
 
@@ -3903,6 +3923,9 @@ function FixedExpensesTab({ companyId }) {
                           {(t.payee_name || t.hr_employees?.name) ? ` · ${t.payee_name || t.hr_employees?.name}` : ''}
                           {t.description ? ` · ${t.description}` : ''}
                         </p>
+                        {t.end_date && (
+                          <p className="text-[10px] text-amber-400 mt-0.5">Ends {fmtDate(t.end_date)}</p>
+                        )}
                       </div>
                       <p className="text-sm font-bold text-slate-100 shrink-0">{fmt(t.amount)}</p>
                       <button onClick={() => setEditTpl(t)} className="text-slate-500 hover:text-slate-300 p-1">
