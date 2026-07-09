@@ -122,6 +122,8 @@ function CreateInvoiceModal({ companyId, session, invoiceCount, proformaCount, o
     nature_of_supply: '', place_of_supply: '', place_of_supply_address: '',
     cgst_rate: 9, sgst_rate: 9, igst_rate: 18, use_igst: false,
     discount_amount: 0, notes: '', terms: 'Payment due within 30 days.',
+    // Internal accounting links (not shown on PDF)
+    project_id: '', inv_equipment_id: '',
   })
   const [lines, setLines] = useState([blankLine()])
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
@@ -178,12 +180,23 @@ function CreateInvoiceModal({ companyId, session, invoiceCount, proformaCount, o
     }).slice(0, 10)
   }, [clientList, clientSearch])
 
-  // Equipment list for line item linking
+  // Equipment list for line item linking + header accounting picker
   const { data: equipList = [] } = useQuery({
     queryKey: ['equip_list_invoice', companyId],
     queryFn: async () => {
       const { data } = await supabase.from('equipment').select('id, name, equipment_number, category')
         .eq('company_id', companyId).order('name')
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+
+  // Projects list for accounting link
+  const { data: projectList = [] } = useQuery({
+    queryKey: ['projects_invoice_picker', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('projects').select('id, project_code, project_name, client_id')
+        .eq('company_id', companyId).order('project_name')
       return data || []
     },
     enabled: !!companyId,
@@ -276,6 +289,14 @@ function CreateInvoiceModal({ companyId, session, invoiceCount, proformaCount, o
         p_items,
       })
       if (error) throw error
+
+      // Save internal accounting links (not part of RPC payload)
+      if (form.project_id || form.inv_equipment_id) {
+        await supabase.from('client_invoices').update({
+          project_id:       form.project_id       || null,
+          inv_equipment_id: form.inv_equipment_id || null,
+        }).eq('id', invoiceId)
+      }
 
       const typeLabel = form.invoice_type === 'proforma' ? 'Proforma' : 'Invoice'
       toast.success(`${typeLabel} ${invNum} ${status === 'sent' ? 'created & marked sent' : 'saved as draft'}`)
@@ -386,9 +407,34 @@ function CreateInvoiceModal({ companyId, session, invoiceCount, proformaCount, o
               <label className="text-xs text-slate-400 mb-1 block">Due Date</label>
               <input type="date" className={inp()} value={form.due_date} onChange={e => setF('due_date', e.target.value)} />
             </div>
+            <div className="col-span-2">
+              <label className="text-xs text-slate-400 mb-1 block">Project Reference <span className="text-slate-600">(shown on invoice)</span></label>
+              <input className={inp()} value={form.project_name} onChange={e => setF('project_name', e.target.value)} placeholder="Optional — e.g. Kodambakkam Railway Station" />
+            </div>
+          </div>
+        </div>
+
+        {/* Internal Accounting Links */}
+        <div className="p-3 bg-dark-700/40 rounded-xl border border-dark-600/60">
+          <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">🔗 Internal Accounting Links <span className="font-normal normal-case text-slate-600 ml-1">(not shown on invoice / PDF)</span></p>
+          <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs text-slate-400 mb-1 block">Project Reference</label>
-              <input className={inp()} value={form.project_name} onChange={e => setF('project_name', e.target.value)} placeholder="Optional" />
+              <label className="text-xs text-slate-400 mb-1 block">Link to Project</label>
+              <select className={inp()} value={form.project_id} onChange={e => setF('project_id', e.target.value)}>
+                <option value="">— Select project —</option>
+                {projectList.map(p => (
+                  <option key={p.id} value={p.id}>{p.project_code} — {p.project_name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-slate-400 mb-1 block">Link to Equipment</label>
+              <select className={inp()} value={form.inv_equipment_id} onChange={e => setF('inv_equipment_id', e.target.value)}>
+                <option value="">— Select equipment —</option>
+                {equipList.map(eq => (
+                  <option key={eq.id} value={eq.id}>{eq.name}{eq.equipment_number ? ` (${eq.equipment_number})` : ''}</option>
+                ))}
+              </select>
             </div>
           </div>
         </div>
@@ -600,6 +646,9 @@ function EditInvoiceModal({ invoice, companyId, session, onClose, onSaved }) {
     discount_amount:         invoice.discount_amount || 0,
     notes:                   invoice.notes || '',
     terms:                   invoice.terms || 'Payment due within 30 days.',
+    // Internal accounting links
+    project_id:              invoice.project_id || '',
+    inv_equipment_id:        invoice.inv_equipment_id || '',
   })
   const [lines, setLines] = useState([blankLine()])
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
@@ -644,12 +693,23 @@ function EditInvoiceModal({ invoice, companyId, session, onClose, onSaved }) {
     ).slice(0, 8)
   }, [clientList, clientSearch])
 
-  // Equipment list for line item linking
+  // Equipment list for line item linking + header accounting picker
   const { data: equipList = [] } = useQuery({
     queryKey: ['equip_list_invoice', companyId],
     queryFn: async () => {
       const { data } = await supabase.from('equipment').select('id, name, equipment_number, category')
         .eq('company_id', companyId).order('name')
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+
+  // Projects list for accounting link
+  const { data: projectList = [] } = useQuery({
+    queryKey: ['projects_invoice_picker', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('projects').select('id, project_code, project_name')
+        .eq('company_id', companyId).order('project_name')
       return data || []
     },
     enabled: !!companyId,
@@ -722,6 +782,8 @@ function EditInvoiceModal({ invoice, companyId, session, onClose, onSaved }) {
         cgst_amount: cgst_amt, sgst_amount: sgst_amt, igst_amount: igst_amt,
         total_amount: total, balance_due: newBalance,
         notes: form.notes.trim() || null, terms: form.terms.trim() || null,
+        project_id:       form.project_id       || null,
+        inv_equipment_id: form.inv_equipment_id || null,
         updated_at: new Date().toISOString(),
       }).eq('id', invoice.id)
       if (invErr) throw invErr
@@ -821,9 +883,34 @@ function EditInvoiceModal({ invoice, companyId, session, onClose, onSaved }) {
                 <label className="text-xs text-slate-400 mb-1 block">Due Date</label>
                 <input type="date" className={inp()} value={form.due_date} onChange={e => setF('due_date', e.target.value)} />
               </div>
+              <div className="col-span-2">
+                <label className="text-xs text-slate-400 mb-1 block">Project Reference <span className="text-slate-600">(shown on invoice)</span></label>
+                <input className={inp()} value={form.project_name} onChange={e => setF('project_name', e.target.value)} placeholder="Optional — e.g. Kodambakkam Railway Station" />
+              </div>
+            </div>
+          </div>
+
+          {/* Internal Accounting Links */}
+          <div className="p-3 bg-dark-700/40 rounded-xl border border-dark-600/60">
+            <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">🔗 Internal Accounting Links <span className="font-normal normal-case text-slate-600 ml-1">(not shown on invoice / PDF)</span></p>
+            <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-xs text-slate-400 mb-1 block">Project Reference</label>
-                <input className={inp()} value={form.project_name} onChange={e => setF('project_name', e.target.value)} placeholder="Optional" />
+                <label className="text-xs text-slate-400 mb-1 block">Link to Project</label>
+                <select className={inp()} value={form.project_id} onChange={e => setF('project_id', e.target.value)}>
+                  <option value="">— Select project —</option>
+                  {projectList.map(p => (
+                    <option key={p.id} value={p.id}>{p.project_code} — {p.project_name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Link to Equipment</label>
+                <select className={inp()} value={form.inv_equipment_id} onChange={e => setF('inv_equipment_id', e.target.value)}>
+                  <option value="">— Select equipment —</option>
+                  {equipList.map(eq => (
+                    <option key={eq.id} value={eq.id}>{eq.name}{eq.equipment_number ? ` (${eq.equipment_number})` : ''}</option>
+                  ))}
+                </select>
               </div>
             </div>
           </div>
