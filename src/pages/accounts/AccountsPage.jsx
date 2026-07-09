@@ -191,54 +191,63 @@ function CreateInvoiceModal({ companyId, session, invoiceCount, onClose, onSaved
     if (lines.every(l => !l.description.trim())) return toast.error('Add at least one line item')
     setSaving(true)
     try {
-      // Generate UUID client-side so we never need to read it back (avoids RLS SELECT issues)
       const invoiceId = crypto.randomUUID()
-
       const invGSTRate = form.use_igst
         ? parseFloat(form.igst_rate)
         : (parseFloat(form.cgst_rate) + parseFloat(form.sgst_rate))
 
-      const { error: invErr } = await supabase.from('client_invoices').insert({
+      const p_invoice = {
         id: invoiceId,
-        company_id: companyId, invoice_number: invNum,
-        invoice_date: form.invoice_date, due_date: form.due_date || null,
+        company_id: companyId,
+        invoice_number: invNum,
+        invoice_date: form.invoice_date,
+        due_date: form.due_date || '',
         client_name: form.client_name.trim(),
-        client_address: form.client_address.trim() || null,
-        client_gstin: form.client_gstin.trim() || null,
-        project_name: form.project_name.trim() || null,
-        work_order_number:       form.work_order_number.trim() || null,
-        work_order_date:         form.work_order_date || null,
-        work_done_from:          form.work_done_from || null,
-        work_done_to:            form.work_done_to || null,
-        nature_of_supply:        form.nature_of_supply.trim() || null,
-        place_of_supply:         form.place_of_supply.trim() || null,
-        place_of_supply_address: form.place_of_supply_address.trim() || null,
-        subtotal, discount_amount: parseFloat(form.discount_amount) || 0, taxable_amount: taxable,
-        cgst_rate: form.use_igst ? 0 : parseFloat(form.cgst_rate),
-        sgst_rate: form.use_igst ? 0 : parseFloat(form.sgst_rate),
-        igst_rate: form.use_igst ? parseFloat(form.igst_rate) : 0,
-        cgst_amount: cgst_amt, sgst_amount: sgst_amt, igst_amount: igst_amt,
-        total_amount: total, paid_amount: 0, balance_due: total,
-        status, notes: form.notes.trim() || null, terms: form.terms.trim() || null,
+        client_address: form.client_address.trim(),
+        client_gstin: form.client_gstin.trim(),
+        project_name: form.project_name.trim(),
+        work_order_number: form.work_order_number.trim(),
+        work_order_date: form.work_order_date || '',
+        work_done_from: form.work_done_from || '',
+        work_done_to: form.work_done_to || '',
+        nature_of_supply: form.nature_of_supply.trim(),
+        place_of_supply: form.place_of_supply.trim(),
+        place_of_supply_address: form.place_of_supply_address.trim(),
+        subtotal: String(subtotal),
+        discount_amount: String(parseFloat(form.discount_amount) || 0),
+        taxable_amount: String(taxable),
+        cgst_rate: String(form.use_igst ? 0 : parseFloat(form.cgst_rate)),
+        sgst_rate: String(form.use_igst ? 0 : parseFloat(form.sgst_rate)),
+        igst_rate: String(form.use_igst ? parseFloat(form.igst_rate) : 0),
+        cgst_amount: String(cgst_amt),
+        sgst_amount: String(sgst_amt),
+        igst_amount: String(igst_amt),
+        total_amount: String(total),
+        status,
+        notes: form.notes.trim(),
+        terms: form.terms.trim(),
         created_by: session.user.id,
-      })
-      if (invErr) throw invErr
-
-      const linePayload = lines.filter(l => l.description.trim()).map((l, i) => ({
-        invoice_id:   invoiceId,   // use our known UUID directly — no dependency on newInv
-        company_id:   companyId,
-        description:  l.description.trim(),
-        item_code:    l.item_code?.trim() || null,
-        sac_hsn_code: l.sac_hsn_code?.trim() || null,
-        gst_rate:     invGSTRate,
-        quantity: parseFloat(l.quantity) || 1, unit: l.unit,
-        rate: parseFloat(l.rate) || 0, amount: l.amount, sort_order: i,
-        equipment_id: l.equipment_id || null,
-      }))
-      if (linePayload.length > 0) {
-        const { error: le } = await supabase.from('invoice_line_items').insert(linePayload)
-        if (le) throw le
       }
+
+      const p_items = lines.filter(l => l.description.trim()).map((l, i) => ({
+        description:  l.description.trim(),
+        item_code:    l.item_code?.trim() || '',
+        sac_hsn_code: l.sac_hsn_code?.trim() || '',
+        gst_rate:     String(invGSTRate),
+        quantity:     String(parseFloat(l.quantity) || 1),
+        unit:         l.unit,
+        rate:         String(parseFloat(l.rate) || 0),
+        amount:       String(l.amount),
+        sort_order:   String(i),
+        equipment_id: l.equipment_id || '',
+      }))
+
+      const { error } = await supabase.rpc('create_invoice_with_items', {
+        p_invoice,
+        p_items,
+      })
+      if (error) throw error
+
       toast.success(`Invoice ${invNum} ${status === 'sent' ? 'created & marked sent' : 'saved as draft'}`)
       onSaved()
     } catch (e) { toast.error(e.message || 'Failed to save invoice')
