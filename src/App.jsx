@@ -1,4 +1,4 @@
-import { useState, lazy, Suspense } from 'react'
+import { useState, lazy, Suspense, useEffect } from 'react'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { DisplayModeProvider } from './contexts/DisplayModeContext'
 import { ThemeProvider } from './contexts/ThemeContext'
@@ -34,11 +34,61 @@ const SettingsPage       = lazy(() => import('./pages/settings/SettingsPage'))
 const ProfilePage        = lazy(() => import('./pages/settings/ProfilePage'))
 const SuperAdminPage     = lazy(() => import('./pages/superadmin/SuperAdminPage'))
 
+// ── Connectivity hook ─────────────────────────────────────────────────────────
+function useOnlineStatus() {
+  const [online, setOnline] = useState(navigator.onLine)
+  useEffect(() => {
+    const up   = () => setOnline(true)
+    const down = () => setOnline(false)
+    window.addEventListener('online',  up)
+    window.addEventListener('offline', down)
+    return () => { window.removeEventListener('online', up); window.removeEventListener('offline', down) }
+  }, [])
+  return online
+}
+
+// ── Contextual error screens ───────────────────────────────────────────────────
+function OfflineScreen() {
+  const [checking, setChecking] = useState(false)
+  return (
+    <div className="flex flex-col items-center justify-center h-full gap-4 px-8 text-center">
+      <div className="text-6xl">📡</div>
+      <div>
+        <p className="text-base font-bold text-slate-200">No Internet Connection</p>
+        <p className="text-sm text-slate-500 mt-1">Check your Wi-Fi or mobile data and try again.</p>
+      </div>
+      <button
+        onClick={() => { setChecking(true); setTimeout(() => { setChecking(false); window.location.reload() }, 1000) }}
+        className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary-600 hover:bg-primary-500 text-white text-sm font-semibold transition-colors"
+      >
+        {checking ? '⏳ Checking…' : '🔄 Retry'}
+      </button>
+      <p className="text-xs text-slate-600">Your data is safe — it will sync when you reconnect.</p>
+    </div>
+  )
+}
+
+function ModuleNotActive({ page }) {
+  return (
+    <div className="flex flex-col items-center justify-center h-full gap-4 px-8 text-center">
+      <div className="text-6xl">🔒</div>
+      <div>
+        <p className="text-base font-bold text-slate-200 capitalize">{page}</p>
+        <p className="text-sm text-slate-500 mt-1">This module hasn't been activated for your account.</p>
+        <p className="text-xs text-slate-600 mt-2">Contact your administrator to enable access.</p>
+      </div>
+    </div>
+  )
+}
+
 function ComingSoon({ page }) {
   return (
-    <div className="flex flex-col items-center justify-center h-full gap-3 text-slate-500">
-      <div className="text-4xl">🚧</div>
-      <p className="text-sm font-semibold capitalize">{page} — coming soon</p>
+    <div className="flex flex-col items-center justify-center h-full gap-4 px-8 text-center">
+      <div className="text-6xl">🚧</div>
+      <div>
+        <p className="text-base font-bold text-slate-200 capitalize">{page}</p>
+        <p className="text-sm text-slate-500 mt-1">This page is under construction — coming soon!</p>
+      </div>
     </div>
   )
 }
@@ -178,6 +228,7 @@ function AppShell() {
   const { loading, session, role, hasModule, isSuperAdmin } = useAuth()
   const [activePage, setActivePage] = useState('dashboard')
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const isOnline = useOnlineStatus()
 
   // Live sync — invalidates React Query cache the moment any table row changes
   useRealtimeSync()
@@ -204,7 +255,10 @@ function AppShell() {
 
     const page = effectivePage
     const wrap = (Component, module) => {
-      if (module && !hasModule(module)) return <ComingSoon page={`${page} (module not activated)`} />
+      if (module && !hasModule(module)) {
+        if (!isOnline) return <OfflineScreen />
+        return <ModuleNotActive page={page} />
+      }
       return (
         <Suspense fallback={<LoadingScreen message={`Loading ${page}…`} />}>
           <Component />
@@ -214,7 +268,7 @@ function AppShell() {
 
     switch (page) {
       case 'dashboard':
-        if (hasModule && !hasModule(MODULES.CORE)) return <ComingSoon page="dashboard" />
+        if (hasModule && !hasModule(MODULES.CORE)) return isOnline ? <ModuleNotActive page="Dashboard" /> : <OfflineScreen />
         return (
           <Suspense fallback={<LoadingScreen message="Loading dashboard…" />}>
             <DashboardPage onNavigate={handleNavigate} />
@@ -255,6 +309,12 @@ function AppShell() {
         {/* Main area */}
         <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
           <TopBar activePage={effectivePage} onMenuToggle={() => setSidebarCollapsed(p => !p)} />
+          {/* Offline banner — shown mid-session when connection drops */}
+          {!isOnline && (
+            <div className="shrink-0 flex items-center justify-center gap-2 bg-amber-500/20 border-b border-amber-600/40 text-amber-300 text-xs font-semibold py-2 px-4">
+              📡 No internet connection — some features may not work until you reconnect.
+            </div>
+          )}
           {/* pb-16 on mobile to avoid content hiding behind bottom nav */}
           <main className="flex-1 overflow-hidden bg-dark-900 lg:pb-0 pb-16">
             {renderPage()}
