@@ -3179,6 +3179,9 @@ function MarkPaidModal({ companyId, payment, onClose, onSaved }) {
     setSaving(true)
     try {
       const amt = parseFloat(form.paid_amount)
+      // expenses table only allows cash/bank/upi/cheque — map 'credit' → 'bank'
+      const expPayMode = ['cash','bank','upi','cheque'].includes(form.payment_mode)
+        ? form.payment_mode : 'bank'
 
       // 1. Mark instance as paid
       const { error: pe } = await supabase.from('fixed_expense_payments').update({
@@ -3200,8 +3203,7 @@ function MarkPaidModal({ companyId, payment, onClose, onSaved }) {
         description:   fe?.name || 'Fixed expense',
         vendor_name:   fe?.payee_name || null,
         amount:        amt,
-        total_amount:  amt,
-        payment_mode:  form.payment_mode,
+        payment_mode:  expPayMode,
         bank_reference:form.transaction_ref || null,
         source:        'manual',
       }).select('id').single()
@@ -3216,7 +3218,7 @@ function MarkPaidModal({ companyId, payment, onClose, onSaved }) {
         amount:          amt,
         payment_mode:    form.payment_mode,
         bank_reference:  form.transaction_ref || null,
-        reference_type:  'fixed_expense',
+        reference_type:  'expense',
         reference_id:    exp?.id || null,
       })
       if (te) throw te
