@@ -1117,7 +1117,6 @@ function ProjectDetail({ project, onClose, onEdit, onDelete }) {
         .from('equipment')
         .select('id, equipment_id, equipment_type, make_model, status')
         .eq('current_project_id', project.id)
-        .eq('is_active', true)
       return data || []
     },
   })
