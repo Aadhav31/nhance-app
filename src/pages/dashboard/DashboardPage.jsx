@@ -155,6 +155,7 @@ function useInvoiceData(companyId, range) {
       const { data } = await supabase.from('client_invoices')
         .select('id,invoice_number,client_name,total_amount,paid_amount,balance_due,status,invoice_date,due_date')
         .eq('company_id', companyId)
+        .neq('invoice_type', 'proforma')   // proformas are pre-invoices — exclude from revenue
         .gte('invoice_date', range.from).lte('invoice_date', range.to)
         .order('invoice_date', { ascending: false })
       return data || []
