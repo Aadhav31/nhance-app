@@ -1952,7 +1952,6 @@ function EditExpenseModal({ exp, companyId, equipmentList, onClose, onSaved }) {
         payment_mode:   form.payment_mode,
         bank_reference: form.bank_reference.trim() || null,
         equipment_id:   form.equipment_id || null,
-        notes:          form.notes.trim() || null,
       }).eq('id', exp.id)
       if (ee) throw ee
 
