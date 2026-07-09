@@ -3219,7 +3219,6 @@ function MarkPaidModal({ companyId, payment, onClose, onSaved }) {
         vendor_name:   fe?.payee_name || null,
         amount:        amt,
         total_amount:  amt,
-        gst_amount:    0,
         payment_mode:  expPayMode,
         bank_reference:form.transaction_ref || null,
         source:        'manual',
