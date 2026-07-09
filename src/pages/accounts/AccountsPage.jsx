@@ -3737,7 +3737,7 @@ function FixedExpensesTab({ companyId }) {
   })
 
   // Load this month's payment instances
-  const { data: payments = [], refetch: refetchPayments } = useQuery({
+  const { data: payments = [], refetch: refetchPayments, isSuccess: paymentsLoaded } = useQuery({
     queryKey: ['fixed_expense_payments', companyId, currentMonth],
     queryFn: async () => {
       const { data } = await supabase.from('fixed_expense_payments')
@@ -3748,12 +3748,14 @@ function FixedExpensesTab({ companyId }) {
     enabled: !!companyId,
   })
 
-  // Auto-generate instances for current month when templates change
+  // Auto-generate instances for current month when templates change.
+  // IMPORTANT: only run after payments have loaded — otherwise payments = [] (loading)
+  // and the upsert would overwrite existing paid records back to 'pending'.
+  // ignoreDuplicates: true ensures existing records (paid or pending) are never overwritten.
   useEffect(() => {
-    if (!companyId || templates.length === 0) return
+    if (!companyId || templates.length === 0 || !paymentsLoaded) return
     const year  = now.getFullYear()
     const month = now.getMonth() + 1
-    const maxDay = new Date(year, month, 0).getDate()
 
     const toCreate = templates
       .filter(t => !payments.find(p => p.fixed_expense_id === t.id))
@@ -3773,10 +3775,10 @@ function FixedExpensesTab({ companyId }) {
 
     if (toCreate.length > 0) {
       supabase.from('fixed_expense_payments')
-        .upsert(toCreate, { onConflict: 'fixed_expense_id,period_month' })
+        .upsert(toCreate, { onConflict: 'fixed_expense_id,period_month', ignoreDuplicates: true })
         .then(() => refetchPayments())
     }
-  }, [templates, companyId]) // eslint-disable-line
+  }, [templates, companyId, paymentsLoaded]) // eslint-disable-line
 
   const deleteTemplate = async (id) => {
     if (!confirm('Delete this fixed expense? Future months will not be generated.')) return
