@@ -1269,7 +1269,7 @@ function CreditNotesTab({ companyId, session }) {
                 </div>
               </div>
               <div className="flex items-center gap-1 mt-2 pt-2 border-t border-dark-700">
-                {cn.status !== 'cancelled' && <button onClick={() => openEdit(cn)} className="p-1.5 rounded-lg text-slate-500 hover:text-blue-400 hover:bg-blue-900/20" title="Edit"><Pencil className="w-3.5 h-3.5" /></button>}
+                {cn.status !== 'cancelled' && <button onClick={() => openEdit(cn)} className="p-1.5 rounded-lg text-slate-500 hover:text-blue-400 hover:bg-blue-900/20" title="Edit"><Edit2 className="w-3.5 h-3.5" /></button>}
                 {cn.status !== 'cancelled' && <button onClick={() => voidCN(cn)} className="p-1.5 rounded-lg text-slate-500 hover:text-yellow-400 hover:bg-yellow-900/20" title="Void"><Ban className="w-3.5 h-3.5" /></button>}
                 <button onClick={() => deleteCN(cn)} className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-900/20" title="Delete"><Trash2 className="w-3.5 h-3.5" /></button>
                 <button onClick={() => dlPDFcn(cn)} className="p-1.5 rounded-lg text-slate-500 hover:text-emerald-400 hover:bg-emerald-900/20" title="Download PDF"><FileDown className="w-3.5 h-3.5" /></button>
@@ -1421,7 +1421,7 @@ function PaymentsReceivedTab({ companyId, session }) {
                 <p className="text-xl font-black text-emerald-400 shrink-0">{fmtINR(p.amount)}</p>
               </div>
               <div className="flex items-center gap-1 mt-2 pt-2 border-t border-dark-700">
-                <button onClick={() => openEdit(p)} className="p-1.5 rounded-lg text-slate-500 hover:text-blue-400 hover:bg-blue-900/20" title="Edit"><Pencil className="w-3.5 h-3.5" /></button>
+                <button onClick={() => openEdit(p)} className="p-1.5 rounded-lg text-slate-500 hover:text-blue-400 hover:bg-blue-900/20" title="Edit"><Edit2 className="w-3.5 h-3.5" /></button>
                 <button onClick={() => deletePayment(p)} className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-900/20" title="Delete"><Trash2 className="w-3.5 h-3.5" /></button>
                 <button onClick={() => { downloadPaymentReceivedPDF(p, company) }} className="p-1.5 rounded-lg text-slate-500 hover:text-emerald-400 hover:bg-emerald-900/20" title="Download PDF"><FileDown className="w-3.5 h-3.5" /></button>
                 <button onClick={() => { downloadPaymentReceivedXLSX(p, company) }} className="p-1.5 rounded-lg text-slate-500 hover:text-teal-400 hover:bg-teal-900/20" title="Export Excel"><Sheet className="w-3.5 h-3.5" /></button>
