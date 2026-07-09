@@ -3642,7 +3642,7 @@ export default function AccountsPage() {
       )}
 
       {/* Tab content */}
-      <div className="flex-1 overflow-hidden">
+      <div className="flex-1 flex flex-col overflow-hidden min-h-0">
         {activeTab === 'dashboard' && <DashboardTab companyId={companyId} onNavigate={setActiveTab} />}
         {activeTab === 'invoices'  && <InvoicesTab  companyId={companyId} session={session} />}
         {activeTab === 'expenses'  && <ExpensesTab  companyId={companyId} session={session} equipmentList={equipmentList} />}
