@@ -192,7 +192,7 @@ export function generateInvoicePDF(invoice, lineItems, company) {
   //   cB = middle (cols G-K, 5 cols) = invoice no, order, work period, nature, place of supply
   //   cC = right  (cols L-O, 4 cols) = invoice date, order date
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  const cA = 66, cB = 68, cC = W - cA - cB   // 66 + 68 + 56 = 190
+  const cA = 76, cB = 66, cC = W - cA - cB   // 76 + 66 + 48 = 190
   const xA = L, xB = L + cA, xC = L + cA + cB
 
   // Row heights for MIDDLE+RIGHT columns (each row has its own border there)
