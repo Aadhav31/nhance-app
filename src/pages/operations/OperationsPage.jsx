@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
+import { VendorPicker } from '../../components/shared/EntityPicker'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
@@ -910,7 +911,7 @@ function FuelModal({ equipment, shift, companyId, onClose }) {
       </Field>
       <div className="grid grid-cols-2 gap-3">
         <Field label="Vendor Name">
-          <input className={inp()} value={form.vendor_name} onChange={e => set('vendor_name', e.target.value)} placeholder="Fuel station / supplier" />
+          <VendorPicker companyId={companyId} value={form.vendor_name} onChange={n => set('vendor_name', n)} onSelect={v => set('vendor_name', v.name)} placeholder="Fuel station / supplier" className={inp()} />
         </Field>
         <Field label="Invoice No.">
           <input className={inp()} value={form.invoice_number} onChange={e => set('invoice_number', e.target.value)} placeholder="INV-001" />

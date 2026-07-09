@@ -1,4 +1,5 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useRef, useEffect } from 'react'
+import { ClientPicker } from '../../components/shared/EntityPicker'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
@@ -387,7 +388,7 @@ function CreateInvoiceModal({ companyId, session, onClose, onSaved, initialDoc =
       </>}>
       <SectionHead label="Client Details" />
       <div className="grid grid-cols-2 gap-3">
-        <div className="col-span-2"><Field label="Client / Company Name *"><input className={inp()} value={form.client_name} onChange={e => setF('client_name', e.target.value)} /></Field></div>
+        <div className="col-span-2"><Field label="Client / Company Name *"><ClientPicker companyId={companyId} value={form.client_name} onChange={n => setF('client_name', n)} onSelect={c => setForm(p => ({ ...p, client_name: c.name, client_gstin: c.gstin || p.client_gstin, client_address: c.address || p.client_address }))} className={inp()} /></Field></div>
         <TaxTypeToggle isTax={isTax} onToggle={v => setF('is_tax_invoice', v)} label="Invoice" />
         {isTax && (
           <div className="col-span-2">
@@ -650,7 +651,7 @@ function CreateQuoteModal({ companyId, session, onClose, onSaved, initialDoc = n
       </>}>
       <SectionHead label="Client Details" />
       <div className="grid grid-cols-2 gap-3">
-        <div className="col-span-2"><Field label="Client / Company Name *"><input className={inp()} value={form.client_name} onChange={e => setF('client_name', e.target.value)} /></Field></div>
+        <div className="col-span-2"><Field label="Client / Company Name *"><ClientPicker companyId={companyId} value={form.client_name} onChange={n => setF('client_name', n)} onSelect={c => setForm(p => ({ ...p, client_name: c.name, client_gstin: c.gstin || p.client_gstin }))} className={inp()} /></Field></div>
         <TaxTypeToggle isTax={isTax} onToggle={v => setF('is_tax_invoice', v)} label="Quote" />
         {isTax && (
           <div className="col-span-2">
@@ -952,7 +953,7 @@ function SalesOrdersTab({ companyId, session }) {
         <Modal title={editing ? `Edit SO · ${editing.so_number}` : 'New Sales Order'} onClose={closeModal} wide
           footer={<><button onClick={closeModal} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : editing ? 'Update SO' : 'Create Sales Order'}</button></>}>
           <div className="grid grid-cols-2 gap-3">
-            <div className="col-span-2"><Field label="Client Name *"><input className={inp()} value={form.client_name} onChange={e => setF('client_name', e.target.value)} /></Field></div>
+            <div className="col-span-2"><Field label="Client Name *"><ClientPicker companyId={companyId} value={form.client_name} onChange={n => setF('client_name', n)} onSelect={c => setForm(p => ({ ...p, client_name: c.name, client_gstin: c.gstin || p.client_gstin }))} className={inp()} /></Field></div>
             <TaxTypeToggle isTax={form.is_tax_invoice !== false} onToggle={v => setF('is_tax_invoice', v)} label="Sales Order" />
             {form.is_tax_invoice !== false && (
               <div className="col-span-2">
@@ -1117,7 +1118,7 @@ function DeliveryChallansTab({ companyId, session }) {
         <Modal title={editing ? `Edit Challan · ${editing.dc_number}` : 'New Delivery Challan'} onClose={closeModal}
           footer={<><button onClick={closeModal} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : editing ? 'Update Challan' : 'Create & Dispatch'}</button></>}>
           <div className="grid grid-cols-2 gap-3">
-            <div className="col-span-2"><Field label="Client Name *"><input className={inp()} value={form.client_name} onChange={e => setF('client_name', e.target.value)} /></Field></div>
+            <div className="col-span-2"><Field label="Client Name *"><ClientPicker companyId={companyId} value={form.client_name} onChange={n => setF('client_name', n)} onSelect={c => setForm(p => ({ ...p, client_name: c.name, delivery_address: c.address || p.delivery_address }))} className={inp()} /></Field></div>
             <Field label="Delivery Address"><input className={inp()} value={form.delivery_address} onChange={e => setF('delivery_address', e.target.value)} /></Field>
             <Field label="DC Date"><input type="date" className={inp()} value={form.dc_date} onChange={e => setF('dc_date', e.target.value)} /></Field>
             <Field label="Vehicle Number"><input className={inp()} value={form.vehicle_number} onChange={e => setF('vehicle_number', e.target.value)} placeholder="TN 01 AB 1234" /></Field>
@@ -1282,7 +1283,7 @@ function CreditNotesTab({ companyId, session }) {
         <Modal title={editing ? `Edit Credit Note · ${editing.cn_number}` : 'New Credit Note'} onClose={closeModal} wide
           footer={<><button onClick={closeModal} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : editing ? 'Update Credit Note' : 'Issue Credit Note'}</button></>}>
           <div className="grid grid-cols-2 gap-3">
-            <div className="col-span-2"><Field label="Client Name *"><input className={inp()} value={form.client_name} onChange={e => setF('client_name', e.target.value)} /></Field></div>
+            <div className="col-span-2"><Field label="Client Name *"><ClientPicker companyId={companyId} value={form.client_name} onChange={n => setF('client_name', n)} onSelect={c => setForm(p => ({ ...p, client_name: c.name, client_gstin: c.gstin || p.client_gstin }))} className={inp()} /></Field></div>
             <TaxTypeToggle isTax={isTaxCN} onToggle={v => setF('is_tax_invoice', v)} label="Credit Note" />
             {isTaxCN && (
               <div className="col-span-2">
@@ -1432,7 +1433,7 @@ function PaymentsReceivedTab({ companyId, session }) {
       {(showCreate || editing) && (
         <Modal title={editing ? `Edit Payment · ${editing.payment_number}` : 'Record Payment'} onClose={closeModal}
           footer={<><button onClick={closeModal} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : editing ? 'Update Payment' : 'Record Payment'}</button></>}>
-          <Field label="Client Name *"><input className={inp()} value={form.client_name} onChange={e => setF('client_name', e.target.value)} placeholder="Who paid?" /></Field>
+          <Field label="Client Name *"><ClientPicker companyId={companyId} value={form.client_name} onChange={n => setF('client_name', n)} onSelect={c => setF('client_name', c.name)} placeholder="Who paid?" className={inp()} /></Field>
           {invoices.length > 0 && <Field label="Link to Invoice (optional)">
             <select className={inp()} value={invoiceId} onChange={e => { setInvoiceId(e.target.value); const inv = invoices.find(i => i.id === e.target.value); if (inv) setF('client_name', inv.client_name) }}>
               <option value="">-- Select invoice --</option>

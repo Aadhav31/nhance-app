@@ -1,4 +1,5 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
+import { VendorPicker } from '../../components/shared/EntityPicker'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
@@ -1256,7 +1257,7 @@ function AddExpenseModal({ companyId, session, equipmentList, onClose, onSaved }
           </div>
           <div>
             <label className="text-xs text-slate-400 mb-1 block">Vendor / Supplier</label>
-            <input className={inp()} value={form.vendor_name} onChange={e => setF('vendor_name', e.target.value)} placeholder="Optional" />
+            <VendorPicker companyId={companyId} value={form.vendor_name} onChange={n => setF('vendor_name', n)} onSelect={v => setForm(p => ({ ...p, vendor_name: v.name, vendor_gstin: v.gstin || p.vendor_gstin }))} placeholder="Optional" className={inp()} />
           </div>
           <div>
             <label className="text-xs text-slate-400 mb-1 block">Vendor GSTIN</label>
@@ -2379,7 +2380,7 @@ function EditExpenseModal({ exp, companyId, equipmentList, onClose, onSaved }) {
           </div>
           <div>
             <label className="text-xs text-slate-400 mb-1 block">Vendor / Supplier</label>
-            <input className={inp()} value={form.vendor_name} onChange={e => setF('vendor_name', e.target.value)} placeholder="Optional" />
+            <VendorPicker companyId={companyId} value={form.vendor_name} onChange={n => setF('vendor_name', n)} onSelect={v => setForm(p => ({ ...p, vendor_name: v.name, vendor_gstin: v.gstin || p.vendor_gstin }))} placeholder="Optional" className={inp()} />
           </div>
           <div>
             <label className="text-xs text-slate-400 mb-1 block">Amount (₹) *</label>
