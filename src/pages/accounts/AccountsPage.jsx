@@ -1117,7 +1117,7 @@ function AddExpenseModal({ companyId, session, equipmentList, onClose, onSaved }
         company_id: companyId, expense_date: form.expense_date,
         category: form.category, description: form.description.trim(),
         vendor_name: form.vendor_name.trim() || null,
-        amount, gst_amount, total_amount: amount + gst_amount,
+        amount, total_amount: amount,
         vendor_gstin: form.vendor_gstin.trim() || null,
         payment_mode: form.payment_mode,
         bank_reference: form.bank_reference.trim() || null,
@@ -1935,7 +1935,6 @@ function EditExpenseModal({ exp, companyId, equipmentList, onClose, onSaved }) {
     setSaving(true)
     try {
       const gst_amount = parseFloat(form.gst_amount) || 0
-      const total_amount = amount + gst_amount
 
       // Update expenses record
       const { error: ee } = await supabase.from('expenses').update({
@@ -1944,8 +1943,7 @@ function EditExpenseModal({ exp, companyId, equipmentList, onClose, onSaved }) {
         description:    form.description.trim(),
         vendor_name:    form.vendor_name.trim() || null,
         amount,
-        gst_amount,
-        total_amount,
+        total_amount:   amount,
         payment_mode:   form.payment_mode,
         bank_reference: form.bank_reference.trim() || null,
         equipment_id:   form.equipment_id || null,
