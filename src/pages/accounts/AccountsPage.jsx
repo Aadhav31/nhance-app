@@ -198,7 +198,7 @@ function CreateInvoiceModal({ companyId, session, invoiceCount, onClose, onSaved
         ? parseFloat(form.igst_rate)
         : (parseFloat(form.cgst_rate) + parseFloat(form.sgst_rate))
 
-      const { data: newInv, error: invErr } = await supabase.from('client_invoices').insert({
+      const { error: invErr } = await supabase.from('client_invoices').insert({
         id: invoiceId,
         company_id: companyId, invoice_number: invNum,
         invoice_date: form.invoice_date, due_date: form.due_date || null,
@@ -206,7 +206,6 @@ function CreateInvoiceModal({ companyId, session, invoiceCount, onClose, onSaved
         client_address: form.client_address.trim() || null,
         client_gstin: form.client_gstin.trim() || null,
         project_name: form.project_name.trim() || null,
-        // GST supply details
         work_order_number:       form.work_order_number.trim() || null,
         work_order_date:         form.work_order_date || null,
         work_done_from:          form.work_done_from || null,
@@ -222,10 +221,8 @@ function CreateInvoiceModal({ companyId, session, invoiceCount, onClose, onSaved
         total_amount: total, paid_amount: 0, balance_due: total,
         status, notes: form.notes.trim() || null, terms: form.terms.trim() || null,
         created_by: session.user.id,
-      }).select('id').single()
+      })
       if (invErr) throw invErr
-      // Guard: if RLS silently blocked the insert, data will be null
-      if (!newInv?.id) throw new Error('Invoice could not be saved — please check your account permissions.')
 
       const linePayload = lines.filter(l => l.description.trim()).map((l, i) => ({
         invoice_id:   invoiceId,   // use our known UUID directly — no dependency on newInv
