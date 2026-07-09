@@ -38,7 +38,8 @@ const INV_STATUS = {
   partial:   { label: 'Partial',   cls: 'bg-amber-500/20 text-amber-400 border-amber-700' },
   paid:      { label: 'Paid',      cls: 'bg-emerald-500/20 text-emerald-400 border-emerald-700' },
   overdue:   { label: 'Overdue',   cls: 'bg-red-500/20 text-red-400 border-red-700' },
-  cancelled: { label: 'Cancelled', cls: 'bg-gray-500/20 text-gray-500 border-gray-600' },
+  cancelled:  { label: 'Cancelled',  cls: 'bg-gray-500/20 text-gray-500 border-gray-600' },
+  converted:  { label: 'Converted',  cls: 'bg-purple-500/20 text-purple-400 border-purple-700' },
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -88,10 +89,11 @@ const blankLine = () => ({
   quantity: 1, unit: 'hrs', rate: '', amount: 0, equipment_id: '',
 })
 
-function CreateInvoiceModal({ companyId, session, invoiceCount, onClose, onSaved }) {
+function CreateInvoiceModal({ companyId, session, invoiceCount, proformaCount, onClose, onSaved }) {
   const [saving, setSaving] = useState(false)
   const [clientSearch, setClientSearch] = useState('')
   const [form, setForm] = useState({
+    invoice_type: 'tax_invoice',
     client_name: '', client_address: '', client_gstin: '',
     project_name: '', invoice_date: today(), due_date: '',
     // GST supply details
@@ -184,7 +186,12 @@ function CreateInvoiceModal({ companyId, session, invoiceCount, onClose, onSaved
   const sgst_amt = useMemo(() => form.use_igst ? 0 : taxable * (parseFloat(form.sgst_rate) || 0) / 100, [taxable, form.sgst_rate, form.use_igst])
   const igst_amt = useMemo(() => form.use_igst ? taxable * (parseFloat(form.igst_rate) || 0) / 100 : 0, [taxable, form.igst_rate, form.use_igst])
   const total    = useMemo(() => taxable + cgst_amt + sgst_amt + igst_amt, [taxable, cgst_amt, sgst_amt, igst_amt])
-  const invNum   = useMemo(() => `INV-${new Date().getFullYear()}-${String((invoiceCount || 0) + 1).padStart(3, '0')}`, [invoiceCount])
+  const invNum   = useMemo(() => {
+    const yr = new Date().getFullYear()
+    if (form.invoice_type === 'proforma')
+      return `PI-${yr}-${String((proformaCount || 0) + 1).padStart(3, '0')}`
+    return `INV-${yr}-${String((invoiceCount || 0) + 1).padStart(3, '0')}`
+  }, [invoiceCount, proformaCount, form.invoice_type])
 
   const handleSave = async (status = 'draft') => {
     if (!form.client_name.trim()) return toast.error('Client name required')
@@ -227,6 +234,8 @@ function CreateInvoiceModal({ companyId, session, invoiceCount, onClose, onSaved
         notes: form.notes.trim(),
         terms: form.terms.trim(),
         created_by: session.user.id,
+        invoice_type: form.invoice_type,
+        converted_from_id: '',
       }
 
       const p_items = lines.filter(l => l.description.trim()).map((l, i) => ({
@@ -248,16 +257,37 @@ function CreateInvoiceModal({ companyId, session, invoiceCount, onClose, onSaved
       })
       if (error) throw error
 
-      toast.success(`Invoice ${invNum} ${status === 'sent' ? 'created & marked sent' : 'saved as draft'}`)
+      const typeLabel = form.invoice_type === 'proforma' ? 'Proforma' : 'Invoice'
+      toast.success(`${typeLabel} ${invNum} ${status === 'sent' ? 'created & marked sent' : 'saved as draft'}`)
       onSaved()
     } catch (e) { toast.error(e.message || 'Failed to save invoice')
     } finally { setSaving(false) }
   }
 
   return (
-    <Modal title={`New Invoice — ${invNum}`} onClose={onClose} wide>
+    <Modal title={`New ${form.invoice_type === 'proforma' ? 'Proforma Invoice' : 'Tax Invoice'} — ${invNum}`} onClose={onClose} wide>
       <div className="space-y-5">
-        {/* Client Picker — select from registered clients */}
+        {/* Invoice Type Selector */}
+        <div className="flex items-center gap-2 p-3 bg-dark-700 rounded-xl border border-dark-600">
+          <span className="text-xs font-bold text-slate-400 uppercase tracking-widest mr-2">Type</span>
+          {[
+            { val: 'tax_invoice', label: 'Tax Invoice',      desc: 'Final GST invoice' },
+            { val: 'proforma',    label: 'Proforma Invoice', desc: 'Pre-invoice, convert later' },
+          ].map(opt => (
+            <button key={opt.val} onClick={() => setF('invoice_type', opt.val)}
+              className={`flex-1 py-2 px-3 rounded-lg text-sm font-semibold border transition-all ${
+                form.invoice_type === opt.val
+                  ? opt.val === 'proforma'
+                    ? 'bg-purple-600 text-white border-purple-500'
+                    : 'bg-primary-600 text-white border-primary-500'
+                  : 'bg-dark-600 text-slate-400 border-dark-500 hover:border-dark-400'
+              }`}>
+              {opt.label}
+              <span className="block text-[10px] font-normal opacity-70">{opt.desc}</span>
+            </button>
+          ))}
+        </div>
+
         {/* Client Picker — always visible */}
         <div>
           <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Select Registered Client</p>
@@ -1477,7 +1507,87 @@ function InvoicesTab({ companyId, session }) {
     refresh()
   }
 
-  const STATUS_FILTERS = ['all', 'draft', 'sent', 'partial', 'overdue', 'paid', 'cancelled']
+  const STATUS_FILTERS = ['all', 'draft', 'sent', 'partial', 'overdue', 'paid', 'cancelled', 'converted']
+
+  const handleConvert = async (proforma) => {
+    if (!window.confirm(
+      `Convert ${proforma.invoice_number} to a Tax Invoice?\n\nA new Tax Invoice will be created with all the same details. The Proforma will be marked as Converted.`
+    )) return
+    try {
+      // Fetch proforma line items
+      const { data: items, error: ie } = await supabase
+        .from('invoice_line_items').select('*')
+        .eq('invoice_id', proforma.id).order('sort_order')
+      if (ie) throw ie
+
+      // Generate new INV- number
+      const taxCount = invoices.filter(i => i.invoice_type !== 'proforma').length
+      const yr = new Date().getFullYear()
+      const newInvNum = `INV-${yr}-${String(taxCount + 1).padStart(3, '0')}`
+      const newId = crypto.randomUUID()
+
+      const p_invoice = {
+        id: newId,
+        company_id: companyId,
+        invoice_number: newInvNum,
+        invoice_date:   proforma.invoice_date,
+        due_date:       proforma.due_date || '',
+        client_name:    proforma.client_name,
+        client_address: proforma.client_address || '',
+        client_gstin:   proforma.client_gstin || '',
+        project_name:   proforma.project_name || '',
+        work_order_number:       proforma.work_order_number || '',
+        work_order_date:         proforma.work_order_date || '',
+        work_done_from:          proforma.work_done_from || '',
+        work_done_to:            proforma.work_done_to || '',
+        nature_of_supply:        proforma.nature_of_supply || '',
+        place_of_supply:         proforma.place_of_supply || '',
+        place_of_supply_address: proforma.place_of_supply_address || '',
+        subtotal:        String(proforma.subtotal || 0),
+        discount_amount: String(proforma.discount_amount || 0),
+        taxable_amount:  String(proforma.taxable_amount || proforma.subtotal || 0),
+        cgst_rate:   String(proforma.cgst_rate || 0),
+        sgst_rate:   String(proforma.sgst_rate || 0),
+        igst_rate:   String(proforma.igst_rate || 0),
+        cgst_amount: String(proforma.cgst_amount || 0),
+        sgst_amount: String(proforma.sgst_amount || 0),
+        igst_amount: String(proforma.igst_amount || 0),
+        total_amount: String(proforma.total_amount || 0),
+        status: 'draft',
+        notes: proforma.notes || '',
+        terms: proforma.terms || '',
+        created_by: session.user.id,
+        invoice_type: 'tax_invoice',
+        converted_from_id: proforma.id,
+      }
+
+      const p_items = (items || []).map((l, i) => ({
+        description:  l.description || '',
+        item_code:    l.item_code || '',
+        sac_hsn_code: l.sac_hsn_code || '',
+        gst_rate:     String(l.gst_rate || 0),
+        quantity:     String(l.quantity || 1),
+        unit:         l.unit || 'nos',
+        rate:         String(l.rate || 0),
+        amount:       String(l.amount || 0),
+        sort_order:   String(i),
+        equipment_id: l.equipment_id || '',
+      }))
+
+      const { error: re } = await supabase.rpc('create_invoice_with_items', { p_invoice, p_items })
+      if (re) throw re
+
+      // Mark proforma as converted
+      await supabase.from('client_invoices')
+        .update({ status: 'converted', updated_at: new Date().toISOString() })
+        .eq('id', proforma.id)
+
+      toast.success(`Tax Invoice ${newInvNum} created from ${proforma.invoice_number}`)
+      refresh()
+    } catch (e) {
+      toast.error(e.message || 'Conversion failed')
+    }
+  }
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -1521,6 +1631,9 @@ function InvoicesTab({ companyId, session }) {
                         <div className="flex items-center gap-2 mb-1 flex-wrap">
                           <span className="font-mono text-xs text-slate-400">{inv.invoice_number}</span>
                           <span className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold ${status.cls}`}>{status.label}</span>
+                          {inv.invoice_type === 'proforma' && (
+                            <span className="text-[10px] px-2 py-0.5 rounded-full border font-semibold bg-purple-500/20 text-purple-300 border-purple-700">Proforma</span>
+                          )}
                           {inv.project_name && <span className="text-[10px] text-slate-500 truncate max-w-[120px]">{inv.project_name}</span>}
                         </div>
                         <p className="text-sm font-semibold text-slate-200 truncate">{inv.client_name}</p>
@@ -1581,6 +1694,13 @@ function InvoicesTab({ companyId, session }) {
                           {['draft', 'cancelled'].includes(inv.status) && (
                             <button onClick={() => handleDeleteInvoice(inv)} className="btn-ghost text-xs py-1.5 text-red-500 hover:bg-red-500/10">
                               <Trash2 className="w-3.5 h-3.5" /> Delete
+                            </button>
+                          )}
+                          {inv.invoice_type === 'proforma' && inv.status !== 'converted' && (
+                            <button
+                              onClick={() => handleConvert(inv)}
+                              className="btn-ghost text-xs py-1.5 border-purple-700 text-purple-300 hover:bg-purple-500/10">
+                              ↗ Convert to Tax Invoice
                             </button>
                           )}
                         </div>
@@ -1674,8 +1794,14 @@ function InvoicesTab({ companyId, session }) {
       </div>
 
       {showCreate && (
-        <CreateInvoiceModal companyId={companyId} session={session} invoiceCount={invoices.length}
-          onClose={() => setShowCreate(false)} onSaved={() => { setShowCreate(false); refresh() }} />
+        <CreateInvoiceModal
+          companyId={companyId}
+          session={session}
+          invoiceCount={invoices.filter(i => i.invoice_type !== 'proforma').length}
+          proformaCount={invoices.filter(i => i.invoice_type === 'proforma').length}
+          onClose={() => setShowCreate(false)}
+          onSaved={() => { setShowCreate(false); refresh() }}
+        />
       )}
       {editTarget && (
         <EditInvoiceModal invoice={editTarget} companyId={companyId} session={session}

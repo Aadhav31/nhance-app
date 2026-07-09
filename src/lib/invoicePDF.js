@@ -166,10 +166,11 @@ export function generateInvoicePDF(invoice, lineItems, company) {
   bx(doc, L, titleY, W, titleH)                   // outer border
   vln(doc, L + irnW, titleY, titleH)               // vertical divider
 
-  // "Tax Invoice" — centered full width
+  // Title — "Proforma Invoice" or "Tax Invoice"
+  const docTitle = invoice.invoice_type === 'proforma' ? 'Proforma Invoice' : 'Tax Invoice'
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(14)
-  doc.text('Tax Invoice', L + W / 2, titleY + 7, { align: 'center' })
+  doc.text(docTitle, L + W / 2, titleY + 7, { align: 'center' })
 
   // IRN / Ack fields (left area)
   doc.setFont('helvetica', 'normal')
