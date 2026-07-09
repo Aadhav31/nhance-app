@@ -8,7 +8,7 @@ import {
   Truck, Plus, Fuel, AlertTriangle, X, Loader2, CheckCircle,
   Gauge, User, Mic, MicOff, MapPin, Camera,
   Clock, Activity, PlayCircle, StopCircle, ChevronRight, Lock, Bell,
-  ExternalLink, ZoomIn, Edit2,
+  ExternalLink, ZoomIn, Edit2, Trash2,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format } from 'date-fns'
