@@ -172,12 +172,19 @@ function ExpenseForm({ companyId, userId, userRole, userName, onSuccess, onBack 
     payment_mode: 'cash',
     transaction_ref: '',
     add_to_inventory: false,   // opt-in checkbox
-    inv_item_name: '',
+    inv_item_id:   '',         // selected from existing inventory
+    inv_item_name: '',         // name of selected/new item
+    inv_item_unit: 'unit',     // unit of the selected item (auto-filled)
     inv_quantity: '',
     inv_unit: 'unit',
   }
   const [form, setForm] = useState(INIT)
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+
+  // Inline "Add New Item" state
+  const [showAddItem, setShowAddItem] = useState(false)
+  const [newItem, setNewItem] = useState({ name: '', category: 'spare_part', unit: 'unit' })
+  const [addingItem, setAddingItem] = useState(false)
 
   // Equipment list
   const { data: equipment = [] } = useQuery({
@@ -219,6 +226,21 @@ function ExpenseForm({ companyId, userId, userRole, userName, onSuccess, onBack 
     enabled: !!companyId,
   })
 
+  // Existing inventory items — fetched for the picker
+  const { data: invItems = [], refetch: refetchInvItems } = useQuery({
+    queryKey: ['fe_inv_items', companyId],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('inventory_items')
+        .select('id, item_name, unit, category')
+        .eq('company_id', companyId)
+        .eq('is_active', true)
+        .order('item_name')
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+
   const selectedCat = CAT_MAP[form.category]
   const canAddInventory = !!selectedCat?.inv          // category supports inventory
   const needsInvDetails = canAddInventory && form.add_to_inventory  // checkbox ticked
@@ -241,18 +263,9 @@ function ExpenseForm({ companyId, userId, userRole, userName, onSuccess, onBack 
         ? parseFloat(amount) / parseFloat(form.inv_quantity)
         : parseFloat(amount)
 
-      // Upsert inventory item
-      const { data: existingItems } = await supabase
-        .from('inventory_items')
-        .select('id')
-        .eq('company_id', companyId)
-        .ilike('item_name', form.inv_item_name.trim())
-        .limit(1)
-
-      let itemId
-      if (existingItems?.length > 0) {
-        itemId = existingItems[0].id
-      } else {
+      // Use pre-selected item if available, otherwise create new
+      let itemId = form.inv_item_id || null
+      if (!itemId) {
         const invCat = form.category === 'lubricants' ? 'lubricant' : 'spare_part'
         const { data: newItem } = await supabase.from('inventory_items').insert({
           company_id: companyId,
@@ -302,8 +315,10 @@ function ExpenseForm({ companyId, userId, userRole, userName, onSuccess, onBack 
     if (!form.amount || parseFloat(form.amount) <= 0) return toast.error('Enter valid amount')
     if (form.payment_mode === 'upi' && !form.transaction_ref && !form.payee_upi)
       return toast.error('Enter UPI transaction ID')
-    if (needsInvDetails && !form.inv_item_name.trim())
-      return toast.error('Enter item name to add to inventory')
+    if (needsInvDetails && !form.inv_item_id)
+      return toast.error('Select an inventory item (or add a new one above)')
+    if (needsInvDetails && !form.inv_quantity)
+      return toast.error('Enter quantity for inventory')
 
     setSaving(true)
     try {
@@ -471,18 +486,108 @@ function ExpenseForm({ companyId, userId, userRole, userName, onSuccess, onBack 
                 </div>
               </label>
 
-              {/* Item fields — only when checked */}
+              {/* Item picker + Add Item — only when checked */}
               {needsInvDetails && (
                 <div className="px-3 pb-3 space-y-2 border-t border-blue-700/20 pt-2">
-                  <input
-                    className={inp()}
-                    placeholder="Item name e.g. Air Filter, Engine Oil *"
-                    value={form.inv_item_name}
-                    onChange={e => set('inv_item_name', e.target.value)}
-                  />
+
+                  {/* Add New Item button — sits above the picker */}
+                  <div className="flex items-center justify-between">
+                    <p className="text-[11px] text-slate-400">Select from inventory</p>
+                    <button
+                      type="button"
+                      onClick={() => { setShowAddItem(s => !s); setNewItem({ name: '', category: 'spare_part', unit: 'unit' }) }}
+                      className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg bg-blue-600/20 border border-blue-600/40 text-blue-300 hover:bg-blue-600/30 font-semibold"
+                    >
+                      <Plus className="w-3 h-3" /> Add Item
+                    </button>
+                  </div>
+
+                  {/* Inline Add New Item form */}
+                  {showAddItem && (
+                    <div className="bg-dark-700/60 border border-blue-700/30 rounded-xl p-3 space-y-2">
+                      <p className="text-[11px] text-blue-300 font-semibold">Create New Inventory Item</p>
+                      <input
+                        className={inp('text-sm')}
+                        placeholder="Item name *"
+                        value={newItem.name}
+                        onChange={e => setNewItem(n => ({ ...n, name: e.target.value }))}
+                      />
+                      <div className="grid grid-cols-2 gap-2">
+                        <select
+                          className={`bg-dark-700 border border-dark-600 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-primary-500 w-full`}
+                          value={newItem.category}
+                          onChange={e => setNewItem(n => ({ ...n, category: e.target.value }))}
+                        >
+                          <option value="spare_part">Spare Part</option>
+                          <option value="lubricant">Lubricant</option>
+                          <option value="consumable">Consumable</option>
+                          <option value="tool">Tool</option>
+                        </select>
+                        <select
+                          className={`bg-dark-700 border border-dark-600 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-primary-500 w-full`}
+                          value={newItem.unit}
+                          onChange={e => setNewItem(n => ({ ...n, unit: e.target.value }))}
+                        >
+                          {INV_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+                        </select>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setShowAddItem(false)}
+                          className="flex-1 py-1.5 text-xs rounded-lg border border-dark-600 text-slate-400 hover:bg-dark-700"
+                        >Cancel</button>
+                        <button
+                          type="button"
+                          disabled={addingItem}
+                          onClick={async () => {
+                            if (!newItem.name.trim()) return toast.error('Enter item name')
+                            setAddingItem(true)
+                            try {
+                              const { data: created, error } = await supabase
+                                .from('inventory_items')
+                                .insert({ company_id: companyId, item_name: newItem.name.trim(), unit: newItem.unit, category: newItem.category, is_active: true })
+                                .select('id, item_name, unit')
+                                .single()
+                              if (error) throw error
+                              await refetchInvItems()
+                              set('inv_item_id', created.id)
+                              set('inv_item_name', created.item_name)
+                              set('inv_unit', created.unit)
+                              setShowAddItem(false)
+                              toast.success(`"${created.item_name}" added to inventory`)
+                            } catch (e) { toast.error(e.message || 'Failed to create item') }
+                            finally { setAddingItem(false) }
+                          }}
+                          className="flex-1 py-1.5 text-xs rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold disabled:opacity-50 flex items-center justify-center gap-1"
+                        >
+                          {addingItem ? <Loader2 className="w-3 h-3 animate-spin" /> : <><Plus className="w-3 h-3" /> Create & Select</>}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Inventory item picker */}
+                  <select
+                    className={`bg-dark-700 border ${form.inv_item_id ? 'border-blue-500' : 'border-dark-600'} rounded-xl px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-primary-500 w-full`}
+                    value={form.inv_item_id}
+                    onChange={e => {
+                      const selected = invItems.find(i => i.id === e.target.value)
+                      set('inv_item_id', e.target.value)
+                      set('inv_item_name', selected?.item_name || '')
+                      set('inv_unit', selected?.unit || 'unit')
+                    }}
+                  >
+                    <option value="">— Select inventory item *  —</option>
+                    {invItems.map(item => (
+                      <option key={item.id} value={item.id}>{item.item_name} ({item.unit})</option>
+                    ))}
+                  </select>
+
+                  {/* Quantity + Unit row */}
                   <div className="grid grid-cols-5 gap-2">
                     <input
-                      className={`col-span-3 bg-dark-700 border border-dark-600 rounded-xl px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-primary-500 placeholder-slate-600 w-full`}
+                      className="col-span-3 bg-dark-700 border border-dark-600 rounded-xl px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-primary-500 placeholder-slate-600 w-full"
                       type="number"
                       inputMode="decimal"
                       placeholder="Quantity *"
@@ -492,14 +597,14 @@ function ExpenseForm({ companyId, userId, userRole, userName, onSuccess, onBack 
                       onChange={e => set('inv_quantity', e.target.value)}
                     />
                     <select
-                      className={`col-span-2 bg-dark-700 border border-dark-600 rounded-xl px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-primary-500 w-full`}
+                      className="col-span-2 bg-dark-700 border border-dark-600 rounded-xl px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-primary-500 w-full"
                       value={form.inv_unit}
                       onChange={e => set('inv_unit', e.target.value)}
                     >
                       {INV_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
                     </select>
                   </div>
-                  <p className="text-[10px] text-blue-400/70">Item will be auto-added to inventory stock on save.</p>
+                  <p className="text-[10px] text-blue-400/70">Stock will be updated in the Inventory module on save.</p>
                 </div>
               )}
             </div>
