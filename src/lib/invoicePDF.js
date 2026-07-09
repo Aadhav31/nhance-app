@@ -72,6 +72,10 @@ export function numToWords(amount) {
 const fmtINR = n =>
   Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
+// For line item qty / rate / amount — up to 3 dp, trims trailing zeros
+const fmtQty = n =>
+  Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 3 })
+
 // Parse date safely without timezone shift (handles "YYYY-MM-DD" ISO strings correctly)
 function parseLocalDate(d) {
   if (!d) return null
@@ -326,9 +330,9 @@ export function generateInvoicePDF(invoice, lineItems, company) {
       l.sac_hsn_code || '',
       gstR > 0 ? `${gstR}%` : '0%',
       l.unit || '',
-      Number(l.quantity || 0),
-      fmtINR(l.rate),
-      fmtINR(l.amount),
+      fmtQty(l.quantity),
+      fmtQty(l.rate),
+      fmtQty(l.amount),
     ]
   })
 

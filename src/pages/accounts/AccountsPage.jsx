@@ -64,6 +64,11 @@ const fmt  = (n) => n == null || isNaN(n)
   ? '₹0'
   : '₹' + Number(n).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
 
+// For invoice line item qty / rate / amount — shows up to 3 dp, no trailing zeros
+const fmtLine = (n) => n == null || isNaN(n)
+  ? '0'
+  : Number(n).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 3 })
+
 const fmtDate = (d) => { try { return format(parseISO(d), 'dd MMM yyyy') } catch { return d || '—' } }
 const today = () => new Date().toISOString().split('T')[0]
 const inp = (extra = '') =>
@@ -461,7 +466,7 @@ function CreateInvoiceModal({ companyId, session, invoiceCount, proformaCount, o
                     <input type="number" className={inp('text-xs')} value={l.rate}
                       onChange={e => updateLine(l._id, 'rate', e.target.value)} placeholder="0" min="0" step="0.001" />
                   </div>
-                  <div className="col-span-1 text-right text-xs text-slate-300 font-mono">{fmt(l.amount)}</div>
+                  <div className="col-span-1 text-right text-xs text-slate-300 font-mono">{fmtLine(l.amount)}</div>
                   <div className="col-span-2 flex justify-end">
                     <button onClick={() => lines.length > 1 && setLines(p => p.filter(x => x._id !== l._id))}
                       className="text-slate-600 hover:text-red-400 transition-colors">
@@ -896,7 +901,7 @@ function EditInvoiceModal({ invoice, companyId, session, onClose, onSaved }) {
                       <input type="number" className={inp('text-xs')} value={l.rate}
                         onChange={e => updateLine(l._id, 'rate', e.target.value)} placeholder="0" min="0" step="0.001" />
                     </div>
-                    <div className="col-span-1 text-right text-xs text-slate-300 font-mono">{fmt(l.amount)}</div>
+                    <div className="col-span-1 text-right text-xs text-slate-300 font-mono">{fmtLine(l.amount)}</div>
                     <div className="col-span-2 flex justify-end">
                       <button onClick={() => lines.length > 1 && setLines(p => p.filter(x => x._id !== l._id))}
                         className="text-slate-600 hover:text-red-400 transition-colors">
