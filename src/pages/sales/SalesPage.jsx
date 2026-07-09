@@ -1340,10 +1340,13 @@ function PaymentsReceivedTab({ companyId, session }) {
   const deletePayment = async (p) => {
     if (!window.confirm(`Delete Payment ${p.payment_number}?`)) return
     try {
+      // Remove ledger entry first
+      await supabase.from('account_transactions').delete().eq('reference_type', 'payment_received').eq('reference_id', p.id)
       const { error } = await supabase.from('payments_received').delete().eq('id', p.id)
       if (error) throw error
       toast.success(`Payment ${p.payment_number} deleted`)
       qc.invalidateQueries(['payments_received', companyId]); qc.invalidateQueries(['sales_invoices', companyId])
+      qc.invalidateQueries(['ledger', companyId])
     } catch (e) { toast.error(e.message) }
   }
 
@@ -1373,28 +1376,52 @@ function PaymentsReceivedTab({ companyId, session }) {
     if (!form.amount || parseFloat(form.amount) <= 0) return toast.error('Enter valid amount')
     setSaving(true)
     try {
+      const amt = parseFloat(form.amount)
       if (editing) {
         const { error } = await supabase.from('payments_received').update({
           payment_date: form.payment_date, invoice_id: invoiceId || null,
-          client_name: form.client_name.trim(), amount: parseFloat(form.amount),
+          client_name: form.client_name.trim(), amount: amt,
           payment_mode: form.payment_mode, bank_reference: form.bank_reference || null,
           notes: form.notes || null,
         }).eq('id', editing.id)
         if (error) throw error
+        // Keep ledger in sync
+        await supabase.from('account_transactions').update({
+          txn_date: form.payment_date, amount: amt,
+          description: `Payment received — ${editing.payment_number} (${form.client_name.trim()})`,
+          payment_mode: form.payment_mode, bank_reference: form.bank_reference || null,
+          notes: form.notes || null,
+        }).eq('reference_type', 'payment_received').eq('reference_id', editing.id)
         toast.success(`Payment ${editing.payment_number} updated`)
-        closeModal(); qc.invalidateQueries(['payments_received', companyId]); qc.invalidateQueries(['sales_invoices', companyId]); return
+        closeModal()
+        qc.invalidateQueries(['payments_received', companyId])
+        qc.invalidateQueries(['sales_invoices', companyId])
+        qc.invalidateQueries(['ledger', companyId])
+        return
       }
       const prNum = await nextDocNumber(companyId, 'payment_recv').catch(() => `PR-${Date.now()}`)
-      const { error } = await supabase.from('payments_received').insert({
+      const { data: pr, error } = await supabase.from('payments_received').insert({
         company_id: companyId, payment_number: prNum,
         payment_date: form.payment_date, invoice_id: invoiceId || null,
-        client_name: form.client_name.trim(), amount: parseFloat(form.amount),
+        client_name: form.client_name.trim(), amount: amt,
         payment_mode: form.payment_mode, bank_reference: form.bank_reference || null,
         notes: form.notes || null, created_by: session.user.id,
-      })
+      }).select().single()
       if (error) throw error
+      // Write to ledger immediately
+      await supabase.from('account_transactions').insert({
+        company_id: companyId, txn_date: form.payment_date, type: 'income',
+        description: `Payment received — ${prNum} (${form.client_name.trim()})`,
+        amount: amt, payment_mode: form.payment_mode,
+        bank_reference: form.bank_reference || null,
+        reference_type: 'payment_received', reference_id: pr.id,
+        notes: form.notes || null, created_by: session.user.id,
+      })
       toast.success(`Payment ${prNum} recorded — ${fmtINR(form.amount)}`)
-      closeModal(); qc.invalidateQueries(['payments_received', companyId]); qc.invalidateQueries(['sales_invoices', companyId])
+      closeModal()
+      qc.invalidateQueries(['payments_received', companyId])
+      qc.invalidateQueries(['sales_invoices', companyId])
+      qc.invalidateQueries(['ledger', companyId])
     } catch (e) { toast.error(e.message) } finally { setSaving(false) }
   }
 

@@ -1484,10 +1484,13 @@ function PaymentsMadeTab({ companyId, session }) {
   const deletePayment = async (p) => {
     if (!window.confirm(`Delete Payment ${p.payment_number}?`)) return
     try {
+      // Remove ledger entry first
+      await supabase.from('account_transactions').delete().eq('reference_type', 'payment_made').eq('reference_id', p.id)
       const { error } = await supabase.from('payments_made').delete().eq('id', p.id)
       if (error) throw error
       toast.success(`Payment ${p.payment_number} deleted`)
       qc.invalidateQueries(['payments_made', companyId]); qc.invalidateQueries(['bills', companyId])
+      qc.invalidateQueries(['ledger', companyId])
     } catch (e) { toast.error(e.message) }
   }
 
@@ -1526,33 +1529,53 @@ function PaymentsMadeTab({ companyId, session }) {
     if (!form.amount || parseFloat(form.amount) <= 0) return toast.error('Enter valid amount')
     setSaving(true)
     try {
+      const amt = parseFloat(form.amount)
       const vendor = vendors.find(v => v.id === form.vendor_id)
       if (editing) {
         const { error } = await supabase.from('payments_made').update({
           vendor_id: form.vendor_id, vendor_name: vendor?.name || '',
           payment_date: form.payment_date, bill_id: billId || null,
-          amount: parseFloat(form.amount), payment_mode: form.payment_mode,
+          amount: amt, payment_mode: form.payment_mode,
           bank_reference: form.bank_reference || null, notes: form.notes || null,
         }).eq('id', editing.id)
         if (error) throw error
+        // Keep ledger in sync
+        await supabase.from('account_transactions').update({
+          txn_date: form.payment_date, amount: amt,
+          description: `Payment made — ${editing.payment_number} (${vendor?.name || ''})`,
+          payment_mode: form.payment_mode, bank_reference: form.bank_reference || null,
+          notes: form.notes || null,
+        }).eq('reference_type', 'payment_made').eq('reference_id', editing.id)
         toast.success(`Payment ${editing.payment_number} updated`)
-        closeModal(); qc.invalidateQueries(['payments_made', companyId]); qc.invalidateQueries(['bills', companyId])
+        closeModal()
+        qc.invalidateQueries(['payments_made', companyId]); qc.invalidateQueries(['bills', companyId])
+        qc.invalidateQueries(['ledger', companyId])
         return
       }
       const pmNum = await nextDocNumber(companyId, 'payment_made').catch(() => `PM-${Date.now()}`)
-      const { error } = await supabase.from('payments_made').insert({
+      const { data: pm, error } = await supabase.from('payments_made').insert({
         company_id: companyId, payment_number: pmNum,
         payment_date: form.payment_date, vendor_id: form.vendor_id,
         vendor_name: vendor?.name || '', bill_id: billId || null,
-        amount: parseFloat(form.amount), payment_mode: form.payment_mode,
+        amount: amt, payment_mode: form.payment_mode,
         bank_reference: form.bank_reference || null, notes: form.notes || null,
         created_by: session.user.id,
-      })
+      }).select().single()
       if (error) throw error
+      // Write to ledger immediately
+      await supabase.from('account_transactions').insert({
+        company_id: companyId, txn_date: form.payment_date, type: 'expense',
+        description: `Payment made — ${pmNum} (${vendor?.name || ''})`,
+        amount: amt, payment_mode: form.payment_mode,
+        bank_reference: form.bank_reference || null,
+        reference_type: 'payment_made', reference_id: pm.id,
+        notes: form.notes || null, created_by: session.user.id,
+      })
       toast.success(`Payment ${pmNum} recorded — ${fmtINR(form.amount)}`)
       closeModal()
       qc.invalidateQueries(['payments_made', companyId])
       qc.invalidateQueries(['bills', companyId])
+      qc.invalidateQueries(['ledger', companyId])
     } catch (e) { toast.error(e.message) } finally { setSaving(false) }
   }
 
