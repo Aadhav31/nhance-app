@@ -1727,7 +1727,17 @@ function InvoicesTab({ companyId, session }) {
     enabled: !!companyId,
   })
 
+  // Build a map of id → proforma invoice for quick lookup (used by tax invoice tag)
+  const proformaMap = useMemo(() => {
+    const m = {}
+    invoices.forEach(inv => { if (inv.invoice_type === 'proforma') m[inv.id] = inv })
+    return m
+  }, [invoices])
+
   const filtered = useMemo(() => invoices.filter(inv => {
+    // Converted proformas are absorbed into the tax invoice — hide from list unless
+    // explicitly filtering by 'converted'
+    if (inv.status === 'converted' && statusFilter !== 'converted') return false
     if (statusFilter !== 'all' && inv.status !== statusFilter) return false
     if (search.trim()) {
       const q = search.toLowerCase()
@@ -1861,7 +1871,9 @@ function InvoicesTab({ companyId, session }) {
       <div className="flex gap-1 px-4 py-2 border-b border-dark-700 overflow-x-auto flex-shrink-0">
         {STATUS_FILTERS.map(s => {
           const info = s === 'all' ? { label: 'All' } : INV_STATUS[s]
-          const count = s === 'all' ? invoices.length : invoices.filter(i => i.status === s).length
+          const count = s === 'all'
+            ? invoices.filter(i => i.status !== 'converted').length
+            : invoices.filter(i => i.status === s).length
           return (
             <button key={s} onClick={() => setStatusFilter(s)}
               className={`px-3 py-1 rounded-lg text-xs font-semibold whitespace-nowrap transition-all ${statusFilter === s ? 'bg-primary-600 text-white' : 'text-slate-400 hover:text-slate-200 hover:bg-dark-700'}`}>
@@ -1890,6 +1902,27 @@ function InvoicesTab({ companyId, session }) {
                           {inv.invoice_type === 'proforma' && (
                             <span className="text-[10px] px-2 py-0.5 rounded-full border font-semibold bg-purple-500/20 text-purple-300 border-purple-700">Proforma</span>
                           )}
+                          {/* Tag on tax invoice linking back to its source proforma */}
+                          {inv.converted_from_id && proformaMap[inv.converted_from_id] && (() => {
+                            const pi = proformaMap[inv.converted_from_id]
+                            return (
+                              <button
+                                onClick={async e => {
+                                  e.stopPropagation()
+                                  try {
+                                    const { data: li } = await supabase
+                                      .from('invoice_line_items').select('*')
+                                      .eq('invoice_id', pi.id).order('sort_order')
+                                    setViewTarget({ inv: pi, lineItems: li || [] })
+                                  } catch { toast.error('Could not load proforma') }
+                                }}
+                                className="text-[10px] px-2 py-0.5 rounded-full border font-semibold bg-purple-500/10 text-purple-400 border-purple-700/50 hover:bg-purple-500/20 transition-colors"
+                                title="View original Proforma Invoice"
+                              >
+                                📄 From {pi.invoice_number}
+                              </button>
+                            )
+                          })()}
                           {inv.project_name && <span className="text-[10px] text-slate-500 truncate max-w-[120px]">{inv.project_name}</span>}
                         </div>
                         <p className="text-sm font-semibold text-slate-200 truncate">{inv.client_name}</p>
