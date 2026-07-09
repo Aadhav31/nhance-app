@@ -297,35 +297,27 @@ function StartShiftForm({ companyId, operatorId, employeeId, equipment, project,
   const [meter,        setMeter]     = useState('')
   const [meterFile,    setMeterFile] = useState(null)
   const [meterPreview, setMeterPrev] = useState(null)
-  const [loginFile,    setLoginFile] = useState(null)
-  const [loginPreview, setLoginPrev] = useState(null)
   const [saving, setSaving]          = useState(false)
 
   const check = checkShiftWindow(project, equipment)
 
   const handleMeterPhoto = f => { setMeterFile(f); setMeterPrev(URL.createObjectURL(f)) }
-  const handleLoginPhoto = f => { setLoginFile(f); setLoginPrev(URL.createObjectURL(f)) }
 
-  const canSubmit = check.allowed && meter && meterFile && loginFile
+  const canSubmit = check.allowed && meter && meterFile
 
   const handleStart = async () => {
     if (!check.allowed) return toast.error(check.reason || 'Outside shift window')
     if (!meter)     return toast.error('Enter hour meter reading')
     if (!meterFile) return toast.error('Take a photo of the hour meter')
-    if (!loginFile) return toast.error('Take a login / presence photo')
     setSaving(true)
     try {
       const meterLabel = `${equipment.equipment_number} — Meter Start`
-      const loginLabel = `${equipment.equipment_number} — Login`
-      const [{ url: meterUrl, location }, { url: loginUrl }] = await Promise.all([
-        stampAndUpload(meterFile, meterLabel),
-        stampAndUpload(loginFile, loginLabel),
-      ])
+      const { url: meterUrl, location } = await stampAndUpload(meterFile, meterLabel)
       const { data, error } = await supabase.from('shifts').insert({
         company_id: companyId, equipment_id: equipment.id, operator_id: employeeId,
         shift_date: today(), shift_type: check.shiftType, start_time: nowTime(),
         start_meter: Number(meter), start_meter_photo: meterUrl,
-        login_photo_url: loginUrl, start_location: location,
+        start_location: location,
         project_id: project?.id || null, status: 'open',
       }).select().single()
       if (error) throw error
@@ -346,31 +338,17 @@ function StartShiftForm({ companyId, operatorId, employeeId, equipment, project,
         )}
       </div>
 
-      {/* Required photos — both must be taken */}
-      <div className="space-y-3 bg-dark-800 border border-dark-600 rounded-2xl p-4">
-        <p className="text-xs text-amber-400 font-semibold uppercase tracking-wide">📷 Required Photos — both must be taken</p>
-
-        {/* Photo 1: Meter */}
+      {/* Required photo: Meter reading */}
+      <div className="bg-dark-800 border border-dark-600 rounded-2xl p-4">
+        <p className="text-xs text-amber-400 font-semibold uppercase tracking-wide mb-3">📷 Meter Reading Photo</p>
         <div className={`rounded-xl border-2 p-3 transition-all ${meterFile ? 'border-green-600/60 bg-green-900/10' : 'border-dashed border-dark-500'}`}>
           <div className="flex items-center gap-2 mb-2">
             <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${meterFile ? 'bg-green-700/30 text-green-400' : 'bg-red-900/30 text-red-400'}`}>
               {meterFile ? '✓ Done' : 'Required'}
             </span>
-            <span className="text-xs text-slate-300">Meter Reading Photo</span>
+            <span className="text-xs text-slate-300">Photo of hour meter</span>
           </div>
           <PhotoCapture label="" onCapture={handleMeterPhoto} preview={meterPreview} />
-        </div>
-
-        {/* Photo 2: Login / Presence */}
-        <div className={`rounded-xl border-2 p-3 transition-all ${loginFile ? 'border-green-600/60 bg-green-900/10' : 'border-dashed border-dark-500'}`}>
-          <div className="flex items-center gap-2 mb-2">
-            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${loginFile ? 'bg-green-700/30 text-green-400' : 'bg-red-900/30 text-red-400'}`}>
-              {loginFile ? '✓ Done' : 'Required'}
-            </span>
-            <span className="text-xs text-slate-300">Login / Presence Photo</span>
-          </div>
-          <p className="text-[11px] text-slate-500 mb-2">Take a selfie or photo at the site to confirm your presence</p>
-          <PhotoCapture label="" onCapture={handleLoginPhoto} preview={loginPreview} />
         </div>
       </div>
 
@@ -378,7 +356,7 @@ function StartShiftForm({ companyId, operatorId, employeeId, equipment, project,
         <ShiftWindowBanner check={check} />
       ) : (
         <Btn onClick={handleStart} loading={saving} disabled={!canSubmit}>
-          {canSubmit ? '🚀 Start Shift' : `Complete ${!meter ? 'meter reading' : !meterFile ? 'meter photo' : 'login photo'} first`}
+          {canSubmit ? '🚀 Start Shift' : `Complete ${!meter ? 'meter reading' : 'meter photo'} first`}
         </Btn>
       )}
     </div>
