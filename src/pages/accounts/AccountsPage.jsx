@@ -3200,19 +3200,7 @@ function MarkPaidModal({ companyId, payment, onClose, onSaved }) {
       const expPayMode = ['cash','bank','upi','cheque'].includes(form.payment_mode)
         ? form.payment_mode : 'bank'
 
-      // 1. Mark instance as paid
-      const { error: pe } = await supabase.from('fixed_expense_payments').update({
-        status:          'paid',
-        paid_date:       form.paid_date,
-        paid_amount:     amt,
-        payment_mode:    form.payment_mode,
-        transaction_ref: form.transaction_ref || null,
-        notes:           form.notes || null,
-        updated_at:      new Date().toISOString(),
-      }).eq('id', payment.id)
-      if (pe) throw pe
-
-      // 2. Write to expenses ledger
+      // 1. Write to expenses ledger FIRST — if this fails, nothing is marked paid
       const { data: exp, error: ee } = await supabase.from('expenses').insert({
         company_id:    companyId,
         expense_date:  form.paid_date,
@@ -3227,7 +3215,7 @@ function MarkPaidModal({ companyId, payment, onClose, onSaved }) {
       }).select('id').single()
       if (ee) throw ee
 
-      // 3. Write to account_transactions for P&L
+      // 2. Write to account_transactions for ledger / P&L
       const { error: te } = await supabase.from('account_transactions').insert({
         company_id:      companyId,
         txn_date:        form.paid_date,
@@ -3240,6 +3228,18 @@ function MarkPaidModal({ companyId, payment, onClose, onSaved }) {
         reference_id:    exp?.id || null,
       })
       if (te) throw te
+
+      // 3. Mark instance as paid — only after both ledger writes succeed
+      const { error: pe } = await supabase.from('fixed_expense_payments').update({
+        status:          'paid',
+        paid_date:       form.paid_date,
+        paid_amount:     amt,
+        payment_mode:    form.payment_mode,
+        transaction_ref: form.transaction_ref || null,
+        notes:           form.notes || null,
+        updated_at:      new Date().toISOString(),
+      }).eq('id', payment.id)
+      if (pe) throw pe
 
       toast.success(`${fe?.name || 'Payment'} marked as paid`)
       onSaved()
