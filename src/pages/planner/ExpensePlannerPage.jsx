@@ -75,14 +75,31 @@ function monthlyAmount(plan) {
   return Number(plan.amount)
 }
 
+// Fixed expense monthly amount approximation
+function fixedMonthlyAmount(fe) {
+  if (fe.recurrence_type === 'monthly') return Number(fe.amount)
+  if (fe.recurrence_type === 'custom_days' && Number(fe.recurrence_days) > 0)
+    return Math.round(Number(fe.amount) * 30 / Number(fe.recurrence_days))
+  return Number(fe.amount)
+}
+
+// Does a fixed expense apply to this month?
+function fixedOccursInMonth(fe, year, month) {
+  if (!fe.is_active) return false
+  const start = new Date(fe.start_date)
+  const sY = start.getFullYear(), sM = start.getMonth()
+  return !(year < sY || (year === sY && month < sM))
+}
+
 // ── Category dot ──────────────────────────────────────────────────────────────
 function CatDot({ color, size = 8 }) {
   return <span style={{ background: color, width: size, height: size, borderRadius: '50%', display: 'inline-block', flexShrink: 0 }} />
 }
 
 // ── Month Forecast Column ─────────────────────────────────────────────────────
-function MonthColumn({ year, month, plans, hrPayroll, isCurrent }) {
-  const total = plans.reduce((s, p) => s + monthlyAmount(p), 0) + hrPayroll
+function MonthColumn({ year, month, plans, hrPayroll, isCurrent, fixedExpenses = [] }) {
+  const fixedTotal = fixedExpenses.reduce((s, fe) => s + fixedMonthlyAmount(fe), 0)
+  const total = plans.reduce((s, p) => s + monthlyAmount(p), 0) + hrPayroll + fixedTotal
 
   const byCategory = {}
   plans.forEach(p => {
@@ -91,6 +108,8 @@ function MonthColumn({ year, month, plans, hrPayroll, isCurrent }) {
     byCategory[cat].total += monthlyAmount(p)
     byCategory[cat].items.push(p)
   })
+
+  const itemCount = plans.length + (hrPayroll > 0 ? 1 : 0) + fixedExpenses.length
 
   return (
     <div className={`flex-1 min-w-0 rounded-xl border ${isCurrent ? 'border-primary-500/50 bg-primary-500/5' : 'border-dark-700 bg-dark-800'} p-4 flex flex-col gap-3`}>
@@ -103,7 +122,7 @@ function MonthColumn({ year, month, plans, hrPayroll, isCurrent }) {
           </p>
         </div>
         <p className="text-2xl font-bold text-slate-100">{fmtINRShort(total)}</p>
-        <p className="text-xs text-slate-500">{plans.length + (hrPayroll > 0 ? 1 : 0)} expense items</p>
+        <p className="text-xs text-slate-500">{itemCount} expense items</p>
       </div>
 
       {/* Progress bar by category */}
@@ -111,6 +130,9 @@ function MonthColumn({ year, month, plans, hrPayroll, isCurrent }) {
         <div className="flex h-1.5 rounded-full overflow-hidden gap-px">
           {hrPayroll > 0 && (
             <div style={{ width: `${(hrPayroll / total) * 100}%`, background: '#6366f1' }} />
+          )}
+          {fixedTotal > 0 && (
+            <div style={{ width: `${(fixedTotal / total) * 100}%`, background: '#0d9488' }} />
           )}
           {Object.entries(byCategory).map(([cat, { total: ct, color }]) => (
             <div key={cat} style={{ width: `${(ct / total) * 100}%`, background: color || '#64748b' }} />
@@ -129,6 +151,28 @@ function MonthColumn({ year, month, plans, hrPayroll, isCurrent }) {
             </div>
           </div>
           <p className="text-xs font-semibold text-slate-200 shrink-0 ml-2">{fmtINRShort(hrPayroll)}</p>
+        </div>
+      )}
+
+      {/* Fixed Expenses auto-pulled section */}
+      {fixedExpenses.length > 0 && (
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <div className="flex items-center gap-1.5">
+              <CatDot color="#0d9488" />
+              <p className="text-[11px] font-semibold text-teal-400 uppercase tracking-wide">Fixed Expenses</p>
+              <span className="text-[9px] px-1 py-0.5 rounded bg-teal-500/15 border border-teal-500/30 text-teal-400">Auto</span>
+            </div>
+            <p className="text-xs text-teal-400">{fmtINRShort(fixedTotal)}</p>
+          </div>
+          <div className="space-y-1 pl-3">
+            {fixedExpenses.map(fe => (
+              <div key={fe.id} className="flex items-center justify-between">
+                <p className="text-xs text-slate-300 truncate">{fe.name}</p>
+                <p className="text-xs text-slate-400 shrink-0 ml-2">{fmtINRShort(fixedMonthlyAmount(fe))}</p>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
@@ -156,7 +200,7 @@ function MonthColumn({ year, month, plans, hrPayroll, isCurrent }) {
         </div>
       ))}
 
-      {plans.length === 0 && hrPayroll === 0 && (
+      {plans.length === 0 && hrPayroll === 0 && fixedExpenses.length === 0 && (
         <p className="text-xs text-slate-600 text-center py-4">No expenses planned</p>
       )}
     </div>
@@ -395,6 +439,30 @@ export default function ExpensePlannerPage() {
     [salaries]
   )
 
+  // Fixed expenses auto-pull from Accounts → Fixed Expenses
+  const { data: fixedExpenses = [] } = useQuery({
+    queryKey: ['fixed_expenses_planner', companyId],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('fixed_expenses')
+        .select('id,name,category,amount,recurrence_type,recurrence_days,due_day,start_date,payee_name,description')
+        .eq('company_id', companyId)
+        .eq('is_active', true)
+        .order('name', { ascending: true })
+      if (error) throw error
+      return data || []
+    },
+    enabled: !!companyId,
+    staleTime: 60_000,
+  })
+
+  // Fixed expenses that apply to each displayed month
+  const fixedMonthPlans = useMemo(() =>
+    months.map(({ year, month }) =>
+      fixedExpenses.filter(fe => fixedOccursInMonth(fe, year, month))
+    ),
+    [months, fixedExpenses]
+  )
+
   // Assign colors to categories
   const categories = useMemo(() => [...new Set(plans.map(p => p.category).filter(Boolean))], [plans])
 
@@ -417,9 +485,11 @@ export default function ExpensePlannerPage() {
     [months, plansWithColor]
   )
 
-  // Totals for summary
+  // Totals for summary (manual plans + HR payroll + fixed expenses)
   const totals = monthPlans.map((mp, i) =>
-    mp.reduce((s, p) => s + monthlyAmount(p), 0) + hrPayroll
+    mp.reduce((s, p) => s + monthlyAmount(p), 0) +
+    hrPayroll +
+    fixedMonthPlans[i].reduce((s, fe) => s + fixedMonthlyAmount(fe), 0)
   )
 
   // ── Delete ────────────────────────────────────────────────────────────────────
@@ -449,7 +519,8 @@ export default function ExpensePlannerPage() {
           <h1 className="text-xl font-bold text-slate-100">Expense Planner</h1>
           <p className="text-sm text-slate-500">
             {MONTHS[months[0].month].slice(0,3)} · {MONTHS[months[1].month].slice(0,3)} · {MONTHS[months[2].month].slice(0,3)} {months[0].year !== months[2].year ? `${months[0].year}–${months[2].year}` : months[0].year}
-            {hrPayroll > 0 && <span className="ml-2 text-indigo-400">· Payroll {fmtINRShort(hrPayroll)}/mo auto-pulled</span>}
+            {hrPayroll > 0 && <span className="ml-2 text-indigo-400">· Payroll {fmtINRShort(hrPayroll)}/mo</span>}
+            {fixedExpenses.length > 0 && <span className="ml-2 text-teal-400">· {fixedExpenses.length} fixed auto-pulled</span>}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -500,11 +571,53 @@ export default function ExpensePlannerPage() {
                 plans={monthPlans[i]}
                 hrPayroll={hrPayroll}
                 isCurrent={i === 0 && offset === 0}
+                fixedExpenses={fixedMonthPlans[i]}
               />
             ))}
           </div>
         )
       }
+
+      {/* Fixed Expenses auto-pulled panel */}
+      {fixedExpenses.length > 0 && (
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-xs font-semibold text-teal-400 uppercase tracking-wider flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-teal-500 inline-block" />
+              Fixed Expenses — Auto ({fixedExpenses.length})
+            </h2>
+            <span className="text-xs text-slate-500">Pulled from Accounts → Fixed Expenses</span>
+          </div>
+          <div className="card overflow-hidden">
+            {fixedExpenses.map(fe => (
+              <div key={fe.id} className="flex items-center justify-between px-4 py-3 border-b border-dark-700/60 last:border-0">
+                <div className="flex items-center gap-3 min-w-0">
+                  <CatDot color="#0d9488" size={10} />
+                  <div className="min-w-0">
+                    <p className="text-sm text-slate-200 font-medium truncate">{fe.name}</p>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      {fe.category && <span className="text-xs text-slate-500">{fe.category}</span>}
+                      {fe.category && <span className="text-slate-600">·</span>}
+                      <span className="text-xs text-slate-500">
+                        {fe.recurrence_type === 'monthly'
+                          ? `Monthly (due day ${fe.due_day || '—'})`
+                          : `Every ${fe.recurrence_days} days`}
+                      </span>
+                      {fe.payee_name && <><span className="text-slate-600">·</span><span className="text-xs text-slate-500">{fe.payee_name}</span></>}
+                    </div>
+                  </div>
+                </div>
+                <div className="text-right shrink-0 ml-4">
+                  <p className="text-sm font-semibold text-slate-100">{fmtINR(fe.amount)}</p>
+                  {fe.recurrence_type === 'custom_days' && (
+                    <p className="text-xs text-slate-500">≈{fmtINRShort(fixedMonthlyAmount(fe))}/mo</p>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Expense list */}
       <div>
