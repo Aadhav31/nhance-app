@@ -171,6 +171,7 @@ function ExpenseForm({ companyId, userId, userRole, userName, onSuccess, onBack 
     amount: '',
     payment_mode: 'cash',
     transaction_ref: '',
+    add_to_inventory: false,   // opt-in checkbox
     inv_item_name: '',
     inv_quantity: '',
     inv_unit: 'unit',
@@ -219,7 +220,8 @@ function ExpenseForm({ companyId, userId, userRole, userName, onSuccess, onBack 
   })
 
   const selectedCat = CAT_MAP[form.category]
-  const needsInvDetails = selectedCat?.inv && form.category !== ''
+  const canAddInventory = !!selectedCat?.inv          // category supports inventory
+  const needsInvDetails = canAddInventory && form.add_to_inventory  // checkbox ticked
 
   // Upload bill photo to Supabase Storage
   const uploadBillPhoto = async (file) => {
@@ -301,7 +303,7 @@ function ExpenseForm({ companyId, userId, userRole, userName, onSuccess, onBack 
     if (form.payment_mode === 'upi' && !form.transaction_ref && !form.payee_upi)
       return toast.error('Enter UPI transaction ID')
     if (needsInvDetails && !form.inv_item_name.trim())
-      return toast.error('Enter item name for inventory')
+      return toast.error('Enter item name to add to inventory')
 
     setSaving(true)
     try {
@@ -434,30 +436,66 @@ function ExpenseForm({ companyId, userId, userRole, userName, onSuccess, onBack 
             })}
           </div>
 
-          {/* Inventory fields for spares/lubricants */}
-          {needsInvDetails && (
-            <div className="bg-blue-500/5 border border-blue-700/30 rounded-xl p-3 space-y-2">
-              <p className="text-xs text-blue-300 font-semibold flex items-center gap-1.5">
-                <Package className="w-3.5 h-3.5" /> Inventory Entry (auto-recorded)
-              </p>
-              <input
-                className={inp()}
-                placeholder="Item name e.g. Air Filter, Engine Oil *"
-                value={form.inv_item_name}
-                onChange={e => set('inv_item_name', e.target.value)}
-              />
-              <div className="flex gap-2">
-                <input
-                  className={inp('flex-1')}
-                  type="number"
-                  placeholder="Qty"
-                  value={form.inv_quantity}
-                  onChange={e => set('inv_quantity', e.target.value)}
-                />
-                <select className={inp('w-28')} value={form.inv_unit} onChange={e => set('inv_unit', e.target.value)}>
-                  {INV_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
-                </select>
-              </div>
+          {/* Inventory opt-in — only shown for inventory-eligible categories */}
+          {canAddInventory && (
+            <div className={`rounded-xl border transition-all ${needsInvDetails ? 'bg-blue-500/8 border-blue-600/40' : 'bg-dark-700/40 border-dark-600'}`}>
+              {/* Checkbox toggle */}
+              <label className="flex items-center gap-3 px-3 py-2.5 cursor-pointer select-none">
+                <div className="relative flex-shrink-0">
+                  <input
+                    type="checkbox"
+                    className="sr-only"
+                    checked={form.add_to_inventory}
+                    onChange={e => set('add_to_inventory', e.target.checked)}
+                  />
+                  <div className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-all ${
+                    form.add_to_inventory
+                      ? 'bg-blue-500 border-blue-500'
+                      : 'bg-dark-700 border-dark-500'
+                  }`}>
+                    {form.add_to_inventory && (
+                      <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <Package className={`w-3.5 h-3.5 ${needsInvDetails ? 'text-blue-400' : 'text-slate-500'}`} />
+                  <span className={`text-xs font-semibold ${needsInvDetails ? 'text-blue-300' : 'text-slate-400'}`}>
+                    Add to Inventory
+                  </span>
+                  {!needsInvDetails && (
+                    <span className="text-[10px] text-slate-600">— tick to record item in stock</span>
+                  )}
+                </div>
+              </label>
+
+              {/* Item fields — only when checked */}
+              {needsInvDetails && (
+                <div className="px-3 pb-3 space-y-2 border-t border-blue-700/20 pt-2">
+                  <input
+                    className={inp()}
+                    placeholder="Item name e.g. Air Filter, Engine Oil *"
+                    value={form.inv_item_name}
+                    onChange={e => set('inv_item_name', e.target.value)}
+                  />
+                  <div className="flex gap-2">
+                    <input
+                      className={inp('flex-1')}
+                      type="number"
+                      inputMode="decimal"
+                      placeholder="Quantity *"
+                      value={form.inv_quantity}
+                      onChange={e => set('inv_quantity', e.target.value)}
+                    />
+                    <select className={inp('w-28')} value={form.inv_unit} onChange={e => set('inv_unit', e.target.value)}>
+                      {INV_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+                    </select>
+                  </div>
+                  <p className="text-[10px] text-blue-400/70">Item will be auto-added to inventory stock on save.</p>
+                </div>
+              )}
             </div>
           )}
         </div>
