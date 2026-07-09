@@ -2897,8 +2897,8 @@ const FIXED_CATS = [
   { value: 'misc',      label: 'Miscellaneous',     icon: '📦' },
 ]
 const daySuffix = n => n === 1 || n === 21 || n === 31 ? 'st' : n === 2 || n === 22 ? 'nd' : n === 3 || n === 23 ? 'rd' : 'th'
-const PAY_MODES_FE = ['cash', 'bank_transfer', 'upi', 'cheque', 'card']
-const PAY_LABELS_FE = { cash: 'Cash', bank_transfer: 'Bank Transfer', upi: 'UPI', cheque: 'Cheque', card: 'Card' }
+const PAY_MODES_FE = ['cash', 'bank', 'upi', 'cheque', 'credit']
+const PAY_LABELS_FE = { cash: 'Cash', bank: 'Bank Transfer', upi: 'UPI', cheque: 'Cheque', credit: 'Card/Credit' }
 
 const RECURRENCE_TYPES = [
   { value: 'monthly',     label: 'Monthly',     desc: 'Every month on a fixed day' },
@@ -3167,7 +3167,7 @@ function MarkPaidModal({ companyId, payment, onClose, onSaved }) {
   const [form, setForm] = useState({
     paid_date:       todayStr(),
     paid_amount:     String(payment.amount),
-    payment_mode:    'bank_transfer',
+    payment_mode:    'bank',
     transaction_ref: '',
     notes:           '',
   })
