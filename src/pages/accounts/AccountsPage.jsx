@@ -229,6 +229,7 @@ function CreateInvoiceModal({ companyId, session, invoiceCount, onClose, onSaved
 
       const linePayload = lines.filter(l => l.description.trim()).map((l, i) => ({
         invoice_id:   invoiceId,   // use our known UUID directly — no dependency on newInv
+        company_id:   companyId,
         description:  l.description.trim(),
         item_code:    l.item_code?.trim() || null,
         sac_hsn_code: l.sac_hsn_code?.trim() || null,
@@ -673,6 +674,7 @@ function EditInvoiceModal({ invoice, companyId, session, onClose, onSaved }) {
       await supabase.from('invoice_line_items').delete().eq('invoice_id', invoice.id)
       const linePayload = lines.filter(l => l.description.trim()).map((l, i) => ({
         invoice_id:   invoice.id,
+        company_id:   companyId,
         description:  l.description.trim(),
         item_code:    l.item_code?.trim() || null,
         sac_hsn_code: l.sac_hsn_code?.trim() || null,
