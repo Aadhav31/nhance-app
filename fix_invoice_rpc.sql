@@ -1,31 +1,40 @@
 -- ─────────────────────────────────────────────────────────────────────────────
--- proforma_invoice_migration.sql
--- Adds Proforma Invoice support to client_invoices
+-- fix_invoice_rpc.sql
+-- DEFINITIVE FIX — resolves "could not choose best candidate function" error
+--
+-- Root cause: Two overloads of create_invoice_with_items exist in Postgres:
+--   1. (p_invoice JSONB, p_items JSONB)   ← original
+--   2. (p_invoice JSONB, p_items JSONB[]) ← added by proforma migration (wrong)
+-- PostgREST can't pick between them. Fix: drop both, recreate once with JSONB.
+--
 -- Run ONCE in Supabase SQL Editor
 -- ─────────────────────────────────────────────────────────────────────────────
 
--- 1. Add invoice_type column (proforma | tax_invoice)
+-- Step 1: Drop ALL overloads (CASCADE removes dependent objects like grants)
+DROP FUNCTION IF EXISTS public.create_invoice_with_items(JSONB, JSONB)    CASCADE;
+DROP FUNCTION IF EXISTS public.create_invoice_with_items(JSONB, JSONB[])  CASCADE;
+
+-- Step 2: Add columns if not already done by proforma_invoice_migration.sql
 ALTER TABLE client_invoices
   ADD COLUMN IF NOT EXISTS invoice_type TEXT DEFAULT 'tax_invoice';
 
--- 2. Add conversion tracking — which proforma was this tax invoice converted from?
 ALTER TABLE client_invoices
-  ADD COLUMN IF NOT EXISTS converted_from_id UUID REFERENCES client_invoices(id) ON DELETE SET NULL;
+  ADD COLUMN IF NOT EXISTS converted_from_id UUID
+    REFERENCES client_invoices(id) ON DELETE SET NULL;
 
--- 3. Backfill invoice_type for all existing records
 UPDATE client_invoices SET invoice_type = 'tax_invoice' WHERE invoice_type IS NULL;
 
--- 4. Update status CHECK constraint to include 'converted'
 ALTER TABLE client_invoices DROP CONSTRAINT IF EXISTS client_invoices_status_check;
 ALTER TABLE client_invoices ADD CONSTRAINT client_invoices_status_check
   CHECK (status IN ('draft','sent','partial','paid','overdue','cancelled','converted'));
 
--- 5. Recreate create_invoice_with_items RPC to handle invoice_type + converted_from_id
--- Drop all overloads first to avoid ambiguity errors
-DROP FUNCTION IF EXISTS public.create_invoice_with_items(JSONB, JSONB)   CASCADE;
-DROP FUNCTION IF EXISTS public.create_invoice_with_items(JSONB, JSONB[]) CASCADE;
-
-CREATE OR REPLACE FUNCTION create_invoice_with_items(p_invoice JSONB, p_items JSONB)
+-- Step 3: Recreate as single unambiguous function
+--   p_items is JSONB (a JSON array), iterated with jsonb_array_elements.
+--   PostgREST sends JS arrays as JSON arrays → JSONB. No ambiguity.
+CREATE OR REPLACE FUNCTION public.create_invoice_with_items(
+  p_invoice JSONB,
+  p_items   JSONB
+)
 RETURNS VOID
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -37,6 +46,7 @@ DECLARE
   item         JSONB;
   i            INT := 0;
 BEGIN
+  -- Insert the invoice header
   INSERT INTO client_invoices (
     id, company_id, invoice_number, invoice_date, due_date,
     client_name, client_address, client_gstin,
@@ -67,7 +77,11 @@ BEGIN
     NULLIF(p_invoice->>'place_of_supply_address', ''),
     COALESCE((p_invoice->>'subtotal')::NUMERIC, 0),
     COALESCE((p_invoice->>'discount_amount')::NUMERIC, 0),
-    COALESCE((p_invoice->>'taxable_amount')::NUMERIC, (p_invoice->>'subtotal')::NUMERIC, 0),
+    COALESCE(
+      NULLIF(p_invoice->>'taxable_amount', '')::NUMERIC,
+      (p_invoice->>'subtotal')::NUMERIC,
+      0
+    ),
     COALESCE((p_invoice->>'cgst_rate')::NUMERIC, 0),
     COALESCE((p_invoice->>'sgst_rate')::NUMERIC, 0),
     COALESCE((p_invoice->>'igst_rate')::NUMERIC, 0),
@@ -83,6 +97,7 @@ BEGIN
     NULLIF(p_invoice->>'converted_from_id', '')::UUID
   );
 
+  -- Insert line items (p_items is a JSON array)
   FOR item IN SELECT * FROM jsonb_array_elements(p_items) LOOP
     INSERT INTO invoice_line_items (
       invoice_id, company_id,
@@ -107,12 +122,17 @@ BEGIN
 END;
 $$;
 
+-- Re-grant execute to authenticated users
 GRANT EXECUTE ON FUNCTION public.create_invoice_with_items(JSONB, JSONB) TO authenticated;
+
+-- Reload PostgREST schema cache
 NOTIFY pgrst, 'reload schema';
 
--- Verify
-SELECT column_name, data_type, column_default
-FROM information_schema.columns
-WHERE table_name = 'client_invoices'
-  AND column_name IN ('invoice_type', 'converted_from_id')
-ORDER BY column_name;
+-- Verify: should show exactly ONE row
+SELECT
+  p.proname AS function_name,
+  pg_get_function_arguments(p.oid) AS arguments
+FROM pg_proc p
+JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE n.nspname = 'public'
+  AND p.proname = 'create_invoice_with_items';
