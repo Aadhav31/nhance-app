@@ -30,7 +30,22 @@ const EXPENSE_CATS = [
 ]
 
 const PAYMENT_MODES = ['cash', 'bank', 'upi', 'cheque']
-const UNITS = ['hrs', 'days', 'trips', 'LS', 'nos', 'mt', 'km']
+const UNITS = [
+  // Time
+  'hrs', 'days', 'weeks', 'months',
+  // Count / Lump Sum
+  'nos', 'LS', 'set', 'trips',
+  // Volume
+  'cum', 'm3',
+  // Area
+  'sqm', 'sqft',
+  // Length
+  'mtr', 'rmt', 'km',
+  // Weight
+  'mt', 'kg', 'ton',
+  // Liquid
+  'ltr',
+]
 
 const INV_STATUS = {
   draft:     { label: 'Draft',     cls: 'bg-slate-500/20 text-slate-400 border-slate-600' },
