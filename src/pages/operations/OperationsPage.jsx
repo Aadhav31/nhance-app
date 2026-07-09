@@ -1987,6 +1987,7 @@ function IncidentDetailModal({ incident, onClose, onResolve, isAdmin, onDelete }
   const severityColor = { high: 'text-red-400', medium: 'text-orange-400', low: 'text-yellow-400' }[incident.severity] || 'text-slate-400'
 
   return (
+    <>
     <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
       <div className="w-full max-w-md bg-dark-900 sm:rounded-2xl border-t sm:border border-dark-600 shadow-2xl flex flex-col max-h-[92vh] sm:max-h-[85vh]">
         <div className="flex items-start justify-between px-4 py-3 border-b border-dark-700 shrink-0 bg-dark-800 sm:rounded-t-2xl">
@@ -2097,6 +2098,7 @@ function IncidentDetailModal({ incident, onClose, onResolve, isAdmin, onDelete }
         }}
       />
     )}
+    </>
   )
 }
 
