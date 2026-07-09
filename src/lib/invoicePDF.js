@@ -204,7 +204,7 @@ export function generateInvoicePDF(invoice, lineItems, company) {
   // LEFT column: vendor block = all 4 rows merged into ONE cell (no internal hlines)
   const vendorH = rInvH + rOrdH + rWrkH + rNatH   // = 37mm
 
-  const rBuyH   = 18  // Buyer name + address (left) / Place of Supply (right, merged)
+  const rBuyH   = 26  // Buyer name + address (left) / Place of Supply (right, merged)
   const rGSTH   = 8   // Buyer GST (left) / empty (right, continues merged)
 
   // ── LEFT COLUMN — VENDOR block (one big unified rect) ──────────────────
@@ -214,44 +214,54 @@ export function generateInvoicePDF(invoice, lineItems, company) {
   doc.setFont('helvetica', 'bold'); doc.setFontSize(6.5); doc.setTextColor(0)
   doc.text('Vendor Name and Address (Bill from)', xA + 2, y + 4)
 
-  // Vendor company name
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(9)
+  // Vendor company name — 8pt to keep it proportional
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(8)
   const coName = company?.name || ''
-  doc.text(doc.splitTextToSize(coName, cA - 4)[0], xA + 2, y + 9)
+  const coNameLines = doc.splitTextToSize(coName, cA - 4)
+  coNameLines.slice(0, 2).forEach((l, i) => doc.text(l, xA + 2, y + 9 + i * 3.8))
 
-  // Vendor address
+  // Vendor address — up to 3 lines
   doc.setFont('helvetica', 'normal'); doc.setFontSize(7)
   const coAddr = company?.address || ''
   const coAddrLines = doc.splitTextToSize(coAddr, cA - 4)
-  coAddrLines.slice(0, 4).forEach((l, i) => doc.text(l, xA + 2, y + 14 + i * 3.5))
+  const shownCoLines = coAddrLines.slice(0, 3)
+  const nameLineCount = Math.min(coNameLines.length, 2)
+  const addrStartY = y + 9 + nameLineCount * 3.8 + 1.5
+  shownCoLines.forEach((l, i) => doc.text(l, xA + 2, addrStartY + i * 3.5))
 
-  // Vendor GST — at bottom of vendor block
+  // Vendor GST — positioned right after address (not pinned to bottom)
+  const gstLabelY = Math.min(addrStartY + shownCoLines.length * 3.5 + 2.5, y + vendorH - 7)
   doc.setFont('helvetica', 'bold'); doc.setFontSize(6.5)
-  doc.text('Vendor GST Number:', xA + 2, y + vendorH - 6.5)
+  doc.text('Vendor GST Number:', xA + 2, gstLabelY)
   doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5)
-  doc.text(company?.gstin || '', xA + 2, y + vendorH - 2.5)
+  doc.text(company?.gstin || '', xA + 2, gstLabelY + 4)
 
-  // ── LEFT COLUMN — BUYER block ──────────────────────────────────────────
-  bx(doc, xA, y + vendorH, cA, rBuyH)
+  // ── LEFT COLUMN — BUYER block + BUYER GST (one combined rect, no internal divider) ──
+  const buyerBlockH = rBuyH + rGSTH   // combined height, no line between them
+  bx(doc, xA, y + vendorH, cA, buyerBlockH)
 
+  // "Buyer (Bill to)" label
   doc.setFont('helvetica', 'bold'); doc.setFontSize(6.5); doc.setTextColor(0)
   doc.text('Buyer (Bill to)', xA + 2, y + vendorH + 4)
 
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5)
-  const clientName = doc.splitTextToSize(invoice.client_name || '', cA - 4)
-  doc.text(clientName[0], xA + 2, y + vendorH + 9)
+  // Buyer name — 8pt (matched to vendor name size)
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(8)
+  const clientNameLines = doc.splitTextToSize(invoice.client_name || '', cA - 4)
+  clientNameLines.slice(0, 2).forEach((l, i) => doc.text(l, xA + 2, y + vendorH + 9 + i * 3.8))
 
+  // Buyer address — up to 4 lines
   doc.setFont('helvetica', 'normal'); doc.setFontSize(7)
   const buyerAddrLines = doc.splitTextToSize(invoice.client_address || '', cA - 4)
-  buyerAddrLines.slice(0, 3).forEach((l, i) => doc.text(l, xA + 2, y + vendorH + 13 + i * 3.5))
+  const clientNameCount = Math.min(clientNameLines.length, 2)
+  const buyerAddrStartY = y + vendorH + 9 + clientNameCount * 3.8 + 1.5
+  buyerAddrLines.slice(0, 4).forEach((l, i) => doc.text(l, xA + 2, buyerAddrStartY + i * 3.5))
 
-  // ── LEFT COLUMN — BUYER GST block ─────────────────────────────────────
-  bx(doc, xA, y + vendorH + rBuyH, cA, rGSTH)
-
+  // Buyer GST — near bottom of combined block (no rect, no top line)
+  const buyerGSTLabelY = y + vendorH + buyerBlockH - 7.5
   doc.setFont('helvetica', 'bold'); doc.setFontSize(6.5); doc.setTextColor(0)
-  doc.text('Buyer GST Number :', xA + 2, y + vendorH + rBuyH + 3.5)
+  doc.text('Buyer GST Number :', xA + 2, buyerGSTLabelY)
   doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5)
-  doc.text(invoice.client_gstin || '', xA + 2, y + vendorH + rBuyH + 7)
+  doc.text(invoice.client_gstin || '', xA + 2, buyerGSTLabelY + 4)
 
   // ── MIDDLE + RIGHT — Row 1: Invoice No. / Invoice Date ─────────────────
   const y1 = y
