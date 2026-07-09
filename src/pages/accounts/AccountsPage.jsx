@@ -189,7 +189,7 @@ function CreateInvoiceModal({ companyId, session, invoiceCount, proformaCount, o
       if (l._id !== id) return l
       const upd = { ...l, [key]: val }
       if (key === 'quantity' || key === 'rate') {
-        upd.amount = (parseFloat(upd.quantity) || 0) * (parseFloat(upd.rate) || 0)
+        upd.amount = Math.round((parseFloat(upd.quantity) || 0) * (parseFloat(upd.rate) || 0) * 1000) / 1000
       }
       return upd
     }))
@@ -450,7 +450,7 @@ function CreateInvoiceModal({ companyId, session, invoiceCount, proformaCount, o
                   </div>
                   <div className="col-span-2">
                     <input type="number" className={inp('text-xs')} value={l.quantity}
-                      onChange={e => updateLine(l._id, 'quantity', e.target.value)} min="0" step="0.5" />
+                      onChange={e => updateLine(l._id, 'quantity', e.target.value)} min="0" step="0.001" />
                   </div>
                   <div className="col-span-1">
                     <select className={inp('text-xs')} value={l.unit} onChange={e => updateLine(l._id, 'unit', e.target.value)}>
@@ -459,7 +459,7 @@ function CreateInvoiceModal({ companyId, session, invoiceCount, proformaCount, o
                   </div>
                   <div className="col-span-2">
                     <input type="number" className={inp('text-xs')} value={l.rate}
-                      onChange={e => updateLine(l._id, 'rate', e.target.value)} placeholder="0" min="0" />
+                      onChange={e => updateLine(l._id, 'rate', e.target.value)} placeholder="0" min="0" step="0.001" />
                   </div>
                   <div className="col-span-1 text-right text-xs text-slate-300 font-mono">{fmt(l.amount)}</div>
                   <div className="col-span-2 flex justify-end">
@@ -672,7 +672,7 @@ function EditInvoiceModal({ invoice, companyId, session, onClose, onSaved }) {
       if (l._id !== id) return l
       const upd = { ...l, [key]: val }
       if (key === 'quantity' || key === 'rate') {
-        upd.amount = (parseFloat(upd.quantity) || 0) * (parseFloat(upd.rate) || 0)
+        upd.amount = Math.round((parseFloat(upd.quantity) || 0) * (parseFloat(upd.rate) || 0) * 1000) / 1000
       }
       return upd
     }))
@@ -885,7 +885,7 @@ function EditInvoiceModal({ invoice, companyId, session, onClose, onSaved }) {
                     </div>
                     <div className="col-span-2">
                       <input type="number" className={inp('text-xs')} value={l.quantity}
-                        onChange={e => updateLine(l._id, 'quantity', e.target.value)} min="0" step="0.5" />
+                        onChange={e => updateLine(l._id, 'quantity', e.target.value)} min="0" step="0.001" />
                     </div>
                     <div className="col-span-1">
                       <select className={inp('text-xs')} value={l.unit} onChange={e => updateLine(l._id, 'unit', e.target.value)}>
@@ -894,7 +894,7 @@ function EditInvoiceModal({ invoice, companyId, session, onClose, onSaved }) {
                     </div>
                     <div className="col-span-2">
                       <input type="number" className={inp('text-xs')} value={l.rate}
-                        onChange={e => updateLine(l._id, 'rate', e.target.value)} placeholder="0" min="0" />
+                        onChange={e => updateLine(l._id, 'rate', e.target.value)} placeholder="0" min="0" step="0.001" />
                     </div>
                     <div className="col-span-1 text-right text-xs text-slate-300 font-mono">{fmt(l.amount)}</div>
                     <div className="col-span-2 flex justify-end">
