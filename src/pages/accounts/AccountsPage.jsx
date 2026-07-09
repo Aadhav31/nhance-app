@@ -1902,6 +1902,13 @@ function InvoicesTab({ companyId, session }) {
                           : <p className="text-xs text-emerald-400">✓ Paid</p>
                         }
                       </div>
+                      {['sent', 'partial', 'overdue'].includes(inv.status) && (
+                        <button
+                          onClick={e => { e.stopPropagation(); setPayTarget(inv) }}
+                          className="flex-shrink-0 flex items-center gap-1 text-[11px] px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold whitespace-nowrap">
+                          <Banknote className="w-3.5 h-3.5" /> Pay
+                        </button>
+                      )}
                       {isExp ? <ChevronDown className="w-4 h-4 text-slate-400 flex-shrink-0" /> : <ChevronRight className="w-4 h-4 text-slate-400 flex-shrink-0" />}
                     </div>
 
