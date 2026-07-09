@@ -1115,7 +1115,7 @@ function ProjectDetail({ project, onClose, onEdit, onDelete }) {
     queryFn: async () => {
       const { data } = await supabase
         .from('equipment')
-        .select('id, equipment_id, equipment_type, make_model, status')
+        .select('id, name, category, make, model, status')
         .eq('current_project_id', project.id)
       return data || []
     },
@@ -1407,8 +1407,8 @@ function ProjectDetail({ project, onClose, onEdit, onDelete }) {
             {equipment.map(e => (
               <div key={e.id} className="flex items-center justify-between bg-dark-700/50 rounded-lg px-3 py-2">
                 <div>
-                  <p className="text-xs font-medium text-slate-200">{e.equipment_id}</p>
-                  <p className="text-[11px] text-slate-500">{e.equipment_type}{e.make_model ? ` · ${e.make_model}` : ''}</p>
+                  <p className="text-xs font-medium text-slate-200">{e.name}</p>
+                  <p className="text-[11px] text-slate-500">{e.category}{(e.make || e.model) ? ` · ${[e.make, e.model].filter(Boolean).join(' ')}` : ''}</p>
                 </div>
                 <span className={`text-[11px] px-2 py-0.5 rounded-full ${
                   e.status==='working' ? 'bg-emerald-500/15 text-emerald-300'
