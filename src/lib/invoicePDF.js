@@ -1,34 +1,33 @@
 /**
  * invoicePDF.js — GST Tax Invoice (Government format)
  *
- * Matches the standard Indian GST Tax Invoice layout:
- *  ┌─────────────────────────────────────────────────────┐
- *  │  (Original for Recipient)             Tax Invoice   │
- *  │  IRN / Ack No / Ack Date  │  E-Invoice QR Code     │
- *  ├──────────────┬──────────────────────┬───────────────┤
- *  │ Vendor Name  │ Invoice No.          │ Invoice Date  │
- *  │ & Address    ├──────────────────────┼───────────────┤
- *  │              │ Buyer's Order No.    │ Order Date    │
- *  │              ├─────────────────────────────────────-┤
- *  │              │ Work Done Period: From … To …        │
- *  │ Vendor GSTIN ├──────────────────────────────────────┤
- *  │ Buyer Info   │ Nature of Service                    │
- *  │              ├──────────────────────────────────────┤
- *  │              │ Place of Supply with Address         │
- *  │ Buyer GSTIN  │                                      │
- *  ├──────────────┴──────────────────────────────────────┤
- *  │  Line Items Table (9 columns)                       │
- *  ├─────────────────────────────────────────────────────┤
- *  │  Amount chargeable (In Words)                       │
- *  ├─────────────────────────────────────────────────────┤
- *  │  Tax Summary Break-up (10 columns)                  │
- *  ├─────────────────────────────────────────────────────┤
- *  │  Tax Amount (in Words)                              │
- *  │  Reverse Charge                                     │
- *  │  Declaration                                        │
- *  ├──────────────────────┬──────────────────────────────┤
- *  │ Company Seal         │ Authorised Signatory         │
- *  └──────────────────────┴──────────────────────────────┘
+ * Layout matches standard Indian GST Tax Invoice (Book 11.xlsx reference):
+ *
+ *  ┌─────────────────────────────────────────┬────────────────┐
+ *  │  (Original for Recipient)               │  Tax Invoice   │
+ *  │  E-Invoice QR Code            IRN / Ack │                │
+ *  ├──────────────┬────────────────┬──────────┤                │
+ *  │              │ Invoice No.    │ Inv Date │                │
+ *  │ Vendor Name  ├────────────────┼──────────┤                │
+ *  │ & Address    │ Order No.      │ Ord Date │                │
+ *  │              ├────────────────────────────┤                │
+ *  │              │ Work done Period From / To │                │
+ *  │ + Vendor GST ├────────────────────────────┤                │
+ *  ├──────────────│ Nature of Service           │                │
+ *  │ Buyer (Bill  ├────────────────────────────┤                │
+ *  │ to) + Addr   │ Place of Supply w/ Address │                │
+ *  │ Buyer GST    │                            │                │
+ *  ├──────────────┴────────────────────────────┤                │
+ *  │  Sl No. | Item code | Desc | SAC | GST% | UOM | Qty | Rate | Amt
+ *  ├──────────────────────────────────────────────────────────────┤
+ *  │  Amount chargeable (In Words)                                │
+ *  ├──────────────────────────────────────────────────────────────┤
+ *  │  Tax Summary Break-up (2-row header with Rate/Amt sub-cols)  │
+ *  ├──────────────────────────────────────────────────────────────┤
+ *  │  Tax Amount (in Words) | Reverse Charge | Declaration        │
+ *  ├─────────────────────────────┬────────────────────────────────┤
+ *  │   Company Seal              │ For Authorized Signatory       │
+ *  └─────────────────────────────┴────────────────────────────────┘
  */
 
 import jsPDF from 'jspdf'
@@ -70,82 +69,82 @@ export function numToWords(amount) {
 }
 
 // ── Format helpers ─────────────────────────────────────────────────────────
-const fmtINR = n => {
-  const v = Number(n || 0)
-  if (v === 0) return '-'
-  return v.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+const fmtINR = n =>
+  Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+// Parse date safely without timezone shift (handles "YYYY-MM-DD" ISO strings correctly)
+function parseLocalDate(d) {
+  if (!d) return null
+  const s = String(d)
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (m) return { y: Number(m[1]), mo: Number(m[2]), da: Number(m[3]) }
+  const dt = new Date(d)
+  if (isNaN(dt.getTime())) return null
+  return { y: dt.getFullYear(), mo: dt.getMonth() + 1, da: dt.getDate() }
 }
 const fmtDate = d => {
-  if (!d) return ''
-  const dt = new Date(d)
-  return `${String(dt.getDate()).padStart(2, '0')}/${String(dt.getMonth() + 1).padStart(2, '0')}/${dt.getFullYear()}`
+  const p = parseLocalDate(d)
+  if (!p) return ''
+  return `${String(p.da).padStart(2, '0')}/${String(p.mo).padStart(2, '0')}/${p.y}`
 }
 
-// ── Drawing helpers ────────────────────────────────────────────────────────
-function cell(doc, x, y, w, h, content = {}) {
+// ── Drawing primitives ─────────────────────────────────────────────────────
+function border(doc) {
   doc.setDrawColor(0, 0, 0)
   doc.setLineWidth(0.3)
+}
+function hln(doc, x, y, w) {
+  border(doc)
+  doc.line(x, y, x + w, y)
+}
+function vln(doc, x, y, h) {
+  border(doc)
+  doc.line(x, y, x, y + h)
+}
+function bx(doc, x, y, w, h) {
+  border(doc)
   doc.rect(x, y, w, h)
+}
 
-  const {
-    label = '', value = '', size = 7.5, labelSize = 6.5,
-    bold = false, center = false, padX = 2, padY = 4,
-    lineH = 3.8, noValue = false,
-  } = content
-
+// Write label + value inside a pre-drawn cell area
+function cellText(doc, { x, y, w, label = '', value = '', labelSz = 6.5, valSz = 7.5, valBold = false, padX = 2, padY = 3.5, lineH = 3.6, maxLines = 99 }) {
   let ty = y + padY
   if (label) {
     doc.setFont('helvetica', 'bold')
-    doc.setFontSize(labelSize)
-    doc.setTextColor(0, 0, 0)
-    if (center) doc.text(label, x + w / 2, ty, { align: 'center' })
-    else doc.text(label, x + padX, ty)
-    ty += lineH + 0.5
+    doc.setFontSize(labelSz)
+    doc.setTextColor(0)
+    doc.text(label, x + padX, ty)
+    ty += lineH + 0.4
   }
-  if (value && !noValue) {
-    doc.setFont('helvetica', bold ? 'bold' : 'normal')
-    doc.setFontSize(size)
-    doc.setTextColor(0, 0, 0)
+  if (value !== '' && value != null) {
+    doc.setFont('helvetica', valBold ? 'bold' : 'normal')
+    doc.setFontSize(valSz)
+    doc.setTextColor(0)
     const lines = doc.splitTextToSize(String(value), w - padX * 2)
-    lines.forEach((l, i) => {
-      if (center) doc.text(l, x + w / 2, ty + i * lineH, { align: 'center' })
-      else doc.text(l, x + padX, ty + i * lineH)
-    })
+    lines.slice(0, maxLines).forEach((l, i) => doc.text(l, x + padX, ty + i * lineH))
   }
-}
-
-function hline(doc, x, y, w) {
-  doc.setDrawColor(0, 0, 0)
-  doc.setLineWidth(0.3)
-  doc.line(x, y, x + w, y)
-}
-
-function vline(doc, x, y, h) {
-  doc.setDrawColor(0, 0, 0)
-  doc.setLineWidth(0.3)
-  doc.line(x, y, x, y + h)
 }
 
 // ── Main export ─────────────────────────────────────────────────────────────
 export function generateInvoicePDF(invoice, lineItems, company) {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
 
-  const L  = 10    // left margin
-  const T  = 8     // top margin
-  const PW = 210
-  const W  = 190   // content width
+  const L  = 10      // left margin
+  const T  = 8       // top margin
+  const PW = 210     // page width
+  const W  = 190     // content width (PW - 2*L)
 
   const isIGST = Number(invoice.igst_rate || 0) > 0 && !(Number(invoice.cgst_rate || 0) > 0)
 
   // ── TOTALS ────────────────────────────────────────────────────────────────
-  const subtotal = lineItems.reduce((s, l) => s + Number(l.amount || 0), 0)
-  const discount = Number(invoice.discount_amount || 0)
-  const taxable  = subtotal - discount
-  const cgstAmt  = Number(invoice.cgst_amount || 0)
-  const sgstAmt  = Number(invoice.sgst_amount || 0)
-  const igstAmt  = Number(invoice.igst_amount || 0)
-  const totalGST = cgstAmt + sgstAmt + igstAmt
-  const totalAmt = Number(invoice.total_amount || 0)
+  const subtotal  = lineItems.reduce((s, l) => s + Number(l.amount || 0), 0)
+  const discount  = Number(invoice.discount_amount || 0)
+  const taxable   = subtotal - discount
+  const cgstAmt   = Number(invoice.cgst_amount || 0)
+  const sgstAmt   = Number(invoice.sgst_amount || 0)
+  const igstAmt   = Number(invoice.igst_amount || 0)
+  const totalGST  = cgstAmt + sgstAmt + igstAmt
+  const totalAmt  = Number(invoice.total_amount || 0)
   const invGSTRate = isIGST
     ? Number(invoice.igst_rate || 0)
     : (Number(invoice.cgst_rate || 0) + Number(invoice.sgst_rate || 0))
@@ -153,7 +152,7 @@ export function generateInvoicePDF(invoice, lineItems, company) {
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   // BLOCK 1 — TITLE + E-INVOICE HEADER
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // "(Original for Recipient)" at top-right
+  // "(Original for Recipient)" — top right
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(7)
   doc.setTextColor(0)
@@ -161,16 +160,13 @@ export function generateInvoicePDF(invoice, lineItems, company) {
 
   const titleY = T + 2
   const titleH = 28
-  const qrW    = 48   // QR code column width
-  const irnW   = W - qrW
+  const qrW    = 48         // QR code column
+  const irnW   = W - qrW   // IRN / Ack column
 
-  // Outer border for title block
-  doc.setDrawColor(0); doc.setLineWidth(0.3)
-  doc.rect(L, titleY, W, titleH)
-  // Vertical divider between IRN area and QR area
-  vline(doc, L + irnW, titleY, titleH)
+  bx(doc, L, titleY, W, titleH)                   // outer border
+  vln(doc, L + irnW, titleY, titleH)               // vertical divider
 
-  // "Tax Invoice" — centered in full width (bold, large)
+  // "Tax Invoice" — centered full width
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(14)
   doc.text('Tax Invoice', L + W / 2, titleY + 7, { align: 'center' })
@@ -178,142 +174,137 @@ export function generateInvoicePDF(invoice, lineItems, company) {
   // IRN / Ack fields (left area)
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(7)
-  doc.text('IRN         :', L + 2, titleY + 13)
-  doc.text('Ack No.     :', L + 2, titleY + 18)
-  doc.text('Ack. Date   :', L + 2, titleY + 23)
+  doc.text('IRN         :', L + 2, titleY + 14)
+  doc.text('Ack No.     :', L + 2, titleY + 19)
+  doc.text('Ack. Date   :', L + 2, titleY + 24)
 
   // "E-Invoice QR Code" label (right area)
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(8)
-  doc.text('E-Invoice QR Code', L + irnW + qrW / 2, titleY + 7, { align: 'center' })
+  doc.text('E-Invoice QR Code', L + irnW + qrW / 2, titleY + 14, { align: 'center' })
 
   let y = titleY + titleH
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // BLOCK 2 — VENDOR + INVOICE DETAILS  (3-column grid)
+  // BLOCK 2 — VENDOR + BUYER + INVOICE DETAILS
+  // Column layout (matches Excel cols B-O / 14 cols):
+  //   cA = left  (cols B-F,  5 cols) = vendor & buyer
+  //   cB = middle (cols G-K, 5 cols) = invoice no, order, work period, nature, place of supply
+  //   cC = right  (cols L-O, 4 cols) = invoice date, order date
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  const cA = 66   // vendor / buyer column
-  const cB = 66   // invoice no. / order no. / period / nature
-  const cC = W - cA - cB  // invoice date / order date (= 58)
+  const cA = 66, cB = 68, cC = W - cA - cB   // 66 + 68 + 56 = 190
+  const xA = L, xB = L + cA, xC = L + cA + cB
 
-  const xA = L
-  const xB = L + cA
-  const xC = L + cA + cB
+  // Row heights for MIDDLE+RIGHT columns (each row has its own border there)
+  const rInvH = 10    // Invoice No. / Invoice Date
+  const rOrdH = 9     // Order No. / Order Date
+  const rWrkH = 9     // Work Done Period (merged middle+right)
+  const rNatH = 9     // Nature of Service (merged middle+right)
 
-  // Row 1: Vendor Name + Invoice No. + Invoice Date  (h=22)
-  const r1H = 22
-  // Cell A1 — Vendor name & address
-  doc.setDrawColor(0); doc.setLineWidth(0.3)
-  doc.rect(xA, y, cA, r1H)
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(6.5)
+  // LEFT column: vendor block = all 4 rows merged into ONE cell (no internal hlines)
+  const vendorH = rInvH + rOrdH + rWrkH + rNatH   // = 37mm
+
+  const rBuyH   = 18  // Buyer name + address (left) / Place of Supply (right, merged)
+  const rGSTH   = 8   // Buyer GST (left) / empty (right, continues merged)
+
+  // ── LEFT COLUMN — VENDOR block (one big unified rect) ──────────────────
+  bx(doc, xA, y, cA, vendorH)
+
+  // Vendor label
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(6.5); doc.setTextColor(0)
   doc.text('Vendor Name and Address (Bill from)', xA + 2, y + 4)
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(8)
+
+  // Vendor company name
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(9)
   const coName = company?.name || ''
   doc.text(doc.splitTextToSize(coName, cA - 4)[0], xA + 2, y + 9)
+
+  // Vendor address
   doc.setFont('helvetica', 'normal'); doc.setFontSize(7)
-  const coAddr = [company?.address, company?.city, company?.state].filter(Boolean).join(', ')
+  const coAddr = company?.address || ''
   const coAddrLines = doc.splitTextToSize(coAddr, cA - 4)
-  coAddrLines.slice(0, 3).forEach((l, i) => doc.text(l, xA + 2, y + 13 + i * 3.5))
+  coAddrLines.slice(0, 4).forEach((l, i) => doc.text(l, xA + 2, y + 14 + i * 3.5))
 
-  // Cell B1 — Invoice No.
-  cell(doc, xB, y, cB, r1H, { label: 'Invoice No. :', value: invoice.invoice_number || '', size: 8, bold: true })
+  // Vendor GST — at bottom of vendor block
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(6.5)
+  doc.text('Vendor GST Number:', xA + 2, y + vendorH - 6.5)
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5)
+  doc.text(company?.gstin || '', xA + 2, y + vendorH - 2.5)
 
-  // Cell C1 — Invoice Date
-  cell(doc, xC, y, cC, r1H, { label: 'Invoice Date :', value: fmtDate(invoice.invoice_date), size: 8 })
-
-  y += r1H
-
-  // Row 2: (vendor cont.) + Buyer's Order No. + Order Date  (h=10)
-  const r2H = 10
-  vline(doc, xA, y, r2H)       // left border for cell A (no top border — continues)
-  vline(doc, xB, y, r2H)       // divider
-  hline(doc, xA, y + r2H, W)   // bottom border
-  vline(doc, xC, y, r2H)
-  vline(doc, L + W, y, r2H)
-
-  cell(doc, xB, y, cB, r2H, { label: "Buyer's Order Number :", value: invoice.work_order_number || '' })
-  cell(doc, xC, y, cC, r2H, { label: 'Order Date :', value: fmtDate(invoice.work_order_date) })
-
-  y += r2H
-
-  // Row 3: Vendor GST + Work Done Period (B+C merged)  (h=8)
-  const r3H = 10
-  // Cell A3 — Vendor GST (bottom of vendor block)
-  vline(doc, xA, y, r3H)
-  vline(doc, xB, y, r3H)
-  vline(doc, L + W, y, r3H)
-  hline(doc, xA, y + r3H, W)
+  // ── LEFT COLUMN — BUYER block ──────────────────────────────────────────
+  bx(doc, xA, y + vendorH, cA, rBuyH)
 
   doc.setFont('helvetica', 'bold'); doc.setFontSize(6.5); doc.setTextColor(0)
-  doc.text('Vendor GST Number:', xA + 2, y + 4)
-  doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5)
-  doc.text(company?.gstin || '', xA + 2, y + 8)
+  doc.text('Buyer (Bill to)', xA + 2, y + vendorH + 4)
 
-  // Cell B3+C3 — Work Done Period (merged)
-  const periodText = (invoice.work_done_from && invoice.work_done_to)
-    ? `From : ${fmtDate(invoice.work_done_from)}        To : ${fmtDate(invoice.work_done_to)}`
-    : 'From :                             To :'
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(6.5)
-  doc.text('Work done Period', xB + 2, y + 4)
-  doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5)
-  doc.text(periodText, xB + 2, y + 8)
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5)
+  const clientName = doc.splitTextToSize(invoice.client_name || '', cA - 4)
+  doc.text(clientName[0], xA + 2, y + vendorH + 9)
 
-  y += r3H
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(7)
+  const buyerAddrLines = doc.splitTextToSize(invoice.client_address || '', cA - 4)
+  buyerAddrLines.slice(0, 3).forEach((l, i) => doc.text(l, xA + 2, y + vendorH + 13 + i * 3.5))
 
-  // Row 4: Buyer (Bill to) + Nature of Service (B+C merged)  (h=16)
-  const r4H = 16
-  const buyerInfoH = r4H
+  // ── LEFT COLUMN — BUYER GST block ─────────────────────────────────────
+  bx(doc, xA, y + vendorH + rBuyH, cA, rGSTH)
 
-  vline(doc, xA, y, buyerInfoH)
-  vline(doc, xB, y, buyerInfoH)
-  vline(doc, L + W, y, buyerInfoH)
-  hline(doc, xA, y + buyerInfoH, W)
-
-  // Cell A4 — Buyer (Bill to)
   doc.setFont('helvetica', 'bold'); doc.setFontSize(6.5); doc.setTextColor(0)
-  doc.text('Buyer (Bill to)', xA + 2, y + 4)
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(8)
-  doc.text(doc.splitTextToSize(invoice.client_name || '', cA - 4)[0], xA + 2, y + 8)
-  doc.setFont('helvetica', 'normal'); doc.setFontSize(7)
-  const buyerAddr = invoice.client_address || ''
-  const buyerAddrLines = doc.splitTextToSize(buyerAddr, cA - 4)
-  buyerAddrLines.slice(0, 2).forEach((l, i) => doc.text(l, xA + 2, y + 12 + i * 3.5))
-
-  // Cell B4+C4 — Nature of Service
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(6.5)
-  doc.text('Nature of Service:', xB + 2, y + 4)
+  doc.text('Buyer GST Number :', xA + 2, y + vendorH + rBuyH + 3.5)
   doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5)
-  const natureLines = doc.splitTextToSize(invoice.nature_of_supply || '', cB + cC - 4)
-  natureLines.slice(0, 2).forEach((l, i) => doc.text(l, xB + 2, y + 8 + i * 3.8))
+  doc.text(invoice.client_gstin || '', xA + 2, y + vendorH + rBuyH + 7)
 
-  // Horizontal divider inside B/C area
-  hline(doc, xB, y + 9, cB + cC)
+  // ── MIDDLE + RIGHT — Row 1: Invoice No. / Invoice Date ─────────────────
+  const y1 = y
+  bx(doc, xB, y1, cB, rInvH)
+  cellText(doc, { x: xB, y: y1, w: cB, label: 'Invoice No. :', value: invoice.invoice_number || '', valSz: 8, valBold: true })
 
-  // Place of supply below nature
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(6.5)
-  doc.text('Place of Supply with Address:', xB + 2, y + 12)
+  bx(doc, xC, y1, cC, rInvH)
+  cellText(doc, { x: xC, y: y1, w: cC, label: 'Invoice Date :', value: fmtDate(invoice.invoice_date), valSz: 8 })
+
+  // ── MIDDLE + RIGHT — Row 2: Order No. / Order Date ─────────────────────
+  const y2 = y + rInvH
+  bx(doc, xB, y2, cB, rOrdH)
+  cellText(doc, { x: xB, y: y2, w: cB, label: "Buyer's Order Number :", value: invoice.work_order_number || '' })
+
+  bx(doc, xC, y2, cC, rOrdH)
+  cellText(doc, { x: xC, y: y2, w: cC, label: 'Order Date :', value: fmtDate(invoice.work_order_date) })
+
+  // ── MIDDLE + RIGHT — Row 3: Work Done Period (merged) ──────────────────
+  const y3 = y + rInvH + rOrdH
+  bx(doc, xB, y3, cB + cC, rWrkH)
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(6.5); doc.setTextColor(0)
+  doc.text('Work done Period', xB + 2, y3 + 4)
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5)
+  const fromStr = invoice.work_done_from ? fmtDate(invoice.work_done_from) : ''
+  const toStr   = invoice.work_done_to   ? fmtDate(invoice.work_done_to)   : ''
+  doc.text(`From : ${fromStr}`, xB + 2, y3 + 8)
+  doc.text(`To : ${toStr}`, xB + 60, y3 + 8)
+
+  // ── MIDDLE + RIGHT — Row 3b: Nature of Service (merged) ────────────────
+  const y3b = y + rInvH + rOrdH + rWrkH
+  bx(doc, xB, y3b, cB + cC, rNatH)
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(6.5); doc.setTextColor(0)
+  doc.text('Nature of Service:', xB + 2, y3b + 4)
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5)
+  const natLines = doc.splitTextToSize(invoice.nature_of_supply || '', cB + cC - 4)
+  natLines.slice(0, 1).forEach((l, i) => doc.text(l, xB + 2, y3b + 8 + i * 3.5))
+
+  // ── MIDDLE + RIGHT — Rows 4+5: Place of Supply (merged, spans rBuyH+rGSTH) ──
+  const y4 = y + vendorH
+  bx(doc, xB, y4, cB + cC, rBuyH + rGSTH)
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(6.5); doc.setTextColor(0)
+  doc.text('Place of Supply with Address:', xB + 2, y4 + 4)
   doc.setFont('helvetica', 'normal'); doc.setFontSize(7)
-  const posText = [invoice.place_of_supply, invoice.place_of_supply_address].filter(Boolean).join(' — ')
+  const posText = [invoice.place_of_supply, invoice.place_of_supply_address].filter(Boolean).join(', ')
   const posLines = doc.splitTextToSize(posText, cB + cC - 4)
-  posLines.slice(0, 1).forEach((l, i) => doc.text(l, xB + 2, y + 15.5 + i * 3.5))
+  posLines.slice(0, 5).forEach((l, i) => doc.text(l, xB + 2, y4 + 8 + i * 3.5))
 
-  y += buyerInfoH
-
-  // Row 5: Buyer GST (h=8)
-  const r5H = 8
-  doc.setDrawColor(0); doc.setLineWidth(0.3)
-  doc.rect(xA, y, cA, r5H)
-  doc.rect(xB, y, cB + cC, r5H)
-
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(6.5)
-  doc.text('Buyer GST Number :', xA + 2, y + 3)
-  doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5)
-  doc.text(invoice.client_gstin || '', xA + 2, y + 7)
-
-  y += r5H
+  // Advance y past entire header block
+  y += vendorH + rBuyH + rGSTH
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   // BLOCK 3 — LINE ITEMS TABLE
+  // Columns: Sl No. | Item code | Description | SAC | GST Rate | UOM | Qty | Basic Rate | Amount
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   const lineBody = lineItems.map((l, i) => {
     const gstR = l.gst_rate != null ? Number(l.gst_rate) : invGSTRate
@@ -330,20 +321,22 @@ export function generateInvoicePDF(invoice, lineItems, company) {
     ]
   })
 
-  // Footer rows (subtotal, tax lines, grand total)
+  // Footer rows: subtotal, tax lines, grand total
   const footerRows = []
   footerRows.push(['', '', 'Subtotal', '', '', '', '', '', fmtINR(subtotal)])
-  if (discount > 0) footerRows.push(['', '', 'Less: Discount', '', '', '', '', '', `(${fmtINR(discount)})`])
+  if (discount > 0) {
+    footerRows.push(['', '', 'Less: Discount', '', '', '', '', '', `(${fmtINR(discount)})`])
+  }
   if (isIGST) {
     footerRows.push(['', '', 'IGST', '', `${invoice.igst_rate}%`, '', '', '', fmtINR(igstAmt)])
   } else {
-    footerRows.push(['', '', 'IGST', '', '0%', '', '', '', '-'])
+    footerRows.push(['', '', 'IGST', '', '0%', '', '', '', fmtINR(0)])
     footerRows.push(['', '', 'CGST', '', `${invoice.cgst_rate}%`, '', '', '', fmtINR(cgstAmt)])
     footerRows.push(['', '', 'SGST/UTGST', '', `${invoice.sgst_rate}%`, '', '', '', fmtINR(sgstAmt)])
   }
   footerRows.push(['', '', 'TOTAL', '', '', '', '', '', fmtINR(totalAmt)])
 
-  const allBody = [...lineBody, ...footerRows]
+  const allBody   = [...lineBody, ...footerRows]
   const footerStart = lineBody.length
 
   autoTable(doc, {
@@ -351,15 +344,15 @@ export function generateInvoicePDF(invoice, lineItems, company) {
     margin: { left: L, right: L },
     tableWidth: W,
     head: [[
-      { content: 'Sl No.',      styles: { halign: 'center' } },
-      { content: 'Item code',   styles: { halign: 'center' } },
-      { content: 'Description', styles: { halign: 'center' } },
-      { content: 'SAC',         styles: { halign: 'center' } },
-      { content: 'GST Rate',    styles: { halign: 'center' } },
-      { content: 'UOM',         styles: { halign: 'center' } },
-      { content: 'Quantity',    styles: { halign: 'center' } },
-      { content: 'Basic Rate',  styles: { halign: 'right'  } },
-      { content: 'Amount',      styles: { halign: 'right'  } },
+      { content: 'Sl\nNo.',      styles: { halign: 'center', valign: 'middle' } },
+      { content: 'Item\nCode',   styles: { halign: 'center', valign: 'middle' } },
+      { content: 'Description',  styles: { halign: 'center', valign: 'middle' } },
+      { content: 'SAC',          styles: { halign: 'center', valign: 'middle' } },
+      { content: 'GST\nRate',    styles: { halign: 'center', valign: 'middle' } },
+      { content: 'UOM',          styles: { halign: 'center', valign: 'middle' } },
+      { content: 'Quantity',     styles: { halign: 'center', valign: 'middle' } },
+      { content: 'Basic\nRate',  styles: { halign: 'right',  valign: 'middle' } },
+      { content: 'Amount',       styles: { halign: 'right',  valign: 'middle' } },
     ]],
     body: allBody,
     styles: {
@@ -381,31 +374,24 @@ export function generateInvoicePDF(invoice, lineItems, company) {
     },
     bodyStyles: { fillColor: [255, 255, 255], minCellHeight: 8 },
     columnStyles: {
-      0: { halign: 'center', cellWidth: 12 },
+      0: { halign: 'center', cellWidth: 11 },
       1: { halign: 'center', cellWidth: 18 },
       2: { halign: 'left',   cellWidth: 'auto' },
-      3: { halign: 'center', cellWidth: 18 },
-      4: { halign: 'center', cellWidth: 16 },
+      3: { halign: 'center', cellWidth: 16 },
+      4: { halign: 'center', cellWidth: 15 },
       5: { halign: 'center', cellWidth: 14 },
       6: { halign: 'right',  cellWidth: 16 },
-      7: { halign: 'right',  cellWidth: 23 },
-      8: { halign: 'right',  cellWidth: 25 },
+      7: { halign: 'right',  cellWidth: 24 },
+      8: { halign: 'right',  cellWidth: 26 },
     },
     didParseCell: (data) => {
       if (data.section !== 'body') return
       const ri = data.row.index
       if (ri < footerStart) return
-      // Footer summary rows
-      data.cell.styles.fontStyle = ri === allBody.length - 1 ? 'bold' : 'normal'
-      // "TOTAL" row — bold all
-      if (ri === allBody.length - 1) {
-        data.cell.styles.fontStyle = 'bold'
-      }
-    },
-    didDrawCell: (data) => {
-      // Ensure black borders throughout
-      doc.setDrawColor(0, 0, 0)
-      doc.setLineWidth(0.3)
+      // Footer rows: normal weight except TOTAL
+      const isTotalRow = ri === allBody.length - 1
+      data.cell.styles.fontStyle = isTotalRow ? 'bold' : 'normal'
+      // Merge first 7 cols visually for label rows (just align label left in col 2)
     },
   })
 
@@ -414,39 +400,39 @@ export function generateInvoicePDF(invoice, lineItems, company) {
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   // BLOCK 4 — AMOUNT IN WORDS
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  const wordsH = 10
-  doc.setDrawColor(0); doc.setLineWidth(0.3)
-  doc.rect(L, y, W, wordsH)
+  const wordsH = 11
+  bx(doc, L, y, W, wordsH)
   doc.setFont('helvetica', 'bold'); doc.setFontSize(7); doc.setTextColor(0)
   doc.text('Amount chargeable (In Words):', L + 2, y + 4)
   doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5)
   const amtWords = numToWords(totalAmt)
-  doc.text(doc.splitTextToSize(amtWords, W - 4)[0], L + 2, y + 8)
+  const amtWordLines = doc.splitTextToSize(amtWords, W - 4)
+  amtWordLines.slice(0, 2).forEach((l, i) => doc.text(l, L + 2, y + 8 + i * 3.5))
   y += wordsH
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   // BLOCK 5 — TAX SUMMARY BREAK-UP
+  // Header: SAC | Taxable Value | IGST (Rate | Amt) | CGST (Rate | Amt) | SGST (Rate | Amt) | Total Tax
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // Header label
-  doc.setDrawColor(0); doc.setLineWidth(0.3)
-  doc.rect(L, y, W, 6)
+  // Section label row
+  bx(doc, L, y, W, 6)
   doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5); doc.setTextColor(0)
-  doc.text('Tax Summary Break-up', L + 2, y + 4)
+  doc.text('Tax Summary Break-up', L + 2, y + 4.5)
   y += 6
 
-  // Group line items by SAC/HSN
+  // Group line items by SAC code
   const gstMap = {}
   lineItems.forEach(l => {
-    const key = l.sac_hsn_code || '—'
+    const key  = l.sac_hsn_code || '—'
     const lRate = l.gst_rate != null ? Number(l.gst_rate) : invGSTRate
     if (!gstMap[key]) gstMap[key] = { sac: key, taxableAmt: 0, gstRate: lRate }
     gstMap[key].taxableAmt += Number(l.amount || 0)
   })
-
   const gstGroups = Object.values(gstMap)
-  let totTaxableA = 0, totIGSTA = 0, totCGSTA = 0, totSGSTA = 0, totTaxA = 0
 
-  const gstBody = gstGroups.map((g, i) => {
+  let totTaxable = 0, totIGST = 0, totCGST = 0, totSGST = 0, totTax = 0
+
+  const gstBody = gstGroups.map(g => {
     const taxableG = g.taxableAmt - (discount * g.taxableAmt / (subtotal || 1))
     const igstR = isIGST ? g.gstRate : 0
     const cgstR = isIGST ? 0 : g.gstRate / 2
@@ -456,53 +442,64 @@ export function generateInvoicePDF(invoice, lineItems, company) {
     const sgstA = Number((taxableG * sgstR / 100).toFixed(2))
     const totalT = igstA + cgstA + sgstA
 
-    totTaxableA += taxableG
-    totIGSTA    += igstA
-    totCGSTA    += cgstA
-    totSGSTA    += sgstA
-    totTaxA     += totalT
+    totTaxable += taxableG
+    totIGST    += igstA
+    totCGST    += cgstA
+    totSGST    += sgstA
+    totTax     += totalT
 
     return [
       g.sac,
       fmtINR(taxableG),
       igstR > 0 ? `${igstR}%` : '0%',
-      igstA > 0 ? fmtINR(igstA) : '-',
-      cgstR > 0 ? `${cgstR}%` : `${isIGST ? 0 : cgstR}%`,
-      cgstA > 0 ? fmtINR(cgstA) : '-',
-      sgstR > 0 ? `${sgstR}%` : `${isIGST ? 0 : sgstR}%`,
-      sgstA > 0 ? fmtINR(sgstA) : '-',
+      fmtINR(igstA),
+      cgstR > 0 ? `${cgstR}%` : '0%',
+      fmtINR(cgstA),
+      sgstR > 0 ? `${sgstR}%` : '0%',
+      fmtINR(sgstA),
       fmtINR(totalT),
     ]
   })
 
-  // Totals row
+  // TOTAL row
   gstBody.push([
     'TOTAL',
-    fmtINR(totTaxableA),
+    fmtINR(totTaxable),
     '',
-    totIGSTA > 0 ? fmtINR(totIGSTA) : '-',
+    fmtINR(totIGST),
     '',
-    totCGSTA > 0 ? fmtINR(totCGSTA) : '-',
+    fmtINR(totCGST),
     '',
-    totSGSTA > 0 ? fmtINR(totSGSTA) : '-',
-    fmtINR(totTaxA),
+    fmtINR(totSGST),
+    fmtINR(totTax),
   ])
+  const gstTotalIdx = gstBody.length - 1
 
+  // 2-row header: IGST/CGST/SGST each span 2 sub-columns (Rate + Amount)
   autoTable(doc, {
     startY: y,
     margin: { left: L, right: L },
     tableWidth: W,
-    head: [[
-      { content: 'SAC',              styles: { halign: 'center', valign: 'middle' } },
-      { content: 'Taxable\nValue',   styles: { halign: 'right',  valign: 'middle' } },
-      { content: 'IGST\nRate',       styles: { halign: 'center', valign: 'middle' } },
-      { content: 'IGST\nAmount',     styles: { halign: 'right',  valign: 'middle' } },
-      { content: 'CGST\nRate',       styles: { halign: 'center', valign: 'middle' } },
-      { content: 'CGST\nAmount',     styles: { halign: 'right',  valign: 'middle' } },
-      { content: 'SGST/UTGST\nRate', styles: { halign: 'center', valign: 'middle' } },
-      { content: 'SGST/UTGST\nAmt', styles: { halign: 'right',  valign: 'middle' } },
-      { content: 'Total Tax\nAmount',styles: { halign: 'right',  valign: 'middle' } },
-    ]],
+    head: [
+      // Row 1: group labels
+      [
+        { content: 'SAC',             rowSpan: 2, styles: { halign: 'center', valign: 'middle' } },
+        { content: 'Taxable\nValue',  rowSpan: 2, styles: { halign: 'right',  valign: 'middle' } },
+        { content: 'IGST',            colSpan: 2, styles: { halign: 'center', valign: 'middle' } },
+        { content: 'CGST',            colSpan: 2, styles: { halign: 'center', valign: 'middle' } },
+        { content: 'SGST/UTGST',      colSpan: 2, styles: { halign: 'center', valign: 'middle' } },
+        { content: 'Total Tax\nAmount', rowSpan: 2, styles: { halign: 'right',  valign: 'middle' } },
+      ],
+      // Row 2: Rate / Amount sub-headers (SAC, Taxable, Total are rowSpan so excluded)
+      [
+        { content: 'Rate',   styles: { halign: 'center', valign: 'middle' } },
+        { content: 'Amount', styles: { halign: 'right',  valign: 'middle' } },
+        { content: 'Rate',   styles: { halign: 'center', valign: 'middle' } },
+        { content: 'Amount', styles: { halign: 'right',  valign: 'middle' } },
+        { content: 'Rate',   styles: { halign: 'center', valign: 'middle' } },
+        { content: 'Amount', styles: { halign: 'right',  valign: 'middle' } },
+      ],
+    ],
     body: gstBody,
     styles: {
       fontSize: 7.5,
@@ -519,21 +516,22 @@ export function generateInvoicePDF(invoice, lineItems, company) {
       fontSize: 7,
       lineColor: [0, 0, 0],
       lineWidth: 0.3,
+      valign: 'middle',
     },
     bodyStyles: { fillColor: [255, 255, 255] },
     columnStyles: {
-      0: { halign: 'center', cellWidth: 28 },
-      1: { halign: 'right',  cellWidth: 22 },
-      2: { halign: 'center', cellWidth: 16 },
+      0: { halign: 'center', cellWidth: 24 },
+      1: { halign: 'right',  cellWidth: 24 },
+      2: { halign: 'center', cellWidth: 14 },
       3: { halign: 'right',  cellWidth: 22 },
-      4: { halign: 'center', cellWidth: 16 },
+      4: { halign: 'center', cellWidth: 14 },
       5: { halign: 'right',  cellWidth: 22 },
-      6: { halign: 'center', cellWidth: 20 },
+      6: { halign: 'center', cellWidth: 18 },
       7: { halign: 'right',  cellWidth: 22 },
       8: { halign: 'right',  cellWidth: 'auto' },
     },
     didParseCell: (data) => {
-      if (data.section === 'body' && data.row.index === gstBody.length - 1) {
+      if (data.section === 'body' && data.row.index === gstTotalIdx) {
         data.cell.styles.fontStyle = 'bold'
       }
     },
@@ -544,73 +542,71 @@ export function generateInvoicePDF(invoice, lineItems, company) {
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   // BLOCK 6 — TAX AMOUNT IN WORDS
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  const taxWordsH = 9
-  doc.setDrawColor(0); doc.setLineWidth(0.3)
-  doc.rect(L, y, W, taxWordsH)
+  const taxWordsH = 11
+  bx(doc, L, y, W, taxWordsH)
   doc.setFont('helvetica', 'bold'); doc.setFontSize(7); doc.setTextColor(0)
   doc.text('Tax Amount (in Words) :', L + 2, y + 4)
   doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5)
-  doc.text(doc.splitTextToSize(numToWords(totTaxA || totalGST), W - 4)[0], L + 2, y + 8)
+  const taxWords = numToWords(totTax || totalGST)
+  const taxWordLines = doc.splitTextToSize(taxWords, W - 4)
+  taxWordLines.slice(0, 2).forEach((l, i) => doc.text(l, L + 2, y + 8 + i * 3.5))
   y += taxWordsH
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   // BLOCK 7 — REVERSE CHARGE
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   const rcH = 8
-  doc.setDrawColor(0); doc.setLineWidth(0.3)
-  doc.rect(L, y, W, rcH)
+  bx(doc, L, y, W, rcH)
   doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5); doc.setTextColor(0)
-  doc.text('Whether Tax is payable under Reverse Charge', L + 2, y + 5)
-  doc.setFont('helvetica', 'normal')
-  // "Yes" strikethrough + No
-  doc.text('Yes / No', L + 120, y + 5)
-  // Draw strikethrough on "Yes"
-  const yesW = doc.getTextWidth('Yes')
-  doc.setLineWidth(0.4)
-  doc.line(L + 120, y + 4, L + 120 + yesW, y + 4)
+  doc.text('Whether Tax is payable under Reverse Charge :', L + 2, y + 5)
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5)
+  doc.text('Yes / No', L + W - 2, y + 5, { align: 'right' })
   y += rcH
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   // BLOCK 8 — DECLARATION
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   const declH = 14
-  doc.setDrawColor(0); doc.setLineWidth(0.3)
-  doc.rect(L, y, W, declH)
+  bx(doc, L, y, W, declH)
   doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5); doc.setTextColor(0)
   doc.text('Declaration :', L + 2, y + 5)
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5)
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(7)
   doc.text(
-    'We declare that invoice shows the actual price of the services described and all particulars are true and correct.',
+    'We declare that this invoice shows the actual price of the services described and all particulars are true and correct.',
     L + 2, y + 10, { maxWidth: W - 4 }
   )
   y += declH
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // BLOCK 9 — SIGNATURE  (check space, add page if needed)
+  // BLOCK 9 — SIGNATURE  (add page if too close to bottom)
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  const sigH = 35
+  const sigH = 32
   if (y + sigH > 287) { doc.addPage(); y = 10 }
 
-  const sigLW = W / 2   // 95mm each
+  const sigLW = 85   // left seal box
+  const sigRW = W - sigLW
   const sigRX = L + sigLW
 
-  // Left box — company seal
-  doc.setDrawColor(0); doc.setLineWidth(0.3)
-  doc.rect(L, y, sigLW, sigH)
-  doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(0)
-  doc.text('(Company Seal)', L + 2, y + sigH - 3)
+  // Left box — Company Seal
+  bx(doc, L, y, sigLW, sigH)
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(120, 120, 120)
+  doc.text('(Company Seal)', L + sigLW / 2, y + sigH - 4, { align: 'center' })
 
-  // Right box — Authorized signatory
-  doc.rect(sigRX, y, sigLW, sigH)
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5)
-  doc.text('For Authorized Signatory (Vendor seal and signature)', sigRX + 2, y + 5, { maxWidth: sigLW - 4 })
+  // Right box — Authorized Signatory
+  bx(doc, sigRX, y, sigRW, sigH)
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5); doc.setTextColor(0)
+  doc.text(
+    'For Authorized Signatory (Vendor seal and signature)',
+    sigRX + 2, y + 5, { maxWidth: sigRW - 4 }
+  )
   doc.setFont('helvetica', 'normal'); doc.setFontSize(7)
-  doc.text(`For ${company?.name || ''}`, sigRX + 2, y + 12, { maxWidth: sigLW - 4 })
+  doc.text(`For ${company?.name || ''}`, sigRX + 2, y + 12, { maxWidth: sigRW - 4 })
+
   // Signature line
   doc.setLineWidth(0.4); doc.setDrawColor(0)
-  doc.line(sigRX + 5, y + sigH - 7, sigRX + sigLW - 5, y + sigH - 7)
+  doc.line(sigRX + 5, y + sigH - 8, sigRX + sigRW - 5, y + sigH - 8)
   doc.setFontSize(7)
-  doc.text('Authorised Signatory', sigRX + sigLW / 2, y + sigH - 3, { align: 'center' })
+  doc.text('Authorised Signatory', sigRX + sigRW / 2, y + sigH - 3, { align: 'center' })
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   // PAGE FOOTER
