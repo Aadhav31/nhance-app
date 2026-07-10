@@ -107,14 +107,22 @@ function CatDot({ color, size = 8 }) {
 }
 
 // ── Month Forecast Column ─────────────────────────────────────────────────────
-function MonthColumn({ year, month, plans, hrPayroll, isCurrent, fixedExpenses = [], fepStats = { paid: 0, pending: 0 } }) {
-  const fixedTotal = fixedExpenses.reduce((s, fe) => s + fixedMonthlyAmount(fe), 0)
-  const plansTotal = plans.reduce((s, p) => s + monthlyAmount(p), 0)
-  const total = plansTotal + hrPayroll + fixedTotal
+function MonthColumn({ year, month, plans, hrPayroll, isCurrent, fixedExpenses = [], fepStats = { paid: 0, pending: 0 }, overdueItems = [], today = '' }) {
+  const fixedTotal   = fixedExpenses.reduce((s, fe) => s + fixedMonthlyAmount(fe), 0)
+  const plansTotal   = plans.reduce((s, p) => s + monthlyAmount(p), 0)
+  const total        = plansTotal + hrPayroll + fixedTotal
+  const overdueTotal = overdueItems.reduce((s, p) => s + Number(p.amount), 0)
 
-  // Paid = confirmed fixed expense payments; remaining = everything else
-  const paidAmount   = fepStats.paid
-  const remaining    = total - paidAmount
+  // Paid = confirmed fixed expense payments; remaining = this month unpaid + all carryover
+  const paidAmount = fepStats.paid
+  const remaining  = (total - paidAmount) + overdueTotal
+
+  // Days overdue for each carryover item
+  const todayMs = today ? new Date(today).getTime() : Date.now()
+  const overdueWithDays = overdueItems.map(p => ({
+    ...p,
+    daysOverdue: Math.floor((todayMs - new Date(p.due_date).getTime()) / 86400000),
+  }))
 
   const byCategory = {}
   plans.forEach(p => {
@@ -137,13 +145,20 @@ function MonthColumn({ year, month, plans, hrPayroll, isCurrent, fixedExpenses =
           </p>
         </div>
         <p className="text-2xl font-bold text-slate-100">{fmtINRShort(total)}</p>
-        <p className="text-xs text-slate-500">{itemCount} expense items</p>
-        {/* Paid / remaining breakdown — shown when any payment has been made */}
-        {paidAmount > 0 && (
-          <div className="flex items-center gap-3 mt-1.5 flex-wrap">
-            <span className="text-[10px] text-emerald-400 font-medium">✓ Paid {fmtINRShort(paidAmount)}</span>
-            <span className="text-[10px] text-slate-500">·</span>
-            <span className="text-[10px] text-amber-400 font-medium">⏳ Remaining {fmtINRShort(remaining)}</span>
+        <p className="text-xs text-slate-500">{itemCount} expense items{overdueItems.length > 0 ? ` · ${overdueItems.length} overdue` : ''}</p>
+        {/* Paid / remaining / overdue summary */}
+        {(paidAmount > 0 || overdueTotal > 0) && (
+          <div className="flex flex-col gap-0.5 mt-1.5">
+            {paidAmount > 0 && (
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-emerald-400 font-medium">✓ Paid {fmtINRShort(paidAmount)}</span>
+                <span className="text-[10px] text-slate-500">·</span>
+                <span className="text-[10px] text-amber-400 font-medium">⏳ Remaining {fmtINRShort(total - paidAmount)}</span>
+              </div>
+            )}
+            {overdueTotal > 0 && (
+              <span className="text-[10px] text-red-400 font-medium">⚠ +{fmtINRShort(overdueTotal)} overdue carryover · Total due {fmtINRShort(remaining)}</span>
+            )}
           </div>
         )}
       </div>
@@ -223,7 +238,33 @@ function MonthColumn({ year, month, plans, hrPayroll, isCurrent, fixedExpenses =
         </div>
       ))}
 
-      {plans.length === 0 && hrPayroll === 0 && fixedExpenses.length === 0 && (
+      {/* Overdue carryover section */}
+      {overdueWithDays.length > 0 && (
+        <div className="rounded-lg border border-red-800/50 bg-red-950/25 p-2.5 flex flex-col gap-1.5">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5">
+              <AlertTriangle size={10} className="text-red-400" />
+              <p className="text-[11px] font-semibold text-red-400 uppercase tracking-wide">Overdue Carryover</p>
+            </div>
+            <p className="text-xs font-semibold text-red-400">{fmtINRShort(overdueTotal)}</p>
+          </div>
+          <div className="space-y-1.5">
+            {overdueWithDays.map(p => (
+              <div key={p.id} className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-xs text-red-200 truncate">{p.fixed_expenses?.name || '—'}</p>
+                  <p className="text-[10px] text-red-500">
+                    Due {p.due_date} · <span className="font-semibold">{p.daysOverdue}d overdue</span>
+                  </p>
+                </div>
+                <p className="text-xs text-red-300 font-semibold shrink-0">{fmtINRShort(p.amount)}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {plans.length === 0 && hrPayroll === 0 && fixedExpenses.length === 0 && overdueItems.length === 0 && (
         <p className="text-xs text-slate-600 text-center py-4">No expenses planned</p>
       )}
     </div>
@@ -518,6 +559,30 @@ export default function ExpensePlannerPage() {
     [fepPayments, monthKeys]
   )
 
+  // Overdue: all pending fixed_expense_payments whose due_date is in the past
+  const todayStr = useMemo(() => new Date().toISOString().split('T')[0], [])
+
+  const { data: overduePayments = [] } = useQuery({
+    queryKey: ['fep_overdue', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('fixed_expense_payments')
+        .select('id, fixed_expense_id, period_month, due_date, amount, fixed_expenses(name, category)')
+        .eq('company_id', companyId)
+        .eq('status', 'pending')
+        .lt('due_date', todayStr)
+        .order('due_date', { ascending: true })
+      return data || []
+    },
+    enabled: !!companyId,
+    staleTime: 30_000,
+  })
+
+  // For each displayed month, collect overdue items from PRIOR months (carryover)
+  const overdueByMonth = useMemo(() =>
+    monthKeys.map(key => overduePayments.filter(p => p.period_month < key)),
+    [overduePayments, monthKeys]
+  )
+
   // Assign colors to categories
   const categories = useMemo(() => [...new Set(plans.map(p => p.category).filter(Boolean))], [plans])
 
@@ -628,6 +693,8 @@ export default function ExpensePlannerPage() {
                 isCurrent={i === 0 && offset === 0}
                 fixedExpenses={fixedMonthPlans[i]}
                 fepStats={fepStatsByMonth[i] || { paid: 0, pending: 0 }}
+                overdueItems={overdueByMonth[i] || []}
+                today={todayStr}
               />
             ))}
           </div>
