@@ -782,7 +782,7 @@ function BillsTab({ companyId, session }) {
   }
 
   const dlPDFbill = async (b) => {
-    try { const { data: ld } = await supabase.from('bill_line_items').select('*').eq('bill_id', b.id).order('sort_order'); downloadBillPDF(b, ld||[], company) } catch(e) { toast.error(e.message) }
+    try { const { data: ld } = await supabase.from('bill_line_items').select('*').eq('bill_id', b.id).order('sort_order'); await downloadBillPDF(b, ld||[], company) } catch(e) { toast.error(e.message) }
   }
   const dlXLSXbill = async (b) => {
     try { const { data: ld } = await supabase.from('bill_line_items').select('*').eq('bill_id', b.id).order('sort_order'); downloadBillXLSX(b, ld||[], company) } catch(e) { toast.error(e.message) }
@@ -1124,7 +1124,7 @@ function PurchaseOrdersTab({ companyId, session }) {
   }
 
   const dlPDFpo = async (po) => {
-    try { const { data: ld } = await supabase.from('po_line_items').select('*').eq('po_id', po.id).order('sort_order'); downloadPOPDF(po, ld||[], company) } catch(e) { toast.error(e.message) }
+    try { const { data: ld } = await supabase.from('po_line_items').select('*').eq('po_id', po.id).order('sort_order'); await downloadPOPDF(po, ld||[], company) } catch(e) { toast.error(e.message) }
   }
   const dlXLSXpo = async (po) => {
     try { const { data: ld } = await supabase.from('po_line_items').select('*').eq('po_id', po.id).order('sort_order'); downloadPOXLSX(po, ld||[], company) } catch(e) { toast.error(e.message) }

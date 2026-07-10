@@ -423,7 +423,7 @@ function InvoicesTab({ companyId, session }) {
   const dlPDF = async (inv) => {
     try {
       const { data: ld } = await supabase.from('invoice_line_items').select('*').eq('invoice_id', inv.id).order('sort_order')
-      downloadInvoicePDF(inv, ld || [], company)
+      await downloadInvoicePDF(inv, ld || [], company)
     } catch(e) { toast.error(e.message) }
   }
   const dlXLSX = async (inv) => {
@@ -705,7 +705,7 @@ function QuotesTab({ companyId, session }) {
   const dlPDF = async (q) => {
     try {
       const { data: ld } = await supabase.from('quote_line_items').select('*').eq('quote_id', q.id).order('sort_order')
-      downloadQuotePDF(q, ld || [], company)
+      await downloadQuotePDF(q, ld || [], company)
     } catch(e) { toast.error(e.message) }
   }
   const dlXLSX = async (q) => {
@@ -814,7 +814,7 @@ function SalesOrdersTab({ companyId, session }) {
   }
 
   const dlPDFso = async (o) => {
-    try { const { data: ld } = await supabase.from('so_line_items').select('*').eq('so_id', o.id).order('sort_order'); downloadSOPDF(o, ld||[], company) } catch(e) { toast.error(e.message) }
+    try { const { data: ld } = await supabase.from('so_line_items').select('*').eq('so_id', o.id).order('sort_order'); await downloadSOPDF(o, ld||[], company) } catch(e) { toast.error(e.message) }
   }
   const dlXLSXso = async (o) => {
     try { const { data: ld } = await supabase.from('so_line_items').select('*').eq('so_id', o.id).order('sort_order'); downloadSOXLSX(o, ld||[], company) } catch(e) { toast.error(e.message) }
@@ -1000,7 +1000,7 @@ function DeliveryChallansTab({ companyId, session }) {
   }
 
   const dlPDFdc = async (dc) => {
-    try { const { data: ld } = await supabase.from('dc_line_items').select('*').eq('dc_id', dc.id).order('sort_order'); downloadDCPDF(dc, ld||[], company) } catch(e) { toast.error(e.message) }
+    try { const { data: ld } = await supabase.from('dc_line_items').select('*').eq('dc_id', dc.id).order('sort_order'); await downloadDCPDF(dc, ld||[], company) } catch(e) { toast.error(e.message) }
   }
   const dlXLSXdc = async (dc) => {
     try { const { data: ld } = await supabase.from('dc_line_items').select('*').eq('dc_id', dc.id).order('sort_order'); downloadDCXLSX(dc, ld||[], company) } catch(e) { toast.error(e.message) }
@@ -1170,7 +1170,7 @@ function CreditNotesTab({ companyId, session }) {
   }
 
   const dlPDFcn = async (cn) => {
-    try { const { data: ld } = await supabase.from('cn_line_items').select('*').eq('cn_id', cn.id).order('sort_order'); downloadCNPDF(cn, ld||[], company) } catch(e) { toast.error(e.message) }
+    try { const { data: ld } = await supabase.from('cn_line_items').select('*').eq('cn_id', cn.id).order('sort_order'); await downloadCNPDF(cn, ld||[], company) } catch(e) { toast.error(e.message) }
   }
   const dlXLSXcn = async (cn) => {
     try { const { data: ld } = await supabase.from('cn_line_items').select('*').eq('cn_id', cn.id).order('sort_order'); downloadCNXLSX(cn, ld||[], company) } catch(e) { toast.error(e.message) }

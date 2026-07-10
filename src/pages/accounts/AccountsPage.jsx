@@ -1755,7 +1755,7 @@ function InvoicesTab({ companyId, session }) {
         .eq('invoice_id', inv.id)
         .order('sort_order')
       if (error) throw error
-      generateInvoicePDF(inv, lineItems || [], company)
+      await generateInvoicePDF(inv, lineItems || [], company)
     } catch (e) {
       toast.error(e.message || 'Failed to generate PDF')
     } finally {

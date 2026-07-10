@@ -32,6 +32,31 @@
 
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
+import QRCode from 'qrcode'
+
+// ── QR verification payload ──────────────────────────────────────────────────
+function buildQRPayload(invoice, company) {
+  const lines = [
+    `NHANCE VERIFIED DOCUMENT`,
+    `Type    : ${invoice.invoice_type === 'proforma' ? 'Proforma Invoice' : 'Tax Invoice'}`,
+    `No      : ${invoice.invoice_number || '—'}`,
+    `Date    : ${invoice.invoice_date || '—'}`,
+    `From    : ${company?.name || '—'}`,
+    `GSTIN   : ${company?.gstin || '—'}`,
+    `To      : ${invoice.client_name || '—'}`,
+    `Amount  : INR ${Number(invoice.total_amount || 0).toFixed(2)}`,
+  ]
+  return lines.join('\n')
+}
+
+async function makeQRDataURL(payload) {
+  return QRCode.toDataURL(payload, {
+    errorCorrectionLevel: 'M',
+    margin: 1,
+    width: 200,
+    color: { dark: '#000000', light: '#ffffff' },
+  })
+}
 
 // ── Number-to-words (Indian system) ──────────────────────────────────────────
 const ONES = [
@@ -130,7 +155,7 @@ function cellText(doc, { x, y, w, label = '', value = '', labelSz = 6.5, valSz =
 }
 
 // ── Main export ─────────────────────────────────────────────────────────────
-export function generateInvoicePDF(invoice, lineItems, company) {
+export async function generateInvoicePDF(invoice, lineItems, company) {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
 
   const L  = 10      // left margin
@@ -183,10 +208,21 @@ export function generateInvoicePDF(invoice, lineItems, company) {
   doc.text('Ack No.     :', L + 2, titleY + 19)
   doc.text('Ack. Date   :', L + 2, titleY + 24)
 
-  // "E-Invoice QR Code" label (right area)
-  doc.setFont('helvetica', 'bold')
-  doc.setFontSize(8)
-  doc.text('E-Invoice QR Code', L + irnW + qrW / 2, titleY + 14, { align: 'center' })
+  // ── QR code (right area) — generated from invoice verification payload ──
+  try {
+    const qrPayload = buildQRPayload(invoice, company)
+    const qrDataUrl = await makeQRDataURL(qrPayload)
+    // Center a 24×24 mm QR square in the 48×28 mm box
+    const qrSize  = 24
+    const qrX     = L + irnW + (qrW - qrSize) / 2
+    const qrY     = titleY   + (titleH - qrSize) / 2
+    doc.addImage(qrDataUrl, 'PNG', qrX, qrY, qrSize, qrSize)
+  } catch {
+    // Fallback: label if QR generation fails
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(7)
+    doc.text('QR Code', L + irnW + qrW / 2, titleY + 14, { align: 'center' })
+  }
 
   let y = titleY + titleH
 
