@@ -84,8 +84,8 @@ function fixedMonthlyAmount(fe) {
 }
 
 // Does a fixed expense apply to this month?
+// Note: query already filters is_active=true, so no check needed here
 function fixedOccursInMonth(fe, year, month) {
-  if (!fe.is_active) return false
   // Check start_date (only for non-monthly — monthly has no start_date)
   if (fe.start_date) {
     const start = new Date(fe.start_date)
