@@ -450,6 +450,11 @@ export default function ExpensePlannerPage() {
   const [modal, setModal]   = useState(null)   // null | 'add' | plan object
   const [delId, setDelId]   = useState(null)
   const [deleting, setDeleting] = useState(false)
+  const [expandedCats, setExpandedCats]           = useState({})  // planned expense categories
+  const [expandedFixedCats, setExpandedFixedCats] = useState({})  // fixed expense categories
+
+  const toggleCat      = (cat) => setExpandedCats(p => ({ ...p, [cat]: !p[cat] }))
+  const toggleFixedCat = (cat) => setExpandedFixedCats(p => ({ ...p, [cat]: !p[cat] }))
 
   // Compute 3 months to display
   const months = useMemo(() => {
@@ -597,6 +602,30 @@ export default function ExpensePlannerPage() {
     [plans, catColor]
   )
 
+  // Group planned expenses by category (for the category-tile list)
+  const plansByCategory = useMemo(() => {
+    const groups = {}
+    plansWithColor.forEach(p => {
+      const cat = p.category || 'General'
+      if (!groups[cat]) groups[cat] = { color: p._color || '#64748b', items: [], total: 0 }
+      groups[cat].items.push(p)
+      groups[cat].total += monthlyAmount(p)
+    })
+    return groups
+  }, [plansWithColor])
+
+  // Group fixed expenses by category
+  const fixedByCategory = useMemo(() => {
+    const groups = {}
+    fixedExpenses.forEach(fe => {
+      const cat = fe.category || 'misc'
+      if (!groups[cat]) groups[cat] = { items: [], total: 0 }
+      groups[cat].items.push(fe)
+      groups[cat].total += fixedMonthlyAmount(fe)
+    })
+    return groups
+  }, [fixedExpenses])
+
   // Filter plans for each month
   const monthPlans = useMemo(() =>
     months.map(({ year, month }) =>
@@ -701,7 +730,7 @@ export default function ExpensePlannerPage() {
         )
       }
 
-      {/* Fixed Expenses auto-pulled panel */}
+      {/* ── Fixed Expenses by Category ────────────────────────────────────────── */}
       {fixedExpenses.length > 0 && (
         <div>
           <div className="flex items-center justify-between mb-3">
@@ -711,39 +740,62 @@ export default function ExpensePlannerPage() {
             </h2>
             <span className="text-xs text-slate-500">Pulled from Accounts → Fixed Expenses</span>
           </div>
-          <div className="card overflow-hidden">
-            {fixedExpenses.map(fe => (
-              <div key={fe.id} className="flex items-center justify-between px-4 py-3 border-b border-dark-700/60 last:border-0">
-                <div className="flex items-center gap-3 min-w-0">
-                  <CatDot color="#0d9488" size={10} />
-                  <div className="min-w-0">
-                    <p className="text-sm text-slate-200 font-medium truncate">{fe.name}</p>
-                    <div className="flex items-center gap-2 mt-0.5">
-                      {fe.category && <span className="text-xs text-slate-500">{fe.category}</span>}
-                      {fe.category && <span className="text-slate-600">·</span>}
-                      <span className="text-xs text-slate-500">
-                        {fe.recurrence_type === 'monthly'
-                          ? `Monthly (due day ${fe.due_day || '—'})`
-                          : `Every ${fe.recurrence_days} days`}
-                      </span>
-                      {fe.payee_name && <><span className="text-slate-600">·</span><span className="text-xs text-slate-500">{fe.payee_name}</span></>}
-                      {fe.end_date && <><span className="text-slate-600">·</span><span className="text-xs text-amber-400">ends {fe.end_date}</span></>}
+          <div className="space-y-2">
+            {Object.entries(fixedByCategory).map(([cat, { items, total: catTotal }]) => {
+              const expanded = !!expandedFixedCats[cat]
+              const icon = { salary:'👤', emi:'🏦', rent:'🏠', insurance:'🛡️', interest:'📈', admin:'📋', misc:'📦' }[cat] || '📦'
+              const label = { salary:'Salary', emi:'EMI / Loan', rent:'Rent', insurance:'Insurance', interest:'Interest', admin:'Admin', misc:'Miscellaneous' }[cat] || cat
+              return (
+                <div key={cat} className="card overflow-hidden">
+                  <button onClick={() => toggleFixedCat(cat)}
+                    className="w-full flex items-center justify-between px-4 py-3 hover:bg-dark-700/30 transition-colors text-left">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span className="text-base">{icon}</span>
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-slate-200">{label}</p>
+                        <p className="text-xs text-slate-500">{items.length} expense{items.length !== 1 ? 's' : ''}</p>
+                      </div>
                     </div>
-                  </div>
-                </div>
-                <div className="text-right shrink-0 ml-4">
-                  <p className="text-sm font-semibold text-slate-100">{fmtINR(fe.amount)}</p>
-                  {fe.recurrence_type === 'custom_days' && (
-                    <p className="text-xs text-slate-500">≈{fmtINRShort(fixedMonthlyAmount(fe))}/mo</p>
+                    <div className="flex items-center gap-2 shrink-0 ml-3">
+                      <p className="text-sm font-semibold text-teal-300">{fmtINRShort(catTotal)}<span className="text-xs text-slate-500 font-normal">/mo</span></p>
+                      <ChevronRight size={15} className={`text-slate-500 transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`} />
+                    </div>
+                  </button>
+                  {expanded && (
+                    <div className="border-t border-dark-700/60">
+                      {items.map(fe => (
+                        <div key={fe.id} className="flex items-center justify-between px-4 py-2.5 border-b border-dark-700/40 last:border-0 bg-dark-900/30">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <CatDot color="#0d9488" size={8} />
+                            <div className="min-w-0">
+                              <p className="text-sm text-slate-200 truncate">{fe.name}</p>
+                              <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                                <span className="text-[10px] text-slate-500">
+                                  {fe.recurrence_type === 'monthly' ? `Due day ${fe.due_day || '—'}` : `Every ${fe.recurrence_days}d`}
+                                </span>
+                                {fe.payee_name && <><span className="text-slate-600">·</span><span className="text-[10px] text-slate-500">{fe.payee_name}</span></>}
+                                {fe.end_date && <span className="text-[10px] text-amber-400">· ends {fe.end_date}</span>}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="text-right shrink-0 ml-3">
+                            <p className="text-sm font-semibold text-slate-100">{fmtINR(fe.amount)}</p>
+                            {fe.recurrence_type === 'custom_days' && (
+                              <p className="text-[10px] text-slate-500">≈{fmtINRShort(fixedMonthlyAmount(fe))}/mo</p>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   )}
                 </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         </div>
       )}
 
-      {/* Expense list */}
+      {/* ── Planned Expenses by Category ──────────────────────────────────────── */}
       <div>
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-2">
@@ -765,66 +817,78 @@ export default function ExpensePlannerPage() {
             </button>
           </div>
         ) : (
-          <div className="card overflow-hidden">
-            {/* Category legend */}
-            {categories.length > 0 && (
-              <div className="px-4 py-2.5 border-b border-dark-700 flex flex-wrap gap-3">
-                {categories.map(c => (
-                  <div key={c} className="flex items-center gap-1.5">
-                    <CatDot color={catColor[c]} />
-                    <span className="text-xs text-slate-400">{c}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Expense rows */}
-            {plans.map(plan => (
-              <div key={plan.id} className="flex items-center justify-between px-4 py-3 border-b border-dark-700/60 last:border-0 hover:bg-dark-700/30 group">
-                <div className="flex items-center gap-3 min-w-0">
-                  <CatDot color={catColor[plan.category] || '#64748b'} size={10} />
-                  <div className="min-w-0">
-                    <p className="text-sm text-slate-200 font-medium truncate">{plan.name}</p>
-                    <div className="flex items-center gap-2 mt-0.5">
-                      <span className="text-xs text-slate-500">{plan.category}</span>
-                      <span className="text-slate-600">·</span>
-                      <span className="text-xs text-slate-500">{FREQ_LABELS[plan.frequency]}</span>
-                      {plan.end_date && <span className="text-xs text-slate-600">until {plan.end_date}</span>}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-3 shrink-0 ml-4">
-                  <div className="text-right">
-                    <p className="text-sm font-semibold text-slate-100">{fmtINR(plan.amount)}</p>
-                    {plan.frequency !== 'monthly' && plan.frequency !== 'one_time' && (
-                      <p className="text-xs text-slate-500">≈{fmtINRShort(monthlyAmount(plan))}/mo</p>
-                    )}
-                  </div>
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded border ${TYPE_COLORS[plan.type]}`}>
-                    {plan.type === 'fixed' ? 'Fixed' : 'Est.'}
-                  </span>
-                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button onClick={() => setModal(plan)} className="p-1 rounded text-slate-400 hover:text-slate-200 hover:bg-dark-600">
-                      <Edit2 size={13} />
-                    </button>
-                    {delId === plan.id ? (
-                      <div className="flex items-center gap-1">
-                        <button onClick={() => handleDelete(plan.id)} disabled={deleting}
-                          className="text-xs px-2 py-0.5 rounded bg-red-600/20 border border-red-700/40 text-red-400 hover:bg-red-600/30">
-                          {deleting ? '…' : 'Confirm'}
-                        </button>
-                        <button onClick={() => setDelId(null)} className="text-xs text-slate-500 hover:text-slate-300 px-1">✕</button>
+          <div className="space-y-2">
+            {Object.entries(plansByCategory).map(([cat, { color, items, total: catTotal }]) => {
+              const expanded = !!expandedCats[cat]
+              return (
+                <div key={cat} className="card overflow-hidden">
+                  {/* Category tile header */}
+                  <button onClick={() => toggleCat(cat)}
+                    className="w-full flex items-center justify-between px-4 py-3 hover:bg-dark-700/30 transition-colors text-left">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <CatDot color={color} size={12} />
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-slate-200">{cat}</p>
+                        <p className="text-xs text-slate-500">{items.length} expense{items.length !== 1 ? 's' : ''}</p>
                       </div>
-                    ) : (
-                      <button onClick={() => setDelId(plan.id)} className="p-1 rounded text-slate-400 hover:text-red-400 hover:bg-dark-600">
-                        <Trash2 size={13} />
-                      </button>
-                    )}
-                  </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0 ml-3">
+                      <p className="text-sm font-semibold text-slate-100">{fmtINRShort(catTotal)}<span className="text-xs text-slate-500 font-normal">/mo</span></p>
+                      <ChevronRight size={15} className={`text-slate-500 transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`} />
+                    </div>
+                  </button>
+
+                  {/* Expense rows — visible when expanded */}
+                  {expanded && (
+                    <div className="border-t border-dark-700/60">
+                      {items.map(plan => (
+                        <div key={plan.id} className="flex items-center justify-between px-4 py-2.5 border-b border-dark-700/40 last:border-0 bg-dark-900/30 group">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <CatDot color={color} size={8} />
+                            <div className="min-w-0">
+                              <p className="text-sm text-slate-200 truncate">{plan.name}</p>
+                              <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                                <span className="text-[10px] text-slate-500">{FREQ_LABELS[plan.frequency]}</span>
+                                {plan.end_date && <span className="text-[10px] text-slate-500">· until {plan.end_date}</span>}
+                                <span className={`text-[9px] px-1 py-0.5 rounded border ml-0.5 ${TYPE_COLORS[plan.type]}`}>
+                                  {plan.type === 'fixed' ? 'Fixed' : 'Est.'}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0 ml-3">
+                            <div className="text-right">
+                              <p className="text-sm font-semibold text-slate-100">{fmtINR(plan.amount)}</p>
+                              {plan.frequency !== 'monthly' && plan.frequency !== 'one_time' && (
+                                <p className="text-[10px] text-slate-500">≈{fmtINRShort(monthlyAmount(plan))}/mo</p>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button onClick={() => setModal(plan)} className="p-1 rounded text-slate-400 hover:text-slate-200 hover:bg-dark-600">
+                                <Edit2 size={13} />
+                              </button>
+                              {delId === plan.id ? (
+                                <div className="flex items-center gap-1">
+                                  <button onClick={() => handleDelete(plan.id)} disabled={deleting}
+                                    className="text-xs px-2 py-0.5 rounded bg-red-600/20 border border-red-700/40 text-red-400 hover:bg-red-600/30">
+                                    {deleting ? '…' : 'Confirm'}
+                                  </button>
+                                  <button onClick={() => setDelId(null)} className="text-xs text-slate-500 hover:text-slate-300 px-1">✕</button>
+                                </div>
+                              ) : (
+                                <button onClick={() => setDelId(plan.id)} className="p-1 rounded text-slate-400 hover:text-red-400 hover:bg-dark-600">
+                                  <Trash2 size={13} />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         )}
       </div>
