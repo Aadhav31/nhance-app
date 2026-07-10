@@ -107,9 +107,14 @@ function CatDot({ color, size = 8 }) {
 }
 
 // ── Month Forecast Column ─────────────────────────────────────────────────────
-function MonthColumn({ year, month, plans, hrPayroll, isCurrent, fixedExpenses = [] }) {
+function MonthColumn({ year, month, plans, hrPayroll, isCurrent, fixedExpenses = [], fepStats = { paid: 0, pending: 0 } }) {
   const fixedTotal = fixedExpenses.reduce((s, fe) => s + fixedMonthlyAmount(fe), 0)
-  const total = plans.reduce((s, p) => s + monthlyAmount(p), 0) + hrPayroll + fixedTotal
+  const plansTotal = plans.reduce((s, p) => s + monthlyAmount(p), 0)
+  const total = plansTotal + hrPayroll + fixedTotal
+
+  // Paid = confirmed fixed expense payments; remaining = everything else
+  const paidAmount   = fepStats.paid
+  const remaining    = total - paidAmount
 
   const byCategory = {}
   plans.forEach(p => {
@@ -133,6 +138,14 @@ function MonthColumn({ year, month, plans, hrPayroll, isCurrent, fixedExpenses =
         </div>
         <p className="text-2xl font-bold text-slate-100">{fmtINRShort(total)}</p>
         <p className="text-xs text-slate-500">{itemCount} expense items</p>
+        {/* Paid / remaining breakdown — shown when any payment has been made */}
+        {paidAmount > 0 && (
+          <div className="flex items-center gap-3 mt-1.5 flex-wrap">
+            <span className="text-[10px] text-emerald-400 font-medium">✓ Paid {fmtINRShort(paidAmount)}</span>
+            <span className="text-[10px] text-slate-500">·</span>
+            <span className="text-[10px] text-amber-400 font-medium">⏳ Remaining {fmtINRShort(remaining)}</span>
+          </div>
+        )}
       </div>
 
       {/* Progress bar by category */}
@@ -473,6 +486,38 @@ export default function ExpensePlannerPage() {
     [months, fixedExpenses]
   )
 
+  // YYYY-MM keys for the 3 displayed months
+  const monthKeys = useMemo(() =>
+    months.map(({ year, month }) => `${year}-${String(month + 1).padStart(2, '0')}`),
+    [months]
+  )
+
+  // Fetch actual payment status for fixed expenses in displayed months
+  const { data: fepPayments = [] } = useQuery({
+    queryKey: ['fep_planner_status', companyId, monthKeys.join(',')],
+    queryFn: async () => {
+      const { data } = await supabase.from('fixed_expense_payments')
+        .select('fixed_expense_id, period_month, status, paid_amount, amount')
+        .eq('company_id', companyId)
+        .in('period_month', monthKeys)
+      return data || []
+    },
+    enabled: !!companyId && monthKeys.length > 0,
+    staleTime: 30_000,
+  })
+
+  // Per-month: how much of the fixed expenses is paid vs still pending
+  const fepStatsByMonth = useMemo(() =>
+    monthKeys.map(key => {
+      const mp = fepPayments.filter(p => p.period_month === key)
+      return {
+        paid:    mp.filter(p => p.status === 'paid').reduce((s, p) => s + Number(p.paid_amount || p.amount), 0),
+        pending: mp.filter(p => p.status === 'pending').reduce((s, p) => s + Number(p.amount), 0),
+      }
+    }),
+    [fepPayments, monthKeys]
+  )
+
   // Assign colors to categories
   const categories = useMemo(() => [...new Set(plans.map(p => p.category).filter(Boolean))], [plans])
 
@@ -582,6 +627,7 @@ export default function ExpensePlannerPage() {
                 hrPayroll={hrPayroll}
                 isCurrent={i === 0 && offset === 0}
                 fixedExpenses={fixedMonthPlans[i]}
+                fepStats={fepStatsByMonth[i] || { paid: 0, pending: 0 }}
               />
             ))}
           </div>
