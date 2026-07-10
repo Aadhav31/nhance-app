@@ -32,30 +32,35 @@
 
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
-import QRCode from 'qrcode'
 
-// ── QR verification payload ──────────────────────────────────────────────────
+// ── QR code via public API (zero npm dependency) ──────────────────────────────
 function buildQRPayload(invoice, company) {
-  const lines = [
-    `NHANCE VERIFIED DOCUMENT`,
-    `Type    : ${invoice.invoice_type === 'proforma' ? 'Proforma Invoice' : 'Tax Invoice'}`,
-    `No      : ${invoice.invoice_number || '—'}`,
-    `Date    : ${invoice.invoice_date || '—'}`,
-    `From    : ${company?.name || '—'}`,
-    `GSTIN   : ${company?.gstin || '—'}`,
-    `To      : ${invoice.client_name || '—'}`,
-    `Amount  : INR ${Number(invoice.total_amount || 0).toFixed(2)}`,
-  ]
-  return lines.join('\n')
+  return [
+    'NHANCE VERIFIED DOCUMENT',
+    `Type: ${invoice.invoice_type === 'proforma' ? 'Proforma Invoice' : 'Tax Invoice'}`,
+    `No: ${invoice.invoice_number || ''}`,
+    `Date: ${invoice.invoice_date || ''}`,
+    `From: ${company?.name || ''} GSTIN:${company?.gstin || ''}`,
+    `To: ${invoice.client_name || ''}`,
+    `Amt: INR ${Number(invoice.total_amount || 0).toFixed(2)}`,
+  ].join(' | ')
 }
 
 async function makeQRDataURL(payload) {
-  return QRCode.toDataURL(payload, {
-    errorCorrectionLevel: 'M',
-    margin: 1,
-    width: 200,
-    color: { dark: '#000000', light: '#ffffff' },
-  })
+  try {
+    const url = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&format=png&data=${encodeURIComponent(payload)}`
+    const res  = await fetch(url)
+    if (!res.ok) return null
+    const blob = await res.blob()
+    return new Promise((resolve) => {
+      const reader = new FileReader()
+      reader.onloadend = () => resolve(reader.result)
+      reader.onerror  = () => resolve(null)
+      reader.readAsDataURL(blob)
+    })
+  } catch {
+    return null
+  }
 }
 
 // ── Number-to-words (Indian system) ──────────────────────────────────────────
@@ -209,19 +214,20 @@ export async function generateInvoicePDF(invoice, lineItems, company) {
   doc.text('Ack. Date   :', L + 2, titleY + 24)
 
   // ── QR code (right area) — generated from invoice verification payload ──
-  try {
-    const qrPayload = buildQRPayload(invoice, company)
-    const qrDataUrl = await makeQRDataURL(qrPayload)
+  const qrPayload = buildQRPayload(invoice, company)
+  const qrDataUrl = await makeQRDataURL(qrPayload)
+  if (qrDataUrl) {
     // Center a 24×24 mm QR square in the 48×28 mm box
-    const qrSize  = 24
-    const qrX     = L + irnW + (qrW - qrSize) / 2
-    const qrY     = titleY   + (titleH - qrSize) / 2
+    const qrSize = 24
+    const qrX    = L + irnW + (qrW - qrSize) / 2
+    const qrY    = titleY   + (titleH - qrSize) / 2
     doc.addImage(qrDataUrl, 'PNG', qrX, qrY, qrSize, qrSize)
-  } catch {
-    // Fallback: label if QR generation fails
-    doc.setFont('helvetica', 'bold')
+  } else {
+    doc.setFont('helvetica', 'normal')
     doc.setFontSize(7)
-    doc.text('QR Code', L + irnW + qrW / 2, titleY + 14, { align: 'center' })
+    doc.setTextColor(150, 150, 150)
+    doc.text('QR unavailable', L + irnW + qrW / 2, titleY + 14, { align: 'center' })
+    doc.setTextColor(0)
   }
 
   let y = titleY + titleH

@@ -5,23 +5,26 @@
  */
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
-import QRCode from 'qrcode'
 
-// ── QR stamp — floated top-right on page 1 ───────────────────────────────────
-// Adds an 18×18 mm QR code at the top-right corner without disturbing layout.
+// ── QR stamp — zero-dependency, fetches from public QR API ───────────────────
 async function stampQR(pdf, lines) {
   try {
-    const payload = lines.filter(Boolean).join('\n')
-    const dataUrl = await QRCode.toDataURL(payload, {
-      errorCorrectionLevel: 'M',
-      margin: 1,
-      width: 180,
-      color: { dark: '#000000', light: '#ffffff' },
+    const payload = lines.filter(Boolean).join(' | ')
+    const url = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&format=png&data=${encodeURIComponent(payload)}`
+    const res = await fetch(url)
+    if (!res.ok) return
+    const blob = await res.blob()
+    const dataUrl = await new Promise((resolve) => {
+      const reader = new FileReader()
+      reader.onloadend = () => resolve(reader.result)
+      reader.onerror  = () => resolve(null)
+      reader.readAsDataURL(blob)
     })
+    if (!dataUrl) return
     pdf.setPage(1)
-    // x=178 y=12 gives 18×18 mm box at top-right (W=210, MR=12, MT=10)
+    // x=178 y=12 → 18×18 mm at top-right corner (W=210, MR=12, MT=10)
     pdf.addImage(dataUrl, 'PNG', 178, 12, 18, 18)
-  } catch { /* silently skip if QR generation fails */ }
+  } catch { /* silently skip — PDF still saves without QR */ }
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
