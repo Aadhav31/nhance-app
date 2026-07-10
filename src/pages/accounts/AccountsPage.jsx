@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import { generateInvoicePDF } from '../../lib/invoicePDF'
+import { createVerification } from '../../lib/docVerify'
 import {
   Receipt, Plus, X, Loader2, Trash2, Pencil, Eye,
   TrendingUp, TrendingDown, Clock, Search, Banknote,
@@ -1755,7 +1756,11 @@ function InvoicesTab({ companyId, session }) {
         .eq('invoice_id', inv.id)
         .order('sort_order')
       if (error) throw error
-      await generateInvoicePDF(inv, lineItems || [], company)
+      const verifyUrl = await createVerification(supabase, companyId, {
+        docType: 'invoice', docNumber: inv.invoice_number,
+        docDate: inv.invoice_date, partyName: inv.client_name, amount: inv.total_amount,
+      })
+      await generateInvoicePDF(inv, lineItems || [], company, verifyUrl)
     } catch (e) {
       toast.error(e.message || 'Failed to generate PDF')
     } finally {

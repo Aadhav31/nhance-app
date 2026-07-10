@@ -7,9 +7,12 @@ import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 
 // ── QR stamp — zero-dependency, fetches from public QR API ───────────────────
-async function stampQR(pdf, lines) {
+// payloadOrLines: verification URL string (preferred) OR array of fallback text
+async function stampQR(pdf, payloadOrLines) {
   try {
-    const payload = lines.filter(Boolean).join(' | ')
+    const payload = Array.isArray(payloadOrLines)
+      ? payloadOrLines.filter(Boolean).join(' | ')
+      : payloadOrLines
     const url = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&format=png&data=${encodeURIComponent(payload)}`
     const res = await fetch(url)
     if (!res.ok) return
@@ -378,7 +381,7 @@ function buildDocPDF(opts) {
 
 // ── Public download functions ─────────────────────────────────────────────────
 
-export async function downloadInvoicePDF(invoice, lineItems, company) {
+export async function downloadInvoicePDF(invoice, lineItems, company, verifyUrl = null) {
   const pos = invoice.client_gstin
     ? getStateFromGSTIN(invoice.client_gstin)
     : getStateFromGSTIN(company?.gstin)
@@ -406,17 +409,17 @@ export async function downloadInvoicePDF(invoice, lineItems, company) {
     balanceDue: invoice.balance_due,
     notes: invoice.notes,
   })
-  await stampQR(pdf, [
-    'NHANCE VERIFIED DOCUMENT', `Type    : Tax Invoice`,
-    `No      : ${invoice.invoice_number}`, `Date    : ${invoice.invoice_date || ''}`,
-    `From    : ${company?.name || ''} | GSTIN: ${company?.gstin || ''}`,
-    `To      : ${invoice.client_name || ''}`,
-    `Amount  : INR ${Number(invoice.total_amount || 0).toFixed(2)}`,
+  await stampQR(pdf, verifyUrl || [
+    'NHANCE DOCUMENT', `Type: Tax Invoice`,
+    `No: ${invoice.invoice_number}`, `Date: ${invoice.invoice_date || ''}`,
+    `From: ${company?.name || ''} GSTIN:${company?.gstin || ''}`,
+    `To: ${invoice.client_name || ''}`,
+    `Amt: INR ${Number(invoice.total_amount || 0).toFixed(2)}`,
   ])
   pdf.save(`${invoice.invoice_number}.pdf`)
 }
 
-export async function downloadQuotePDF(quote, lineItems, company) {
+export async function downloadQuotePDF(quote, lineItems, company, verifyUrl = null) {
   const pdf = buildDocPDF({
     company,
     docTitle: quote.is_tax_invoice !== false ? 'TAX QUOTATION' : 'QUOTATION',
@@ -440,17 +443,16 @@ export async function downloadQuotePDF(quote, lineItems, company) {
     balanceDue: quote.total_amount || 0,
     notes: quote.notes,
   })
-  await stampQR(pdf, [
-    'NHANCE VERIFIED DOCUMENT', `Type    : Quotation`,
-    `No      : ${quote.quote_number}`, `Date    : ${quote.quote_date || ''}`,
-    `From    : ${company?.name || ''} | GSTIN: ${company?.gstin || ''}`,
-    `To      : ${quote.client_name || ''}`,
-    `Amount  : INR ${Number(quote.total_amount || 0).toFixed(2)}`,
+  await stampQR(pdf, verifyUrl || [
+    'NHANCE DOCUMENT', `Type: Quotation`,
+    `No: ${quote.quote_number}`, `Date: ${quote.quote_date || ''}`,
+    `From: ${company?.name || ''}`, `To: ${quote.client_name || ''}`,
+    `Amt: INR ${Number(quote.total_amount || 0).toFixed(2)}`,
   ])
   pdf.save(`${quote.quote_number}.pdf`)
 }
 
-export async function downloadSOPDF(so, lineItems, company) {
+export async function downloadSOPDF(so, lineItems, company, verifyUrl = null) {
   const pdf = buildDocPDF({
     company,
     docTitle: 'SALES ORDER',
@@ -473,16 +475,16 @@ export async function downloadSOPDF(so, lineItems, company) {
     balanceDue: so.total_amount || 0,
     notes: so.notes,
   })
-  await stampQR(pdf, [
-    'NHANCE VERIFIED DOCUMENT', `Type    : Sales Order`,
-    `No      : ${so.so_number}`, `Date    : ${so.so_date || ''}`,
-    `From    : ${company?.name || ''}`, `To      : ${so.client_name || ''}`,
-    `Amount  : INR ${Number(so.total_amount || 0).toFixed(2)}`,
+  await stampQR(pdf, verifyUrl || [
+    'NHANCE DOCUMENT', `Type: Sales Order`,
+    `No: ${so.so_number}`, `Date: ${so.so_date || ''}`,
+    `From: ${company?.name || ''}`, `To: ${so.client_name || ''}`,
+    `Amt: INR ${Number(so.total_amount || 0).toFixed(2)}`,
   ])
   pdf.save(`${so.so_number}.pdf`)
 }
 
-export async function downloadDCPDF(dc, lineItems, company) {
+export async function downloadDCPDF(dc, lineItems, company, verifyUrl = null) {
   const dcTotal = lineItems.reduce((s, l) => s + (Number(l.amount)||0), 0)
   const pdf = buildDocPDF({
     company,
@@ -504,16 +506,16 @@ export async function downloadDCPDF(dc, lineItems, company) {
     notes: dc.notes,
     noTotals: false,
   })
-  await stampQR(pdf, [
-    'NHANCE VERIFIED DOCUMENT', `Type    : Delivery Challan`,
-    `No      : ${dc.dc_number}`, `Date    : ${dc.dc_date || ''}`,
-    `From    : ${company?.name || ''}`, `To      : ${dc.client_name || ''}`,
-    dc.vehicle_number ? `Vehicle : ${dc.vehicle_number}` : null,
+  await stampQR(pdf, verifyUrl || [
+    'NHANCE DOCUMENT', `Type: Delivery Challan`,
+    `No: ${dc.dc_number}`, `Date: ${dc.dc_date || ''}`,
+    `From: ${company?.name || ''}`, `To: ${dc.client_name || ''}`,
+    dc.vehicle_number ? `Vehicle: ${dc.vehicle_number}` : null,
   ])
   pdf.save(`${dc.dc_number}.pdf`)
 }
 
-export async function downloadCNPDF(cn, lineItems, company) {
+export async function downloadCNPDF(cn, lineItems, company, verifyUrl = null) {
   const pdf = buildDocPDF({
     company,
     docTitle: 'CREDIT NOTE',
@@ -533,16 +535,16 @@ export async function downloadCNPDF(cn, lineItems, company) {
     balanceDue: cn.total_amount || 0,
     notes: cn.notes,
   })
-  await stampQR(pdf, [
-    'NHANCE VERIFIED DOCUMENT', `Type    : Credit Note`,
-    `No      : ${cn.cn_number}`, `Date    : ${cn.cn_date || ''}`,
-    `From    : ${company?.name || ''}`, `To      : ${cn.client_name || ''}`,
-    `Amount  : INR ${Number(cn.total_amount || 0).toFixed(2)}`,
+  await stampQR(pdf, verifyUrl || [
+    'NHANCE DOCUMENT', `Type: Credit Note`,
+    `No: ${cn.cn_number}`, `Date: ${cn.cn_date || ''}`,
+    `From: ${company?.name || ''}`, `To: ${cn.client_name || ''}`,
+    `Amt: INR ${Number(cn.total_amount || 0).toFixed(2)}`,
   ])
   pdf.save(`${cn.cn_number}.pdf`)
 }
 
-export async function downloadBillPDF(bill, lineItems, company) {
+export async function downloadBillPDF(bill, lineItems, company, verifyUrl = null) {
   const pdf = buildDocPDF({
     company,
     docTitle: bill.is_tax_invoice !== false ? 'PURCHASE BILL' : 'BILL',
@@ -565,16 +567,16 @@ export async function downloadBillPDF(bill, lineItems, company) {
     balanceDue: bill.balance_due,
     notes: bill.notes,
   })
-  await stampQR(pdf, [
-    'NHANCE VERIFIED DOCUMENT', `Type    : Purchase Bill`,
-    `No      : ${bill.bill_number}`, `Date    : ${bill.bill_date || ''}`,
-    `Co      : ${company?.name || ''}`, `Vendor  : ${bill.vendor_name || ''}`,
-    `Amount  : INR ${Number(bill.total_amount || 0).toFixed(2)}`,
+  await stampQR(pdf, verifyUrl || [
+    'NHANCE DOCUMENT', `Type: Purchase Bill`,
+    `No: ${bill.bill_number}`, `Date: ${bill.bill_date || ''}`,
+    `Co: ${company?.name || ''}`, `Vendor: ${bill.vendor_name || ''}`,
+    `Amt: INR ${Number(bill.total_amount || 0).toFixed(2)}`,
   ])
   pdf.save(`${bill.bill_number}.pdf`)
 }
 
-export async function downloadPOPDF(po, lineItems, company) {
+export async function downloadPOPDF(po, lineItems, company, verifyUrl = null) {
   const pdf = buildDocPDF({
     company,
     docTitle: 'PURCHASE ORDER',
@@ -596,16 +598,16 @@ export async function downloadPOPDF(po, lineItems, company) {
     balanceDue: po.total_amount || 0,
     notes: po.notes,
   })
-  await stampQR(pdf, [
-    'NHANCE VERIFIED DOCUMENT', `Type    : Purchase Order`,
-    `No      : ${po.po_number}`, `Date    : ${po.po_date || ''}`,
-    `Co      : ${company?.name || ''}`, `Vendor  : ${po.vendor_name || ''}`,
-    `Amount  : INR ${Number(po.total_amount || 0).toFixed(2)}`,
+  await stampQR(pdf, verifyUrl || [
+    'NHANCE DOCUMENT', `Type: Purchase Order`,
+    `No: ${po.po_number}`, `Date: ${po.po_date || ''}`,
+    `Co: ${company?.name || ''}`, `Vendor: ${po.vendor_name || ''}`,
+    `Amt: INR ${Number(po.total_amount || 0).toFixed(2)}`,
   ])
   pdf.save(`${po.po_number}.pdf`)
 }
 
-export async function downloadVendorCreditPDF(vc, company) {
+export async function downloadVendorCreditPDF(vc, company, verifyUrl = null) {
   const pdf = buildDocPDF({
     company,
     docTitle: 'VENDOR CREDIT',
@@ -623,16 +625,16 @@ export async function downloadVendorCreditPDF(vc, company) {
     bodyText: `Credit Amount: Rs.${fmtINR(vc.amount)}\nStatus: ${vc.status || 'open'}`,
     notes: vc.notes,
   })
-  await stampQR(pdf, [
-    'NHANCE VERIFIED DOCUMENT', `Type    : Vendor Credit`,
-    `No      : ${vc.vc_number || vc.id?.slice(0,8) || ''}`,
-    `Co      : ${company?.name || ''}`, `Vendor  : ${vc.vendor_name || ''}`,
-    `Amount  : INR ${Number(vc.amount || 0).toFixed(2)}`,
+  await stampQR(pdf, verifyUrl || [
+    'NHANCE DOCUMENT', `Type: Vendor Credit`,
+    `No: ${vc.vc_number || vc.id?.slice(0,8) || ''}`,
+    `Co: ${company?.name || ''}`, `Vendor: ${vc.vendor_name || ''}`,
+    `Amt: INR ${Number(vc.amount || 0).toFixed(2)}`,
   ])
   pdf.save(`VC-${(vc.vc_number||vc.id?.slice(0,8))}.pdf`)
 }
 
-export async function downloadPaymentReceivedPDF(p, company) {
+export async function downloadPaymentReceivedPDF(p, company, verifyUrl = null) {
   const pdf = buildDocPDF({
     company,
     docTitle: 'PAYMENT RECEIPT',
@@ -653,16 +655,16 @@ export async function downloadPaymentReceivedPDF(p, company) {
     notes: p.notes,
     noTotals: false,
   })
-  await stampQR(pdf, [
-    'NHANCE VERIFIED DOCUMENT', `Type    : Payment Receipt`,
-    `No      : ${p.payment_number}`, `Date    : ${p.payment_date || ''}`,
-    `Co      : ${company?.name || ''}`, `From    : ${p.client_name || ''}`,
-    `Amount  : INR ${Number(p.amount || 0).toFixed(2)}`,
+  await stampQR(pdf, verifyUrl || [
+    'NHANCE DOCUMENT', `Type: Payment Receipt`,
+    `No: ${p.payment_number}`, `Date: ${p.payment_date || ''}`,
+    `Co: ${company?.name || ''}`, `From: ${p.client_name || ''}`,
+    `Amt: INR ${Number(p.amount || 0).toFixed(2)}`,
   ])
   pdf.save(`${p.payment_number}.pdf`)
 }
 
-export async function downloadPaymentMadePDF(p, company) {
+export async function downloadPaymentMadePDF(p, company, verifyUrl = null) {
   const pdf = buildDocPDF({
     company,
     docTitle: 'PAYMENT VOUCHER',
@@ -683,11 +685,11 @@ export async function downloadPaymentMadePDF(p, company) {
     notes: p.notes,
     noTotals: false,
   })
-  await stampQR(pdf, [
-    'NHANCE VERIFIED DOCUMENT', `Type    : Payment Voucher`,
-    `No      : ${p.payment_number}`, `Date    : ${p.payment_date || ''}`,
-    `Co      : ${company?.name || ''}`, `To      : ${p.vendor_name || ''}`,
-    `Amount  : INR ${Number(p.amount || 0).toFixed(2)}`,
+  await stampQR(pdf, verifyUrl || [
+    'NHANCE DOCUMENT', `Type: Payment Voucher`,
+    `No: ${p.payment_number}`, `Date: ${p.payment_date || ''}`,
+    `Co: ${company?.name || ''}`, `To: ${p.vendor_name || ''}`,
+    `Amt: INR ${Number(p.amount || 0).toFixed(2)}`,
   ])
   pdf.save(`${p.payment_number}.pdf`)
 }

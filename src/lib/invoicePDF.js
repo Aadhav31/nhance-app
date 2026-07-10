@@ -34,9 +34,12 @@ import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 
 // ── QR code via public API (zero npm dependency) ──────────────────────────────
-function buildQRPayload(invoice, company) {
+// verifyUrl is preferred (short UUID URL → small QR, opens verification page).
+// Falls back to a text payload if no verifyUrl is provided.
+function buildQRPayload(invoice, company, verifyUrl) {
+  if (verifyUrl) return verifyUrl
   return [
-    'NHANCE VERIFIED DOCUMENT',
+    'NHANCE DOCUMENT',
     `Type: ${invoice.invoice_type === 'proforma' ? 'Proforma Invoice' : 'Tax Invoice'}`,
     `No: ${invoice.invoice_number || ''}`,
     `Date: ${invoice.invoice_date || ''}`,
@@ -160,7 +163,7 @@ function cellText(doc, { x, y, w, label = '', value = '', labelSz = 6.5, valSz =
 }
 
 // ── Main export ─────────────────────────────────────────────────────────────
-export async function generateInvoicePDF(invoice, lineItems, company) {
+export async function generateInvoicePDF(invoice, lineItems, company, verifyUrl = null) {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
 
   const L  = 10      // left margin
@@ -214,7 +217,7 @@ export async function generateInvoicePDF(invoice, lineItems, company) {
   doc.text('Ack. Date   :', L + 2, titleY + 24)
 
   // ── QR code (right area) — generated from invoice verification payload ──
-  const qrPayload = buildQRPayload(invoice, company)
+  const qrPayload = buildQRPayload(invoice, company, verifyUrl)
   const qrDataUrl = await makeQRDataURL(qrPayload)
   if (qrDataUrl) {
     // Center a 24×24 mm QR square in the 48×28 mm box

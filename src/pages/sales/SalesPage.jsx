@@ -19,6 +19,7 @@ import {
   downloadInvoicePDF, downloadQuotePDF, downloadSOPDF,
   downloadDCPDF, downloadCNPDF, downloadPaymentReceivedPDF,
 } from '../../lib/docPDF'
+import { createVerification } from '../../lib/docVerify'
 import {
   downloadInvoiceXLSX, downloadQuoteXLSX, downloadSOXLSX,
   downloadDCXLSX, downloadCNXLSX, downloadPaymentReceivedXLSX,
@@ -423,7 +424,8 @@ function InvoicesTab({ companyId, session }) {
   const dlPDF = async (inv) => {
     try {
       const { data: ld } = await supabase.from('invoice_line_items').select('*').eq('invoice_id', inv.id).order('sort_order')
-      await downloadInvoicePDF(inv, ld || [], company)
+      const verifyUrl = await createVerification(supabase, companyId, { docType: 'invoice', docNumber: inv.invoice_number, docDate: inv.invoice_date, partyName: inv.client_name, amount: inv.total_amount })
+      await downloadInvoicePDF(inv, ld || [], company, verifyUrl)
     } catch(e) { toast.error(e.message) }
   }
   const dlXLSX = async (inv) => {
@@ -705,7 +707,8 @@ function QuotesTab({ companyId, session }) {
   const dlPDF = async (q) => {
     try {
       const { data: ld } = await supabase.from('quote_line_items').select('*').eq('quote_id', q.id).order('sort_order')
-      await downloadQuotePDF(q, ld || [], company)
+      const verifyUrl = await createVerification(supabase, companyId, { docType: 'quote', docNumber: q.quote_number, docDate: q.quote_date, partyName: q.client_name, amount: q.total_amount })
+      await downloadQuotePDF(q, ld || [], company, verifyUrl)
     } catch(e) { toast.error(e.message) }
   }
   const dlXLSX = async (q) => {
@@ -814,7 +817,7 @@ function SalesOrdersTab({ companyId, session }) {
   }
 
   const dlPDFso = async (o) => {
-    try { const { data: ld } = await supabase.from('so_line_items').select('*').eq('so_id', o.id).order('sort_order'); await downloadSOPDF(o, ld||[], company) } catch(e) { toast.error(e.message) }
+    try { const { data: ld } = await supabase.from('so_line_items').select('*').eq('so_id', o.id).order('sort_order'); const verifyUrl = await createVerification(supabase, companyId, { docType: 'so', docNumber: o.so_number, docDate: o.so_date, partyName: o.client_name, amount: o.total_amount }); await downloadSOPDF(o, ld||[], company, verifyUrl) } catch(e) { toast.error(e.message) }
   }
   const dlXLSXso = async (o) => {
     try { const { data: ld } = await supabase.from('so_line_items').select('*').eq('so_id', o.id).order('sort_order'); downloadSOXLSX(o, ld||[], company) } catch(e) { toast.error(e.message) }
@@ -1000,7 +1003,7 @@ function DeliveryChallansTab({ companyId, session }) {
   }
 
   const dlPDFdc = async (dc) => {
-    try { const { data: ld } = await supabase.from('dc_line_items').select('*').eq('dc_id', dc.id).order('sort_order'); await downloadDCPDF(dc, ld||[], company) } catch(e) { toast.error(e.message) }
+    try { const { data: ld } = await supabase.from('dc_line_items').select('*').eq('dc_id', dc.id).order('sort_order'); const verifyUrl = await createVerification(supabase, companyId, { docType: 'dc', docNumber: dc.dc_number, docDate: dc.dc_date, partyName: dc.client_name, amount: null }); await downloadDCPDF(dc, ld||[], company, verifyUrl) } catch(e) { toast.error(e.message) }
   }
   const dlXLSXdc = async (dc) => {
     try { const { data: ld } = await supabase.from('dc_line_items').select('*').eq('dc_id', dc.id).order('sort_order'); downloadDCXLSX(dc, ld||[], company) } catch(e) { toast.error(e.message) }
@@ -1170,7 +1173,7 @@ function CreditNotesTab({ companyId, session }) {
   }
 
   const dlPDFcn = async (cn) => {
-    try { const { data: ld } = await supabase.from('cn_line_items').select('*').eq('cn_id', cn.id).order('sort_order'); await downloadCNPDF(cn, ld||[], company) } catch(e) { toast.error(e.message) }
+    try { const { data: ld } = await supabase.from('cn_line_items').select('*').eq('cn_id', cn.id).order('sort_order'); const verifyUrl = await createVerification(supabase, companyId, { docType: 'cn', docNumber: cn.cn_number, docDate: cn.cn_date, partyName: cn.client_name, amount: cn.total_amount }); await downloadCNPDF(cn, ld||[], company, verifyUrl) } catch(e) { toast.error(e.message) }
   }
   const dlXLSXcn = async (cn) => {
     try { const { data: ld } = await supabase.from('cn_line_items').select('*').eq('cn_id', cn.id).order('sort_order'); downloadCNXLSX(cn, ld||[], company) } catch(e) { toast.error(e.message) }

@@ -15,6 +15,7 @@ import { format } from 'date-fns'
 import {
   downloadBillPDF, downloadPOPDF, downloadVendorCreditPDF, downloadPaymentMadePDF,
 } from '../../lib/docPDF'
+import { createVerification } from '../../lib/docVerify'
 import {
   downloadBillXLSX, downloadPOXLSX, downloadPaymentMadeXLSX,
 } from '../../lib/docXLSX'
@@ -782,7 +783,7 @@ function BillsTab({ companyId, session }) {
   }
 
   const dlPDFbill = async (b) => {
-    try { const { data: ld } = await supabase.from('bill_line_items').select('*').eq('bill_id', b.id).order('sort_order'); await downloadBillPDF(b, ld||[], company) } catch(e) { toast.error(e.message) }
+    try { const { data: ld } = await supabase.from('bill_line_items').select('*').eq('bill_id', b.id).order('sort_order'); const verifyUrl = await createVerification(supabase, companyId, { docType: 'bill', docNumber: b.bill_number, docDate: b.bill_date, partyName: b.vendor_name, amount: b.total_amount }); await downloadBillPDF(b, ld||[], company, verifyUrl) } catch(e) { toast.error(e.message) }
   }
   const dlXLSXbill = async (b) => {
     try { const { data: ld } = await supabase.from('bill_line_items').select('*').eq('bill_id', b.id).order('sort_order'); downloadBillXLSX(b, ld||[], company) } catch(e) { toast.error(e.message) }
@@ -1124,7 +1125,7 @@ function PurchaseOrdersTab({ companyId, session }) {
   }
 
   const dlPDFpo = async (po) => {
-    try { const { data: ld } = await supabase.from('po_line_items').select('*').eq('po_id', po.id).order('sort_order'); await downloadPOPDF(po, ld||[], company) } catch(e) { toast.error(e.message) }
+    try { const { data: ld } = await supabase.from('po_line_items').select('*').eq('po_id', po.id).order('sort_order'); const verifyUrl = await createVerification(supabase, companyId, { docType: 'po', docNumber: po.po_number, docDate: po.po_date, partyName: po.vendor_name, amount: po.total_amount }); await downloadPOPDF(po, ld||[], company, verifyUrl) } catch(e) { toast.error(e.message) }
   }
   const dlXLSXpo = async (po) => {
     try { const { data: ld } = await supabase.from('po_line_items').select('*').eq('po_id', po.id).order('sort_order'); downloadPOXLSX(po, ld||[], company) } catch(e) { toast.error(e.message) }

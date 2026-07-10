@@ -1,4 +1,5 @@
 import { useState, lazy, Suspense, useEffect } from 'react'
+import VerifyPage from './pages/verify/VerifyPage'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { DisplayModeProvider } from './contexts/DisplayModeContext'
 import { ThemeProvider } from './contexts/ThemeContext'
@@ -335,6 +336,17 @@ function AppShell() {
 }
 
 export default function App() {
+  // Public verification route — accessible without login
+  const path  = window.location.pathname
+  const match = path.match(/^\/verify\/([0-9a-f-]{36})$/i)
+  if (match) {
+    return (
+      <ThemeProvider>
+        <VerifyPage token={match[1]} />
+      </ThemeProvider>
+    )
+  }
+
   return (
     <ThemeProvider>
       <AuthProvider>
