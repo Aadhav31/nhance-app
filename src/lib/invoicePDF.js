@@ -32,8 +32,9 @@
 
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
+import QRCode from 'qrcode'
 
-// ── QR code via public API (zero npm dependency) ──────────────────────────────
+// ── QR code (generated locally — no external API, no network dependency) ──────
 // verifyUrl is preferred (short UUID URL → small QR, opens verification page).
 // Falls back to a text payload if no verifyUrl is provided.
 function buildQRPayload(invoice, company, verifyUrl) {
@@ -51,16 +52,7 @@ function buildQRPayload(invoice, company, verifyUrl) {
 
 async function makeQRDataURL(payload) {
   try {
-    const url = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&format=png&data=${encodeURIComponent(payload)}`
-    const res  = await fetch(url)
-    if (!res.ok) return null
-    const blob = await res.blob()
-    return new Promise((resolve) => {
-      const reader = new FileReader()
-      reader.onloadend = () => resolve(reader.result)
-      reader.onerror  = () => resolve(null)
-      reader.readAsDataURL(blob)
-    })
+    return await QRCode.toDataURL(payload, { width: 200, margin: 1, errorCorrectionLevel: 'M' })
   } catch {
     return null
   }

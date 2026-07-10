@@ -5,24 +5,16 @@
  */
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
+import QRCode from 'qrcode'
 
-// ── QR stamp — zero-dependency, fetches from public QR API ───────────────────
+// ── QR stamp — generated locally via npm qrcode (no external API needed) ─────
 // payloadOrLines: verification URL string (preferred) OR array of fallback text
 async function stampQR(pdf, payloadOrLines) {
   try {
     const payload = Array.isArray(payloadOrLines)
       ? payloadOrLines.filter(Boolean).join(' | ')
       : payloadOrLines
-    const url = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&format=png&data=${encodeURIComponent(payload)}`
-    const res = await fetch(url)
-    if (!res.ok) return
-    const blob = await res.blob()
-    const dataUrl = await new Promise((resolve) => {
-      const reader = new FileReader()
-      reader.onloadend = () => resolve(reader.result)
-      reader.onerror  = () => resolve(null)
-      reader.readAsDataURL(blob)
-    })
+    const dataUrl = await QRCode.toDataURL(payload, { width: 180, margin: 1, errorCorrectionLevel: 'M' })
     if (!dataUrl) return
     pdf.setPage(1)
     // x=178 y=12 → 18×18 mm at top-right corner (W=210, MR=12, MT=10)
