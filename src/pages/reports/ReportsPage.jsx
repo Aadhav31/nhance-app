@@ -1223,18 +1223,44 @@ function ClientStatementReport({ companyId, from, to }) {
   const { data=[], isLoading } = useQuery({
     queryKey: ['rpt_client_statement', companyId, from, to],
     queryFn: async () => {
-      const { data: clients } = await supabase.from('clients').select('id,name,phone,email,gstin').eq('company_id', companyId).eq('is_active', true)
-      if (!clients?.length) return []
-      const { data: invoices } = await supabase.from('client_invoices').select('client_id,total_amount,paid_amount,balance_due,status').eq('company_id', companyId).neq('invoice_type','proforma').gte('invoice_date', from).lte('invoice_date', to)
-      const invMap = {}
-      for (const i of invoices||[]) {
-        if (!invMap[i.client_id]) invMap[i.client_id]={ invoiced:0, paid:0, outstanding:0, count:0 }
-        invMap[i.client_id].invoiced    += Number(i.total_amount)||0
-        invMap[i.client_id].paid        += Number(i.paid_amount)||0
-        invMap[i.client_id].outstanding += Number(i.balance_due)||0
-        invMap[i.client_id].count++
+      // Fetch invoices first — works even if client isn't in the clients table
+      const { data: invoices } = await supabase
+        .from('client_invoices')
+        .select('client_id,client_name,total_amount,paid_amount,balance_due,status')
+        .eq('company_id', companyId)
+        .neq('invoice_type','proforma')
+        .gte('invoice_date', from)
+        .lte('invoice_date', to)
+      if (!invoices?.length) return []
+
+      // Optionally enrich with phone/email/gstin from clients table
+      const clientIds = [...new Set(invoices.filter(i=>i.client_id).map(i=>i.client_id))]
+      let clientMap = {}
+      if (clientIds.length) {
+        const { data: clients } = await supabase.from('clients')
+          .select('id,name,phone,email,gstin').in('id', clientIds)
+        clientMap = Object.fromEntries((clients||[]).map(c=>[c.id,c]))
       }
-      return clients.map(c=>({ ...c, ...(invMap[c.id]||{ invoiced:0, paid:0, outstanding:0, count:0 }) })).filter(c=>c.invoiced>0).sort((a,b)=>b.invoiced-a.invoiced)
+
+      // Group by client_id, falling back to client_name when client_id is null
+      const grouped = {}
+      for (const inv of invoices) {
+        const key    = inv.client_id || `name:${inv.client_name}`
+        const client = inv.client_id ? clientMap[inv.client_id] : null
+        if (!grouped[key]) grouped[key] = {
+          id:          inv.client_id || key,
+          name:        client?.name || inv.client_name || 'Unknown Client',
+          phone:       client?.phone || '',
+          email:       client?.email || '',
+          gstin:       client?.gstin || '',
+          invoiced:0, paid:0, outstanding:0, count:0,
+        }
+        grouped[key].invoiced    += Number(inv.total_amount)||0
+        grouped[key].paid        += Number(inv.paid_amount)||0
+        grouped[key].outstanding += Number(inv.balance_due)||0
+        grouped[key].count++
+      }
+      return Object.values(grouped).filter(c=>c.invoiced>0).sort((a,b)=>b.invoiced-a.invoiced)
     },
     enabled: !!companyId,
   })
