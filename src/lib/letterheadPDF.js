@@ -1,30 +1,26 @@
 /**
  * letterheadPDF.js — Official company letter generator
  *
- * Layout:
- *  ┌═══════════════════════════════════════════════════╗  ← full-page double green border
- *  ║  Company name (bold centered)                  [QR] ║
- *  ║  Address (bold centered)                           ║
- *  ║  CIN: ...                          GSTIN: ...      ║
- *  ║  E-mail: ...                       Mobile: ...     ║
- *  ╠═══════════════════════════════════════════════════╣  ← header divider
+ * Page layout:
+ *  ╔════════════════════════════════════════════════════╗  ← full-page double green border
+ *  ║  SRA MINING AND CONSTRUCTIONS (OPC) PVT LTD       ║
+ *  ║  71/3, VENKATESAPURAM COLONY, PERAMBALUR 621212   ║
+ *  ║  CIN: U14200TN2023OPC157908    GSTIN: 33ABKCS...  ║
+ *  ║  E-mail: aadhav_kannan@yahoo.in   Mobile: +91-... ║
+ *  ╠════════════════════════════════════════════════════╣  ← dynamic divider (no wasted space)
+ *  ║                                                [QR]║
+ *  ║         EXPERIENCE CERTIFICATE                    ║
  *  ║                                                    ║
- *  ║  LETTER TYPE TITLE (centered, bold)                ║
- *  ║                                                    ║
- *  ║  Ref: ...                           Date: ...      ║
- *  ║  To, / [hidden for exp cert]                       ║
- *  ║  Sub: ...                                          ║
- *  ║                                                    ║
- *  ║  Body text...                                      ║
- *  ║                                                    ║
+ *  ║  Ref: SRA/HR/001/2026             Date: 11 Jul 26 ║
+ *  ║  ...                                               ║
  *  ║  Yours faithfully,                                 ║
- *  ║  For COMPANY NAME                                  ║
+ *  ║  For SRA MINING AND CONSTRUCTIONS...               ║
  *  ║                                                    ║
  *  ║  Signatory Name                                    ║
  *  ║  Designation                                       ║
- *  ╠═══════════════════════════════════════════════════╣  ← footer divider
- *  ║  COMPANY NAME (small centered)                     ║
- *  ╚═══════════════════════════════════════════════════╝
+ *  ╠════════════════════════════════════════════════════╣
+ *  ║          SRA MINING AND CONSTRUCTIONS...           ║
+ *  ╚════════════════════════════════════════════════════╝
  */
 
 import jsPDF from 'jspdf'
@@ -35,125 +31,107 @@ const GREEN     = [26, 92, 42]
 const BLACK     = [15, 15, 15]
 const DARK_GREY = [60, 60, 60]
 
-// ── Page constants (A4) ───────────────────────────────────────────────────────
+// ── Page constants (A4 = 210 × 297 mm) ───────────────────────────────────────
 const W        = 210
 const ML       = 12
 const MR       = 12
 const MT       = 8
-const IW       = W - ML - MR   // 186mm inner width
-const HEADER_H = 52             // header block height
-const BORDER_H = 279            // full-page border height: MT+BORDER_H = 287mm
+const IW       = W - ML - MR     // 186 mm
+const BORDER_H = 279              // full-page border height (ends at y = 287)
+const CONT_Y   = MT + 18          // content start y on continuation pages (no header)
 
-// ── Date formatter ─────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 function fmtDate(d) {
   if (!d) return ''
-  const dt = new Date(d)
-  return dt.toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' })
+  return new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' })
 }
 
-// ── Draw the full-page double border (call once per page) ─────────────────────
+// ── Full-page double border ───────────────────────────────────────────────────
 function drawPageBorder(pdf) {
   pdf.setDrawColor(...GREEN)
   pdf.setLineWidth(1.2)
-  pdf.rect(ML, MT, IW, BORDER_H)              // outer thick border
+  pdf.rect(ML, MT, IW, BORDER_H)
   pdf.setLineWidth(0.4)
-  pdf.rect(ML + 2, MT + 2, IW - 4, BORDER_H - 4)  // inner thin border
+  pdf.rect(ML + 2, MT + 2, IW - 4, BORDER_H - 4)
 }
 
-// ── QR stamp (async) ──────────────────────────────────────────────────────────
-async function stampQR(pdf, verifyUrl) {
+// ── QR stamp ─────────────────────────────────────────────────────────────────
+async function stampQR(pdf, verifyUrl, qx, qy, size) {
   if (!verifyUrl) return
   try {
     const dataUrl = await QRCode.toDataURL(verifyUrl, {
-      width: 150, margin: 1, errorCorrectionLevel: 'M',
+      width: 130, margin: 1, errorCorrectionLevel: 'M',
     })
     if (!dataUrl) return
-    // Top-right corner inside header border
-    const qx = ML + IW - 4 - 21
-    const qy = MT + 4
-    pdf.addImage(dataUrl, 'PNG', qx, qy, 20, 20)
-    pdf.setFont('helvetica', 'normal')
-    pdf.setFontSize(5.5)
-    pdf.setTextColor(...DARK_GREY)
-    pdf.text('Scan to verify', qx + 10, qy + 22, { align: 'center' })
-  } catch { /* silently skip — PDF saves without QR */ }
+    pdf.addImage(dataUrl, 'PNG', qx, qy, size, size)
+  } catch { /* silently skip */ }
 }
 
-// ── Draw header content (company info + divider) ──────────────────────────────
-async function drawHeader(pdf, company, verifyUrl) {
+// ── Header: company info + dynamic divider ────────────────────────────────────
+// Returns divY (position of the horizontal divider line)
+async function drawHeader(pdf, company) {
   let y = MT + 7
 
-  // Company name — leave right 44mm free for QR
+  // Company name — full width centered
   pdf.setFont('helvetica', 'bold')
   pdf.setFontSize(13)
   pdf.setTextColor(...GREEN)
   const coName = (company?.name || 'Your Company').toUpperCase()
-  const nameLines = pdf.splitTextToSize(coName, IW - 48)
-  nameLines.forEach(line => {
-    pdf.text(line, W / 2, y, { align: 'center' })
-    y += 6
-  })
+  const nameLines = pdf.splitTextToSize(coName, IW - 8)
+  nameLines.forEach(line => { pdf.text(line, W / 2, y, { align: 'center' }); y += 6 })
 
   // Address
   if (company?.address) {
     pdf.setFont('helvetica', 'bold')
     pdf.setFontSize(8)
     pdf.setTextColor(...BLACK)
-    const addrLines = pdf.splitTextToSize(company.address.toUpperCase(), IW - 48)
-    addrLines.forEach(line => {
-      pdf.text(line, W / 2, y, { align: 'center' })
-      y += 4.5
-    })
+    const addrLines = pdf.splitTextToSize(company.address.toUpperCase(), IW - 8)
+    addrLines.forEach(line => { pdf.text(line, W / 2, y, { align: 'center' }); y += 4.5 })
     y += 1
   }
 
-  // CIN / GSTIN row
+  // CIN / GSTIN
   pdf.setFont('helvetica', 'normal')
   pdf.setFontSize(7.5)
   pdf.setTextColor(...DARK_GREY)
   const cinText   = company?.cin   ? `CIN: ${company.cin}`     : null
   const gstinText = company?.gstin ? `GSTIN: ${company.gstin}` : null
-  if (cinText && gstinText) {
-    pdf.text(cinText,   ML + 4, y)
-    pdf.text(gstinText, W - MR - 4, y, { align: 'right' })
-    y += 4.5
-  } else if (gstinText || cinText) {
-    pdf.text(gstinText || cinText, W / 2, y, { align: 'center' })
+  if (cinText || gstinText) {
+    if (cinText && gstinText) {
+      pdf.text(cinText,   ML + 4, y)
+      pdf.text(gstinText, W - MR - 4, y, { align: 'right' })
+    } else {
+      pdf.text(gstinText || cinText, W / 2, y, { align: 'center' })
+    }
     y += 4.5
   }
 
-  // Email / Mobile row
+  // Email / Mobile
   const emailText = company?.contact_email ? `E-mail: ${company.contact_email}` : null
   const phoneText = company?.contact_phone ? `Mobile: ${company.contact_phone}` : null
-  if (emailText && phoneText) {
-    pdf.text(emailText, ML + 4, y)
-    pdf.text(phoneText, W - MR - 4, y, { align: 'right' })
-  } else if (emailText || phoneText) {
-    pdf.text(emailText || phoneText, W / 2, y, { align: 'center' })
+  if (emailText || phoneText) {
+    if (emailText && phoneText) {
+      pdf.text(emailText, ML + 4, y)
+      pdf.text(phoneText, W - MR - 4, y, { align: 'right' })
+    } else {
+      pdf.text(emailText || phoneText, W / 2, y, { align: 'center' })
+    }
+    y += 4.5
   }
 
-  // QR code in header top-right
-  await stampQR(pdf, verifyUrl)
-
-  // Horizontal divider below header
-  const divY = MT + HEADER_H
+  // Dynamic divider — sits just after last content line
+  const divY = y + 2
   pdf.setDrawColor(...GREEN)
   pdf.setLineWidth(0.8)
   pdf.line(ML + 2, divY, ML + IW - 2, divY)
 
-  return divY + 5  // y position for content to start
+  return divY
 }
 
-// ── Letter types that hide the To/Address block ───────────────────────────────
+// ── Letter types that hide To/Address block in PDF ────────────────────────────
 export const HIDE_TO_BLOCK = new Set(['Experience Certificate'])
 
-// ── Main export ────────────────────────────────────────────────────────────────
-/**
- * @param {Object} company     — from AuthContext
- * @param {Object} letterData  — { letterType, refNumber, date, toName, toAddress,
- *                                 subject, body, signatoryName, signatoryDesignation }
- * @param {string|null} verifyUrl — QR verification URL from createVerification()
- */
+// ── Main export ───────────────────────────────────────────────────────────────
 export async function generateLetterPDF(company, letterData = {}, verifyUrl = null) {
   const {
     letterType            = 'Letter',
@@ -169,18 +147,32 @@ export async function generateLetterPDF(company, letterData = {}, verifyUrl = nu
 
   const pdf = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' })
 
-  // ── Page 1: border + header ───────────────────────────────────────────────
+  // Page border + header
   drawPageBorder(pdf)
-  let y = await drawHeader(pdf, company, verifyUrl)
+  const divY = await drawHeader(pdf, company)
 
-  // ── Letter type title (no underline) ──────────────────────────────────────
+  // ── QR: below divider, right side ──────────────────────────────────────────
+  const qrSize = 16
+  const qrX    = ML + IW - 4 - qrSize  // = 178 mm (right-aligned inside inner border)
+  const qrY    = divY + 3
+  if (verifyUrl) await stampQR(pdf, verifyUrl, qrX, qrY, qrSize)
+
+  // ── Letter type title: centered, width limited to avoid QR zone ───────────
   pdf.setFont('helvetica', 'bold')
   pdf.setFontSize(12)
   pdf.setTextColor(...BLACK)
-  pdf.text(letterType.toUpperCase(), W / 2, y, { align: 'center' })
-  y += 9
+  const titleMaxW  = IW - 52             // leaves ~38mm on right for QR
+  const titleLines = pdf.splitTextToSize(letterType.toUpperCase(), titleMaxW)
+  const titleY     = divY + 13
+  titleLines.forEach((line, i) => {
+    pdf.text(line, W / 2, titleY + i * 6, { align: 'center' })
+  })
+  const titleBottom = titleY + titleLines.length * 6
 
-  // ── Ref / Date ────────────────────────────────────────────────────────────
+  // y moves past whichever is taller: QR block or title block
+  let y = Math.max(qrY + qrSize + 4, titleBottom) + 3
+
+  // ── Ref / Date ─────────────────────────────────────────────────────────────
   pdf.setFont('helvetica', 'normal')
   pdf.setFontSize(9)
   pdf.setTextColor(...DARK_GREY)
@@ -188,7 +180,7 @@ export async function generateLetterPDF(company, letterData = {}, verifyUrl = nu
   pdf.text(`Date: ${fmtDate(date)}`, W - MR - 4, y, { align: 'right' })
   y += 7
 
-  // ── To block (hidden for certain letter types) ────────────────────────────
+  // ── To block (hidden for Experience Certificate etc.) ─────────────────────
   if (!HIDE_TO_BLOCK.has(letterType) && (toName || toAddress)) {
     pdf.setFont('helvetica', 'normal')
     pdf.setFontSize(9.5)
@@ -198,26 +190,28 @@ export async function generateLetterPDF(company, letterData = {}, verifyUrl = nu
 
     if (toName) {
       pdf.setFont('helvetica', 'bold')
-      const nl = pdf.splitTextToSize(toName, IW - 8)
-      nl.forEach(line => { pdf.text(line, ML + 4, y); y += 5 })
+      pdf.splitTextToSize(toName, IW - 8).forEach(line => {
+        pdf.text(line, ML + 4, y); y += 5
+      })
       pdf.setFont('helvetica', 'normal')
     }
     if (toAddress) {
       pdf.setFontSize(9)
       pdf.setTextColor(...DARK_GREY)
-      const al = pdf.splitTextToSize(toAddress, IW - 8)
-      al.forEach(line => { pdf.text(line, ML + 4, y); y += 4.5 })
+      pdf.splitTextToSize(toAddress, IW - 8).forEach(line => {
+        pdf.text(line, ML + 4, y); y += 4.5
+      })
       pdf.setTextColor(...BLACK)
     }
     y += 4
   }
 
-  // ── Subject (no underline below) ──────────────────────────────────────────
+  // ── Subject (no underline) ─────────────────────────────────────────────────
   if (subject) {
     pdf.setFontSize(9.5)
     pdf.setFont('helvetica', 'normal')
     pdf.setTextColor(...BLACK)
-    const subLabel = 'Sub: '
+    const subLabel  = 'Sub: '
     const subLabelW = pdf.getTextWidth(subLabel)
     pdf.text(subLabel, ML + 4, y)
     pdf.setFont('helvetica', 'bold')
@@ -231,7 +225,7 @@ export async function generateLetterPDF(company, letterData = {}, verifyUrl = nu
 
   // ── Body ──────────────────────────────────────────────────────────────────
   const LINE_H        = 5.5
-  const BOTTOM_MARGIN = 60   // space at bottom for signatory + footer
+  const BOTTOM_MARGIN = 60
   const PAGE_H        = 297
 
   pdf.setFont('helvetica', 'normal')
@@ -242,7 +236,7 @@ export async function generateLetterPDF(company, letterData = {}, verifyUrl = nu
     if (y + LINE_H > PAGE_H - BOTTOM_MARGIN) {
       pdf.addPage()
       drawPageBorder(pdf)
-      y = MT + HEADER_H + 10
+      y = CONT_Y
     }
     pdf.text(text, ML + 4, y)
     y += LINE_H
@@ -257,30 +251,27 @@ export async function generateLetterPDF(company, letterData = {}, verifyUrl = nu
   y += 8
 
   // ── Signatory ─────────────────────────────────────────────────────────────
-  if (y + 35 > PAGE_H - BOTTOM_MARGIN + 25) {
+  if (y + 36 > PAGE_H - BOTTOM_MARGIN + 26) {
     pdf.addPage()
     drawPageBorder(pdf)
-    y = MT + HEADER_H + 10
+    y = CONT_Y
   }
 
   pdf.setFont('helvetica', 'normal')
   pdf.setFontSize(9.5)
   pdf.setTextColor(...BLACK)
-  pdf.text('Yours faithfully,', ML + 4, y)
-  y += 5
-  pdf.text(`For ${(company?.name || '').toUpperCase()}`, ML + 4, y)
-  y += 14  // signature gap
+  pdf.text('Yours faithfully,', ML + 4, y);  y += 5
+  pdf.text(`For ${(company?.name || '').toUpperCase()}`, ML + 4, y);  y += 14
 
   pdf.setFont('helvetica', 'bold')
-  pdf.text(signatoryName || '_________________________', ML + 4, y)
-  y += 5
+  pdf.text(signatoryName || '_________________________', ML + 4, y);  y += 5
   pdf.setFont('helvetica', 'normal')
   pdf.setFontSize(9)
   pdf.setTextColor(...DARK_GREY)
   if (signatoryDesignation) pdf.text(signatoryDesignation, ML + 4, y)
 
-  // ── Footer (inside border) ─────────────────────────────────────────────────
-  const footDivY = MT + BORDER_H - 8   // footer divider line y
+  // ── Footer ────────────────────────────────────────────────────────────────
+  const footDivY = MT + BORDER_H - 8
   pdf.setDrawColor(...GREEN)
   pdf.setLineWidth(0.5)
   pdf.line(ML + 2, footDivY, ML + IW - 2, footDivY)
@@ -290,6 +281,5 @@ export async function generateLetterPDF(company, letterData = {}, verifyUrl = nu
   pdf.text((company?.name || '').toUpperCase(), W / 2, footDivY + 4, { align: 'center' })
 
   // ── Save ──────────────────────────────────────────────────────────────────
-  const safeType = letterType.replace(/[^a-zA-Z0-9]/g, '_')
-  pdf.save(`${safeType}_${date.slice(0, 10)}.pdf`)
+  pdf.save(`${letterType.replace(/[^a-zA-Z0-9]/g, '_')}_${date.slice(0, 10)}.pdf`)
 }

@@ -1,16 +1,17 @@
 /**
- * LettersPage.jsx — Official letter composer
- *
- * Generates formal letters on the company letterhead (SRA green double-border).
- * Includes HMAC-signed QR code for document verification (same system as invoices/bills).
+ * LettersPage.jsx — Official letter composer + issued document registry
  */
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useAuth } from '../../contexts/AuthContext'
 import { supabase } from '../../lib/supabase'
 import { generateLetterPDF, HIDE_TO_BLOCK } from '../../lib/letterheadPDF'
 import { createVerification } from '../../lib/docVerify'
-import { FileText, Download, Loader2, RotateCcw } from 'lucide-react'
+import {
+  FileText, Download, Loader2, RotateCcw,
+  ClipboardList, ExternalLink, ShieldCheck, ShieldOff,
+  RefreshCw,
+} from 'lucide-react'
 import toast from 'react-hot-toast'
 
 // ── Letter types ───────────────────────────────────────────────────────────────
@@ -56,7 +57,7 @@ We look forward to a long and productive association.`,
 
   'Salary Certificate': `This is to certify that [Employee Name], [Designation], is currently employed with us since [Joining Date].
 
-[His/Her/Their] gross monthly salary is INR [Gross Amount], and the net monthly salary (after statutory deductions) is INR [Net Amount].
+[His/Her/Their] gross monthly salary is INR [Gross Amount], and net monthly salary (after statutory deductions) is INR [Net Amount].
 
 This certificate is issued on request for [purpose — e.g. bank loan / visa] purposes only.`,
 
@@ -83,13 +84,27 @@ We wish [him/her/them] all success in future endeavours.`,
   'General Letter': '',
 }
 
+// ── Doc type formatter ─────────────────────────────────────────────────────────
+const DOC_TYPE_LABELS = {
+  letter: 'Letter', invoice: 'Invoice', bill: 'Bill',
+  po: 'Purchase Order', vendor_credit: 'Vendor Credit',
+  quote: 'Quote', so: 'Sales Order', dc: 'Delivery Challan',
+  cn: 'Credit Note',
+}
+const fmtDocType = t => DOC_TYPE_LABELS[t] || t
+
+const fmtDate = d => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'
+
 const todayStr = () => new Date().toISOString().slice(0, 10)
 const inp = 'w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500'
 
+// ── Component ──────────────────────────────────────────────────────────────────
 export default function LettersPage() {
   const { company, companyId } = useAuth()
-  const [downloading, setDownloading] = useState(false)
+  const [tab, setTab] = useState('compose')
 
+  // ── Compose state ────────────────────────────────────────────────────────────
+  const [downloading, setDownloading] = useState(false)
   const [form, setForm] = useState({
     letterType:           'Experience Certificate',
     refNumber:            '',
@@ -103,7 +118,6 @@ export default function LettersPage() {
   })
 
   const setF = (k, v) => setForm(prev => ({ ...prev, [k]: v }))
-
   const hideToBlock = HIDE_TO_BLOCK.has(form.letterType)
 
   const handleTypeChange = (type) => {
@@ -128,11 +142,9 @@ export default function LettersPage() {
     if (!form.body.trim()) return toast.error('Letter body cannot be empty')
     setDownloading(true)
     try {
-      // Auto-generate ref number if blank
       const refNo = form.refNumber.trim() ||
         `LTR-${new Date().toISOString().slice(0, 10)}-${Date.now().toString().slice(-4)}`
 
-      // Create verification record → get QR URL
       const verifyUrl = await createVerification(supabase, companyId, {
         docType:   'letter',
         docNumber: refNo,
@@ -149,10 +161,38 @@ export default function LettersPage() {
     }
   }
 
-  return (
-    <div className="p-4 md:p-6 space-y-6 max-w-4xl mx-auto">
+  // ── Issued documents state ───────────────────────────────────────────────────
+  const [docs, setDocs]           = useState([])
+  const [loadingDocs, setLoadingDocs] = useState(false)
+  const [docFilter, setDocFilter] = useState('all')
 
-      {/* Header */}
+  const fetchDocs = () => {
+    if (!companyId) return
+    setLoadingDocs(true)
+    let q = supabase
+      .from('document_verifications')
+      .select('token, doc_type, doc_number, doc_date, party_name, amount, status, created_at, sig')
+      .eq('company_id', companyId)
+      .order('created_at', { ascending: false })
+      .limit(200)
+    if (docFilter !== 'all') q = q.eq('doc_type', docFilter)
+    q.then(({ data, error }) => {
+      if (!error) setDocs(data || [])
+      setLoadingDocs(false)
+    })
+  }
+
+  useEffect(() => {
+    if (tab === 'history') fetchDocs()
+  }, [tab, companyId, docFilter]) // eslint-disable-line
+
+  const docTypes = ['all', 'letter', 'invoice', 'bill', 'po', 'vendor_credit', 'quote', 'so', 'dc', 'cn']
+
+  // ── Render ─────────────────────────────────────────────────────────────────
+  return (
+    <div className="p-4 md:p-6 space-y-5 max-w-5xl mx-auto">
+
+      {/* Page header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-lg bg-emerald-900/40 flex items-center justify-center">
@@ -160,152 +200,219 @@ export default function LettersPage() {
           </div>
           <div>
             <h1 className="text-lg font-bold text-slate-100">Official Letters</h1>
-            <p className="text-xs text-slate-400">Company letterhead — {company?.name || 'Your Company'}</p>
+            <p className="text-xs text-slate-400">{company?.name || 'Your Company'}</p>
           </div>
         </div>
-        <button
-          onClick={handleReset}
-          className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-100 transition-colors"
-        >
-          <RotateCcw className="w-3.5 h-3.5" /> Clear
-        </button>
+        {tab === 'compose' && (
+          <button onClick={handleReset} className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-100 transition-colors">
+            <RotateCcw className="w-3.5 h-3.5" /> Clear
+          </button>
+        )}
       </div>
 
-      {/* Form */}
-      <div className="bg-dark-800 rounded-xl border border-dark-700 p-6 space-y-5">
+      {/* Tabs */}
+      <div className="flex gap-1 bg-dark-800 border border-dark-700 rounded-lg p-1 w-fit">
+        {[
+          { key: 'compose', label: 'Compose Letter', Icon: FileText },
+          { key: 'history', label: 'Issued Documents', Icon: ClipboardList },
+        ].map(({ key, label, Icon }) => (
+          <button
+            key={key}
+            onClick={() => setTab(key)}
+            className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${
+              tab === key
+                ? 'bg-emerald-600 text-white shadow'
+                : 'text-slate-400 hover:text-slate-100'
+            }`}
+          >
+            <Icon className="w-3.5 h-3.5" /> {label}
+          </button>
+        ))}
+      </div>
 
-        {/* Letter type + Date */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className="text-xs text-slate-400 mb-1 block">Letter Type *</label>
-            <select
-              className={inp}
-              value={form.letterType}
-              onChange={e => handleTypeChange(e.target.value)}
-            >
-              {LETTER_TYPES.map(t => (
-                <option key={t.value} value={t.value}>{t.label}</option>
-              ))}
-            </select>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs text-slate-400 mb-1 block">Ref Number</label>
-              <input
-                className={inp}
-                value={form.refNumber}
-                onChange={e => setF('refNumber', e.target.value)}
-                placeholder="SRA/HR/001/2026"
-              />
-            </div>
-            <div>
-              <label className="text-xs text-slate-400 mb-1 block">Date *</label>
-              <input
-                type="date"
-                className={inp}
-                value={form.date}
-                onChange={e => setF('date', e.target.value)}
-              />
-            </div>
-          </div>
-        </div>
+      {/* ── COMPOSE TAB ─────────────────────────────────────────────────────── */}
+      {tab === 'compose' && (
+        <div className="bg-dark-800 rounded-xl border border-dark-700 p-6 space-y-5">
 
-        {/* To block — hidden for Experience Certificate */}
-        {!hideToBlock && (
+          {/* Letter type + Date/Ref */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="text-xs text-slate-400 mb-1 block">To (Name)</label>
-              <input
-                className={inp}
-                value={form.toName}
-                onChange={e => setF('toName', e.target.value)}
-                placeholder="Mr. Ravi Kumar"
-              />
+              <label className="text-xs text-slate-400 mb-1 block">Letter Type *</label>
+              <select className={inp} value={form.letterType} onChange={e => handleTypeChange(e.target.value)}>
+                {LETTER_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+              </select>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Ref Number</label>
+                <input className={inp} value={form.refNumber} onChange={e => setF('refNumber', e.target.value)} placeholder="SRA/HR/001/2026" />
+              </div>
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">Date *</label>
+                <input type="date" className={inp} value={form.date} onChange={e => setF('date', e.target.value)} />
+              </div>
+            </div>
+          </div>
+
+          {/* To block — hidden for Experience Certificate */}
+          {!hideToBlock && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">To (Name)</label>
+                <input className={inp} value={form.toName} onChange={e => setF('toName', e.target.value)} placeholder="Mr. Ravi Kumar" />
+              </div>
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">To (Address / Organisation)</label>
+                <input className={inp} value={form.toAddress} onChange={e => setF('toAddress', e.target.value)} placeholder="123, Main Road, Chennai – 600001" />
+              </div>
+            </div>
+          )}
+
+          {/* Subject */}
+          <div>
+            <label className="text-xs text-slate-400 mb-1 block">Subject</label>
+            <input className={inp} value={form.subject} onChange={e => setF('subject', e.target.value)} placeholder="Issue of Experience Certificate for Mr. Ravi Kumar" />
+          </div>
+
+          {/* Body */}
+          <div>
+            <label className="text-xs text-slate-400 mb-1 block">Letter Body *</label>
+            <textarea
+              className={`${inp} min-h-[220px] resize-y font-mono text-xs leading-relaxed`}
+              value={form.body}
+              onChange={e => setF('body', e.target.value)}
+              placeholder="Type the letter content here. Replace [placeholders] with actual values."
+            />
+            <p className="text-[10px] text-slate-500 mt-1">Replace [placeholders] with actual names, dates, and values before downloading.</p>
+          </div>
+
+          {/* Signatory */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="text-xs text-slate-400 mb-1 block">Signatory Name</label>
+              <input className={inp} value={form.signatoryName} onChange={e => setF('signatoryName', e.target.value)} placeholder="Aadhavun S." />
             </div>
             <div>
-              <label className="text-xs text-slate-400 mb-1 block">To (Address / Organisation)</label>
-              <input
-                className={inp}
-                value={form.toAddress}
-                onChange={e => setF('toAddress', e.target.value)}
-                placeholder="123, Main Road, Chennai – 600001"
-              />
+              <label className="text-xs text-slate-400 mb-1 block">Designation</label>
+              <input className={inp} value={form.signatoryDesignation} onChange={e => setF('signatoryDesignation', e.target.value)} placeholder="Managing Director" />
             </div>
           </div>
-        )}
 
-        {/* Subject */}
-        <div>
-          <label className="text-xs text-slate-400 mb-1 block">Subject</label>
-          <input
-            className={inp}
-            value={form.subject}
-            onChange={e => setF('subject', e.target.value)}
-            placeholder="Issue of Experience Certificate for Mr. Ravi Kumar"
-          />
+          {/* Download */}
+          <div className="flex items-center justify-between pt-2">
+            <p className="text-[10px] text-slate-500 flex items-center gap-1.5">
+              <ShieldCheck className="w-3 h-3 text-emerald-500" />
+              Each letter gets a unique verification QR code — scan to authenticate
+            </p>
+            <button
+              onClick={handleDownload}
+              disabled={downloading}
+              className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-semibold text-sm px-5 py-2.5 rounded-lg transition-colors"
+            >
+              {downloading
+                ? <><Loader2 className="w-4 h-4 animate-spin" /> Generating…</>
+                : <><Download className="w-4 h-4" /> Download PDF</>
+              }
+            </button>
+          </div>
         </div>
+      )}
 
-        {/* Body */}
-        <div>
-          <label className="text-xs text-slate-400 mb-1 block">Letter Body *</label>
-          <textarea
-            className={`${inp} min-h-[220px] resize-y font-mono text-xs leading-relaxed`}
-            value={form.body}
-            onChange={e => setF('body', e.target.value)}
-            placeholder="Type the letter content here. Replace [placeholders] with actual values."
-          />
-          <p className="text-[10px] text-slate-500 mt-1">
-            Replace [placeholders] with actual names, dates, and values before downloading.
+      {/* ── ISSUED DOCUMENTS TAB ────────────────────────────────────────────── */}
+      {tab === 'history' && (
+        <div className="space-y-4">
+
+          {/* Filter + Refresh row */}
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-1 flex-wrap">
+              {docTypes.map(t => (
+                <button
+                  key={t}
+                  onClick={() => setDocFilter(t)}
+                  className={`text-xs px-3 py-1.5 rounded-full border transition-all ${
+                    docFilter === t
+                      ? 'bg-emerald-600 border-emerald-600 text-white'
+                      : 'border-dark-600 text-slate-400 hover:text-slate-100 hover:border-dark-500'
+                  }`}
+                >
+                  {t === 'all' ? 'All' : fmtDocType(t)}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={fetchDocs}
+              className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-100 transition-colors"
+            >
+              <RefreshCw className="w-3.5 h-3.5" /> Refresh
+            </button>
+          </div>
+
+          {/* Table */}
+          <div className="bg-dark-800 rounded-xl border border-dark-700 overflow-hidden">
+            {loadingDocs ? (
+              <div className="flex items-center justify-center py-16">
+                <Loader2 className="w-5 h-5 animate-spin text-emerald-400" />
+              </div>
+            ) : docs.length === 0 ? (
+              <div className="text-center py-16 text-slate-500 text-sm">
+                No issued documents found
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-dark-700 text-slate-500 uppercase tracking-wide">
+                      <th className="text-left px-4 py-3 font-semibold">Type</th>
+                      <th className="text-left px-4 py-3 font-semibold">Document No.</th>
+                      <th className="text-left px-4 py-3 font-semibold">Date</th>
+                      <th className="text-left px-4 py-3 font-semibold">Party / Subject</th>
+                      <th className="text-left px-4 py-3 font-semibold">Issued On</th>
+                      <th className="text-left px-4 py-3 font-semibold">Status</th>
+                      <th className="text-right px-4 py-3 font-semibold">Verify</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {docs.map(doc => (
+                      <tr key={doc.token} className="border-b border-dark-700/50 hover:bg-dark-700/30 transition-colors">
+                        <td className="px-4 py-3 text-slate-300 font-medium">{fmtDocType(doc.doc_type)}</td>
+                        <td className="px-4 py-3 text-slate-300 font-mono">{doc.doc_number || '—'}</td>
+                        <td className="px-4 py-3 text-slate-400">{fmtDate(doc.doc_date)}</td>
+                        <td className="px-4 py-3 text-slate-400 max-w-[160px] truncate">{doc.party_name || '—'}</td>
+                        <td className="px-4 py-3 text-slate-500">{fmtDate(doc.created_at?.slice(0, 10))}</td>
+                        <td className="px-4 py-3">
+                          {doc.status === 'active' ? (
+                            <span className="flex items-center gap-1 text-emerald-400">
+                              <ShieldCheck className="w-3 h-3" /> Active
+                            </span>
+                          ) : (
+                            <span className="flex items-center gap-1 text-amber-400">
+                              <ShieldOff className="w-3 h-3" /> Voided
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <a
+                            href={`/verify/${doc.token}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 text-emerald-400 hover:text-emerald-300 transition-colors"
+                          >
+                            <ExternalLink className="w-3 h-3" /> Open
+                          </a>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          <p className="text-[10px] text-slate-600 text-center">
+            Showing last 200 records · All document types · Click "Open" to view the public verification page
           </p>
         </div>
-
-        {/* Signatory */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className="text-xs text-slate-400 mb-1 block">Signatory Name</label>
-            <input
-              className={inp}
-              value={form.signatoryName}
-              onChange={e => setF('signatoryName', e.target.value)}
-              placeholder="Aadhavun S."
-            />
-          </div>
-          <div>
-            <label className="text-xs text-slate-400 mb-1 block">Designation</label>
-            <input
-              className={inp}
-              value={form.signatoryDesignation}
-              onChange={e => setF('signatoryDesignation', e.target.value)}
-              placeholder="Managing Director"
-            />
-          </div>
-        </div>
-
-        {/* Download */}
-        <div className="flex justify-end pt-2">
-          <button
-            onClick={handleDownload}
-            disabled={downloading}
-            className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-semibold text-sm px-5 py-2.5 rounded-lg transition-colors"
-          >
-            {downloading
-              ? <><Loader2 className="w-4 h-4 animate-spin" /> Generating…</>
-              : <><Download className="w-4 h-4" /> Download PDF</>
-            }
-          </button>
-        </div>
-      </div>
-
-      {/* Info bar */}
-      <div className="bg-dark-800/50 border border-dark-700 rounded-xl p-4 flex items-start gap-3">
-        <div className="w-5 h-5 rounded-full bg-emerald-900/60 flex items-center justify-center flex-shrink-0 mt-0.5">
-          <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-        </div>
-        <p className="text-xs text-slate-400 leading-relaxed">
-          Each letter gets a unique <span className="text-emerald-400 font-medium">verification QR code</span> stamped in the header — scannable to confirm the document was issued by {company?.name || 'your company'}.
-          Letterhead auto-fills from company settings: name · address · CIN · GSTIN · email · mobile.
-        </p>
-      </div>
+      )}
     </div>
   )
 }
