@@ -173,8 +173,6 @@ export const NAV_ITEMS = [
         roles: [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
       { key: 'projects', label: 'Projects', icon: 'FolderOpen',   module: MODULES.CLIENTS_PROJECTS,
         roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
-      { key: 'letters',  label: 'Letters',  icon: 'FileText',     module: MODULES.CORE,
-        roles: [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
     ],
   },
   {
@@ -196,7 +194,9 @@ export const NAV_ITEMS = [
   {
     section: 'People',
     items: [
-      { key: 'hr', label: 'Employee Management', icon: 'Users', module: MODULES.HR_PAYROLL,
+      { key: 'hr',      label: 'Employee Management', icon: 'Users',    module: MODULES.HR_PAYROLL,
+        roles: [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
+      { key: 'letters', label: 'Letters',           icon: 'FileText', module: MODULES.CORE,
         roles: [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
     ],
   },
