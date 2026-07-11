@@ -34,6 +34,7 @@ const FieldExpensePage   = lazy(() => import('./pages/fieldexpense/FieldExpenseP
 const SettingsPage       = lazy(() => import('./pages/settings/SettingsPage'))
 const ProfilePage        = lazy(() => import('./pages/settings/ProfilePage'))
 const SuperAdminPage     = lazy(() => import('./pages/superadmin/SuperAdminPage'))
+const LettersPage        = lazy(() => import('./pages/letters/LettersPage'))
 
 // ── Connectivity hook ─────────────────────────────────────────────────────────
 function useOnlineStatus() {
@@ -288,6 +289,7 @@ function AppShell() {
       case 'purchase':     return wrap(PurchasePage,       MODULES.PURCHASE)
       case 'reports':      return wrap(ReportsPage,        MODULES.REPORTS)
       case 'hr':           return wrap(HRPage,             MODULES.HR_PAYROLL)
+      case 'letters':      return wrap(LettersPage,         MODULES.CORE)
       case 'settings':     return wrap(SettingsPage,       MODULES.CORE)
       case 'profile':      return wrap(ProfilePage,        MODULES.CORE)
       default:             return <ComingSoon page={page} />

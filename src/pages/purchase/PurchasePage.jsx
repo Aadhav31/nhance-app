@@ -1352,7 +1352,7 @@ function VendorCreditsTab({ companyId, session }) {
     setShowCreate(true)
   }
 
-  const dlPDFvc = (vc) => { try { downloadVendorCreditPDF(vc, company) } catch(e) { toast.error(e.message) } }
+  const dlPDFvc = async (vc) => { try { const verifyUrl = await createVerification(supabase, companyId, { docType: 'vendor_credit', docNumber: vc.vc_number, docDate: vc.cn_date, partyName: vc.vendor_name, amount: vc.total_amount }); await downloadVendorCreditPDF(vc, company, verifyUrl) } catch(e) { toast.error(e.message) } }
   const voidQRvc = async (vc) => {
     if (!window.confirm(`Void QR code for ${vc.vc_number}?\nAny printed copy will immediately show as invalid.`)) return
     const r = await voidVerification(supabase, companyId, { docType: 'vc', docNumber: vc.vc_number })
