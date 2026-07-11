@@ -101,12 +101,21 @@ export async function downloadVoucherPDF(company, voucher) {
   pdf.setFont('helvetica', 'bold')
   pdf.setFontSize(11)
   pdf.setTextColor(...GREEN)
-  // wrap company name within IW
   const nameLines = pdf.splitTextToSize((company?.name || 'Company').toUpperCase(), IW)
   nameLines.forEach((l, i) => pdf.text(l, W / 2, y + i * 5, { align: 'center' }))
   y += nameLines.length * 5
 
-  // GSTIN / phone — one line, truncated to IW
+  // Address below company name
+  if (company?.address) {
+    pdf.setFont('helvetica', 'normal')
+    pdf.setFontSize(7)
+    pdf.setTextColor(...GREY)
+    const addrLines = pdf.splitTextToSize(company.address, IW)
+    addrLines.slice(0, 2).forEach((l, i) => pdf.text(l, W / 2, y + i * 3.8, { align: 'center' }))
+    y += Math.min(addrLines.length, 2) * 3.8
+  }
+
+  // GSTIN / phone — one line
   const meta = [
     company?.gstin         ? `GSTIN: ${company.gstin}`       : '',
     company?.contact_phone ? `Ph: ${company.contact_phone}`  : '',
@@ -115,9 +124,8 @@ export async function downloadVoucherPDF(company, voucher) {
     pdf.setFont('helvetica', 'normal')
     pdf.setFontSize(7)
     pdf.setTextColor(...GREY)
-    // splitTextToSize ensures it won't overflow; take first line only (meta is always short)
     const mLine = pdf.splitTextToSize(meta, IW)[0]
-    pdf.text(mLine, W / 2, y, { align: 'center' })
+    pdf.text(mLine, W / 2, y + 1, { align: 'center' })
     y += 4
   }
 
@@ -153,13 +161,7 @@ export async function downloadVoucherPDF(company, voucher) {
   pdf.setFont('helvetica', 'normal')
   pdf.setTextColor(...BLACK)
   pdf.text(dateStr, RIGHT - pdf.getTextWidth(dateStr), y)
-  y += 6
-
-  // ── Light divider ─────────────────────────────────────────────────────────
-  pdf.setDrawColor(...LGREY)
-  pdf.setLineWidth(0.2)
-  pdf.line(M, y, RIGHT, y)
-  y += 4
+  y += 8
 
   // ── Amount chip ───────────────────────────────────────────────────────────
   // Measure how many lines the "in words" text needs
@@ -196,7 +198,7 @@ export async function downloadVoucherPDF(company, voucher) {
   pdf.setFontSize(6.5)
   pdf.setTextColor(...GREY)
   wordLines.forEach((l, i) => pdf.text(l, M + 3, y + 10 + i * 3.8))
-  y += chipH + 4
+  y += chipH + 3
 
   // ── Details rows (label | value, value wraps, row expands) ───────────────
   const rows = [
