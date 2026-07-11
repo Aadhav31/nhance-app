@@ -93,3 +93,31 @@ export async function createVerification(supabase, companyId, { docType, docNumb
     return null
   }
 }
+
+// ── Void all active verifications for a document ──────────────────────────────
+/**
+ * Sets status = 'void' on every active verification record for the given
+ * company + docType + docNumber combination. Call this when a document is
+ * cancelled, corrected, or superseded — the QR on any printed copy will
+ * immediately show as voided on the verify page.
+ *
+ * @returns {Promise<{ count: number } | null>}  { count } = rows voided, or null on error
+ */
+export async function voidVerification(supabase, companyId, { docType, docNumber }) {
+  if (!supabase || !companyId || !docNumber) return null
+  try {
+    const { data, error } = await supabase
+      .from('document_verifications')
+      .update({ status: 'void' })
+      .eq('company_id', companyId)
+      .eq('doc_type',   docType)
+      .eq('doc_number', docNumber)
+      .eq('status',     'active')   // only touch currently-active records
+      .select('token')
+
+    if (error) return null
+    return { count: data?.length ?? 0 }
+  } catch {
+    return null
+  }
+}

@@ -8,14 +8,14 @@ import {
   Plus, X, Loader2, ShoppingCart, FileText, Building, CreditCard,
   ArrowUpCircle, RefreshCcw, Wallet, Search, ChevronRight,
   CheckCircle, User, Phone, Mail, MapPin, Hash, Upload, ExternalLink,
-  Pencil, Trash2, Ban, FileDown, Sheet,
+  Pencil, Trash2, Ban, FileDown, Sheet, ShieldOff,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format } from 'date-fns'
 import {
   downloadBillPDF, downloadPOPDF, downloadVendorCreditPDF, downloadPaymentMadePDF,
 } from '../../lib/docPDF'
-import { createVerification } from '../../lib/docVerify'
+import { createVerification, voidVerification } from '../../lib/docVerify'
 import {
   downloadBillXLSX, downloadPOXLSX, downloadPaymentMadeXLSX,
 } from '../../lib/docXLSX'
@@ -785,6 +785,12 @@ function BillsTab({ companyId, session }) {
   const dlPDFbill = async (b) => {
     try { const { data: ld } = await supabase.from('bill_line_items').select('*').eq('bill_id', b.id).order('sort_order'); const verifyUrl = await createVerification(supabase, companyId, { docType: 'bill', docNumber: b.bill_number, docDate: b.bill_date, partyName: b.vendor_name, amount: b.total_amount }); await downloadBillPDF(b, ld||[], company, verifyUrl) } catch(e) { toast.error(e.message) }
   }
+  const voidQRbill = async (b) => {
+    if (!window.confirm(`Void QR code for ${b.bill_number}?\nAny printed copy will immediately show as invalid.`)) return
+    const r = await voidVerification(supabase, companyId, { docType: 'bill', docNumber: b.bill_number })
+    if (!r || r.count === 0) toast('No active QR found.', { icon: 'ℹ️' })
+    else toast.success(`QR voided — ${b.bill_number} printed copies now show as invalid`)
+  }
   const dlXLSXbill = async (b) => {
     try { const { data: ld } = await supabase.from('bill_line_items').select('*').eq('bill_id', b.id).order('sort_order'); downloadBillXLSX(b, ld||[], company) } catch(e) { toast.error(e.message) }
   }
@@ -1011,6 +1017,7 @@ function BillsTab({ companyId, session }) {
                   {!['paid','cancelled'].includes(b.status) && <button onClick={() => openEdit(b)} className="p-1.5 rounded-lg text-slate-500 hover:text-blue-400 hover:bg-blue-900/20" title="Edit"><Pencil className="w-3.5 h-3.5" /></button>}
                   {!['paid','cancelled'].includes(b.status) && <button onClick={() => voidBill(b)} className="p-1.5 rounded-lg text-slate-500 hover:text-yellow-400 hover:bg-yellow-900/20" title="Void"><Ban className="w-3.5 h-3.5" /></button>}
                   {b.status !== 'paid' && <button onClick={() => deleteBill(b)} className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-900/20" title="Delete"><Trash2 className="w-3.5 h-3.5" /></button>}
+                  <button onClick={() => voidQRbill(b)} className="p-1.5 rounded-lg text-slate-500 hover:text-amber-400 hover:bg-amber-900/20" title="Void QR Code"><ShieldOff className="w-3.5 h-3.5" /></button>
                   <button onClick={() => dlPDFbill(b)} className="p-1.5 rounded-lg text-slate-500 hover:text-emerald-400 hover:bg-emerald-900/20" title="Download PDF"><FileDown className="w-3.5 h-3.5" /></button>
                   <button onClick={() => dlXLSXbill(b)} className="p-1.5 rounded-lg text-slate-500 hover:text-teal-400 hover:bg-teal-900/20" title="Export Excel"><Sheet className="w-3.5 h-3.5" /></button>
                 </div>
@@ -1126,6 +1133,12 @@ function PurchaseOrdersTab({ companyId, session }) {
 
   const dlPDFpo = async (po) => {
     try { const { data: ld } = await supabase.from('po_line_items').select('*').eq('po_id', po.id).order('sort_order'); const verifyUrl = await createVerification(supabase, companyId, { docType: 'po', docNumber: po.po_number, docDate: po.po_date, partyName: po.vendor_name, amount: po.total_amount }); await downloadPOPDF(po, ld||[], company, verifyUrl) } catch(e) { toast.error(e.message) }
+  }
+  const voidQRpo = async (po) => {
+    if (!window.confirm(`Void QR code for ${po.po_number}?\nAny printed copy will immediately show as invalid.`)) return
+    const r = await voidVerification(supabase, companyId, { docType: 'po', docNumber: po.po_number })
+    if (!r || r.count === 0) toast('No active QR found.', { icon: 'ℹ️' })
+    else toast.success(`QR voided — ${po.po_number} printed copies now show as invalid`)
   }
   const dlXLSXpo = async (po) => {
     try { const { data: ld } = await supabase.from('po_line_items').select('*').eq('po_id', po.id).order('sort_order'); downloadPOXLSX(po, ld||[], company) } catch(e) { toast.error(e.message) }
@@ -1275,6 +1288,7 @@ function PurchaseOrdersTab({ companyId, session }) {
                   {!['received','cancelled'].includes(p.status) && <button onClick={() => openEdit(p)} className="p-1.5 rounded-lg text-slate-500 hover:text-blue-400 hover:bg-blue-900/20" title="Edit"><Pencil className="w-3.5 h-3.5" /></button>}
                   {!['received','cancelled'].includes(p.status) && <button onClick={() => voidPO(p)} className="p-1.5 rounded-lg text-slate-500 hover:text-yellow-400 hover:bg-yellow-900/20" title="Void"><Ban className="w-3.5 h-3.5" /></button>}
                   {p.status !== 'received' && <button onClick={() => deletePO(p)} className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-900/20" title="Delete"><Trash2 className="w-3.5 h-3.5" /></button>}
+                  <button onClick={() => voidQRpo(p)} className="p-1.5 rounded-lg text-slate-500 hover:text-amber-400 hover:bg-amber-900/20" title="Void QR Code"><ShieldOff className="w-3.5 h-3.5" /></button>
                   <button onClick={() => dlPDFpo(p)} className="p-1.5 rounded-lg text-slate-500 hover:text-emerald-400 hover:bg-emerald-900/20" title="Download PDF"><FileDown className="w-3.5 h-3.5" /></button>
                   <button onClick={() => dlXLSXpo(p)} className="p-1.5 rounded-lg text-slate-500 hover:text-teal-400 hover:bg-teal-900/20" title="Export Excel"><Sheet className="w-3.5 h-3.5" /></button>
                 </div>
@@ -1339,6 +1353,12 @@ function VendorCreditsTab({ companyId, session }) {
   }
 
   const dlPDFvc = (vc) => { try { downloadVendorCreditPDF(vc, company) } catch(e) { toast.error(e.message) } }
+  const voidQRvc = async (vc) => {
+    if (!window.confirm(`Void QR code for ${vc.vc_number}?\nAny printed copy will immediately show as invalid.`)) return
+    const r = await voidVerification(supabase, companyId, { docType: 'vc', docNumber: vc.vc_number })
+    if (!r || r.count === 0) toast('No active QR found.', { icon: 'ℹ️' })
+    else toast.success(`QR voided — ${vc.vc_number} printed copies now show as invalid`)
+  }
 
   const deleteVC = async (vc) => {
     if (vc.status === 'applied') return toast.error('Cannot delete an applied credit. Void it instead.')
@@ -1433,6 +1453,7 @@ function VendorCreditsTab({ companyId, session }) {
                 {vc.status !== 'cancelled' && <button onClick={() => openEdit(vc)} className="p-1.5 rounded-lg text-slate-500 hover:text-blue-400 hover:bg-blue-900/20" title="Edit"><Pencil className="w-3.5 h-3.5" /></button>}
                 {vc.status !== 'cancelled' && <button onClick={() => voidVC(vc)} className="p-1.5 rounded-lg text-slate-500 hover:text-yellow-400 hover:bg-yellow-900/20" title="Void"><Ban className="w-3.5 h-3.5" /></button>}
                 <button onClick={() => deleteVC(vc)} className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-900/20" title="Delete"><Trash2 className="w-3.5 h-3.5" /></button>
+                <button onClick={() => voidQRvc(vc)} className="p-1.5 rounded-lg text-slate-500 hover:text-amber-400 hover:bg-amber-900/20" title="Void QR Code"><ShieldOff className="w-3.5 h-3.5" /></button>
                 <button onClick={() => dlPDFvc(vc)} className="p-1.5 rounded-lg text-slate-500 hover:text-emerald-400 hover:bg-emerald-900/20" title="Download PDF"><FileDown className="w-3.5 h-3.5" /></button>
               </div>
             </div>

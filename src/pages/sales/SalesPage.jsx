@@ -10,7 +10,7 @@ import {
   ArrowDownCircle, ShoppingCart, ChevronRight, CheckCircle,
   Copy, Edit2, Trash2, Search, IndianRupee, Calendar, User,
   FileQuestion, Send, AlertTriangle, Building2, Phone, Mail,
-  MapPin, BadgeCheck, Ban, FileDown, Sheet,
+  MapPin, BadgeCheck, Ban, FileDown, Sheet, ShieldOff,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format } from 'date-fns'
@@ -19,7 +19,7 @@ import {
   downloadInvoicePDF, downloadQuotePDF, downloadSOPDF,
   downloadDCPDF, downloadCNPDF, downloadPaymentReceivedPDF,
 } from '../../lib/docPDF'
-import { createVerification } from '../../lib/docVerify'
+import { createVerification, voidVerification } from '../../lib/docVerify'
 import {
   downloadInvoiceXLSX, downloadQuoteXLSX, downloadSOXLSX,
   downloadDCXLSX, downloadCNXLSX, downloadPaymentReceivedXLSX,
@@ -434,6 +434,12 @@ function InvoicesTab({ companyId, session }) {
       downloadInvoiceXLSX(inv, ld || [], company)
     } catch(e) { toast.error(e.message) }
   }
+  const voidQR = async (inv) => {
+    if (!window.confirm(`Void QR code for ${inv.invoice_number}?\nAny printed copy will immediately show as invalid on the verification page.`)) return
+    const r = await voidVerification(supabase, companyId, { docType: 'invoice', docNumber: inv.invoice_number })
+    if (!r || r.count === 0) toast('No active QR found for this invoice.', { icon: 'ℹ️' })
+    else toast.success(`QR voided — ${inv.invoice_number} printed copies now show as invalid`)
+  }
 
   const { data: invoices = [], isLoading } = useQuery({
     queryKey: ['sales_invoices', companyId],
@@ -536,6 +542,7 @@ function InvoicesTab({ companyId, session }) {
                   {!['paid','cancelled'].includes(inv.status) && <button onClick={() => openEdit(inv)} className="p-1.5 rounded-lg text-slate-500 hover:text-blue-400 hover:bg-blue-900/20" title="Edit"><Edit2 className="w-3.5 h-3.5" /></button>}
                   {!['paid','cancelled'].includes(inv.status) && <button onClick={() => voidInvoice(inv)} className="p-1.5 rounded-lg text-slate-500 hover:text-yellow-400 hover:bg-yellow-900/20" title="Void"><Ban className="w-3.5 h-3.5" /></button>}
                   {inv.status !== 'paid' && <button onClick={() => deleteInvoice(inv)} className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-900/20" title="Delete"><Trash2 className="w-3.5 h-3.5" /></button>}
+                  <button onClick={() => voidQR(inv)} className="p-1.5 rounded-lg text-slate-500 hover:text-amber-400 hover:bg-amber-900/20" title="Void QR Code"><ShieldOff className="w-3.5 h-3.5" /></button>
                   <button onClick={() => dlPDF(inv)} className="p-1.5 rounded-lg text-slate-500 hover:text-emerald-400 hover:bg-emerald-900/20" title="Download PDF"><FileDown className="w-3.5 h-3.5" /></button>
                   <button onClick={() => dlXLSX(inv)} className="p-1.5 rounded-lg text-slate-500 hover:text-teal-400 hover:bg-teal-900/20" title="Export Excel"><Sheet className="w-3.5 h-3.5" /></button>
                 </div>
@@ -717,6 +724,12 @@ function QuotesTab({ companyId, session }) {
       downloadQuoteXLSX(q, ld || [], company)
     } catch(e) { toast.error(e.message) }
   }
+  const voidQR = async (q) => {
+    if (!window.confirm(`Void QR code for ${q.quote_number}?\nAny printed copy will immediately show as invalid.`)) return
+    const r = await voidVerification(supabase, companyId, { docType: 'quote', docNumber: q.quote_number })
+    if (!r || r.count === 0) toast('No active QR found.', { icon: 'ℹ️' })
+    else toast.success(`QR voided — ${q.quote_number} printed copies now show as invalid`)
+  }
 
   const deleteQuote = async (q) => {
     if (!window.confirm(`Delete Quote ${q.quote_number}?`)) return
@@ -780,6 +793,7 @@ function QuotesTab({ companyId, session }) {
                   {!['accepted','rejected'].includes(q.status) && <button onClick={() => openEdit(q)} className="p-1.5 rounded-lg text-slate-500 hover:text-blue-400 hover:bg-blue-900/20" title="Edit"><Edit2 className="w-3.5 h-3.5" /></button>}
                   {!['accepted','rejected'].includes(q.status) && <button onClick={() => voidQuote(q)} className="p-1.5 rounded-lg text-slate-500 hover:text-yellow-400 hover:bg-yellow-900/20" title="Void"><Ban className="w-3.5 h-3.5" /></button>}
                   <button onClick={() => deleteQuote(q)} className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-900/20" title="Delete"><Trash2 className="w-3.5 h-3.5" /></button>
+                  <button onClick={() => voidQR(q)} className="p-1.5 rounded-lg text-slate-500 hover:text-amber-400 hover:bg-amber-900/20" title="Void QR Code"><ShieldOff className="w-3.5 h-3.5" /></button>
                   <button onClick={() => dlPDF(q)} className="p-1.5 rounded-lg text-slate-500 hover:text-emerald-400 hover:bg-emerald-900/20" title="Download PDF"><FileDown className="w-3.5 h-3.5" /></button>
                   <button onClick={() => dlXLSX(q)} className="p-1.5 rounded-lg text-slate-500 hover:text-teal-400 hover:bg-teal-900/20" title="Export Excel"><Sheet className="w-3.5 h-3.5" /></button>
                 </div>
@@ -821,6 +835,12 @@ function SalesOrdersTab({ companyId, session }) {
   }
   const dlXLSXso = async (o) => {
     try { const { data: ld } = await supabase.from('so_line_items').select('*').eq('so_id', o.id).order('sort_order'); downloadSOXLSX(o, ld||[], company) } catch(e) { toast.error(e.message) }
+  }
+  const voidQRso = async (o) => {
+    if (!window.confirm(`Void QR code for ${o.so_number}?\nAny printed copy will immediately show as invalid.`)) return
+    const r = await voidVerification(supabase, companyId, { docType: 'so', docNumber: o.so_number })
+    if (!r || r.count === 0) toast('No active QR found.', { icon: 'ℹ️' })
+    else toast.success(`QR voided — ${o.so_number} printed copies now show as invalid`)
   }
 
   const deleteSO = async (o) => {
@@ -944,6 +964,7 @@ function SalesOrdersTab({ companyId, session }) {
                   {!['fulfilled','cancelled'].includes(o.status) && <button onClick={() => openEdit(o)} className="p-1.5 rounded-lg text-slate-500 hover:text-blue-400 hover:bg-blue-900/20" title="Edit"><Edit2 className="w-3.5 h-3.5" /></button>}
                   {!['fulfilled','cancelled'].includes(o.status) && <button onClick={() => voidSO(o)} className="p-1.5 rounded-lg text-slate-500 hover:text-yellow-400 hover:bg-yellow-900/20" title="Void"><Ban className="w-3.5 h-3.5" /></button>}
                   {o.status !== 'fulfilled' && <button onClick={() => deleteSO(o)} className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-900/20" title="Delete"><Trash2 className="w-3.5 h-3.5" /></button>}
+                  <button onClick={() => voidQRso(o)} className="p-1.5 rounded-lg text-slate-500 hover:text-amber-400 hover:bg-amber-900/20" title="Void QR Code"><ShieldOff className="w-3.5 h-3.5" /></button>
                   <button onClick={() => dlPDFso(o)} className="p-1.5 rounded-lg text-slate-500 hover:text-emerald-400 hover:bg-emerald-900/20" title="Download PDF"><FileDown className="w-3.5 h-3.5" /></button>
                   <button onClick={() => dlXLSXso(o)} className="p-1.5 rounded-lg text-slate-500 hover:text-teal-400 hover:bg-teal-900/20" title="Export Excel"><Sheet className="w-3.5 h-3.5" /></button>
                 </div>
@@ -1007,6 +1028,12 @@ function DeliveryChallansTab({ companyId, session }) {
   }
   const dlXLSXdc = async (dc) => {
     try { const { data: ld } = await supabase.from('dc_line_items').select('*').eq('dc_id', dc.id).order('sort_order'); downloadDCXLSX(dc, ld||[], company) } catch(e) { toast.error(e.message) }
+  }
+  const voidQRdc = async (dc) => {
+    if (!window.confirm(`Void QR code for ${dc.dc_number}?\nAny printed copy will immediately show as invalid.`)) return
+    const r = await voidVerification(supabase, companyId, { docType: 'dc', docNumber: dc.dc_number })
+    if (!r || r.count === 0) toast('No active QR found.', { icon: 'ℹ️' })
+    else toast.success(`QR voided — ${dc.dc_number} printed copies now show as invalid`)
   }
 
   const deleteDC = async (dc) => {
@@ -1109,6 +1136,7 @@ function DeliveryChallansTab({ companyId, session }) {
                   {dc.status === 'dispatched' && <button onClick={() => openEdit(dc)} className="p-1.5 rounded-lg text-slate-500 hover:text-blue-400 hover:bg-blue-900/20" title="Edit"><Edit2 className="w-3.5 h-3.5" /></button>}
                   {dc.status === 'dispatched' && <button onClick={() => voidDC(dc)} className="p-1.5 rounded-lg text-slate-500 hover:text-yellow-400 hover:bg-yellow-900/20" title="Void"><Ban className="w-3.5 h-3.5" /></button>}
                   <button onClick={() => deleteDC(dc)} className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-900/20" title="Delete"><Trash2 className="w-3.5 h-3.5" /></button>
+                  <button onClick={() => voidQRdc(dc)} className="p-1.5 rounded-lg text-slate-500 hover:text-amber-400 hover:bg-amber-900/20" title="Void QR Code"><ShieldOff className="w-3.5 h-3.5" /></button>
                   <button onClick={() => dlPDFdc(dc)} className="p-1.5 rounded-lg text-slate-500 hover:text-emerald-400 hover:bg-emerald-900/20" title="Download PDF"><FileDown className="w-3.5 h-3.5" /></button>
                   <button onClick={() => dlXLSXdc(dc)} className="p-1.5 rounded-lg text-slate-500 hover:text-teal-400 hover:bg-teal-900/20" title="Export Excel"><Sheet className="w-3.5 h-3.5" /></button>
                 </div>
@@ -1177,6 +1205,12 @@ function CreditNotesTab({ companyId, session }) {
   }
   const dlXLSXcn = async (cn) => {
     try { const { data: ld } = await supabase.from('cn_line_items').select('*').eq('cn_id', cn.id).order('sort_order'); downloadCNXLSX(cn, ld||[], company) } catch(e) { toast.error(e.message) }
+  }
+  const voidQRcn = async (cn) => {
+    if (!window.confirm(`Void QR code for ${cn.cn_number}?\nAny printed copy will immediately show as invalid.`)) return
+    const r = await voidVerification(supabase, companyId, { docType: 'cn', docNumber: cn.cn_number })
+    if (!r || r.count === 0) toast('No active QR found.', { icon: 'ℹ️' })
+    else toast.success(`QR voided — ${cn.cn_number} printed copies now show as invalid`)
   }
 
   const deleteCN = async (cn) => {
@@ -1275,6 +1309,7 @@ function CreditNotesTab({ companyId, session }) {
                 {cn.status !== 'cancelled' && <button onClick={() => openEdit(cn)} className="p-1.5 rounded-lg text-slate-500 hover:text-blue-400 hover:bg-blue-900/20" title="Edit"><Edit2 className="w-3.5 h-3.5" /></button>}
                 {cn.status !== 'cancelled' && <button onClick={() => voidCN(cn)} className="p-1.5 rounded-lg text-slate-500 hover:text-yellow-400 hover:bg-yellow-900/20" title="Void"><Ban className="w-3.5 h-3.5" /></button>}
                 <button onClick={() => deleteCN(cn)} className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-900/20" title="Delete"><Trash2 className="w-3.5 h-3.5" /></button>
+                <button onClick={() => voidQRcn(cn)} className="p-1.5 rounded-lg text-slate-500 hover:text-amber-400 hover:bg-amber-900/20" title="Void QR Code"><ShieldOff className="w-3.5 h-3.5" /></button>
                 <button onClick={() => dlPDFcn(cn)} className="p-1.5 rounded-lg text-slate-500 hover:text-emerald-400 hover:bg-emerald-900/20" title="Download PDF"><FileDown className="w-3.5 h-3.5" /></button>
                 <button onClick={() => dlXLSXcn(cn)} className="p-1.5 rounded-lg text-slate-500 hover:text-teal-400 hover:bg-teal-900/20" title="Export Excel"><Sheet className="w-3.5 h-3.5" /></button>
               </div>

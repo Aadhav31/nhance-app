@@ -4,13 +4,14 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import { generateInvoicePDF } from '../../lib/invoicePDF'
-import { createVerification } from '../../lib/docVerify'
+import { createVerification, voidVerification } from '../../lib/docVerify'
 import {
   Receipt, Plus, X, Loader2, Trash2, Pencil, Eye,
   TrendingUp, TrendingDown, Clock, Search, Banknote,
   ArrowUpCircle, ArrowDownCircle, ChevronRight, ChevronDown,
   Link, Copy, ExternalLink, Share2, Bell, AlertTriangle, CheckCircle2,
   Download, FileText, FileSpreadsheet, ToggleLeft, ToggleRight, CalendarRange,
+  ShieldOff,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format, startOfMonth, endOfMonth, parseISO } from 'date-fns'
@@ -1745,6 +1746,8 @@ function InvoicesTab({ companyId, session }) {
   const [generatingLink, setGeneratingLink] = useState(null) // invoice id being processed
   const [downloadingId, setDownloadingId] = useState(null)
   const [viewTarget, setViewTarget] = useState(null)  // { inv, lineItems }
+  const [voidingId, setVoidingId]     = useState(null) // invoice id being voided
+  const [voidConfirm, setVoidConfirm] = useState(null) // invoice pending void confirm
 
   // ── Download GST-compliant PDF ────────────────────────────────────────────
   const handleDownloadPDF = async (inv) => {
@@ -1765,6 +1768,29 @@ function InvoicesTab({ companyId, session }) {
       toast.error(e.message || 'Failed to generate PDF')
     } finally {
       setDownloadingId(null)
+    }
+  }
+
+  // ── Void QR verification for an invoice ──────────────────────────────────
+  const handleVoidQR = async (inv) => {
+    setVoidingId(inv.id)
+    setVoidConfirm(null)
+    try {
+      const result = await voidVerification(supabase, companyId, {
+        docType:   'invoice',
+        docNumber: inv.invoice_number,
+      })
+      if (!result) {
+        toast.error('Could not void verification — no active QR found for this invoice.')
+      } else if (result.count === 0) {
+        toast('No active QR code found for this invoice.', { icon: 'ℹ️' })
+      } else {
+        toast.success(`QR code voided — the verification link on any printed copy of ${inv.invoice_number} now shows as invalid.`)
+      }
+    } catch {
+      toast.error('Failed to void QR code.')
+    } finally {
+      setVoidingId(null)
     }
   }
 
@@ -2103,6 +2129,30 @@ function InvoicesTab({ companyId, session }) {
                               onClick={() => handleConvert(inv)}
                               className="btn-ghost text-xs py-1.5 border-purple-700 text-purple-300 hover:bg-purple-500/10">
                               ↗ Convert to Tax Invoice
+                            </button>
+                          )}
+                          {/* Void QR — revoke the document verification so printed copies show as invalid */}
+                          {voidConfirm === inv.id ? (
+                            <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-600/30 text-xs">
+                              <ShieldOff className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                              <span className="text-amber-300 font-medium">Void QR on all printed copies?</span>
+                              <button
+                                onClick={() => handleVoidQR(inv)}
+                                disabled={voidingId === inv.id}
+                                className="ml-1 px-2 py-0.5 rounded bg-amber-600 hover:bg-amber-500 text-white font-semibold disabled:opacity-50">
+                                {voidingId === inv.id ? 'Voiding…' : 'Confirm'}
+                              </button>
+                              <button
+                                onClick={() => setVoidConfirm(null)}
+                                className="px-2 py-0.5 rounded bg-dark-600 hover:bg-dark-500 text-slate-300">
+                                Cancel
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => setVoidConfirm(inv.id)}
+                              className="btn-ghost text-xs py-1.5 text-amber-400 hover:bg-amber-500/10 border-amber-700/40">
+                              <ShieldOff className="w-3.5 h-3.5" /> Void QR
                             </button>
                           )}
                         </div>
