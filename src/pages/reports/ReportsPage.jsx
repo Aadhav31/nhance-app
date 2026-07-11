@@ -1104,7 +1104,7 @@ function ExpenseReport({ companyId, from, to }) {
   const { data=[], isLoading } = useQuery({
     queryKey: ['rpt_expense', companyId, from, to],
     queryFn: async () => {
-      const { data: exps } = await supabase.from('expenses').select('id,expense_date,category,vendor_name,description,amount,status,payment_method').eq('company_id', companyId).gte('expense_date', from).lte('expense_date', to).order('expense_date', { ascending:false })
+      const { data: exps } = await supabase.from('expenses').select('id,expense_date,category,vendor_name,description,amount,status,payment_mode').eq('company_id', companyId).gte('expense_date', from).lte('expense_date', to).order('expense_date', { ascending:false })
       return exps||[]
     },
     enabled: !!companyId,
@@ -1131,7 +1131,7 @@ function ExpenseReport({ companyId, from, to }) {
       )}
       <div className="bg-dark-800 border border-dark-600 rounded-xl overflow-hidden">
         <table className="w-full text-sm">
-          <THead cols={['Date','Category','Vendor','Description','Amount','Status']} />
+          <THead cols={['Date','Category','Vendor','Description','Amount','Mode']} />
           <tbody>
             {data.map(e => (
               <tr key={e.id} className="border-b border-dark-700 hover:bg-dark-700/40 transition-colors">
@@ -1140,7 +1140,7 @@ function ExpenseReport({ companyId, from, to }) {
                 <td className="py-2.5 px-3 text-xs text-slate-200">{e.vendor_name||'—'}</td>
                 <td className="py-2.5 px-3 text-xs text-slate-500 max-w-xs truncate">{e.description||'—'}</td>
                 <td className="py-2.5 px-3 text-xs text-red-400 font-bold font-mono">{fmt(e.amount)}</td>
-                <td className="py-2.5 px-3 text-[10px] text-slate-400 capitalize">{e.status||'—'}</td>
+                <td className="py-2.5 px-3 text-[10px] text-slate-400 uppercase">{e.payment_mode||'—'}</td>
               </tr>
             ))}
           </tbody>
@@ -1149,8 +1149,8 @@ function ExpenseReport({ companyId, from, to }) {
       <ExportBar onPrint={() => {
         const rows = data.map(e=>`<tr><td>${fmtDate(e.expense_date)}</td><td>${e.category||'—'}</td><td>${e.vendor_name||'—'}</td><td>${e.description||'—'}</td><td>${fmt(e.amount)}</td><td>${e.status||'—'}</td></tr>`).join('')
         printSection('Expense Breakdown',`<h1>Expense Breakdown</h1><p class="sub">${fmtDate(from)} — ${fmtDate(to)}</p><div><span class="stat"><span class="stat-v">${fmt(totAmt)}</span><br/><span class="stat-l">Total Expenses</span></span></div><table><tr><th>Date</th><th>Category</th><th>Vendor</th><th>Description</th><th>Amount</th><th>Status</th></tr>${rows}</table>`)
-      }} onCSV={() => exportCSV(data.map(e=>({ date:e.expense_date, category:e.category, vendor:e.vendor_name, description:e.description, amount:e.amount, payment_method:e.payment_method, status:e.status })),
-        [{key:'date',label:'Date'},{key:'category',label:'Category'},{key:'vendor',label:'Vendor'},{key:'description',label:'Description'},{key:'amount',label:'Amount'},{key:'payment_method',label:'Payment Method'},{key:'status',label:'Status'}],'expense_report')} />
+      }} onCSV={() => exportCSV(data.map(e=>({ date:e.expense_date, category:e.category, vendor:e.vendor_name, description:e.description, amount:e.amount, payment_mode:e.payment_mode, status:e.status })),
+        [{key:'date',label:'Date'},{key:'category',label:'Category'},{key:'vendor',label:'Vendor'},{key:'description',label:'Description'},{key:'amount',label:'Amount'},{key:'payment_mode',label:'Payment Mode'},{key:'status',label:'Status'}],'expense_report')} />
     </div>
   )
 }
