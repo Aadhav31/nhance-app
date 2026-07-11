@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import { generateInvoicePDF } from '../../lib/invoicePDF'
+import { downloadVoucherPDF, makeVoucherNumber } from '../../lib/voucherPDF'
 import { createVerification, voidVerification } from '../../lib/docVerify'
 import {
   Receipt, Plus, X, Loader2, Trash2, Pencil, Eye,
@@ -2485,6 +2486,7 @@ function EditExpenseModal({ exp, companyId, equipmentList, onClose, onSaved }) {
 // ─────────────────────────────────────────────────────────────────────────────
 function ExpensesTab({ companyId, session, equipmentList }) {
   const qc = useQueryClient()
+  const { company } = useAuth()
   const [catFilter, setCatFilter] = useState('all')
   const [month, setMonth] = useState(curMonth())
   const [showAdd, setShowAdd] = useState(false)
@@ -2603,6 +2605,26 @@ function ExpensesTab({ companyId, session, equipmentList }) {
                         </div>
                       </div>
                     </div>
+                    <button
+                      onClick={e => {
+                        e.stopPropagation()
+                        const vNo = makeVoucherNumber(exp.id, exp.expense_date)
+                        downloadVoucherPDF(company, {
+                          voucherNumber: vNo,
+                          date:         exp.expense_date,
+                          amount:       exp.amount,
+                          payee:        exp.vendor_name || exp.description,
+                          purpose:      exp.description,
+                          category:     exp.category,
+                          paymentMode:  exp.payment_mode,
+                          bankRef:      exp.bank_reference,
+                        })
+                      }}
+                      title="Download Payment Voucher"
+                      className="p-1.5 rounded-lg text-slate-500 hover:text-primary-400 hover:bg-primary-900/30 transition-colors shrink-0"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                    </button>
                     <ChevronRight className="w-4 h-4 text-slate-600 mt-1 shrink-0" />
                   </div>
                 )
@@ -3301,6 +3323,7 @@ function LedgerTab({ companyId }) {
                       <th className="text-left px-4 py-3 font-semibold hidden lg:table-cell">Reference</th>
                       <th className="text-right px-4 py-3 font-semibold text-red-400">Debit</th>
                       <th className="text-right px-4 py-3 font-semibold text-emerald-400">Credit</th>
+                      <th className="px-2 py-3 w-8"></th>
                     </tr>
                   </thead>
                   <tbody>
@@ -3321,6 +3344,29 @@ function LedgerTab({ companyId }) {
                         <td className="px-4 py-3 text-right font-mono font-bold text-emerald-400 whitespace-nowrap">
                           {t.type === 'income' ? fmt(t.amount) : ''}
                         </td>
+                        <td className="px-2 py-3 text-center">
+                          {t.type === 'expense' && (
+                            <button
+                              onClick={() => {
+                                const vNo = makeVoucherNumber(t.id, t.txn_date)
+                                downloadVoucherPDF(company, {
+                                  voucherNumber: vNo,
+                                  date:         t.txn_date,
+                                  amount:       t.amount,
+                                  payee:        t.vendor_name || t.description,
+                                  purpose:      t.description,
+                                  category:     t.category,
+                                  paymentMode:  t.payment_mode,
+                                  bankRef:      t.bank_reference,
+                                })
+                              }}
+                              title="Download Payment Voucher"
+                              className="p-1 rounded text-slate-600 hover:text-primary-400 hover:bg-primary-900/30 transition-colors"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -3331,6 +3377,7 @@ function LedgerTab({ companyId }) {
                       </td>
                       <td className="px-4 py-3 text-right font-mono font-bold text-red-400">{fmt(expense)}</td>
                       <td className="px-4 py-3 text-right font-mono font-bold text-emerald-400">{fmt(income)}</td>
+                      <td className="px-2 py-3"></td>
                     </tr>
                   </tfoot>
                 </table>
