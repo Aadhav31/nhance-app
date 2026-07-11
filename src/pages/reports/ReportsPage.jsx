@@ -976,13 +976,14 @@ function RevenueReport({ companyId, from, to }) {
   const { data=[], isLoading } = useQuery({
     queryKey: ['rpt_revenue', companyId, from, to],
     queryFn: async () => {
-      const { data: invoices } = await supabase.from('client_invoices')
-        .select('id,invoice_number,invoice_date,due_date,total_amount,paid_amount,balance_due,status,client_id')
-        .eq('company_id', companyId).neq('invoice_type', 'proforma')
+      const { data: rawInv } = await supabase.from('client_invoices')
+        .select('id,invoice_number,invoice_date,due_date,total_amount,paid_amount,balance_due,status,client_id,invoice_type')
+        .eq('company_id', companyId)
         .gte('invoice_date', from).lte('invoice_date', to).order('invoice_date', { ascending:false })
+      const invoices = (rawInv||[]).filter(i => i.invoice_type !== 'proforma')
       const { data: clients } = await supabase.from('clients').select('id,name').eq('company_id', companyId)
       const clientMap = Object.fromEntries((clients||[]).map(c=>[c.id,c]))
-      return (invoices||[]).map(inv=>({ ...inv, _client:clientMap[inv.client_id] }))
+      return invoices.map(inv=>({ ...inv, _client:clientMap[inv.client_id] }))
     },
     enabled: !!companyId,
   })
@@ -1042,7 +1043,8 @@ function InvoiceAgingReport({ companyId }) {
   const { data=[], isLoading } = useQuery({
     queryKey: ['rpt_aging', companyId],
     queryFn: async () => {
-      const { data: invoices } = await supabase.from('client_invoices').select('id,invoice_number,due_date,balance_due,status,client_id').eq('company_id', companyId).or('invoice_type.neq.proforma,invoice_type.is.null').neq('status','paid').gt('balance_due',0)
+      const { data: rawInv2 } = await supabase.from('client_invoices').select('id,invoice_number,due_date,balance_due,status,client_id,invoice_type').eq('company_id', companyId).neq('status','paid').gt('balance_due',0)
+      const invoices = (rawInv2||[]).filter(i => i.invoice_type !== 'proforma')
       const { data: clients } = await supabase.from('clients').select('id,name,phone').eq('company_id', companyId)
       const clientMap = Object.fromEntries((clients||[]).map(c=>[c.id,c]))
       const now = new Date()
@@ -1165,7 +1167,8 @@ function ProjectPLReport({ companyId, from, to }) {
       const { data: clients } = await supabase.from('clients').select('id,name').eq('company_id', companyId)
       const clientMap = Object.fromEntries((clients||[]).map(c=>[c.id,c]))
       const { data: shifts } = await supabase.from('shifts').select('project_id,working_hours,equipment_id').eq('company_id', companyId).gte('shift_date', from).lte('shift_date', to).in('project_id', pIds)
-      const { data: invoices } = await supabase.from('client_invoices').select('id,total_amount,paid_amount,balance_due,project_id').eq('company_id', companyId).or('invoice_type.neq.proforma,invoice_type.is.null').in('project_id', pIds)
+      const { data: rawInv3 } = await supabase.from('client_invoices').select('id,total_amount,paid_amount,balance_due,project_id,invoice_type').eq('company_id', companyId).in('project_id', pIds)
+      const invoices = (rawInv3||[]).filter(i => i.invoice_type !== 'proforma')
       const { data: maint } = await supabase.from('maintenance_records').select('project_id,total_cost').eq('company_id', companyId).gte('service_date', from).lte('service_date', to).in('project_id', pIds)
       return projects.map(p => {
         const pShifts = (shifts||[]).filter(s=>s.project_id===p.id)
@@ -1224,14 +1227,15 @@ function ClientStatementReport({ companyId, from, to }) {
     queryKey: ['rpt_client_statement', companyId, from, to],
     queryFn: async () => {
       // Fetch invoices first — works even if client isn't in the clients table
-      const { data: invoices } = await supabase
+      const { data: rawInv4 } = await supabase
         .from('client_invoices')
-        .select('client_id,client_name,total_amount,paid_amount,balance_due,status')
+        .select('client_id,client_name,total_amount,paid_amount,balance_due,status,invoice_type')
         .eq('company_id', companyId)
-        .or('invoice_type.neq.proforma,invoice_type.is.null')
         .gte('invoice_date', from)
         .lte('invoice_date', to)
-      if (!invoices?.length) return []
+      // JS !== correctly treats null as "not proforma" (unlike SQL != which treats null as unknown)
+      const invoices = (rawInv4||[]).filter(i => i.invoice_type !== 'proforma')
+      if (!invoices.length) return []
 
       // Optionally enrich with phone/email/gstin from clients table
       const clientIds = [...new Set(invoices.filter(i=>i.client_id).map(i=>i.client_id))]
