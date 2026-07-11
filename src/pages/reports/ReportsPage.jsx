@@ -1042,7 +1042,7 @@ function InvoiceAgingReport({ companyId }) {
   const { data=[], isLoading } = useQuery({
     queryKey: ['rpt_aging', companyId],
     queryFn: async () => {
-      const { data: invoices } = await supabase.from('client_invoices').select('id,invoice_number,due_date,balance_due,status,client_id').eq('company_id', companyId).neq('invoice_type','proforma').neq('status','paid').gt('balance_due',0)
+      const { data: invoices } = await supabase.from('client_invoices').select('id,invoice_number,due_date,balance_due,status,client_id').eq('company_id', companyId).or('invoice_type.neq.proforma,invoice_type.is.null').neq('status','paid').gt('balance_due',0)
       const { data: clients } = await supabase.from('clients').select('id,name,phone').eq('company_id', companyId)
       const clientMap = Object.fromEntries((clients||[]).map(c=>[c.id,c]))
       const now = new Date()
@@ -1165,7 +1165,7 @@ function ProjectPLReport({ companyId, from, to }) {
       const { data: clients } = await supabase.from('clients').select('id,name').eq('company_id', companyId)
       const clientMap = Object.fromEntries((clients||[]).map(c=>[c.id,c]))
       const { data: shifts } = await supabase.from('shifts').select('project_id,working_hours,equipment_id').eq('company_id', companyId).gte('shift_date', from).lte('shift_date', to).in('project_id', pIds)
-      const { data: invoices } = await supabase.from('client_invoices').select('id,total_amount,paid_amount,balance_due,project_id').eq('company_id', companyId).neq('invoice_type','proforma').in('project_id', pIds)
+      const { data: invoices } = await supabase.from('client_invoices').select('id,total_amount,paid_amount,balance_due,project_id').eq('company_id', companyId).or('invoice_type.neq.proforma,invoice_type.is.null').in('project_id', pIds)
       const { data: maint } = await supabase.from('maintenance_records').select('project_id,total_cost').eq('company_id', companyId).gte('service_date', from).lte('service_date', to).in('project_id', pIds)
       return projects.map(p => {
         const pShifts = (shifts||[]).filter(s=>s.project_id===p.id)
@@ -1228,7 +1228,7 @@ function ClientStatementReport({ companyId, from, to }) {
         .from('client_invoices')
         .select('client_id,client_name,total_amount,paid_amount,balance_due,status')
         .eq('company_id', companyId)
-        .neq('invoice_type','proforma')
+        .or('invoice_type.neq.proforma,invoice_type.is.null')
         .gte('invoice_date', from)
         .lte('invoice_date', to)
       if (!invoices?.length) return []
