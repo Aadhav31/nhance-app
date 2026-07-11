@@ -2,7 +2,7 @@
  * voucherPDF.js — Payment Voucher PDF generator (A5)
  *
  * Compact A5 slip: company name + GSTIN, voucher details, signatures.
- * No full letterhead. Deterministic voucher number from record ID.
+ * All text is wrapped/clipped within margins — nothing bleeds over the edge.
  */
 
 import jsPDF from 'jspdf'
@@ -76,100 +76,120 @@ export async function downloadVoucherPDF(company, voucher) {
   } = voucher
 
   // A5 = 148 × 210 mm
-  const pdf = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a5' })
-  const W   = 148
-  const M   = 10          // margin
-  const IW  = W - M * 2  // 128 mm inner width
+  const pdf   = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a5' })
+  const W     = 148
+  const M     = 12          // left/right margin
+  const IW    = W - M * 2   // 124 mm usable width
+  const RIGHT = M + IW      // right boundary = 136 mm
+  const LINE  = 4           // standard line height (mm)
   const fmtAmt = n => '₹' + (Number(n) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })
 
-  let y = 8
+  // Helper: wrap text, render all lines, return new y after last line
+  const textBlock = (text, x, startY, maxW, lineH = LINE) => {
+    const lines = pdf.splitTextToSize(String(text || ''), maxW)
+    lines.forEach((l, i) => pdf.text(l, x, startY + i * lineH))
+    return startY + lines.length * lineH
+  }
 
-  // ── Thin outer border ─────────────────────────────────────────────────────
-  pdf.setDrawColor(...GREEN)
-  pdf.setLineWidth(0.6)
-  pdf.rect(M - 3, y - 1, IW + 6, 200)
+  let y = 10
+  const borderTop = y - 1
 
   // ── Company name ──────────────────────────────────────────────────────────
   y += 6
   pdf.setFont('helvetica', 'bold')
   pdf.setFontSize(11)
   pdf.setTextColor(...GREEN)
-  pdf.text((company?.name || 'Company').toUpperCase(), W / 2, y, { align: 'center' })
+  // wrap company name within IW
+  const nameLines = pdf.splitTextToSize((company?.name || 'Company').toUpperCase(), IW)
+  nameLines.forEach((l, i) => pdf.text(l, W / 2, y + i * 5, { align: 'center' }))
+  y += nameLines.length * 5
 
-  // GSTIN / contact line
-  y += 5
+  // GSTIN / phone — one line, truncated to IW
   const meta = [
-    company?.gstin ? `GSTIN: ${company.gstin}` : '',
-    company?.contact_phone ? company.contact_phone : '',
+    company?.gstin         ? `GSTIN: ${company.gstin}`       : '',
+    company?.contact_phone ? `Ph: ${company.contact_phone}`  : '',
   ].filter(Boolean).join('   |   ')
   if (meta) {
     pdf.setFont('helvetica', 'normal')
     pdf.setFontSize(7)
     pdf.setTextColor(...GREY)
-    pdf.text(meta, W / 2, y, { align: 'center' })
+    // splitTextToSize ensures it won't overflow; take first line only (meta is always short)
+    const mLine = pdf.splitTextToSize(meta, IW)[0]
+    pdf.text(mLine, W / 2, y, { align: 'center' })
     y += 4
   }
 
   // ── Green divider ─────────────────────────────────────────────────────────
   pdf.setDrawColor(...GREEN)
   pdf.setLineWidth(0.5)
-  pdf.line(M - 3, y, M + IW + 3, y)
+  pdf.line(M, y, RIGHT, y)
   y += 1
 
-  // ── "PAYMENT VOUCHER" title ───────────────────────────────────────────────
+  // ── Title ─────────────────────────────────────────────────────────────────
   pdf.setFont('helvetica', 'bold')
   pdf.setFontSize(10)
   pdf.setTextColor(...BLACK)
   pdf.text('PAYMENT VOUCHER', W / 2, y + 5, { align: 'center' })
   y += 9
 
-  // ── Voucher No + Date (same line) ─────────────────────────────────────────
+  // ── Voucher No (left) + Date (right) — measure to avoid overlap ───────────
   pdf.setFont('helvetica', 'bold')
   pdf.setFontSize(7.5)
   pdf.setTextColor(...GREY)
   pdf.text('Voucher No:', M, y)
-  pdf.setTextColor(...GREEN)
-  pdf.text(voucherNumber, M + 24, y)
 
+  pdf.setTextColor(...GREEN)
+  pdf.text(voucherNumber, M + 23, y)
+
+  // Date: right-anchored
+  const dateStr  = fmtDate(date)
+  pdf.setFont('helvetica', 'bold')
+  pdf.setFontSize(7.5)
   pdf.setTextColor(...GREY)
-  pdf.text('Date:', W - M - 38, y)
+  const dateLabelW = pdf.getTextWidth('Date: ')
+  pdf.text('Date: ', RIGHT - pdf.getTextWidth('Date: ') - pdf.getTextWidth(dateStr), y)
   pdf.setFont('helvetica', 'normal')
   pdf.setTextColor(...BLACK)
-  pdf.text(fmtDate(date), W - M - 24, y)
+  pdf.text(dateStr, RIGHT - pdf.getTextWidth(dateStr), y)
   y += 6
 
   // ── Light divider ─────────────────────────────────────────────────────────
   pdf.setDrawColor(...LGREY)
   pdf.setLineWidth(0.2)
-  pdf.line(M, y, M + IW, y)
+  pdf.line(M, y, RIGHT, y)
   y += 4
 
-  // ── Amount ────────────────────────────────────────────────────────────────
-  // Background chip
+  // ── Amount chip ───────────────────────────────────────────────────────────
+  // Measure how many lines the "in words" text needs
+  pdf.setFontSize(6.5)
+  const wordLines = pdf.splitTextToSize(amountInWords(amount), IW - 6)
+  const chipH = 8 + wordLines.length * 3.8   // base + lines
+
   pdf.setFillColor(236, 248, 239)
   pdf.setDrawColor(...GREEN)
   pdf.setLineWidth(0.3)
-  pdf.roundedRect(M, y, IW, 16, 2, 2, 'FD')
+  pdf.roundedRect(M, y, IW, chipH, 2, 2, 'FD')
 
+  // Label
   pdf.setFont('helvetica', 'bold')
-  pdf.setFontSize(7.5)
+  pdf.setFontSize(7)
   pdf.setTextColor(...GREY)
-  pdf.text('AMOUNT PAID', M + 3, y + 6)
+  pdf.text('AMOUNT PAID', M + 3, y + 5.5)
 
+  // Amount figure — right-aligned, stays within RIGHT
   pdf.setFont('helvetica', 'bold')
-  pdf.setFontSize(15)
+  pdf.setFontSize(13)
   pdf.setTextColor(...GREEN)
-  pdf.text(fmtAmt(amount), M + IW - 3, y + 7, { align: 'right' })
+  pdf.text(fmtAmt(amount), RIGHT - 3, y + 6, { align: 'right' })
 
-  // In words
+  // In words — all lines
   pdf.setFont('helvetica', 'italic')
   pdf.setFontSize(6.5)
   pdf.setTextColor(...GREY)
-  const wordLines = pdf.splitTextToSize(amountInWords(amount), IW - 6)
-  pdf.text(wordLines[0] || '', M + 3, y + 13)  // single line is enough for A5
-  y += 21
+  wordLines.forEach((l, i) => pdf.text(l, M + 3, y + 10 + i * 3.8))
+  y += chipH + 4
 
-  // ── Details rows ──────────────────────────────────────────────────────────
+  // ── Details rows (label | value, value wraps, row expands) ───────────────
   const rows = [
     ['Paid To',      payee],
     ['Purpose',      purpose],
@@ -178,41 +198,48 @@ export async function downloadVoucherPDF(company, voucher) {
     ...(bankRef ? [['Bank / Ref', bankRef]] : []),
   ]
 
-  const COL1 = 28  // label column width
-  const ROW_H = 8
+  const COL1   = 28   // label column width
+  const VAL_W  = IW - COL1 - 2  // value column width (fits within RIGHT)
+  const ROW_PAD = 2   // top padding inside row
+  const ROW_LEAD = 3.8 // line height for value text
 
   rows.forEach(([label, value], idx) => {
-    // alternating row tint
+    // pre-measure wrapped value lines
+    pdf.setFontSize(7.5)
+    const valLines = pdf.splitTextToSize(String(value || '—'), VAL_W)
+    const rowH = ROW_PAD * 2 + valLines.length * ROW_LEAD
+
+    // alternating tint
     if (idx % 2 === 0) {
       pdf.setFillColor(248, 250, 248)
-      pdf.rect(M, y, IW, ROW_H, 'F')
+      pdf.rect(M, y, IW, rowH, 'F')
     }
 
+    // label
     pdf.setFont('helvetica', 'bold')
     pdf.setFontSize(7)
     pdf.setTextColor(...GREY)
-    pdf.text(label, M + 2, y + 5.5)
+    pdf.text(label, M + 2, y + ROW_PAD + ROW_LEAD)
 
+    // value — all wrapped lines
     pdf.setFont('helvetica', 'normal')
     pdf.setFontSize(7.5)
     pdf.setTextColor(...BLACK)
-    // truncate value to fit single row
-    const safeVal = pdf.splitTextToSize(String(value || '—'), IW - COL1 - 4)[0] || '—'
-    pdf.text(safeVal, M + COL1, y + 5.5)
+    valLines.forEach((l, li) => pdf.text(l, M + COL1, y + ROW_PAD + ROW_LEAD + li * ROW_LEAD))
 
-    y += ROW_H
+    y += rowH
   })
 
   // ── Divider before signatures ─────────────────────────────────────────────
   y += 4
   pdf.setDrawColor(...LGREY)
   pdf.setLineWidth(0.2)
-  pdf.line(M, y, M + IW, y)
+  pdf.line(M, y, RIGHT, y)
   y += 6
 
-  // ── Signature boxes (3 equal columns) ────────────────────────────────────
-  const sigW   = (IW - 8) / 3
-  const sigH   = 18
+  // ── Signature boxes ───────────────────────────────────────────────────────
+  const sigW = (IW - 8) / 3
+  const sigH = 18
   const sigBoxes = [
     { label: 'Prepared By', x: M },
     { label: 'Approved By', x: M + sigW + 4 },
@@ -223,8 +250,6 @@ export async function downloadVoucherPDF(company, voucher) {
     pdf.setDrawColor(...LGREY)
     pdf.setLineWidth(0.25)
     pdf.rect(x, y, sigW, sigH, 'S')
-
-    // signature underline inside box
     pdf.line(x + 3, y + sigH - 7, x + sigW - 3, y + sigH - 7)
 
     pdf.setFont('helvetica', 'bold')
@@ -233,13 +258,19 @@ export async function downloadVoucherPDF(company, voucher) {
     pdf.text(label, x + sigW / 2, y + sigH - 2, { align: 'center' })
   })
 
-  y += sigH + 4
+  y += sigH + 5
 
   // ── Footer note ───────────────────────────────────────────────────────────
   pdf.setFont('helvetica', 'normal')
   pdf.setFontSize(6)
   pdf.setTextColor(...LGREY)
   pdf.text('Computer-generated payment voucher.', W / 2, y, { align: 'center' })
+
+  // ── Outer border — drawn last using actual content height ─────────────────
+  const borderH = y + 3 - borderTop
+  pdf.setDrawColor(...GREEN)
+  pdf.setLineWidth(0.6)
+  pdf.rect(M - 3, borderTop, IW + 6, borderH)
 
   pdf.save(`${voucherNumber}.pdf`)
 }
