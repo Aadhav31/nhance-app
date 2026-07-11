@@ -652,7 +652,8 @@ export async function generateInvoicePDF(invoice, lineItems, company, verifyUrl 
     sigRX + 2, y + 5, { maxWidth: sigRW - 4 }
   )
   doc.setFont('helvetica', 'normal'); doc.setFontSize(7)
-  doc.text(`For ${company?.name || ''}`, sigRX + 2, y + 12, { maxWidth: sigRW - 4 })
+  const forCoLines = doc.splitTextToSize(`For ${company?.name || ''}`, sigRW - 4)
+  forCoLines.slice(0,2).forEach((l, i) => doc.text(l, sigRX + 2, y + 12 + i * 3.5))
 
   // Signature line
   doc.setLineWidth(0.4); doc.setDrawColor(0)

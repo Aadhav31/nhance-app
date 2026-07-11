@@ -82,7 +82,9 @@ export async function downloadVoucherPDF(company, voucher) {
   const IW    = W - M * 2   // 124 mm usable width
   const RIGHT = M + IW      // right boundary = 136 mm
   const LINE  = 4           // standard line height (mm)
-  const fmtAmt = n => '₹' + (Number(n) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })
+  // Note: jsPDF's built-in Helvetica doesn't support the ₹ glyph (U+20B9).
+  // It renders as a tick and breaks right-align measurement. Use "Rs." instead.
+  const fmtAmt = n => 'Rs. ' + (Number(n) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })
 
   // Helper: wrap text, render all lines, return new y after last line
   const textBlock = (text, x, startY, maxW, lineH = LINE) => {
@@ -176,11 +178,18 @@ export async function downloadVoucherPDF(company, voucher) {
   pdf.setTextColor(...GREY)
   pdf.text('AMOUNT PAID', M + 3, y + 5.5)
 
-  // Amount figure — right-aligned, stays within RIGHT
+  // Amount figure — right-aligned, shrinks font if text is too wide for chip
   pdf.setFont('helvetica', 'bold')
-  pdf.setFontSize(13)
   pdf.setTextColor(...GREEN)
-  pdf.text(fmtAmt(amount), RIGHT - 3, y + 6, { align: 'right' })
+  const amtStr = fmtAmt(amount)
+  const amtMaxW = IW - 44  // leave 44mm for "AMOUNT PAID" label on left
+  let amtFontSz = 13
+  pdf.setFontSize(amtFontSz)
+  while (pdf.getTextWidth(amtStr) > amtMaxW && amtFontSz > 8) {
+    amtFontSz -= 0.5
+    pdf.setFontSize(amtFontSz)
+  }
+  pdf.text(amtStr, RIGHT - 3, y + 6, { align: 'right' })
 
   // In words — all lines
   pdf.setFont('helvetica', 'italic')

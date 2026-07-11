@@ -190,7 +190,10 @@ function buildDocPDF(opts) {
     pdf.text(lbl, labelX, y+6+i*5)
     pdf.setFont('helvetica','bold')
     pdf.setTextColor(20,20,20)
-    pdf.text(String(val || '—'), valX, y+6+i*5)
+    // constrain value to left meta column (labelX → divX), never bleeds into right column
+    const metaValW = divX - valX - 2
+    const valLines = pdf.splitTextToSize(String(val || '—'), metaValW)
+    pdf.text(valLines[0], valX, y+6+i*5)
   })
 
   if (placeOfSupply) {
@@ -199,7 +202,10 @@ function buildDocPDF(opts) {
     pdf.text('Place Of Supply', divX+3, y+6)
     pdf.setFont('helvetica','bold')
     pdf.setTextColor(20,20,20)
-    pdf.text(placeOfSupply, divX+3, y+11)
+    // constrain to right meta column width
+    const posW = W - MR - divX - 6
+    const posLines = pdf.splitTextToSize(placeOfSupply, posW)
+    pdf.text(posLines[0], divX+3, y+11)
   }
 
   y += metaH + 2
@@ -219,7 +225,8 @@ function buildDocPDF(opts) {
   pdf.setFont('helvetica','bold')
   pdf.setFontSize(9.5)
   pdf.setTextColor(10,10,10)
-  pdf.text(partyName || '—', ML+3, y+11)
+  const partyNameLines = pdf.splitTextToSize(partyName || '—', W-ML-MR-6)
+  partyNameLines.slice(0,2).forEach((l, i) => pdf.text(l, ML+3, y+11+i*5))
 
   pdf.setFont('helvetica','normal')
   pdf.setFontSize(7.5)

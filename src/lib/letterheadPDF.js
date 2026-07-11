@@ -111,7 +111,10 @@ async function drawHeader(pdf, company) {
   const phoneText = company?.contact_phone ? `Mobile: ${company.contact_phone}` : null
   if (emailText || phoneText) {
     if (emailText && phoneText) {
-      pdf.text(emailText, ML + 4, y)
+      // Constrain email to left half so it never runs into the right-anchored phone
+      const halfW = (IW - 12) / 2
+      const safeEmail = pdf.splitTextToSize(emailText, halfW)[0]
+      pdf.text(safeEmail, ML + 4, y)
       pdf.text(phoneText, W - MR - 4, y, { align: 'right' })
     } else {
       pdf.text(emailText || phoneText, W / 2, y, { align: 'center' })
@@ -278,7 +281,8 @@ export async function generateLetterPDF(company, letterData = {}, verifyUrl = nu
   pdf.setFont('helvetica', 'normal')
   pdf.setFontSize(7)
   pdf.setTextColor(...GREEN)
-  pdf.text((company?.name || '').toUpperCase(), W / 2, footDivY + 4, { align: 'center' })
+  const footName = pdf.splitTextToSize((company?.name || '').toUpperCase(), IW - 8)[0]
+  pdf.text(footName, W / 2, footDivY + 4, { align: 'center' })
 
   // ── Save ──────────────────────────────────────────────────────────────────
   pdf.save(`${letterType.replace(/[^a-zA-Z0-9]/g, '_')}_${date.slice(0, 10)}.pdf`)
