@@ -209,40 +209,60 @@ function EquipUtilizationReport({ companyId, from, to }) {
 }
 
 // ─── Equipment P&L (Full Model) ───────────────────────────────────────────────
-// Revenue = rate-card × actual hours/days/months worked
+// Revenue rules (shift-based only — no shifts = no revenue):
+//   • Hourly billing   : workingHrs × rate_per_hour  (unchanged — already per-shift)
+//   • Daily billing    : Σ per day  (actual_shifts ÷ maxShiftsPerDay) × rateDay  + OT
+//   • Monthly billing  : convert rateMo → rateDay (÷26 working days), then same as daily
+//
+// maxShiftsPerDay = max_hours_per_day ÷ 8  (8 hrs = 1 shift, 16 hrs = 2 shifts, etc.)
+// For double-shift machines (max_hours_per_day = 16):
+//   1 shift logged on a day  →  0.5 × rateDay  (half-day revenue)
+//   2 shifts logged on a day →  1.0 × rateDay  (full-day revenue)
+//
 // Expenses = fuel (excl. client-supplied) + operator salary + maintenance + spares + tagged expenses
-// Alert   = actual fuel consumption vs standard L/hr (if configured)
+// Alert    = actual fuel consumption vs standard L/hr (if configured)
 
-function calcRevenue(deployment, workingHrs, shiftDays, monthsWorked) {
-  const basis = deployment.billing_basis || (deployment.rate_unit === 'per_hour' ? 'hourly' : deployment.rate_unit === 'per_month' ? 'monthly' : 'daily')
-  const maxHrDay  = Number(deployment.max_hours_per_day)   || 8
-  const maxHrMo   = Number(deployment.max_hours_per_month) || 200
-  const otPct     = Number(deployment.ot_percentage)        || 125
+function calcRevenue(deployment, workingHrs, shiftDays, shiftsByDate) {
+  const basis = deployment.billing_basis || (
+    deployment.rate_unit === 'per_hour'  ? 'hourly'  :
+    deployment.rate_unit === 'per_month' ? 'monthly' : 'daily'
+  )
+  const maxHrDay       = Number(deployment.max_hours_per_day)   || 8
+  const otPct          = Number(deployment.ot_percentage)        || 125
+  // Each standard shift is 8 hrs; derive max concurrent shifts from max daily hours
+  const maxShiftsPerDay = Math.max(1, Math.round(maxHrDay / 8))
 
+  // ── Hourly ── already shift-driven; no change needed
   if (basis === 'hourly' || basis === 'short_term_hourly') {
-    const rate    = Number(deployment.rate_per_hour) || Number(deployment.rental_rate) || 0
+    const rate = Number(deployment.rate_per_hour) || Number(deployment.rental_rate) || 0
     return rate * workingHrs
   }
-  if (basis === 'daily') {
-    const rateDay = Number(deployment.rate_per_day)  || Number(deployment.rental_rate) || 0
-    const rateHr  = rateDay / maxHrDay
-    const baseRev = shiftDays * rateDay
-    // OT: hours worked beyond maxHrDay × shiftDays
-    const stdHrs  = shiftDays * maxHrDay
-    const otHrs   = Math.max(0, workingHrs - stdHrs)
-    const otRev   = otHrs * rateHr * (otPct / 100)
-    return baseRev + otRev
-  }
+
+  // ── Daily / Monthly ── shift-proportional per day ──────────────────────────
+  let rateDay
   if (basis === 'monthly') {
-    const rateMo  = Number(deployment.rate_per_month) || Number(deployment.rental_rate) || 0
-    const rateHr  = maxHrMo > 0 ? rateMo / maxHrMo : 0
-    const baseRev = monthsWorked * rateMo
-    const stdHrs  = monthsWorked * maxHrMo
-    const otHrs   = Math.max(0, workingHrs - stdHrs)
-    const otRev   = otHrs * rateHr * (otPct / 100)
-    return baseRev + otRev
+    const rateMo = Number(deployment.rate_per_month) || Number(deployment.rental_rate) || 0
+    rateDay = rateMo / 26   // 26 working days/month standard
+  } else {
+    rateDay = Number(deployment.rate_per_day) || Number(deployment.rental_rate) || 0
   }
-  return 0
+
+  // Base revenue: each day earns (shifts_logged ÷ maxShiftsPerDay) of the daily rate
+  let rev = 0
+  for (const shiftsOnDay of Object.values(shiftsByDate)) {
+    const effectiveShifts = Math.min(shiftsOnDay, maxShiftsPerDay)
+    rev += (effectiveShifts / maxShiftsPerDay) * rateDay
+  }
+
+  // OT (daily billing only): aggregate hours beyond maxHrDay × shiftDays
+  if (basis === 'daily' && otPct > 0 && rateDay > 0) {
+    const rateHr = rateDay / maxHrDay
+    const stdHrs = shiftDays * maxHrDay
+    const otHrs  = Math.max(0, workingHrs - stdHrs)
+    rev += otHrs * rateHr * (otPct / 100)
+  }
+
+  return rev
 }
 
 function EquipPLReport({ companyId, from, to }) {
@@ -328,14 +348,23 @@ function EquipPLReport({ companyId, from, to }) {
         const workingHrs= eqShifts.reduce((s,sh)=>s+(Number(sh.working_hours)||0),0)
         const shiftDays = new Set(eqShifts.map(s=>s.shift_date)).size
 
-        // Revenue — use best deployment (most recent active one)
+        // Count shifts per calendar day for this equipment (used for half-day revenue splits)
+        const shiftsByDate = {}
+        for (const sh of eqShifts) {
+          shiftsByDate[sh.shift_date] = (shiftsByDate[sh.shift_date] || 0) + 1
+        }
+        const totalShiftCount = eqShifts.length
+
+        // Revenue — ONLY when actual shifts are logged (no shifts = no revenue)
         const deploy = (deployments||[]).find(d=>d.equipment_id===eq.id)
         let calcRevenue_ = 0
         let revenueSource = 'no_deployment'
-        if (deploy && (deploy.rate_per_hour||deploy.rate_per_day||deploy.rate_per_month||deploy.rental_rate)) {
-          calcRevenue_ = calcRevenue(deploy, workingHrs, shiftDays, periodMonths)
+        const hasShifts = totalShiftCount > 0
+        if (deploy && hasShifts && (deploy.rate_per_hour||deploy.rate_per_day||deploy.rate_per_month||deploy.rental_rate)) {
+          calcRevenue_ = calcRevenue(deploy, workingHrs, shiftDays, shiftsByDate)
           revenueSource = deploy.billing_basis || deploy.rate_unit || 'rate_card'
         }
+        const maxShiftsPerDay = deploy ? Math.max(1, Math.round((Number(deploy.max_hours_per_day)||8) / 8)) : 1
 
         // Fuel cost (exclude client-supplied at equipment OR deployment level)
         const fuelInfo     = fuelByEq[eq.id] || { qty:0, amt:0, clientQty:0 }
@@ -384,7 +413,7 @@ function EquipPLReport({ companyId, from, to }) {
         if (workingHrs === 0 && totalExpense === 0 && calcRevenue_ === 0) return null
         return {
           id: eq.id, eq, deploy,
-          workingHrs, shiftDays,
+          workingHrs, shiftDays, totalShiftCount, maxShiftsPerDay,
           calcRevenue: calcRevenue_, revenueSource,
           fuelCost, fuelQtyOwn, fuelByClient,
           operatorCost, maintCost, sparesCost, directCost,
@@ -488,9 +517,13 @@ function EquipPLReport({ companyId, from, to }) {
                     <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-2">Revenue</p>
                     <div className="space-y-1">
                       <div className="flex justify-between text-xs"><span className="text-slate-400">Billing basis</span><span className="text-slate-200 capitalize">{r.deploy?.billing_basis||r.deploy?.rate_unit||'—'}</span></div>
+                      <div className="flex justify-between text-xs"><span className="text-slate-400">Shifts logged</span><span className="text-slate-200">{r.totalShiftCount}</span></div>
+                      {r.maxShiftsPerDay > 1 && (
+                        <div className="flex justify-between text-xs"><span className="text-slate-400">Max shifts/day</span><span className="text-slate-200">{r.maxShiftsPerDay} (split billing)</span></div>
+                      )}
                       <div className="flex justify-between text-xs"><span className="text-slate-400">Working hours</span><span className="text-slate-200">{fmtN(r.workingHrs,1)} hrs</span></div>
                       <div className="flex justify-between text-xs"><span className="text-slate-400">Shift days</span><span className="text-slate-200">{r.shiftDays}</span></div>
-                      <div className="flex justify-between text-xs font-semibold border-t border-dark-600 pt-1 mt-1"><span className="text-slate-300">Calculated Revenue</span><span className="text-primary-300">{fmt(r.calcRevenue)}</span></div>
+                      <div className="flex justify-between text-xs font-semibold border-t border-dark-600 pt-1 mt-1"><span className="text-slate-300">Calculated Revenue</span><span className="text-primary-300">{r.totalShiftCount > 0 ? fmt(r.calcRevenue) : '—'}</span></div>
                     </div>
                   </div>
 
