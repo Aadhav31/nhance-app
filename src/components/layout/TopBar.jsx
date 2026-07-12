@@ -36,13 +36,13 @@ export default function TopBar({ activePage, onMenuToggle }) {
 
       {/* Page info */}
       <div className="flex-1 min-w-0">
-        <h1 className="text-base font-bold text-slate-100 truncate">{info.title}</h1>
-        <p className="text-xs text-slate-500 hidden sm:block">{info.subtitle}</p>
+        <h1 className="text-base font-bold truncate" style={{ color: 'rgb(var(--t1))' }}>{info.title}</h1>
+        <p className="text-xs hidden sm:block" style={{ color: 'rgb(var(--t3))' }}>{info.subtitle}</p>
       </div>
 
       {/* Right actions */}
       <div className="flex items-center gap-3">
-        <span className="text-xs text-slate-500 hidden md:block">{today}</span>
+        <span className="text-xs hidden md:block" style={{ color: 'rgb(var(--t3))' }}>{today}</span>
 
         {/* Basic / Advanced mode toggle */}
         {session && (
@@ -53,8 +53,9 @@ export default function TopBar({ activePage, onMenuToggle }) {
               className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
                 mode === 'basic'
                   ? 'bg-primary-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
+                  : 'hover:bg-dark-600'
               }`}
+              style={mode !== 'basic' ? { color: 'rgb(var(--t2))' } : undefined}
             >
               Basic
             </button>
@@ -64,8 +65,9 @@ export default function TopBar({ activePage, onMenuToggle }) {
               className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
                 mode === 'advanced'
                   ? 'bg-primary-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
+                  : 'hover:bg-dark-600'
               }`}
+              style={mode !== 'advanced' ? { color: 'rgb(var(--t2))' } : undefined}
             >
               Advanced
             </button>
@@ -76,13 +78,17 @@ export default function TopBar({ activePage, onMenuToggle }) {
         <button
           onClick={toggle}
           title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-          className="w-9 h-9 flex items-center justify-center rounded-lg text-slate-400 hover:text-slate-100 hover:bg-dark-700 transition-all"
+          className="w-9 h-9 flex items-center justify-center rounded-lg hover:bg-dark-700 transition-all"
+          style={{ color: 'rgb(var(--t2))' }}
         >
           {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
         </button>
 
         {/* Notifications */}
-        <button className="relative w-9 h-9 flex items-center justify-center rounded-lg text-slate-400 hover:text-slate-100 hover:bg-dark-700 transition-all">
+        <button
+          className="relative w-9 h-9 flex items-center justify-center rounded-lg hover:bg-dark-700 transition-all"
+          style={{ color: 'rgb(var(--t2))' }}
+        >
           <Bell className="w-4 h-4" />
           <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full" />
         </button>
@@ -91,7 +97,7 @@ export default function TopBar({ activePage, onMenuToggle }) {
         {company && (
           <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-dark-700 rounded-lg border border-dark-600">
             <div className="w-2 h-2 bg-emerald-500 rounded-full" />
-            <span className="text-xs font-medium text-slate-100 truncate max-w-[120px]">
+            <span className="text-xs font-medium truncate max-w-[120px]" style={{ color: 'rgb(var(--t1))' }}>
               {company.name}
             </span>
           </div>

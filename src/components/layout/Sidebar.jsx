@@ -29,7 +29,7 @@ export default function Sidebar({ activePage, onNavigate, collapsed, onToggle })
       )}>
         {!collapsed && (
           <div>
-            <div className="text-lg font-black tracking-tight bg-gradient-to-r from-primary-400 to-cyan-400 bg-clip-text text-transparent">
+            <div className="text-lg font-black tracking-tight bg-gradient-to-r from-primary-600 to-primary-400 bg-clip-text text-transparent">
               NHANCE
             </div>
             {company && (
@@ -52,7 +52,7 @@ export default function Sidebar({ activePage, onNavigate, collapsed, onToggle })
         {filteredNav.map((section) => (
           <div key={section.section} className="mb-4">
             {!collapsed && (
-              <p className="text-[10px] font-bold text-slate-600 uppercase tracking-widest px-3 mb-1">
+              <p className="text-[10px] font-bold uppercase tracking-widest px-3 mb-1" style={{ color: 'rgb(var(--t3))' }}>
                 {section.section}
               </p>
             )}
@@ -64,11 +64,12 @@ export default function Sidebar({ activePage, onNavigate, collapsed, onToggle })
                   key={item.key}
                   onClick={() => onNavigate(item.key)}
                   title={collapsed ? item.label : undefined}
+                  style={!isActive ? { color: 'rgb(var(--t2))' } : undefined}
                   className={cn(
                     'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg mb-0.5 transition-all duration-150 text-sm font-medium',
                     isActive
                       ? 'bg-primary-600 text-white shadow-lg shadow-primary-600/20'
-                      : 'text-slate-400 hover:text-slate-100 hover:bg-dark-700',
+                      : 'hover:bg-dark-700 hover:text-slate-100',
                     collapsed && 'justify-center'
                   )}
                 >

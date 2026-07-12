@@ -35,13 +35,15 @@
   --t3: 148 163 184;   /* #94a3b8  slate-400 */
 }
 
-/* ── Text-slate override: dark values in light mode, light values in dark ────
-   Using [html] compound selector beats plain class specificity.             */
+/* ── Text-slate override: map every shade through theme variables ─────────────
+   In light mode  →  dark readable text.  In dark mode  →  unchanged light text.
+   [html] compound selector beats plain utility specificity.                   */
 html .text-slate-100  { color: rgb(var(--t1)); }
 html .text-slate-200  { color: rgb(var(--t2)); }
 html .text-slate-300  { color: rgb(var(--t2)); }
-
-/* slate-400/500/600/700 are already neutral grays — readable in both modes */
+/* slate-400 (#94a3b8) is near-invisible on white — remap to --t3 (#64748b) in light */
+html .text-slate-400  { color: rgb(var(--t3)); }
+/* slate-500 is borderline — keep as-is (resolves to #64748b in light, fine contrast) */
 
 @layer base {
   * { box-sizing: border-box; }
