@@ -176,6 +176,36 @@ html .text-slate-400  { color: rgb(var(--t3)); }
   .divider { @apply border-t border-dark-700 my-4; }
 }
 
+/* ── Warning/alert semantic classes — light-mode overrides ONLY ─────────────
+   Dark mode: original Tailwind classes on each element stay as-is.
+   Light mode: these override bg/border/text so warnings stay readable.    */
+
+/* Banner backgrounds */
+html:not([data-theme="dark"]) .nhance-alert-danger {
+  background-color: rgb(254 242 242);   /* red-50  */
+  border-color:     rgb(252 165 165);   /* red-300 */
+}
+html:not([data-theme="dark"]) .nhance-alert-warn {
+  background-color: rgb(255 251 235);   /* amber-50  */
+  border-color:     rgb(253 230 138);   /* amber-200 */
+}
+
+/* Banner text */
+html:not([data-theme="dark"]) .nhance-alert-text-danger { color: rgb(185 28 28);  } /* red-700   */
+html:not([data-theme="dark"]) .nhance-alert-text-warn   { color: rgb(180 83 9);   } /* amber-700 */
+html:not([data-theme="dark"]) .nhance-alert-icon-danger { color: rgb(220 38 38);  } /* red-600   */
+html:not([data-theme="dark"]) .nhance-alert-icon-warn   { color: rgb(217 119 6);  } /* amber-600 */
+
+/* Overdue carryover card (ExpensePlanner) */
+html:not([data-theme="dark"]) .nhance-overdue-card {
+  background-color: rgb(254 242 242);   /* red-50  */
+  border-color:     rgb(252 165 165);   /* red-300 */
+}
+html:not([data-theme="dark"]) .nhance-overdue-label  { color: rgb(185 28 28);  } /* red-700 */
+html:not([data-theme="dark"]) .nhance-overdue-name   { color: rgb(153 27 27);  } /* red-800 */
+html:not([data-theme="dark"]) .nhance-overdue-date   { color: rgb(220 38 38);  } /* red-600 */
+html:not([data-theme="dark"]) .nhance-overdue-amount { color: rgb(185 28 28);  } /* red-700 */
+
 /* Page transition */
 .page-enter { opacity: 0; transform: translateY(8px); }
 .page-enter-active {

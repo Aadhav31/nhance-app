@@ -240,24 +240,24 @@ function MonthColumn({ year, month, plans, hrPayroll, isCurrent, fixedExpenses =
 
       {/* Overdue carryover section */}
       {overdueWithDays.length > 0 && (
-        <div className="rounded-lg border border-red-800/50 bg-red-950/25 p-2.5 flex flex-col gap-1.5">
+        <div className="nhance-overdue-card rounded-lg border border-red-800/50 bg-red-950/25 p-2.5 flex flex-col gap-1.5">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5">
-              <AlertTriangle size={10} className="text-red-400" />
-              <p className="text-[11px] font-semibold text-red-400 uppercase tracking-wide">Overdue Carryover</p>
+              <AlertTriangle size={10} className="text-red-400 nhance-overdue-label" />
+              <p className="text-[11px] font-semibold text-red-400 nhance-overdue-label uppercase tracking-wide">Overdue Carryover</p>
             </div>
-            <p className="text-xs font-semibold text-red-400">{fmtINRShort(overdueTotal)}</p>
+            <p className="text-xs font-semibold text-red-400 nhance-overdue-label">{fmtINRShort(overdueTotal)}</p>
           </div>
           <div className="space-y-1.5">
             {overdueWithDays.map(p => (
               <div key={p.id} className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <p className="text-xs text-red-200 truncate">{p.fixed_expenses?.name || '—'}</p>
-                  <p className="text-[10px] text-red-500">
+                  <p className="text-xs text-red-200 nhance-overdue-name truncate">{p.fixed_expenses?.name || '—'}</p>
+                  <p className="text-[10px] text-red-500 nhance-overdue-date">
                     Due {p.due_date} · <span className="font-semibold">{p.daysOverdue}d overdue</span>
                   </p>
                 </div>
-                <p className="text-xs text-red-300 font-semibold shrink-0">{fmtINRShort(p.amount)}</p>
+                <p className="text-xs text-red-300 nhance-overdue-amount font-semibold shrink-0">{fmtINRShort(p.amount)}</p>
               </div>
             ))}
           </div>

@@ -3903,16 +3903,16 @@ function FixedExpensesTab({ companyId }) {
     <div className="flex-1 overflow-y-auto p-4 space-y-4">
       {/* Alert banner */}
       {(overdue.length > 0 || dueSoon.length > 0) && (
-        <div className={`rounded-xl border p-4 flex gap-3 ${overdue.length > 0 ? 'bg-red-950/40 border-red-700' : 'bg-amber-950/40 border-amber-700'}`}>
-          <AlertTriangle className={`w-5 h-5 shrink-0 mt-0.5 ${overdue.length > 0 ? 'text-red-400' : 'text-amber-400'}`} />
+        <div className={`rounded-xl border p-4 flex gap-3 ${overdue.length > 0 ? 'bg-red-950/40 border-red-700 nhance-alert-danger' : 'bg-amber-950/40 border-amber-700 nhance-alert-warn'}`}>
+          <AlertTriangle className={`w-5 h-5 shrink-0 mt-0.5 ${overdue.length > 0 ? 'text-red-400 nhance-alert-icon-danger' : 'text-amber-400 nhance-alert-icon-warn'}`} />
           <div className="space-y-0.5">
             {overdue.length > 0 && (
-              <p className="text-sm font-bold text-red-300">
+              <p className="text-sm font-bold text-red-300 nhance-alert-text-danger">
                 {overdue.length} overdue payment{overdue.length > 1 ? 's' : ''} — {fmt(overdue.reduce((s,p)=>s+Number(p.amount),0))} pending
               </p>
             )}
             {dueSoon.length > 0 && (
-              <p className="text-sm font-semibold text-amber-300">
+              <p className="text-sm font-semibold text-amber-300 nhance-alert-text-warn">
                 {dueSoon.length} payment{dueSoon.length > 1 ? 's' : ''} due within 3 days — {fmt(dueSoon.reduce((s,p)=>s+Number(p.amount),0))}
               </p>
             )}
@@ -4151,16 +4151,16 @@ export default function AccountsPage() {
 
       {/* Fixed expense alert banner */}
       {showAlert && (
-        <div className={`shrink-0 flex items-start gap-3 px-4 py-3 border-b ${overdueAlerts.length > 0 ? 'bg-red-950/40 border-red-800' : 'bg-amber-950/40 border-amber-800'}`}>
-          <AlertTriangle className={`w-4 h-4 shrink-0 mt-0.5 ${overdueAlerts.length > 0 ? 'text-red-400' : 'text-amber-400'}`} />
+        <div className={`shrink-0 flex items-start gap-3 px-4 py-3 border-b ${overdueAlerts.length > 0 ? 'bg-red-950/40 border-red-800 nhance-alert-danger' : 'bg-amber-950/40 border-amber-800 nhance-alert-warn'}`}>
+          <AlertTriangle className={`w-4 h-4 shrink-0 mt-0.5 ${overdueAlerts.length > 0 ? 'text-red-400 nhance-alert-icon-danger' : 'text-amber-400 nhance-alert-icon-warn'}`} />
           <div className="flex-1 min-w-0">
             {overdueAlerts.length > 0 && (
-              <p className="text-xs font-bold text-red-300">
+              <p className="text-xs font-bold text-red-300 nhance-alert-text-danger">
                 {overdueAlerts.length} overdue fixed expense{overdueAlerts.length > 1 ? 's' : ''}: {overdueAlerts.map(a => a.fixed_expenses?.name).join(', ')}
               </p>
             )}
             {soonAlerts.length > 0 && (
-              <p className="text-xs text-amber-300">
+              <p className="text-xs text-amber-300 nhance-alert-text-warn">
                 Due within 3 days: {soonAlerts.map(a => a.fixed_expenses?.name).join(', ')}
               </p>
             )}
