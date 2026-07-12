@@ -239,10 +239,11 @@ function calcRevenue(deployment, workingHrs, shiftDays, shiftsByDate) {
   }
 
   // ── Daily / Monthly ── shift-proportional per day ──────────────────────────
+  const workingDays = Number(deployment.working_days_per_month) || 26
   let rateDay
   if (basis === 'monthly') {
     const rateMo = Number(deployment.rate_per_month) || Number(deployment.rental_rate) || 0
-    rateDay = rateMo / 26   // 26 working days/month standard
+    rateDay = rateMo / workingDays   // configurable working days/month
   } else {
     rateDay = Number(deployment.rate_per_day) || Number(deployment.rental_rate) || 0
   }
@@ -280,7 +281,7 @@ function EquipPLReport({ companyId, from, to }) {
 
       // ── 2. Active deployments in period (with rate card) ────────────────────
       const { data: deployments } = await supabase.from('equipment_deployments')
-        .select('equipment_id,project_id,client_id,billing_basis,rate_per_hour,rate_per_day,rate_per_month,max_hours_per_day,max_hours_per_month,ot_percentage,fuel_by_client,rate_unit,rental_rate,item_name,deployed_date,withdrawn_date')
+        .select('equipment_id,project_id,client_id,billing_basis,rate_per_hour,rate_per_day,rate_per_month,max_hours_per_day,max_hours_per_month,working_days_per_month,ot_percentage,fuel_by_client,rate_unit,rental_rate,item_name,deployed_date,withdrawn_date')
         .eq('company_id', companyId).in('equipment_id', eqIds)
         .or(`withdrawn_date.is.null,withdrawn_date.gte.${from}`)
         .order('deployed_date', { ascending: false })
@@ -517,6 +518,9 @@ function EquipPLReport({ companyId, from, to }) {
                     <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-2">Revenue</p>
                     <div className="space-y-1">
                       <div className="flex justify-between text-xs"><span className="text-slate-400">Billing basis</span><span className="text-slate-200 capitalize">{r.deploy?.billing_basis||r.deploy?.rate_unit||'—'}</span></div>
+                      {(r.deploy?.billing_basis === 'monthly' || r.deploy?.rate_unit === 'per_month') && (
+                        <div className="flex justify-between text-xs"><span className="text-slate-400">Working days/month</span><span className="text-slate-200">{r.deploy?.working_days_per_month || 26} days</span></div>
+                      )}
                       <div className="flex justify-between text-xs"><span className="text-slate-400">Shifts logged</span><span className="text-slate-200">{r.totalShiftCount}</span></div>
                       {r.maxShiftsPerDay > 1 && (
                         <div className="flex justify-between text-xs"><span className="text-slate-400">Max shifts/day</span><span className="text-slate-200">{r.maxShiftsPerDay} (split billing)</span></div>

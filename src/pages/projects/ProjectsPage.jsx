@@ -159,6 +159,7 @@ const emptyItem = () => ({
   billing_basis: 'daily',
   max_hours_per_day: '8',
   max_hours_per_month: '200',
+  working_days_per_month: '26',
   ot_percentage: '125',
   is_short_term: false,
   short_term_fixed_hours: '6',
@@ -265,10 +266,17 @@ function RateCard({ job, items, onChange }) {
                 </div>
                 <div className={half}>
                   <div>
+                    <p className="text-xs text-slate-500 mb-1">Working days/month</p>
+                    <input className={inp('text-xs py-1.5')} value={r.working_days_per_month}
+                      onChange={e=>set(i,'working_days_per_month',e.target.value)} placeholder="26" type="number" min="1" max="31"/>
+                  </div>
+                  <div>
                     <p className="text-xs text-slate-500 mb-1">Max hrs/month before OT</p>
                     <input className={inp('text-xs py-1.5')} value={r.max_hours_per_month}
                       onChange={e=>set(i,'max_hours_per_month',e.target.value)} placeholder="200" type="number"/>
                   </div>
+                </div>
+                <div className={half}>
                   <div>
                     <p className="text-xs text-slate-500 mb-1">OT charge (% of pro-rata rate)</p>
                     <input className={inp('text-xs py-1.5')} value={r.ot_percentage}
@@ -538,6 +546,7 @@ function AddEditModal({ project, clients, onClose, onSaved }) {
         billing_basis:          r.billing_basis          || 'daily',
         max_hours_per_day:      r.max_hours_per_day      || '8',
         max_hours_per_month:    r.max_hours_per_month    || '200',
+        working_days_per_month: r.working_days_per_month || '26',
         ot_percentage:          r.ot_percentage          || '125',
         short_term_fixed_hours: r.short_term_fixed_hours || '6',
         rate_inclusive_hsd:     !!r.rate_inclusive_hsd,
@@ -639,6 +648,7 @@ function AddEditModal({ project, clients, onClose, onSaved }) {
           billing_basis:  r.billing_basis  || 'daily',
           max_hours_per_day:       r.max_hours_per_day      ? Number(r.max_hours_per_day)      : null,
           max_hours_per_month:     r.max_hours_per_month    ? Number(r.max_hours_per_month)    : null,
+          working_days_per_month:  r.working_days_per_month ? Number(r.working_days_per_month) : 26,
           ot_percentage:           r.ot_percentage          ? Number(r.ot_percentage)          : null,
           is_short_term:           r.billing_basis === 'short_term_hourly',
           short_term_fixed_hours:  r.short_term_fixed_hours ? Number(r.short_term_fixed_hours) : null,

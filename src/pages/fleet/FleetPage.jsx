@@ -1549,9 +1549,10 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
         rate_per_hour:       effectiveRate?.rate_per_hour    || null,
         rate_per_day:        effectiveRate?.rate_per_day     || null,
         rate_per_month:      effectiveRate?.rate_per_month   || null,
-        max_hours_per_day:   effectiveRate?.max_hours_per_day   || 8,
-        max_hours_per_month: effectiveRate?.max_hours_per_month || 200,
-        ot_percentage:       effectiveRate?.ot_percentage    || 125,
+        max_hours_per_day:      effectiveRate?.max_hours_per_day      || 8,
+        max_hours_per_month:    effectiveRate?.max_hours_per_month    || 200,
+        working_days_per_month: effectiveRate?.working_days_per_month || 26,
+        ot_percentage:          effectiveRate?.ot_percentage          || 125,
         fuel_by_client:      deployFuelByClient,
       })
 
