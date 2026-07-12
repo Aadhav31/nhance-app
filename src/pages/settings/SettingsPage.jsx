@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Save, Building2, Users, Monitor, CheckCircle, AlertCircle,
          Plus, X, Loader2, Mail, Shield, Trash2, RefreshCw, Send,
-         CreditCard, Eye, EyeOff, Link } from 'lucide-react'
+         CreditCard, Eye, EyeOff, Link, Pencil } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
 import { useDisplayMode } from '../../contexts/DisplayModeContext'
 import { supabase } from '../../lib/supabase'
@@ -409,11 +409,12 @@ function CompanyProfile({ company }) {
 
 // ─── Payment Info Settings (UPI + Bank) ──────────────────────────────────────
 function PaymentInfoSettings({ companyId, isAdmin }) {
-  const [form, setForm] = useState({
-    upi_id: '', bank_account_name: '', bank_account_number: '', bank_ifsc: '', bank_name: '',
-  })
+  const EMPTY = { upi_id: '', bank_account_name: '', bank_account_number: '', bank_ifsc: '', bank_name: '' }
+  const [form,    setForm]    = useState(EMPTY)
+  const [saved,   setSaved]   = useState(EMPTY)   // snapshot of what's in DB
   const [loading, setLoading] = useState(true)
   const [saving,  setSaving]  = useState(false)
+  const [editing, setEditing] = useState(false)
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
 
   useEffect(() => {
@@ -421,31 +422,120 @@ function PaymentInfoSettings({ companyId, isAdmin }) {
     supabase.from('companies')
       .select('upi_id, bank_account_name, bank_account_number, bank_ifsc, bank_name')
       .eq('id', companyId).single()
-      .then(({ data }) => { if (data) setForm({ upi_id: data.upi_id || '', bank_account_name: data.bank_account_name || '', bank_account_number: data.bank_account_number || '', bank_ifsc: data.bank_ifsc || '', bank_name: data.bank_name || '' }); setLoading(false) })
+      .then(({ data }) => {
+        if (data) {
+          const vals = {
+            upi_id:              data.upi_id              || '',
+            bank_account_name:   data.bank_account_name   || '',
+            bank_account_number: data.bank_account_number || '',
+            bank_ifsc:           data.bank_ifsc           || '',
+            bank_name:           data.bank_name           || '',
+          }
+          setForm(vals)
+          setSaved(vals)
+        }
+        setLoading(false)
+      })
   }, [companyId])
+
+  const hasSavedData = !!(saved.upi_id || saved.bank_account_number || saved.bank_account_name)
 
   const handleSave = async () => {
     setSaving(true)
     try {
-      const { error } = await supabase.from('companies').update({
-        upi_id: form.upi_id.trim() || null,
-        bank_account_name: form.bank_account_name.trim() || null,
+      const patch = {
+        upi_id:              form.upi_id.trim()              || null,
+        bank_account_name:   form.bank_account_name.trim()   || null,
         bank_account_number: form.bank_account_number.trim() || null,
-        bank_ifsc: form.bank_ifsc.trim().toUpperCase() || null,
-        bank_name: form.bank_name.trim() || null,
-      }).eq('id', companyId)
+        bank_ifsc:           form.bank_ifsc.trim().toUpperCase() || null,
+        bank_name:           form.bank_name.trim()           || null,
+      }
+      const { error } = await supabase.from('companies').update(patch).eq('id', companyId)
       if (error) throw error
+      const next = { ...form, bank_ifsc: form.bank_ifsc.trim().toUpperCase() }
+      setSaved(next)
+      setEditing(false)
       toast.success('Payment info saved')
     } catch (e) { toast.error(e.message) } finally { setSaving(false) }
   }
 
-  // Live UPI QR URI preview
-  const upiUri = form.upi_id.trim()
-    ? `upi://pay?pa=${encodeURIComponent(form.upi_id.trim())}&pn=${encodeURIComponent(form.bank_account_name.trim() || 'Payment')}&cu=INR`
+  const handleCancel = () => { setForm(saved); setEditing(false) }
+
+  // QR URI — show live in edit mode, from saved in view mode
+  const upiSrc = editing ? form.upi_id.trim() : saved.upi_id.trim()
+  const upiUri = upiSrc
+    ? `upi://pay?pa=${encodeURIComponent(upiSrc)}&pn=${encodeURIComponent((editing ? form.bank_account_name : saved.bank_account_name).trim() || 'Payment')}&cu=INR`
     : null
 
   if (loading) return <div className="flex justify-center py-6"><Loader2 className="w-5 h-5 animate-spin text-primary-400" /></div>
 
+  // ── READ-ONLY view ──────────────────────────────────────────────────────────
+  if (!editing && hasSavedData) {
+    return (
+      <div className="space-y-5">
+        <div className="flex items-start justify-between gap-3">
+          <p className="text-xs text-slate-400 leading-relaxed">
+            Shown on invoices so clients can pay directly — <span className="text-emerald-400 font-medium">0% commission</span>.
+          </p>
+          {isAdmin && (
+            <button onClick={() => setEditing(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-dark-600 rounded-lg hover:bg-dark-700 transition-all shrink-0"
+              style={{ color: 'rgb(var(--t2))' }}>
+              <Pencil className="w-3 h-3" /> Edit
+            </button>
+          )}
+        </div>
+
+        {/* UPI display */}
+        {saved.upi_id && (
+          <div className="rounded-xl border border-dark-600 overflow-hidden">
+            <div className="px-4 py-2.5 bg-dark-700 border-b border-dark-600 flex items-center gap-2">
+              <span className="w-4 h-4 rounded bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-[9px] text-emerald-500 font-bold">₹</span>
+              <span className="text-xs font-semibold" style={{ color: 'rgb(var(--t2))' }}>UPI Details</span>
+            </div>
+            <div className="p-4 flex items-start gap-4">
+              <div className="shrink-0 bg-white p-2 rounded-lg shadow-sm">
+                <img
+                  src={`https://chart.googleapis.com/chart?chs=120x120&cht=qr&chl=${encodeURIComponent(upiUri)}&choe=UTF-8`}
+                  alt="UPI QR" className="w-20 h-20"
+                />
+              </div>
+              <div className="space-y-1 text-xs min-w-0">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">UPI ID</p>
+                <p className="font-mono text-primary-500 break-all">{saved.upi_id}</p>
+                <p className="text-slate-500 mt-2">Scan with PhonePe / GPay / BHIM to pay instantly.</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Bank display */}
+        {(saved.bank_account_name || saved.bank_account_number) && (
+          <div className="rounded-xl border border-dark-600 overflow-hidden">
+            <div className="px-4 py-2.5 bg-dark-700 border-b border-dark-600 flex items-center gap-2">
+              <span className="w-4 h-4 rounded bg-primary-500/20 border border-primary-500/30 flex items-center justify-center text-[9px] text-primary-500 font-bold">⇄</span>
+              <span className="text-xs font-semibold" style={{ color: 'rgb(var(--t2))' }}>Bank Account (NEFT / RTGS)</span>
+            </div>
+            <div className="grid grid-cols-2 divide-x divide-dark-600">
+              {[
+                { label: 'Account Holder', value: saved.bank_account_name,   span: true },
+                { label: 'Account Number', value: saved.bank_account_number, mono: true },
+                { label: 'IFSC Code',      value: saved.bank_ifsc,           mono: true },
+                { label: 'Bank',           value: saved.bank_name,           span: true },
+              ].map(({ label, value, mono, span }) => value ? (
+                <div key={label} className={`px-4 py-3 ${span ? 'col-span-2 border-b border-dark-600 last:border-b-0' : 'border-b border-dark-600'}`}>
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 mb-0.5">{label}</p>
+                  <p className={`text-sm ${mono ? 'font-mono text-primary-500' : ''}`} style={!mono ? { color: 'rgb(var(--t1))' } : undefined}>{value}</p>
+                </div>
+              ) : null)}
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // ── EDIT / ADD form ─────────────────────────────────────────────────────────
   return (
     <div className="space-y-5">
       <p className="text-xs text-slate-400 leading-relaxed">
@@ -458,28 +548,22 @@ function PaymentInfoSettings({ companyId, isAdmin }) {
           <span className="w-5 h-5 rounded bg-emerald-900/40 border border-emerald-700/40 flex items-center justify-center text-[10px] text-emerald-400 font-bold">₹</span>
           UPI Details
         </p>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div className="sm:col-span-2">
-            <label className="text-xs text-slate-400 mb-1 block">UPI ID</label>
-            <input className={inp()} value={form.upi_id} onChange={e => setF('upi_id', e.target.value)}
-              placeholder="yourname@ybl  or  company@okicici" disabled={!isAdmin} />
-            <p className="text-[11px] text-slate-600 mt-1">Find in PhonePe / GPay / BHIM → Profile → UPI ID</p>
-          </div>
+        <div className="sm:col-span-2">
+          <label className="text-xs text-slate-400 mb-1 block">UPI ID</label>
+          <input className={inp()} value={form.upi_id} onChange={e => setF('upi_id', e.target.value)}
+            placeholder="yourname@ybl  or  company@okicici" disabled={!isAdmin} />
+          <p className="text-[11px] text-slate-500 mt-1">Find in PhonePe / GPay / BHIM → Profile → UPI ID</p>
         </div>
         {upiUri && (
           <div className="mt-3 flex items-start gap-4 bg-dark-700/60 border border-dark-600 rounded-xl p-4">
             <div className="shrink-0 bg-white p-2 rounded-lg">
-              {/* QR code rendered via Google Charts API — no npm package needed */}
-              <img
-                src={`https://chart.googleapis.com/chart?chs=120x120&cht=qr&chl=${encodeURIComponent(upiUri)}&choe=UTF-8`}
-                alt="UPI QR Code"
-                className="w-24 h-24"
-              />
+              <img src={`https://chart.googleapis.com/chart?chs=120x120&cht=qr&chl=${encodeURIComponent(upiUri)}&choe=UTF-8`}
+                alt="UPI QR Code" className="w-24 h-24" />
             </div>
             <div className="space-y-1 text-xs">
               <p className="text-emerald-400 font-semibold">QR Preview</p>
               <p className="text-slate-400">This QR will appear on your invoices. Clients scan with any UPI app to pay instantly.</p>
-              <p className="text-slate-500 font-mono break-all mt-2">{form.upi_id}</p>
+              <p className="text-primary-500 font-mono break-all mt-2">{form.upi_id}</p>
             </div>
           </div>
         )}
@@ -516,7 +600,14 @@ function PaymentInfoSettings({ companyId, isAdmin }) {
       </div>
 
       {isAdmin && (
-        <div className="flex justify-end pt-1">
+        <div className="flex justify-end gap-2 pt-1">
+          {hasSavedData && (
+            <button onClick={handleCancel}
+              className="flex items-center gap-2 px-4 py-2 border border-dark-600 text-sm font-medium rounded-lg hover:bg-dark-700 transition-all"
+              style={{ color: 'rgb(var(--t2))' }}>
+              <X className="w-4 h-4" /> Cancel
+            </button>
+          )}
           <button onClick={handleSave} disabled={saving}
             className="flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-500 text-white text-sm font-medium rounded-lg transition-all disabled:opacity-50">
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
