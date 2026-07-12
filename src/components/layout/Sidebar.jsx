@@ -33,7 +33,7 @@ export default function Sidebar({ activePage, onNavigate, collapsed, onToggle })
               NHANCE
             </div>
             {company && (
-              <div className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider truncate max-w-[160px]">
+              <div className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider leading-tight">
                 {company.name}
               </div>
             )}

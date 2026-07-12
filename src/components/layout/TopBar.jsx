@@ -95,9 +95,9 @@ export default function TopBar({ activePage, onMenuToggle }) {
 
         {/* Company badge */}
         {company && (
-          <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-dark-700 rounded-lg border border-dark-600">
-            <div className="w-2 h-2 bg-emerald-500 rounded-full" />
-            <span className="text-xs font-medium truncate max-w-[120px]" style={{ color: 'rgb(var(--t1))' }}>
+          <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-dark-700 rounded-lg border border-dark-600 max-w-[220px]">
+            <div className="w-2 h-2 bg-emerald-500 rounded-full flex-shrink-0" />
+            <span className="text-xs font-medium leading-tight" style={{ color: 'rgb(var(--t1))' }}>
               {company.name}
             </span>
           </div>
