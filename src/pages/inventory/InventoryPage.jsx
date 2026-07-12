@@ -33,7 +33,7 @@ const CAT_MAP = Object.fromEntries(CATEGORIES.map(c => [c.value, c]))
 const UNITS = ['unit','nos','kg','g','ton','litre','ml','m','m2','m3','ft','inch','set','box','bag','pair','roll','sheet','length']
 
 function CategoryBadge({ cat }) {
-  const c = CAT_MAP[cat] || { label: cat, bg: 'bg-slate-700/50 border-slate-600', color: 'text-slate-300' }
+  const c = CAT_MAP[cat] || { label: cat, bg: 'bg-slate-500/10 border-slate-400/50', color: 'text-slate-500' }
   return <span className={`text-[10px] px-2 py-0.5 rounded-full border font-medium capitalize ${c.bg} ${c.color}`}>{c.label}</span>
 }
 
@@ -309,9 +309,9 @@ function ItemsTab({ companyId, session }) {
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
-                      {item.item_code && <span className="text-[10px] font-mono text-slate-500">{item.item_code}</span>}
+                      {item.item_code && <span className="text-[10px] font-mono text-primary-500">{item.item_code}</span>}
                       <CategoryBadge cat={item.category} />
-                      {!item.is_active && <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-700 text-slate-400">Inactive</span>}
+                      {!item.is_active && <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 border border-slate-300">Inactive</span>}
                       {low && <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-400 border border-red-700/30">Low Stock</span>}
                     </div>
                     <p className="font-semibold text-slate-100 text-sm mt-0.5">{item.item_name}</p>
@@ -448,7 +448,7 @@ function StoresTab({ companyId, session }) {
                 <div className="flex items-start justify-between">
                   <div>
                     <p className="font-semibold text-slate-100">{s.store_name}</p>
-                    {s.store_code && <p className="text-xs font-mono text-slate-500">{s.store_code}</p>}
+                    {s.store_code && <p className="text-xs font-mono text-primary-500">{s.store_code}</p>}
                     {s.location && <p className="text-xs text-slate-500 mt-0.5">📍 {s.location}</p>}
                     {s.in_charge && <p className="text-xs text-slate-500">👤 {s.in_charge}</p>}
                   </div>
@@ -590,7 +590,7 @@ function StockInTab({ companyId, session }) {
           {txns.map(t => (
             <div key={t.id} className="bg-dark-800 border border-dark-700 rounded-xl p-4 flex items-center justify-between">
               <div>
-                <p className="text-xs font-mono text-slate-500">{t.txn_number}</p>
+                <p className="text-xs font-mono text-primary-500">{t.txn_number}</p>
                 <p className="font-semibold text-slate-100 text-sm">{t.inventory_items?.item_name}</p>
                 <p className="text-xs text-slate-500">{t.stores?.store_name} · {fmtDate(t.txn_date)}</p>
                 {t.notes && <p className="text-xs text-slate-600 mt-0.5">{t.notes}</p>}
@@ -710,7 +710,7 @@ function StockOutTab({ companyId, session }) {
           {txns.map(t => (
             <div key={t.id} className="bg-dark-800 border border-dark-700 rounded-xl p-4 flex items-center justify-between">
               <div>
-                <p className="text-xs font-mono text-slate-500">{t.txn_number}</p>
+                <p className="text-xs font-mono text-primary-500">{t.txn_number}</p>
                 <p className="font-semibold text-slate-100 text-sm">{t.inventory_items?.item_name}</p>
                 <p className="text-xs text-slate-500">{t.stores?.store_name} · {fmtDate(t.txn_date)}</p>
                 {t.issued_to && <p className="text-xs text-slate-500">To: {t.issued_to}</p>}
@@ -822,7 +822,7 @@ function TransfersTab({ companyId, session }) {
           {txns.map(t => (
             <div key={t.id} className="bg-dark-800 border border-dark-700 rounded-xl p-4 flex items-center justify-between">
               <div>
-                <p className="text-xs font-mono text-slate-500">{t.txn_number}</p>
+                <p className="text-xs font-mono text-primary-500">{t.txn_number}</p>
                 <p className="font-semibold text-slate-100 text-sm">{t.inventory_items?.item_name}</p>
                 <p className="text-xs text-slate-500">{t.stores?.store_name} → {fmtDate(t.txn_date)}</p>
               </div>
@@ -922,7 +922,7 @@ function AdjustmentsTab({ companyId, session }) {
           {txns.map(t => (
             <div key={t.id} className="bg-dark-800 border border-dark-700 rounded-xl p-4 flex items-center justify-between">
               <div>
-                <p className="text-xs font-mono text-slate-500">{t.txn_number}</p>
+                <p className="text-xs font-mono text-primary-500">{t.txn_number}</p>
                 <p className="font-semibold text-slate-100 text-sm">{t.inventory_items?.item_name}</p>
                 <p className="text-xs text-slate-500">{t.stores?.store_name} · {fmtDate(t.txn_date)}</p>
                 {t.reason && <p className="text-xs text-slate-500 italic">{t.reason}</p>}

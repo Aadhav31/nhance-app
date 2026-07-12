@@ -1515,18 +1515,18 @@ function InvoicePreviewModal({ inv, lineItems, company, onClose, onDownload }) {
   const total        = Number(inv.total_amount || 0)
   const useIGST      = igstAmt > 0 && !cgstAmt
 
-  const th = 'px-2 py-1.5 text-[10px] font-bold text-slate-300 border border-slate-600 bg-slate-700/60 text-center'
-  const td = 'px-2 py-1.5 text-[10px] text-slate-200 border border-slate-600'
+  const th = 'px-2 py-1.5 text-[10px] font-bold text-slate-500 border border-slate-200 bg-slate-100 text-center'
+  const td = 'px-2 py-1.5 text-[10px] text-slate-700 border border-slate-200'
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-3" onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="w-full max-w-4xl bg-white rounded-2xl overflow-hidden flex flex-col max-h-[95vh]">
 
         {/* Top toolbar */}
-        <div className="flex items-center justify-between px-4 py-3 bg-slate-800 shrink-0">
+        <div className="flex items-center justify-between px-4 py-3 bg-primary-500 shrink-0">
           <div className="flex items-center gap-3">
             <span className="text-white font-bold text-sm">{inv.invoice_number}</span>
-            <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold uppercase ${isProforma ? 'bg-purple-500/30 text-purple-300' : 'bg-sky-500/30 text-sky-300'}`}>
+            <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold uppercase ${isProforma ? 'bg-purple-500/30 text-purple-200' : 'bg-white/20 text-white'}`}>
               {isProforma ? 'Proforma Invoice' : 'Tax Invoice'}
             </span>
           </div>
@@ -1695,7 +1695,7 @@ function InvoicePreviewModal({ inv, lineItems, company, onClose, onDownload }) {
                       <span className="font-semibold text-slate-800">₹ {value}</span>
                     </div>
                   ))}
-                  <div className="flex justify-between px-3 py-2 bg-slate-800 text-white">
+                  <div className="flex justify-between px-3 py-2 bg-primary-500 text-white">
                     <span className="text-xs font-bold">TOTAL</span>
                     <span className="text-sm font-black">₹ {fmtAmt(total)}</span>
                   </div>
@@ -2017,7 +2017,7 @@ function InvoicesTab({ companyId, session }) {
                       onClick={() => setExpandedId(isExp ? null : inv.id)}>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-1 flex-wrap">
-                          <span className="font-mono text-xs text-slate-400">{inv.invoice_number}</span>
+                          <span className="font-mono text-xs text-primary-500">{inv.invoice_number}</span>
                           <span className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold ${status.cls}`}>{status.label}</span>
                           {inv.invoice_type === 'proforma' && (
                             <span className="text-[10px] px-2 py-0.5 rounded-full border font-semibold bg-purple-500/20 text-purple-300 border-purple-700">Proforma</span>

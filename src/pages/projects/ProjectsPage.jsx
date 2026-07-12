@@ -1450,7 +1450,7 @@ function ProjectCard({ project, onClick }) {
             {project.project_name}
           </p>
           {project.project_code && (
-            <p className="text-[11px] text-slate-500 font-mono mt-0.5">{project.project_code}</p>
+            <p className="text-[11px] text-primary-500 font-mono mt-0.5">{project.project_code}</p>
           )}
         </div>
         <StatusBadge status={project.status}/>

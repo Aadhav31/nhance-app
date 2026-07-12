@@ -1468,10 +1468,10 @@ function ClientDetail({ client, companyId, onClose, onEdit }) {
                   </div>
                 </div>
               )}
-              {client.pan && <div className="py-2.5"><p className="text-[10px] text-slate-500 uppercase">PAN</p><p className="font-mono text-sm text-slate-200">{client.pan}</p></div>}
-              {client.udyam_number && <div className="py-2.5"><p className="text-[10px] text-slate-500 uppercase">MSME / Udyam</p><p className="font-mono text-sm text-slate-200">{client.udyam_number}</p></div>}
-              {client.cin && <div className="py-2.5"><p className="text-[10px] text-slate-500 uppercase">CIN</p><p className="font-mono text-sm text-slate-200">{client.cin}</p></div>}
-              {client.tan && <div className="py-2.5"><p className="text-[10px] text-slate-500 uppercase">TAN</p><p className="font-mono text-sm text-slate-200">{client.tan}</p></div>}
+              {client.pan && <div className="py-2.5"><p className="text-[10px] text-slate-500 uppercase">PAN</p><p className="font-mono text-sm text-primary-500">{client.pan}</p></div>}
+              {client.udyam_number && <div className="py-2.5"><p className="text-[10px] text-slate-500 uppercase">MSME / Udyam</p><p className="font-mono text-sm text-primary-500">{client.udyam_number}</p></div>}
+              {client.cin && <div className="py-2.5"><p className="text-[10px] text-slate-500 uppercase">CIN</p><p className="font-mono text-sm text-primary-500">{client.cin}</p></div>}
+              {client.tan && <div className="py-2.5"><p className="text-[10px] text-slate-500 uppercase">TAN</p><p className="font-mono text-sm text-primary-500">{client.tan}</p></div>}
             </div>
           </div>
         )}

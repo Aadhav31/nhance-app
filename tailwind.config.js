@@ -14,16 +14,16 @@ export default {
     extend: {
       colors: {
         primary: {
-          50:  '#eff6ff',
-          100: '#dbeafe',
-          200: '#bfdbfe',
-          300: '#93c5fd',
-          400: '#60a5fa',
-          500: '#3b82f6',
-          600: '#2563eb',
-          700: '#1d4ed8',
-          800: '#1e40af',
-          900: '#1e3a8a',
+          50:  '#EEF5FB',   // lightest tint
+          100: '#D1E7F5',
+          200: '#A3CFEB',
+          300: '#75B7E1',
+          400: '#479FD7',
+          500: '#1A6FA8',   // sea blue — primary brand colour
+          600: '#155A8A',
+          700: '#10456B',
+          800: '#0B304D',
+          900: '#061B2E',   // darkest shade
         },
         // Surface palette — driven by CSS variables so theme switch is instant
         dark: {

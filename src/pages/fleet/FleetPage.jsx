@@ -704,7 +704,7 @@ function DocumentsSection({ equipment, companyId, isAdmin }) {
                         <p className="text-xs text-slate-200 truncate">{doc.doc_name || dt.label}</p>
                         <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                           {doc.reference_number && (
-                            <span className="text-xs text-primary-400 font-mono">{doc.reference_number}</span>
+                            <span className="text-xs text-primary-500 font-mono">{doc.reference_number}</span>
                           )}
                           {doc.expiry_date && (
                             <span className={`text-xs font-medium ${expColor}`}>
@@ -817,8 +817,8 @@ function AttachmentsSection({ equipment, companyId, isAdmin }) {
                 <div className="flex flex-wrap gap-2 mt-0.5">
                   {att.make  && <span className="text-xs text-slate-500">{att.make}</span>}
                   {att.model && <span className="text-xs text-slate-500">{att.model}</span>}
-                  {att.serial_number  && <span className="text-xs text-slate-400 font-mono">S/N: {att.serial_number}</span>}
-                  {att.invoice_number && <span className="text-xs text-primary-400 font-mono">Inv: {att.invoice_number}</span>}
+                  {att.serial_number  && <span className="text-xs text-primary-500 font-mono">S/N: {att.serial_number}</span>}
+                  {att.invoice_number && <span className="text-xs text-primary-500 font-mono">Inv: {att.invoice_number}</span>}
                   {att.purchase_date  && <span className="text-xs text-slate-500">Purchased: {format(new Date(att.purchase_date), 'dd MMM yyyy')}</span>}
                 </div>
               </div>
@@ -1619,7 +1619,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
             <div className="flex items-center gap-2 flex-wrap">
               <span className={`text-xs font-semibold px-2.5 py-1 rounded-full border ${st.bg} ${st.text} ${st.border}`}>{st.label}</span>
               <span className="text-xs text-slate-400">{equipment.category}</span>
-              {equipment.registration_number && <span className="text-xs text-slate-500 font-mono bg-dark-700 px-2 py-0.5 rounded">{equipment.registration_number}</span>}
+              {equipment.registration_number && <span className="text-xs text-primary-500 font-mono bg-dark-700 px-2 py-0.5 rounded">{equipment.registration_number}</span>}
               <span className={`text-xs px-2 py-0.5 rounded-full border ${
                 equipment.ownership_type === 'hired' ? 'bg-yellow-500/10 text-yellow-400 border-yellow-500/30'
                 : equipment.ownership_type === 'client_supplied' ? 'bg-purple-500/10 text-purple-400 border-purple-500/30'
@@ -2135,7 +2135,7 @@ function EquipmentCard({ equipment, onClick }) {
           <div className="flex items-center gap-2">
             <p className="font-semibold text-slate-100 text-sm leading-tight truncate">{equipment.name}</p>
             {equipment.equipment_number && (
-              <span className="text-xs text-slate-600 font-mono shrink-0">{equipment.equipment_number}</span>
+              <span className="text-xs text-primary-500 font-mono shrink-0">{equipment.equipment_number}</span>
             )}
           </div>
           <p className="text-xs text-slate-500 mt-0.5">{equipment.category}</p>
@@ -2165,7 +2165,7 @@ function EquipmentCard({ equipment, onClick }) {
       <div className="flex items-center justify-between mt-2 gap-2">
         <div className="flex items-center gap-1.5 flex-wrap">
           {equipment.registration_number && (
-            <span className="text-xs text-slate-500 font-mono bg-dark-700 px-2 py-0.5 rounded">{equipment.registration_number}</span>
+            <span className="text-xs text-primary-500 font-mono bg-dark-700 px-2 py-0.5 rounded">{equipment.registration_number}</span>
           )}
           {ownerBadge && (
             <span className={`text-xs px-1.5 py-0.5 rounded border ${ownerBadge.color}`}>{ownerBadge.label}</span>

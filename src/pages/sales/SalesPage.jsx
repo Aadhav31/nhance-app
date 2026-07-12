@@ -32,7 +32,7 @@ const fmtINR = (n) => `₹${Number(n || 0).toLocaleString('en-IN', { maximumFrac
 const fmtDate = (d) => d ? format(new Date(d), 'dd MMM yyyy') : '—'
 
 const STATUS_COLORS = {
-  draft:               'bg-slate-700/50 text-slate-300 border-slate-600',
+  draft:               'bg-slate-500/10 text-slate-500 border-slate-400/50',
   sent:                'bg-blue-500/10 text-blue-400 border-blue-700/40',
   accepted:            'bg-emerald-500/10 text-emerald-400 border-emerald-700/40',
   rejected:            'bg-red-500/10 text-red-400 border-red-700/40',
@@ -521,7 +521,7 @@ function InvoicesTab({ companyId, session }) {
               <div className="flex items-start justify-between gap-3">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <p className="text-xs font-mono text-slate-500">{inv.invoice_number}</p>
+                    <p className="text-xs font-mono text-primary-500">{inv.invoice_number}</p>
                     <StatusBadge status={inv.status} />
                   </div>
                   <p className="font-semibold text-slate-100 text-sm mt-0.5 truncate">{inv.client_name}</p>
@@ -773,7 +773,7 @@ function QuotesTab({ companyId, session }) {
               <div className="flex items-start justify-between gap-3">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <p className="text-xs font-mono text-slate-500">{q.quote_number}</p>
+                    <p className="text-xs font-mono text-primary-500">{q.quote_number}</p>
                     <StatusBadge status={q.status} />
                   </div>
                   <p className="font-semibold text-slate-100 text-sm mt-0.5 truncate">{q.client_name}</p>
@@ -943,7 +943,7 @@ function SalesOrdersTab({ companyId, session }) {
               <div className="flex items-start justify-between gap-3">
                 <div className="flex-1 min-w-0">
                   <div className="flex gap-2 items-center flex-wrap">
-                    <p className="text-xs font-mono text-slate-500">{o.so_number}</p>
+                    <p className="text-xs font-mono text-primary-500">{o.so_number}</p>
                     <StatusBadge status={o.status} />
                   </div>
                   <p className="font-semibold text-slate-100 text-sm mt-0.5">{o.client_name}</p>
@@ -1118,7 +1118,7 @@ function DeliveryChallansTab({ companyId, session }) {
             <div key={dc.id} className="bg-dark-800 border border-dark-700 rounded-xl p-4">
               <div className="flex items-start justify-between gap-3">
                 <div className="flex-1 min-w-0">
-                  <div className="flex gap-2 items-center"><p className="text-xs font-mono text-slate-500">{dc.dc_number}</p><StatusBadge status={dc.status} /></div>
+                  <div className="flex gap-2 items-center"><p className="text-xs font-mono text-primary-500">{dc.dc_number}</p><StatusBadge status={dc.status} /></div>
                   <p className="font-semibold text-slate-100 text-sm mt-0.5">{dc.client_name}</p>
                   {dc.vehicle_number && <p className="text-xs text-slate-500">🚛 {dc.vehicle_number}{dc.driver_name ? ` · ${dc.driver_name}` : ''}</p>}
                   {dc.delivery_address && <p className="text-xs text-slate-500 mt-0.5">📍 {dc.delivery_address.slice(0, 60)}</p>}
@@ -1296,7 +1296,7 @@ function CreditNotesTab({ companyId, session }) {
             <div key={cn.id} className="bg-dark-800 border border-dark-700 rounded-xl p-4">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <div className="flex gap-2 items-center"><p className="text-xs font-mono text-slate-500">{cn.cn_number}</p><StatusBadge status={cn.status} /></div>
+                  <div className="flex gap-2 items-center"><p className="text-xs font-mono text-primary-500">{cn.cn_number}</p><StatusBadge status={cn.status} /></div>
                   <p className="font-semibold text-slate-100 text-sm mt-0.5">{cn.client_name}</p>
                   {cn.reason && <p className="text-xs text-slate-500 mt-0.5">Reason: {cn.reason}</p>}
                 </div>
@@ -1479,7 +1479,7 @@ function PaymentsReceivedTab({ companyId, session }) {
             <div key={p.id} className="bg-dark-800 border border-dark-700 rounded-xl p-4">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <p className="text-xs font-mono text-slate-500">{p.payment_number}</p>
+                  <p className="text-xs font-mono text-primary-500">{p.payment_number}</p>
                   <p className="font-semibold text-slate-100 text-sm">{p.client_name}</p>
                   <p className="text-xs text-slate-500">{fmtDate(p.payment_date)} · {p.payment_mode?.toUpperCase()}{p.bank_reference ? ` · ${p.bank_reference}` : ''}</p>
                 </div>

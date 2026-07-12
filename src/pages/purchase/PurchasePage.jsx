@@ -27,7 +27,7 @@ const fmtINR  = (n) => `₹${Number(n || 0).toLocaleString('en-IN', { maximumFra
 const fmtDate = (d) => d ? format(new Date(d), 'dd MMM yyyy') : '—'
 
 const STATUS_COLORS = {
-  draft:               'bg-slate-700/50 text-slate-300 border-slate-600',
+  draft:               'bg-slate-500/10 text-slate-500 border-slate-400/50',
   sent:                'bg-blue-500/10 text-blue-400 border-blue-700/40',
   pending:             'bg-yellow-500/10 text-yellow-400 border-yellow-700/40',
   paid:                'bg-emerald-500/10 text-emerald-400 border-emerald-700/40',
@@ -456,7 +456,7 @@ function VendorsTab({ companyId, session }) {
               <div className="flex items-start justify-between">
                 <div className="flex-1 min-w-0">
                   <p className="font-semibold text-slate-100 truncate">{v.name}</p>
-                  {v.vendor_code && <p className="text-xs font-mono text-slate-500">{v.vendor_code}</p>}
+                  {v.vendor_code && <p className="text-xs font-mono text-primary-500">{v.vendor_code}</p>}
                   <span className="text-[10px] px-2 py-0.5 rounded-full bg-dark-700 text-slate-400 mt-1 inline-block capitalize">{v.category?.replace(/_/g, ' ')}</span>
                 </div>
                 <ChevronRight className="w-4 h-4 text-slate-600 group-hover:text-slate-400 shrink-0 mt-1" />
@@ -998,7 +998,7 @@ function BillsTab({ companyId, session }) {
               <div className="flex items-start justify-between gap-3">
                 <div className="flex-1 min-w-0">
                   <div className="flex gap-2 items-center flex-wrap">
-                    <p className="text-xs font-mono text-slate-500">{b.bill_number}</p>
+                    <p className="text-xs font-mono text-primary-500">{b.bill_number}</p>
                     <StatusBadge status={b.status} />
                   </div>
                   <p className="font-semibold text-slate-100 text-sm mt-0.5">{b.vendor_name || b.vendors?.vendor_name}</p>
@@ -1270,7 +1270,7 @@ function PurchaseOrdersTab({ companyId, session }) {
             <div key={p.id} className="bg-dark-800 border border-dark-700 rounded-xl p-4">
               <div className="flex items-start justify-between gap-3">
                 <div className="flex-1 min-w-0">
-                  <div className="flex gap-2 items-center"><p className="text-xs font-mono text-slate-500">{p.po_number}</p><StatusBadge status={p.status} /></div>
+                  <div className="flex gap-2 items-center"><p className="text-xs font-mono text-primary-500">{p.po_number}</p><StatusBadge status={p.status} /></div>
                   <p className="font-semibold text-slate-100 text-sm mt-0.5">{p.vendor_name || p.vendors?.vendor_name}</p>
                   {p.expected_delivery && <p className="text-xs text-slate-500">Delivery: {fmtDate(p.expected_delivery)}</p>}
                 </div>
@@ -1442,7 +1442,7 @@ function VendorCreditsTab({ companyId, session }) {
             <div key={vc.id} className="bg-dark-800 border border-dark-700 rounded-xl p-4">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <div className="flex gap-2 items-center"><p className="text-xs font-mono text-slate-500">{vc.vc_number}</p><StatusBadge status={vc.status} /></div>
+                  <div className="flex gap-2 items-center"><p className="text-xs font-mono text-primary-500">{vc.vc_number}</p><StatusBadge status={vc.status} /></div>
                   <p className="font-semibold text-slate-100 text-sm mt-0.5">{vc.vendor_name || vc.vendors?.vendor_name}</p>
                   {vc.reason && <p className="text-xs text-slate-500">{vc.reason}</p>}
                   <p className="text-xs text-slate-500">{fmtDate(vc.cn_date)}</p>
@@ -1615,7 +1615,7 @@ function PaymentsMadeTab({ companyId, session }) {
             <div key={p.id} className="bg-dark-800 border border-dark-700 rounded-xl p-4">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <p className="text-xs font-mono text-slate-500">{p.payment_number}</p>
+                  <p className="text-xs font-mono text-primary-500">{p.payment_number}</p>
                   <p className="font-semibold text-slate-100 text-sm">{p.vendor_name || p.vendors?.vendor_name}</p>
                   <p className="text-xs text-slate-500">{fmtDate(p.payment_date)} · {p.payment_mode?.toUpperCase()}{p.bank_reference ? ` · ${p.bank_reference}` : ''}</p>
                 </div>

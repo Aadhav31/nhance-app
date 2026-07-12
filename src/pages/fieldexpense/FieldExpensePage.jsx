@@ -1132,8 +1132,8 @@ function ExpenseHistory({ companyId, userId, userRole }) {
               return (
                 <div key={exp.id} className="bg-dark-800 border border-dark-700 rounded-2xl p-4">
                   <div className="flex items-start gap-3">
-                    <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${cat?.bg || 'bg-slate-700/50 border border-slate-600'}`}>
-                      <Icon className={`w-4 h-4 ${cat?.color || 'text-slate-400'}`} />
+                    <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${cat?.bg || 'bg-slate-100 border border-slate-300'}`}>
+                      <Icon className={`w-4 h-4 ${cat?.color || 'text-slate-500'}`} />
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-start justify-between gap-2">

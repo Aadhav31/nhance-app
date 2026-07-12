@@ -48,7 +48,7 @@ function Field({ label, value }) {
 }
 
 function RoleBadge({ role }) {
-  const r = ROLES.find(x => x.key === role) || { label: role, color: 'text-slate-400 border-slate-600 bg-slate-800' }
+  const r = ROLES.find(x => x.key === role) || { label: role, color: 'text-slate-500 border-slate-300 bg-slate-100' }
   return (
     <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border ${r.color}`}>
       {r.label}
