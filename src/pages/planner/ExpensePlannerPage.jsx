@@ -101,6 +101,14 @@ function fixedOccursInMonth(fe, year, month) {
   return true
 }
 
+// Returns the 'YYYY-MM' key for the month immediately before a given key
+function prevMonthKey(key) {
+  const [y, m] = key.split('-').map(Number)
+  return m === 1
+    ? `${y - 1}-12`
+    : `${y}-${String(m - 1).padStart(2, '0')}`
+}
+
 // ── Category dot ──────────────────────────────────────────────────────────────
 function CatDot({ color, size = 8 }) {
   return <span style={{ background: color, width: size, height: size, borderRadius: '50%', display: 'inline-block', flexShrink: 0 }} />
@@ -108,21 +116,27 @@ function CatDot({ color, size = 8 }) {
 
 // ── Month Forecast Column ─────────────────────────────────────────────────────
 function MonthColumn({ year, month, plans, hrPayroll, isCurrent, fixedExpenses = [], fepStats = { paid: 0, pending: 0 }, overdueItems = [], today = '' }) {
-  const fixedTotal   = fixedExpenses.reduce((s, fe) => s + fixedMonthlyAmount(fe), 0)
-  const plansTotal   = plans.reduce((s, p) => s + monthlyAmount(p), 0)
-  const total        = plansTotal + hrPayroll + fixedTotal
-  const overdueTotal = overdueItems.reduce((s, p) => s + Number(p.amount), 0)
+  const fixedTotal = fixedExpenses.reduce((s, fe) => s + fixedMonthlyAmount(fe), 0)
+  const plansTotal = plans.reduce((s, p) => s + monthlyAmount(p), 0)
+  const total      = plansTotal + hrPayroll + fixedTotal
 
-  // Paid = confirmed fixed expense payments; remaining = this month unpaid + all carryover
-  const paidAmount = fepStats.paid
-  const remaining  = (total - paidAmount) + overdueTotal
-
-  // Days overdue for each carryover item
+  // Split overdue items: same-month (in-period warning) vs prior-month carryover
   const todayMs = today ? new Date(today).getTime() : Date.now()
-  const overdueWithDays = overdueItems.map(p => ({
+  const sameMonthOverdue = overdueItems.filter(p => !p._carryover).map(p => ({
     ...p,
     daysOverdue: Math.floor((todayMs - new Date(p.due_date).getTime()) / 86400000),
   }))
+  const carryoverItems = overdueItems.filter(p => p._carryover).map(p => ({
+    ...p,
+    daysOverdue: Math.floor((todayMs - new Date(p.due_date).getTime()) / 86400000),
+  }))
+
+  // Only carryover adds to total (same-month is already included in fixedTotal)
+  const carryoverTotal = carryoverItems.reduce((s, p) => s + Number(p.amount), 0)
+
+  // Paid = confirmed fixed expense payments; remaining = this month unpaid + carryover
+  const paidAmount = fepStats.paid
+  const remaining  = (total - paidAmount) + carryoverTotal
 
   const byCategory = {}
   plans.forEach(p => {
@@ -145,9 +159,13 @@ function MonthColumn({ year, month, plans, hrPayroll, isCurrent, fixedExpenses =
           </p>
         </div>
         <p className="text-2xl font-bold text-slate-100">{fmtINRShort(total)}</p>
-        <p className="text-xs text-slate-500">{itemCount} expense items{overdueItems.length > 0 ? ` · ${overdueItems.length} overdue` : ''}</p>
-        {/* Paid / remaining / overdue summary */}
-        {(paidAmount > 0 || overdueTotal > 0) && (
+        <p className="text-xs text-slate-500">
+          {itemCount} expense items
+          {sameMonthOverdue.length > 0 ? ` · ${sameMonthOverdue.length} overdue` : ''}
+          {carryoverItems.length > 0 ? ` · ${carryoverItems.length} overdue` : ''}
+        </p>
+        {/* Paid / remaining / carryover summary */}
+        {(paidAmount > 0 || carryoverTotal > 0) && (
           <div className="flex flex-col gap-0.5 mt-1.5">
             {paidAmount > 0 && (
               <div className="flex items-center gap-2">
@@ -156,8 +174,8 @@ function MonthColumn({ year, month, plans, hrPayroll, isCurrent, fixedExpenses =
                 <span className="text-[10px] text-amber-400 font-medium">⏳ Remaining {fmtINRShort(total - paidAmount)}</span>
               </div>
             )}
-            {overdueTotal > 0 && (
-              <span className="text-[10px] text-red-400 font-medium">⚠ +{fmtINRShort(overdueTotal)} overdue carryover · Total due {fmtINRShort(remaining)}</span>
+            {carryoverTotal > 0 && (
+              <span className="text-[10px] text-red-400 font-medium">⚠ +{fmtINRShort(carryoverTotal)} overdue carryover · Total due {fmtINRShort(remaining)}</span>
             )}
           </div>
         )}
@@ -238,18 +256,20 @@ function MonthColumn({ year, month, plans, hrPayroll, isCurrent, fixedExpenses =
         </div>
       ))}
 
-      {/* Overdue carryover section */}
-      {overdueWithDays.length > 0 && (
+      {/* Same-month overdue (payment missed within this month, not yet month-end) */}
+      {sameMonthOverdue.length > 0 && (
         <div className="nhance-overdue-card rounded-lg border border-red-800/50 bg-red-950/25 p-2.5 flex flex-col gap-1.5">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5">
               <AlertTriangle size={10} className="text-red-400 nhance-overdue-label" />
-              <p className="text-[11px] font-semibold text-red-400 nhance-overdue-label uppercase tracking-wide">Overdue Carryover</p>
+              <p className="text-[11px] font-semibold text-red-400 nhance-overdue-label uppercase tracking-wide">Overdue This Month</p>
             </div>
-            <p className="text-xs font-semibold text-red-400 nhance-overdue-label">{fmtINRShort(overdueTotal)}</p>
+            <p className="text-xs font-semibold text-red-400 nhance-overdue-label">
+              {fmtINRShort(sameMonthOverdue.reduce((s, p) => s + Number(p.amount), 0))}
+            </p>
           </div>
           <div className="space-y-1.5">
-            {overdueWithDays.map(p => (
+            {sameMonthOverdue.map(p => (
               <div key={p.id} className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <p className="text-xs text-red-200 nhance-overdue-name truncate">{p.fixed_expenses?.name || '—'}</p>
@@ -264,7 +284,33 @@ function MonthColumn({ year, month, plans, hrPayroll, isCurrent, fixedExpenses =
         </div>
       )}
 
-      {plans.length === 0 && hrPayroll === 0 && fixedExpenses.length === 0 && overdueItems.length === 0 && (
+      {/* Prior-month carryover (1 month only — after month ends) */}
+      {carryoverItems.length > 0 && (
+        <div className="nhance-overdue-card rounded-lg border border-red-800/50 bg-red-950/25 p-2.5 flex flex-col gap-1.5">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5">
+              <AlertTriangle size={10} className="text-red-400 nhance-overdue-label" />
+              <p className="text-[11px] font-semibold text-red-400 nhance-overdue-label uppercase tracking-wide">Overdue Carryover</p>
+            </div>
+            <p className="text-xs font-semibold text-red-400 nhance-overdue-label">{fmtINRShort(carryoverTotal)}</p>
+          </div>
+          <div className="space-y-1.5">
+            {carryoverItems.map(p => (
+              <div key={p.id} className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-xs text-red-200 nhance-overdue-name truncate">{p.fixed_expenses?.name || '—'}</p>
+                  <p className="text-[10px] text-red-500 nhance-overdue-date">
+                    Due {p.due_date} · <span className="font-semibold">{p.daysOverdue}d overdue</span>
+                  </p>
+                </div>
+                <p className="text-xs text-red-300 nhance-overdue-amount font-semibold shrink-0">{fmtINRShort(p.amount)}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {plans.length === 0 && hrPayroll === 0 && fixedExpenses.length === 0 && sameMonthOverdue.length === 0 && carryoverItems.length === 0 && (
         <p className="text-xs text-slate-600 text-center py-4">No expenses planned</p>
       )}
     </div>
@@ -582,9 +628,17 @@ export default function ExpensePlannerPage() {
     staleTime: 30_000,
   })
 
-  // For each displayed month, collect overdue items from PRIOR months (carryover)
+  // Overdue display rules:
+  //   • Same month (period_month === key, due_date already < today): show as "OVERDUE"
+  //   • Immediately prior month only (period_month === prevMonth): show as "OVERDUE CARRYOVER"
+  //   • Anything older: do NOT show (no infinite carry-forward)
   const overdueByMonth = useMemo(() =>
-    monthKeys.map(key => overduePayments.filter(p => p.period_month < key)),
+    monthKeys.map(key => {
+      const prev = prevMonthKey(key)
+      return overduePayments
+        .filter(p => p.period_month === key || p.period_month === prev)
+        .map(p => ({ ...p, _carryover: p.period_month !== key }))
+    }),
     [overduePayments, monthKeys]
   )
 
