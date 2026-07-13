@@ -70,18 +70,36 @@ function StatCard({ label, value, sub, accent='text-primary-400' }) {
 
 function BarChart({ data=[], color='#6366f1' }) {
   if (!data.length) return null
-  const max = Math.max(...data.map(d=>d.v), 1)
+  const max    = Math.max(...data.map(d => d.v), 1)
+  const BAR_H  = 110  // px — fixed bar area height
+
   return (
-    <div className="flex items-end gap-1 h-32 px-1">
-      {data.map((d,i) => (
-        <div key={i} className="flex-1 flex flex-col items-center gap-0.5 min-w-0 group relative">
-          <div className="absolute -top-5 left-1/2 -translate-x-1/2 text-[9px] text-slate-400 opacity-0 group-hover:opacity-100 whitespace-nowrap bg-dark-700 px-1 py-0.5 rounded z-10">
-            {d.tip ?? fmtN(d.v)}
+    <div className="px-1">
+      {/* Bar area — fixed pixel height so percentages resolve correctly */}
+      <div className="flex items-end gap-1" style={{ height: BAR_H }}>
+        {data.map((d, i) => {
+          const barPx = Math.max((d.v / max) * BAR_H, 2)
+          return (
+            <div key={i} className="flex-1 min-w-0 group relative flex flex-col justify-end" style={{ height: BAR_H }}>
+              {/* Hover tooltip */}
+              <div className="absolute left-1/2 -translate-x-1/2 text-[9px] text-slate-300 opacity-0 group-hover:opacity-100 whitespace-nowrap bg-dark-800 border border-dark-600 px-1.5 py-0.5 rounded z-10 pointer-events-none"
+                style={{ bottom: barPx + 4 }}>
+                {d.tip ?? fmtN(d.v)}
+              </div>
+              {/* Bar */}
+              <div className="w-full rounded-t" style={{ height: barPx, background: d.color || color }} />
+            </div>
+          )
+        })}
+      </div>
+      {/* Labels row */}
+      <div className="flex gap-1 mt-1.5">
+        {data.map((d, i) => (
+          <div key={i} className="flex-1 min-w-0 text-center">
+            <span className="text-[9px] text-slate-500 truncate block leading-none">{d.l}</span>
           </div>
-          <div className="w-full rounded-t-sm" style={{ height:`${Math.max((d.v/max)*100,2)}%`, background:d.color||color }} />
-          <span className="text-[9px] text-slate-500 truncate w-full text-center leading-none">{d.l}</span>
-        </div>
-      ))}
+        ))}
+      </div>
     </div>
   )
 }
