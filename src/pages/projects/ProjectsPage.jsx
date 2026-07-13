@@ -1599,6 +1599,37 @@ function ProjectDocumentsSection({ project, companyId }) {
         </div>
       )}
 
+      {/* Financial summary — only when at least one doc has an amount */}
+      {!isLoading && docs.some(d => d.amount) && (
+        <div className="mb-4 rounded-xl bg-dark-700/30 border border-dark-700 p-3">
+          <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-2 font-semibold">Financial Summary</p>
+          <div className="flex flex-wrap gap-x-4 gap-y-2">
+            {DOC_TYPES.map(dt => {
+              const typeDocs  = docs.filter(d => d.doc_type === dt.value && d.amount)
+              const typeTotal = typeDocs.reduce((s, d) => s + Number(d.amount || 0), 0)
+              if (!typeTotal) return null
+              return (
+                <div key={dt.value} className="flex-1 min-w-[110px]">
+                  <p className="text-[10px] text-slate-500">{dt.label} ({typeDocs.length})</p>
+                  <p className="text-xs font-semibold text-slate-200">
+                    ₹{typeTotal.toLocaleString('en-IN')}
+                  </p>
+                </div>
+              )
+            })}
+          </div>
+          {/* Grand total row */}
+          <div className="mt-2 pt-2 border-t border-dark-700/60 flex items-center justify-between">
+            <p className="text-[10px] text-slate-500">
+              Grand Total · {docs.filter(d => d.amount).length} document{docs.filter(d => d.amount).length !== 1 ? 's' : ''}
+            </p>
+            <p className="text-sm font-bold text-emerald-400">
+              ₹{docs.reduce((s, d) => s + Number(d.amount || 0), 0).toLocaleString('en-IN')}
+            </p>
+          </div>
+        </div>
+      )}
+
       {isLoading && (
         <p className="text-xs text-slate-500 text-center py-4">Loading documents…</p>
       )}
@@ -1713,7 +1744,7 @@ function ProjectDocumentsSection({ project, companyId }) {
   )
 }
 
-function ProjectDetail({ project, companyId, onClose, onEdit, onDelete }) {
+function ProjectDetail({ project, companyId, docTotals, onClose, onEdit, onDelete }) {
   const { isAdvanced } = useDisplayMode()
 
   const { data: equipment = [] } = useQuery({
@@ -1795,16 +1826,34 @@ function ProjectDetail({ project, companyId, onClose, onEdit, onDelete }) {
 
       {/* Quick stats */}
       <div className={`grid gap-3 ${isAdvanced ? 'grid-cols-3' : 'grid-cols-2'}`}>
-        {[
-          { label: 'Contract Value',    value: fmt(project.contract_value) },
-          { label: 'Equipment on Site', value: `${equipment.length} unit${equipment.length !== 1 ? 's' : ''}` },
-          ...(isAdvanced ? [{ label: 'GST Rate', value: project.gst_rate ? `${project.gst_rate}%` : '18%' }] : []),
-        ].map(s => (
-          <div key={s.label} className="bg-dark-700/50 rounded-lg p-3 text-center">
-            <p className="text-[11px] text-slate-500 mb-0.5">{s.label}</p>
-            <p className="text-sm font-semibold text-slate-100">{s.value}</p>
+        {/* Document value (live) or fallback to static contract_value */}
+        <div className="bg-dark-700/50 rounded-lg p-3 text-center">
+          <p className="text-[11px] text-slate-500 mb-0.5">
+            {docTotals?.total > 0 ? 'Total Doc Value' : 'Contract Value'}
+          </p>
+          <p className={`text-sm font-semibold ${docTotals?.total > 0 ? 'text-emerald-400' : 'text-slate-100'}`}>
+            {fmt(docTotals?.total > 0 ? docTotals.total : project.contract_value)}
+          </p>
+          {docTotals?.total > 0 && (
+            <p className="text-[10px] text-slate-600 mt-0.5">
+              {Object.entries(docTotals.byType).map(([k, v]) =>
+                `${DOC_TYPES.find(d => d.value === k)?.label?.split('/')[0] || k}: ${fmt(v)}`
+              ).join(' · ')}
+            </p>
+          )}
+        </div>
+        <div className="bg-dark-700/50 rounded-lg p-3 text-center">
+          <p className="text-[11px] text-slate-500 mb-0.5">Equipment on Site</p>
+          <p className="text-sm font-semibold text-slate-100">
+            {equipment.length} unit{equipment.length !== 1 ? 's' : ''}
+          </p>
+        </div>
+        {isAdvanced && (
+          <div className="bg-dark-700/50 rounded-lg p-3 text-center">
+            <p className="text-[11px] text-slate-500 mb-0.5">GST Rate</p>
+            <p className="text-sm font-semibold text-slate-100">{project.gst_rate ? `${project.gst_rate}%` : '18%'}</p>
           </div>
-        ))}
+        )}
       </div>
 
       {/* Site & Timeline */}
@@ -2044,7 +2093,7 @@ function ProjectDetail({ project, companyId, onClose, onEdit, onDelete }) {
 
 // ── Project Card ───────────────────────────────────────────────────────────────
 
-function ProjectCard({ project, onClick }) {
+function ProjectCard({ project, docTotals, onClick }) {
   const clientName = project.clients?.display_name || project.clients?.business_name
   const mapsHref = project.site_lat && project.site_lng
     ? `https://maps.google.com/?q=${project.site_lat},${project.site_lng}`
@@ -2095,9 +2144,17 @@ function ProjectCard({ project, onClick }) {
             <span>{fmtDate(project.start_date)}{project.expected_end_date ? ` → ${fmtDate(project.expected_end_date)}` : ''}</span>
           </div>
         )}
-        {project.contract_value && (
+        {(docTotals?.total > 0 || project.contract_value) && (
           <div className="flex items-center gap-1.5">
-            <IndianRupee className="w-3 h-3 shrink-0"/><span>{fmt(project.contract_value)}</span>
+            <IndianRupee className="w-3 h-3 shrink-0 text-emerald-500"/>
+            <span className={docTotals?.total > 0 ? 'text-emerald-400 font-medium' : ''}>
+              {fmt(docTotals?.total > 0 ? docTotals.total : project.contract_value)}
+            </span>
+            {docTotals?.total > 0 && (
+              <span className="text-[10px] text-slate-600 font-normal">
+                ({Object.keys(docTotals.byType).length} type{Object.keys(docTotals.byType).length !== 1 ? 's' : ''})
+              </span>
+            )}
           </div>
         )}
       </div>
@@ -2147,6 +2204,34 @@ export default function ProjectsPage() {
     },
     enabled: !!companyId,
   })
+
+  // Fetch all document amounts for this company in one shot → sum per project
+  const { data: allDocAmounts = [] } = useQuery({
+    queryKey: ['project_doc_amounts', companyId],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('project_documents')
+        .select('project_id, doc_type, amount')
+        .eq('company_id', companyId)
+        .not('amount', 'is', null)
+      return data || []
+    },
+    staleTime: 60_000,
+    enabled: !!companyId,
+  })
+
+  // { [project_id]: { total: number, byType: { po: number, work_order: number, ... } } }
+  const docTotalsByProject = useMemo(() => {
+    const map = {}
+    allDocAmounts.forEach(d => {
+      const amt = Number(d.amount || 0)
+      if (!amt) return
+      if (!map[d.project_id]) map[d.project_id] = { total: 0, byType: {} }
+      map[d.project_id].total += amt
+      map[d.project_id].byType[d.doc_type] = (map[d.project_id].byType[d.doc_type] || 0) + amt
+    })
+    return map
+  }, [allDocAmounts])
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase()
@@ -2250,7 +2335,7 @@ export default function ProjectsPage() {
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filtered.map(p => <ProjectCard key={p.id} project={p} onClick={() => setViewing(p)}/>)}
+            {filtered.map(p => <ProjectCard key={p.id} project={p} docTotals={docTotalsByProject[p.id]} onClick={() => setViewing(p)}/>)}
           </div>
         )}
       </div>
@@ -2275,6 +2360,7 @@ export default function ProjectsPage() {
         <ProjectDetail
           project={viewing}
           companyId={companyId}
+          docTotals={docTotalsByProject[viewing?.id]}
           onClose={() => setViewing(null)}
           onEdit={() => { setEditing(viewing); setViewing(null) }}
           onDelete={isAdmin ? () => handleDelete(viewing) : undefined}
