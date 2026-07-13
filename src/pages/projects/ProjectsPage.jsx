@@ -8,6 +8,8 @@ import {
   Plus, X, Search, MapPin, Calendar, FileText, Users,
   Droplet, Building2, Trash2, Edit2, IndianRupee, ExternalLink,
   Cpu, Phone, Mail, FolderOpen, Navigation, UserPlus, RefreshCw, Clock,
+  Upload, Download, Eye, File, ShoppingBag, Briefcase, PenLine, LayoutGrid,
+  AlertTriangle, CheckCircle2,
 } from 'lucide-react'
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -1117,7 +1119,391 @@ function ContactCard({ name, phone, email, role }) {
   )
 }
 
-function ProjectDetail({ project, onClose, onEdit, onDelete }) {
+// ── Document Types ─────────────────────────────────────────────────────────────
+const DOC_TYPES = [
+  { value: 'po',          label: 'Purchase Order',       icon: ShoppingBag,  cls: 'text-blue-400 bg-blue-500/10' },
+  { value: 'work_order',  label: 'Work Order / LOA',     icon: Briefcase,    cls: 'text-emerald-400 bg-emerald-500/10' },
+  { value: 'contract',    label: 'Contract / Agreement',  icon: PenLine,      cls: 'text-purple-400 bg-purple-500/10' },
+  { value: 'drawing',     label: 'Drawing / BOQ',         icon: LayoutGrid,   cls: 'text-amber-400 bg-amber-500/10' },
+]
+const docTypeMeta = Object.fromEntries(DOC_TYPES.map(d => [d.value, d]))
+
+const BUCKET = 'project-documents'
+
+function fmtBytes(b) {
+  if (!b) return ''
+  if (b >= 1024 * 1024) return `${(b / 1024 / 1024).toFixed(1)} MB`
+  if (b >= 1024) return `${(b / 1024).toFixed(0)} KB`
+  return `${b} B`
+}
+
+// ── Upload Document Modal ──────────────────────────────────────────────────────
+function UploadDocModal({ projectId, companyId, onClose, onUploaded }) {
+  const [form, setForm] = useState({
+    doc_type: 'po', doc_name: '', doc_number: '', doc_date: '', amount: '', notes: '',
+  })
+  const [file, setFile]       = useState(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError]     = useState('')
+
+  const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
+  const fi  = (x = '') => `w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-primary-500 placeholder-slate-500 ${x}`
+
+  async function handleSubmit() {
+    if (!form.doc_name.trim()) { setError('Document name is required.'); return }
+    if (!file)                  { setError('Please attach a file.');      return }
+    setError('')
+    setLoading(true)
+    try {
+      // 1. Upload file to Supabase Storage
+      const ext      = file.name.split('.').pop()
+      const uuid     = crypto.randomUUID()
+      const filePath = `${companyId}/${projectId}/${uuid}.${ext}`
+
+      const { error: uploadErr } = await supabase.storage
+        .from(BUCKET)
+        .upload(filePath, file, { cacheControl: '3600', upsert: false })
+      if (uploadErr) throw uploadErr
+
+      // 2. Insert metadata row
+      const { error: dbErr } = await supabase.from('project_documents').insert({
+        company_id: companyId,
+        project_id: projectId,
+        doc_type:   form.doc_type,
+        doc_name:   form.doc_name.trim(),
+        doc_number: form.doc_number.trim() || null,
+        doc_date:   form.doc_date  || null,
+        amount:     form.amount    ? Number(form.amount)  : null,
+        notes:      form.notes.trim() || null,
+        file_path:  filePath,
+        file_name:  file.name,
+        file_size:  file.size,
+        file_type:  file.type,
+      })
+      if (dbErr) throw dbErr
+
+      toast.success('Document uploaded')
+      onUploaded()
+      onClose()
+    } catch (e) {
+      setError(e.message || 'Upload failed')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const selectedType = docTypeMeta[form.doc_type]
+
+  return (
+    <Modal
+      title="Upload Document"
+      subtitle="Attach a client document to this project"
+      onClose={onClose}
+      footer={<>
+        <button onClick={onClose} className="btn-ghost flex-1" disabled={loading}>Cancel</button>
+        <button onClick={handleSubmit} className="btn-primary flex-1 flex items-center justify-center gap-2" disabled={loading}>
+          {loading ? 'Uploading…' : <><Upload className="w-3.5 h-3.5"/> Upload</>}
+        </button>
+      </>}
+    >
+      {/* Doc type selector */}
+      <div>
+        <label className="block text-xs font-medium text-slate-400 mb-2">Document Type</label>
+        <div className="grid grid-cols-2 gap-2">
+          {DOC_TYPES.map(dt => {
+            const Icon = dt.icon
+            const active = form.doc_type === dt.value
+            return (
+              <button key={dt.value} type="button"
+                onClick={() => set('doc_type', dt.value)}
+                className={`flex items-center gap-2.5 px-3 py-2.5 rounded-lg border text-sm font-medium transition-all ${
+                  active
+                    ? 'border-primary-500 bg-primary-500/10 text-primary-300'
+                    : 'border-dark-600 bg-dark-700/50 text-slate-400 hover:border-dark-500'
+                }`}
+              >
+                <span className={`p-1.5 rounded-md ${active ? 'bg-primary-500/15' : dt.cls}`}>
+                  <Icon className="w-3.5 h-3.5" />
+                </span>
+                <span className="text-xs leading-tight">{dt.label}</span>
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* Metadata */}
+      <div className="space-y-3">
+        <div>
+          <label className="block text-xs font-medium text-slate-400 mb-1">
+            Document Name <span className="text-red-400">*</span>
+          </label>
+          <input className={fi()} value={form.doc_name}
+            onChange={e => set('doc_name', e.target.value)}
+            placeholder={`e.g. ${selectedType?.label} from client`} />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs font-medium text-slate-400 mb-1">Document Number</label>
+            <input className={fi()} value={form.doc_number}
+              onChange={e => set('doc_number', e.target.value)}
+              placeholder="PO-2025-001" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-400 mb-1">Document Date</label>
+            <input type="date" className={fi()} value={form.doc_date}
+              onChange={e => set('doc_date', e.target.value)} />
+          </div>
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-slate-400 mb-1">Amount (₹) — optional</label>
+          <input type="number" className={fi()} value={form.amount}
+            onChange={e => set('amount', e.target.value)}
+            placeholder="PO value or contract amount" />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-slate-400 mb-1">Notes — optional</label>
+          <textarea className={fi('resize-none')} rows={2} value={form.notes}
+            onChange={e => set('notes', e.target.value)}
+            placeholder="Any remarks…" />
+        </div>
+      </div>
+
+      {/* File picker */}
+      <div>
+        <label className="block text-xs font-medium text-slate-400 mb-2">
+          Attach File <span className="text-red-400">*</span>
+        </label>
+        <label className={`flex flex-col items-center justify-center gap-2 border-2 border-dashed rounded-xl p-6 cursor-pointer transition-colors ${
+          file ? 'border-emerald-500/50 bg-emerald-500/5' : 'border-dark-600 hover:border-primary-500/50 bg-dark-700/30'
+        }`}>
+          <input type="file" className="hidden"
+            accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.dwg,.zip"
+            onChange={e => setFile(e.target.files?.[0] || null)}
+          />
+          {file ? (
+            <>
+              <CheckCircle2 className="w-6 h-6 text-emerald-400" />
+              <p className="text-sm text-emerald-300 font-medium text-center">{file.name}</p>
+              <p className="text-xs text-slate-500">{fmtBytes(file.size)}</p>
+            </>
+          ) : (
+            <>
+              <Upload className="w-6 h-6 text-slate-500" />
+              <p className="text-sm text-slate-400">Click to choose file</p>
+              <p className="text-xs text-slate-600">PDF, Word, Excel, Images, DWG — max 50 MB</p>
+            </>
+          )}
+        </label>
+      </div>
+
+      {error && (
+        <div className="flex items-center gap-2 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-xs text-red-400">
+          <AlertTriangle className="w-4 h-4 shrink-0" />{error}
+        </div>
+      )}
+    </Modal>
+  )
+}
+
+// ── Documents Section (inside ProjectDetail) ───────────────────────────────────
+function ProjectDocumentsSection({ project, companyId }) {
+  const qc = useQueryClient()
+  const [showUpload, setShowUpload] = useState(false)
+  const [deleting,   setDeleting]   = useState(null)
+  const [filter,     setFilter]     = useState('all')
+
+  const { data: docs = [], isLoading } = useQuery({
+    queryKey: ['project_documents', project.id],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('project_documents')
+        .select('*')
+        .eq('project_id', project.id)
+        .order('created_at', { ascending: false })
+      return data || []
+    },
+    staleTime: 30_000,
+  })
+
+  const filtered = filter === 'all' ? docs : docs.filter(d => d.doc_type === filter)
+
+  async function downloadDoc(doc) {
+    if (!doc.file_path) { toast.error('No file attached'); return }
+    const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(doc.file_path, 60)
+    if (error) { toast.error('Could not generate download link'); return }
+    const a = document.createElement('a')
+    a.href = data.signedUrl
+    a.download = doc.file_name || 'document'
+    a.click()
+  }
+
+  async function deleteDoc(doc) {
+    if (!window.confirm(`Delete "${doc.doc_name}"? This cannot be undone.`)) return
+    setDeleting(doc.id)
+    try {
+      if (doc.file_path) {
+        await supabase.storage.from(BUCKET).remove([doc.file_path])
+      }
+      await supabase.from('project_documents').delete().eq('id', doc.id)
+      qc.invalidateQueries({ queryKey: ['project_documents', project.id] })
+      toast.success('Document deleted')
+    } catch (e) {
+      toast.error('Delete failed')
+    } finally {
+      setDeleting(null)
+    }
+  }
+
+  const counts = DOC_TYPES.reduce((acc, dt) => {
+    acc[dt.value] = docs.filter(d => d.doc_type === dt.value).length
+    return acc
+  }, {})
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2 pb-2 border-b border-dark-700 flex-1">
+          <FolderOpen className="w-4 h-4 text-primary-400" />
+          <span className="text-xs font-semibold text-slate-300 uppercase tracking-wider">
+            Project Documents
+          </span>
+          {docs.length > 0 && (
+            <span className="text-[11px] bg-primary-500/15 text-primary-400 px-2 py-0.5 rounded-full font-medium ml-1">
+              {docs.length}
+            </span>
+          )}
+        </div>
+        <button
+          onClick={() => setShowUpload(true)}
+          className="ml-3 mb-2 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary-600 hover:bg-primary-700 text-white text-xs font-medium transition-colors shrink-0"
+        >
+          <Upload className="w-3.5 h-3.5" /> Upload
+        </button>
+      </div>
+
+      {/* Filter chips */}
+      {docs.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mb-3">
+          <button
+            onClick={() => setFilter('all')}
+            className={`text-[11px] px-2.5 py-1 rounded-full font-medium transition-colors ${
+              filter === 'all' ? 'bg-primary-600 text-white' : 'bg-dark-700 text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            All ({docs.length})
+          </button>
+          {DOC_TYPES.map(dt => counts[dt.value] > 0 && (
+            <button key={dt.value}
+              onClick={() => setFilter(dt.value)}
+              className={`text-[11px] px-2.5 py-1 rounded-full font-medium transition-colors ${
+                filter === dt.value ? 'bg-primary-600 text-white' : 'bg-dark-700 text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              {dt.label} ({counts[dt.value]})
+            </button>
+          ))}
+        </div>
+      )}
+
+      {isLoading && (
+        <p className="text-xs text-slate-500 text-center py-4">Loading documents…</p>
+      )}
+
+      {!isLoading && docs.length === 0 && (
+        <div className="flex flex-col items-center justify-center py-8 gap-2 text-slate-600">
+          <FolderOpen className="w-8 h-8" />
+          <p className="text-sm text-slate-500">No documents yet</p>
+          <p className="text-xs">Upload POs, Work Orders, Contracts, or Drawings</p>
+        </div>
+      )}
+
+      {!isLoading && filtered.length > 0 && (
+        <div className="space-y-2">
+          {filtered.map(doc => {
+            const meta = docTypeMeta[doc.doc_type] || docTypeMeta.po
+            const Icon = meta.icon
+            return (
+              <div key={doc.id}
+                className="flex items-center gap-3 p-3 rounded-xl bg-dark-700/50 border border-dark-700 hover:border-dark-600 transition-colors"
+              >
+                {/* Type icon */}
+                <div className={`p-2 rounded-lg shrink-0 ${meta.cls}`}>
+                  <Icon className="w-4 h-4" />
+                </div>
+
+                {/* Info */}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p className="text-sm font-semibold text-slate-100 truncate">{doc.doc_name}</p>
+                    {doc.doc_number && (
+                      <span className="text-[11px] text-primary-400 font-mono">{doc.doc_number}</span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-3 mt-0.5 flex-wrap">
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${meta.cls}`}>
+                      {meta.label}
+                    </span>
+                    {doc.doc_date && (
+                      <span className="text-[11px] text-slate-500">
+                        {new Date(doc.doc_date).toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' })}
+                      </span>
+                    )}
+                    {doc.amount && (
+                      <span className="text-[11px] text-emerald-400 font-medium">
+                        ₹{Number(doc.amount).toLocaleString('en-IN')}
+                      </span>
+                    )}
+                    {doc.file_name && (
+                      <span className="text-[11px] text-slate-600 truncate max-w-[140px]">
+                        {doc.file_name} {doc.file_size ? `(${fmtBytes(doc.file_size)})` : ''}
+                      </span>
+                    )}
+                  </div>
+                  {doc.notes && (
+                    <p className="text-[11px] text-slate-500 mt-0.5 italic truncate">{doc.notes}</p>
+                  )}
+                </div>
+
+                {/* Actions */}
+                <div className="flex items-center gap-1 shrink-0">
+                  {doc.file_path && (
+                    <button
+                      onClick={() => downloadDoc(doc)}
+                      title="Download"
+                      className="p-2 rounded-lg text-slate-400 hover:text-primary-300 hover:bg-primary-500/10 transition-colors"
+                    >
+                      <Download className="w-4 h-4" />
+                    </button>
+                  )}
+                  <button
+                    onClick={() => deleteDoc(doc)}
+                    disabled={deleting === doc.id}
+                    title="Delete"
+                    className="p-2 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-40"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {showUpload && (
+        <UploadDocModal
+          projectId={project.id}
+          companyId={companyId}
+          onClose={() => setShowUpload(false)}
+          onUploaded={() => qc.invalidateQueries({ queryKey: ['project_documents', project.id] })}
+        />
+      )}
+    </div>
+  )
+}
+
+function ProjectDetail({ project, companyId, onClose, onEdit, onDelete }) {
   const { isAdvanced } = useDisplayMode()
 
   const { data: equipment = [] } = useQuery({
@@ -1439,6 +1825,9 @@ function ProjectDetail({ project, onClose, onEdit, onDelete }) {
           <p className="text-xs text-slate-300 mt-2 leading-relaxed">{project.notes}</p>
         </div>
       )}
+
+      {/* ── Documents ── */}
+      <ProjectDocumentsSection project={project} companyId={companyId} />
     </Modal>
   )
 }
@@ -1675,6 +2064,7 @@ export default function ProjectsPage() {
       {viewing && (
         <ProjectDetail
           project={viewing}
+          companyId={companyId}
           onClose={() => setViewing(null)}
           onEdit={() => { setEditing(viewing); setViewing(null) }}
           onDelete={isAdmin ? () => handleDelete(viewing) : undefined}
