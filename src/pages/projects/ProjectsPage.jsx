@@ -1306,10 +1306,203 @@ function UploadDocModal({ projectId, companyId, onClose, onUploaded }) {
   )
 }
 
+// ── Edit Document Modal ────────────────────────────────────────────────────────
+function EditDocModal({ doc, companyId, projectId, onClose, onSaved }) {
+  const [form, setForm] = useState({
+    doc_type:   doc.doc_type   || 'po',
+    doc_name:   doc.doc_name   || '',
+    doc_number: doc.doc_number || '',
+    doc_date:   doc.doc_date   || '',
+    amount:     doc.amount     ? String(doc.amount) : '',
+    notes:      doc.notes      || '',
+  })
+  const [file, setFile]       = useState(null)   // new replacement file (optional)
+  const [loading, setLoading] = useState(false)
+  const [error, setError]     = useState('')
+
+  const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
+  const fi  = (x = '') => `w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-primary-500 placeholder-slate-500 ${x}`
+
+  async function handleSave() {
+    if (!form.doc_name.trim()) { setError('Document name is required.'); return }
+    setError('')
+    setLoading(true)
+    try {
+      let filePatch = {}
+
+      if (file) {
+        // Delete old file if present
+        if (doc.file_path) {
+          await supabase.storage.from(BUCKET).remove([doc.file_path])
+        }
+        // Upload new file
+        const ext      = file.name.split('.').pop()
+        const uuid     = crypto.randomUUID()
+        const filePath = `${companyId}/${projectId}/${uuid}.${ext}`
+        const { error: uploadErr } = await supabase.storage
+          .from(BUCKET)
+          .upload(filePath, file, { cacheControl: '3600', upsert: false })
+        if (uploadErr) throw uploadErr
+        filePatch = { file_path: filePath, file_name: file.name, file_size: file.size, file_type: file.type }
+      }
+
+      const { error: dbErr } = await supabase
+        .from('project_documents')
+        .update({
+          doc_type:   form.doc_type,
+          doc_name:   form.doc_name.trim(),
+          doc_number: form.doc_number.trim() || null,
+          doc_date:   form.doc_date  || null,
+          amount:     form.amount    ? Number(form.amount) : null,
+          notes:      form.notes.trim() || null,
+          ...filePatch,
+        })
+        .eq('id', doc.id)
+      if (dbErr) throw dbErr
+
+      toast.success('Document updated')
+      onSaved()
+      onClose()
+    } catch (e) {
+      setError(e.message || 'Save failed')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const selectedType = docTypeMeta[form.doc_type]
+
+  return (
+    <Modal
+      title="Edit Document"
+      subtitle={doc.doc_name}
+      onClose={onClose}
+      footer={<>
+        <button onClick={onClose} className="btn-ghost flex-1" disabled={loading}>Cancel</button>
+        <button onClick={handleSave} className="btn-primary flex-1 flex items-center justify-center gap-2" disabled={loading}>
+          {loading ? 'Saving…' : <><Edit2 className="w-3.5 h-3.5"/> Save Changes</>}
+        </button>
+      </>}
+    >
+      {/* Doc type selector */}
+      <div>
+        <label className="block text-xs font-medium text-slate-400 mb-2">Document Type</label>
+        <div className="grid grid-cols-2 gap-2">
+          {DOC_TYPES.map(dt => {
+            const Icon = dt.icon
+            const active = form.doc_type === dt.value
+            return (
+              <button key={dt.value} type="button"
+                onClick={() => set('doc_type', dt.value)}
+                className={`flex items-center gap-2.5 px-3 py-2.5 rounded-lg border text-sm font-medium transition-all ${
+                  active
+                    ? 'border-primary-500 bg-primary-500/10 text-primary-300'
+                    : 'border-dark-600 bg-dark-700/50 text-slate-400 hover:border-dark-500'
+                }`}
+              >
+                <span className={`p-1.5 rounded-md ${active ? 'bg-primary-500/15' : dt.cls}`}>
+                  <Icon className="w-3.5 h-3.5" />
+                </span>
+                <span className="text-xs leading-tight">{dt.label}</span>
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* Metadata */}
+      <div className="space-y-3">
+        <div>
+          <label className="block text-xs font-medium text-slate-400 mb-1">
+            Document Name <span className="text-red-400">*</span>
+          </label>
+          <input className={fi()} value={form.doc_name}
+            onChange={e => set('doc_name', e.target.value)}
+            placeholder={`e.g. ${selectedType?.label} from client`} />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs font-medium text-slate-400 mb-1">Document Number</label>
+            <input className={fi()} value={form.doc_number}
+              onChange={e => set('doc_number', e.target.value)}
+              placeholder="PO-2025-001" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-400 mb-1">Document Date</label>
+            <input type="date" className={fi()} value={form.doc_date}
+              onChange={e => set('doc_date', e.target.value)} />
+          </div>
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-slate-400 mb-1">Amount (₹) — optional</label>
+          <input type="number" className={fi()} value={form.amount}
+            onChange={e => set('amount', e.target.value)}
+            placeholder="PO value or contract amount" />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-slate-400 mb-1">Notes — optional</label>
+          <textarea className={fi('resize-none')} rows={2} value={form.notes}
+            onChange={e => set('notes', e.target.value)}
+            placeholder="Any remarks…" />
+        </div>
+      </div>
+
+      {/* Replace file (optional) */}
+      <div>
+        <label className="block text-xs font-medium text-slate-400 mb-2">
+          Replace File — optional
+        </label>
+        {doc.file_name && !file && (
+          <div className="flex items-center gap-2 mb-2 px-3 py-2 rounded-lg bg-dark-700/50 border border-dark-600">
+            <File className="w-4 h-4 text-slate-400 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-xs text-slate-300 truncate">{doc.file_name}</p>
+              {doc.file_size && <p className="text-[11px] text-slate-500">{fmtBytes(doc.file_size)} — current file</p>}
+            </div>
+          </div>
+        )}
+        <label className={`flex flex-col items-center justify-center gap-2 border-2 border-dashed rounded-xl p-5 cursor-pointer transition-colors ${
+          file ? 'border-amber-500/50 bg-amber-500/5' : 'border-dark-600 hover:border-primary-500/40 bg-dark-700/20'
+        }`}>
+          <input type="file" className="hidden"
+            accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.dwg,.zip"
+            onChange={e => setFile(e.target.files?.[0] || null)}
+          />
+          {file ? (
+            <>
+              <CheckCircle2 className="w-5 h-5 text-amber-400" />
+              <p className="text-sm text-amber-300 font-medium text-center">{file.name}</p>
+              <p className="text-xs text-slate-500">{fmtBytes(file.size)} — will replace existing</p>
+            </>
+          ) : (
+            <>
+              <Upload className="w-5 h-5 text-slate-600" />
+              <p className="text-sm text-slate-500">Choose a new file to replace</p>
+              <p className="text-xs text-slate-600">Leave blank to keep current file</p>
+            </>
+          )}
+        </label>
+        {file && (
+          <button onClick={() => setFile(null)} className="mt-1.5 text-xs text-slate-500 hover:text-slate-300 w-full text-center">
+            ✕ Cancel replacement — keep current file
+          </button>
+        )}
+      </div>
+
+      {error && (
+        <div className="flex items-center gap-2 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-xs text-red-400">
+          <AlertTriangle className="w-4 h-4 shrink-0" />{error}
+        </div>
+      )}
+    </Modal>
+  )
+}
+
 // ── Documents Section (inside ProjectDetail) ───────────────────────────────────
 function ProjectDocumentsSection({ project, companyId }) {
   const qc = useQueryClient()
   const [showUpload, setShowUpload] = useState(false)
+  const [editingDoc, setEditingDoc] = useState(null)
   const [deleting,   setDeleting]   = useState(null)
   const [filter,     setFilter]     = useState('all')
 
@@ -1477,6 +1670,13 @@ function ProjectDocumentsSection({ project, companyId }) {
                     </button>
                   )}
                   <button
+                    onClick={() => setEditingDoc(doc)}
+                    title="Edit"
+                    className="p-2 rounded-lg text-slate-400 hover:text-amber-300 hover:bg-amber-500/10 transition-colors"
+                  >
+                    <Edit2 className="w-4 h-4" />
+                  </button>
+                  <button
                     onClick={() => deleteDoc(doc)}
                     disabled={deleting === doc.id}
                     title="Delete"
@@ -1497,6 +1697,16 @@ function ProjectDocumentsSection({ project, companyId }) {
           companyId={companyId}
           onClose={() => setShowUpload(false)}
           onUploaded={() => qc.invalidateQueries({ queryKey: ['project_documents', project.id] })}
+        />
+      )}
+
+      {editingDoc && (
+        <EditDocModal
+          doc={editingDoc}
+          projectId={project.id}
+          companyId={companyId}
+          onClose={() => setEditingDoc(null)}
+          onSaved={() => qc.invalidateQueries({ queryKey: ['project_documents', project.id] })}
         />
       )}
     </div>
