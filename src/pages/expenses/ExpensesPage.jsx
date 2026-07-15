@@ -358,6 +358,7 @@ function ExpandedDetail({ entry, onNavigate }) {
           <DetailRow label="Payment No."   value={r.payment_number} />
           <DetailRow label="Bill No."      value={r.bills?.bill_number} />
           <DetailRow label="Bill Total"    value={r.bills?.total_amount ? fmtINR(r.bills.total_amount) : null} />
+          <DetailRow label="Amount Paid"   value={fmtINR(r.amount)} />
           <DetailRow label="Payment Mode"  value={r.payment_mode?.toUpperCase()} />
           <DetailRow label="Bank Ref"      value={r.bank_reference} />
           <DetailRow label="Notes"         value={r.notes} />
@@ -396,8 +397,8 @@ export default function ExpensesPage({ onNavigate }) {
 
   const [tab,       setTab]       = useState('all')
   const [search,    setSearch]    = useState('')
-  const [dateFrom,  setFrom]      = useState(monthStart())
-  const [dateTo,    setTo]        = useState(today())
+  const [dateFrom,  setFrom]      = useState('')   // no default — salary dates are month-end of prior months
+  const [dateTo,    setTo]        = useState('')
   const [modeFilter,setMode]      = useState('')
   const [expanded,  setExpanded]  = useState(null)
   const [editing,   setEditing]   = useState(null)
@@ -437,7 +438,7 @@ export default function ExpensesPage({ onNavigate }) {
     queryKey: ['pay_unified', companyId],
     queryFn: async () => {
       const { data } = await supabase.from('payments_made')
-        .select('*, bills(bill_number, total_amount, vendor_name)')
+        .select('*, bills(bill_number, total_amount)')   // bills has no vendor_name column — use payments_made.vendor_name
         .eq('company_id', companyId)
         .order('payment_date', { ascending: false })
         .limit(500)
@@ -539,7 +540,7 @@ export default function ExpensesPage({ onNavigate }) {
         amount:    Number(r.amount || 0),
         mode:      r.payment_mode || 'cash',
         title:     r.bills?.bill_number ? `Bill ${r.bills.bill_number}` : 'Bill Payment',
-        sub1:      r.vendor_name || r.bills?.vendor_name,
+        sub1:      r.vendor_name,   // vendor_name lives on payments_made, not bills
         sub2:      r.payment_number,
         ref:       r.payment_number,
         hasBillPhoto: false,
