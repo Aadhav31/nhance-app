@@ -602,13 +602,26 @@ function ExpensesTab({ companyId, session }) {
   const [form, setForm] = useState({ description: '', amount: '', expense_date: todayStr(), category: 'spares', vendor_id: '', payment_mode: 'cash', reference: '', notes: '' })
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
 
-  const { data: expenses = [], isLoading } = useQuery({
+  // Direct purchase expenses (manually recorded)
+  const { data: expenses = [], isLoading: loadingExp } = useQuery({
     queryKey: ['purchase_expenses', companyId],
     queryFn: async () => {
       const { data } = await supabase.from('expenses').select('*')
-        .eq('company_id', companyId)
-        .eq('source', 'purchase')
+        .eq('company_id', companyId).eq('source', 'purchase')
         .order('expense_date', { ascending: false }).limit(200)
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+
+  // Bill payments (payments_made linked to bills)
+  const { data: billPayments = [], isLoading: loadingPay } = useQuery({
+    queryKey: ['purchase_bill_payments', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('payments_made')
+        .select('id, payment_number, payment_date, vendor_name, amount, payment_mode, bank_reference, bill_id, bills(bill_number, total_amount)')
+        .eq('company_id', companyId)
+        .order('payment_date', { ascending: false }).limit(200)
       return data || []
     },
     enabled: !!companyId,
@@ -633,7 +646,29 @@ function ExpensesTab({ companyId, session }) {
   ]
   const MODES = ['cash','bank','upi','cheque','neft','rtgs']
 
-  const totalExpenses = expenses.reduce((s, e) => s + Number(e.amount || 0), 0)
+  // Merge and sort both streams by date descending
+  const allEntries = useMemo(() => {
+    const expRows = expenses.map(e => ({
+      _key: `exp-${e.id}`, _kind: 'expense',
+      date: e.expense_date, label: e.description,
+      sub: e.category?.replace(/_/g, ' '),
+      vendor: e.vendor_name, mode: e.payment_mode,
+      ref: e.bill_number || e.bank_reference,
+      amount: Number(e.amount || 0),
+    }))
+    const payRows = billPayments.map(p => ({
+      _key: `pay-${p.id}`, _kind: 'payment',
+      date: p.payment_date, label: `Payment — ${p.vendor_name || ''}`,
+      sub: p.bills?.bill_number ? `Bill ${p.bills.bill_number}` : 'Bill Payment',
+      vendor: p.vendor_name, mode: p.payment_mode,
+      ref: p.payment_number,
+      amount: Number(p.amount || 0),
+    }))
+    return [...expRows, ...payRows].sort((a, b) => new Date(b.date) - new Date(a.date))
+  }, [expenses, billPayments])
+
+  const totalSpent = allEntries.reduce((s, e) => s + e.amount, 0)
+  const isLoading  = loadingExp || loadingPay
 
   const save = async () => {
     if (!form.description.trim()) return toast.error('Description required')
@@ -641,7 +676,6 @@ function ExpensesTab({ companyId, session }) {
     setSaving(true)
     try {
       const amt = parseFloat(form.amount)
-      // 1. Write to expenses table (source of truth for purchase ledger)
       const { data: exp, error: ee } = await supabase.from('expenses').insert({
         company_id:    companyId,
         expense_date:  form.expense_date,
@@ -658,22 +692,16 @@ function ExpensesTab({ companyId, session }) {
       }).select('id').single()
       if (ee) throw ee
 
-      // 2. Write to account_transactions for P&L / Overview
-      const { error: te } = await supabase.from('account_transactions').insert({
-        company_id:     companyId,
-        type:           'expense',
+      await supabase.from('account_transactions').insert({
+        company_id:     companyId, type: 'expense',
         description:    form.description.trim(),
-        amount:         amt,
-        gst_amount:     0,
+        amount:         amt, gst_amount: 0,
         txn_date:       form.expense_date,
         payment_mode:   form.payment_mode,
         bank_reference: form.reference || null,
-        reference_type: 'expense',
-        reference_id:   exp.id,
-        notes:          form.notes || null,
-        created_by:     session.user.id,
+        reference_type: 'expense', reference_id: exp.id,
+        notes:          form.notes || null, created_by: session.user.id,
       })
-      if (te) throw te
 
       toast.success('Expense recorded')
       setShowCreate(false)
@@ -685,26 +713,44 @@ function ExpensesTab({ companyId, session }) {
   return (
     <div className="flex flex-col h-full">
       <div className="px-4 py-3 border-b border-dark-800 shrink-0 flex items-center justify-between">
-        <div className="bg-dark-800 rounded-xl px-3 py-2 text-xs"><span className="text-slate-500">Total Spent </span><span className="font-bold text-red-400">{fmtINR(totalExpenses)}</span></div>
+        <div className="bg-dark-800 rounded-xl px-3 py-2 text-xs">
+          <span className="text-slate-500">Total Spent </span>
+          <span className="font-bold text-red-400">{fmtINR(totalSpent)}</span>
+          {billPayments.length > 0 && (
+            <span className="text-slate-600 ml-2">
+              (Direct: {fmtINR(expenses.reduce((s,e)=>s+Number(e.amount||0),0))} · Bills: {fmtINR(billPayments.reduce((s,p)=>s+Number(p.amount||0),0))})
+            </span>
+          )}
+        </div>
         <button onClick={() => setShowCreate(true)} className="btn-primary"><Plus className="w-4 h-4" /> Add Expense</button>
       </div>
       <div className="flex-1 overflow-y-auto px-4 pb-4 pt-3">
-        {isLoading ? <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-primary-400" /></div>
-        : expenses.length === 0 ? <div className="flex flex-col items-center py-16 gap-2 text-slate-500"><Wallet className="w-10 h-10 text-slate-700" /><p>No expenses recorded</p></div>
-        : <div className="space-y-2">
-          {expenses.map(e => (
-            <div key={e.id} className="bg-dark-800 border border-dark-700 rounded-xl p-4 flex items-center justify-between">
-              <div>
-                <p className="font-semibold text-slate-100 text-sm">{e.description}</p>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  {fmtDate(e.expense_date)} · <span className="capitalize">{e.category?.replace(/_/g,' ')}</span>
-                  {e.payment_mode ? ` · ${e.payment_mode.toUpperCase()}` : ''}
-                </p>
-              </div>
-              <p className="text-lg font-black text-red-400 shrink-0">{fmtINR(e.amount)}</p>
+        {isLoading
+          ? <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-primary-400" /></div>
+          : allEntries.length === 0
+            ? <div className="flex flex-col items-center py-16 gap-2 text-slate-500"><Wallet className="w-10 h-10 text-slate-700" /><p>No expenses recorded</p></div>
+            : <div className="space-y-2">
+              {allEntries.map(e => (
+                <div key={e._key} className="bg-dark-800 border border-dark-700 rounded-xl p-4 flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="font-semibold text-slate-100 text-sm truncate">{e.label}</p>
+                      {e._kind === 'payment' && (
+                        <span className="shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-400 border border-blue-500/30">BILL PMT</span>
+                      )}
+                    </div>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      {fmtDate(e.date)}
+                      {e.sub && <> · <span className="capitalize">{e.sub}</span></>}
+                      {e.mode && <> · {e.mode.toUpperCase()}</>}
+                      {e.ref  && <> · <span className="text-primary-500">{e.ref}</span></>}
+                    </p>
+                  </div>
+                  <p className="text-lg font-black text-red-400 shrink-0">{fmtINR(e.amount)}</p>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>}
+        }
       </div>
       {showCreate && (
         <Modal title="Add Expense" onClose={() => setShowCreate(false)}
