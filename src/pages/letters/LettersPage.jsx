@@ -340,8 +340,25 @@ export default function LettersPage() {
           <div>
             <label className="text-xs text-slate-400 mb-1.5 block">Letter Body *</label>
 
+            {/* ── Body textarea ───────────────────────────────────────────── */}
+            <textarea
+              className="w-full bg-dark-700 border border-dark-600 border-b-0 rounded-t-lg px-3 py-2.5 text-slate-100 focus:outline-none focus:border-primary-500 min-h-[240px] resize-y leading-relaxed placeholder:text-slate-500"
+              style={{
+                textAlign:  form.bodyAlign,
+                fontSize:   `${Number(form.bodyFontSize) + 3}px`,
+                fontFamily: form.bodyFont === 'times'   ? '"Times New Roman", Times, serif'
+                          : form.bodyFont === 'courier' ? '"Courier New", Courier, monospace'
+                          : 'Helvetica, Arial, sans-serif',
+                fontWeight: form.bodyBold   ? 'bold'   : 'normal',
+                fontStyle:  form.bodyItalic ? 'italic' : 'normal',
+              }}
+              value={form.body}
+              onChange={e => setF('body', e.target.value)}
+              placeholder="Type the letter content here. Replace [placeholders] with actual values."
+            />
+
             {/* ── Formatting toolbar ──────────────────────────────────────── */}
-            <div className="flex items-center gap-0.5 px-2 py-1.5 bg-dark-700 border border-dark-600 rounded-t-lg flex-wrap">
+            <div className="flex items-center gap-0.5 px-2 py-1.5 bg-dark-700 border border-dark-600 rounded-b-lg flex-wrap">
 
               {/* Bold / Italic */}
               <button type="button" title="Bold"
@@ -402,23 +419,6 @@ export default function LettersPage() {
                 Formatting applies to PDF output
               </span>
             </div>
-
-            {/* ── Body textarea ───────────────────────────────────────────── */}
-            <textarea
-              className="w-full bg-dark-700 border border-dark-600 border-t-0 rounded-b-lg px-3 py-2.5 text-slate-100 focus:outline-none focus:border-primary-500 min-h-[240px] resize-y leading-relaxed placeholder:text-slate-500"
-              style={{
-                textAlign:  form.bodyAlign,
-                fontSize:   `${Number(form.bodyFontSize) + 3}px`,
-                fontFamily: form.bodyFont === 'times'   ? '"Times New Roman", Times, serif'
-                          : form.bodyFont === 'courier' ? '"Courier New", Courier, monospace'
-                          : 'Helvetica, Arial, sans-serif',
-                fontWeight: form.bodyBold   ? 'bold'   : 'normal',
-                fontStyle:  form.bodyItalic ? 'italic' : 'normal',
-              }}
-              value={form.body}
-              onChange={e => setF('body', e.target.value)}
-              placeholder="Type the letter content here. Replace [placeholders] with actual values."
-            />
             <p className="text-[10px] text-slate-500 mt-1">Replace [placeholders] before downloading. Formatting is applied in the PDF.</p>
           </div>
 
