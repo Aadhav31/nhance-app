@@ -174,7 +174,8 @@ function htmlToBlocks(html) {
 }
 
 // ── Letter types that hide To/Address block in PDF ────────────────────────────
-export const HIDE_TO_BLOCK = new Set(['Experience Certificate'])
+// 'To' block hidden for these types (address fields not relevant)
+export const HIDE_TO_BLOCK = new Set(['Experience Certificate', 'Commencement of Operations'])
 
 // ── Main export ───────────────────────────────────────────────────────────────
 export async function generateLetterPDF(company, letterData = {}, verifyUrl = null) {

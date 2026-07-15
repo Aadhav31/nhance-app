@@ -24,7 +24,11 @@ import toast from 'react-hot-toast'
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Letter types that need project + equipment fields
+const EQUIPMENT_LETTER_TYPES = new Set(['Commencement of Operations'])
+
 const LETTER_TYPES = [
+  { value: 'Commencement of Operations', label: 'Commencement of Operations Certificate' },
   { value: 'Experience Certificate',   label: 'Experience Certificate' },
   { value: 'No Objection Certificate', label: 'NOC (No Objection Certificate)' },
   { value: 'Reference Letter',         label: 'Reference Letter' },
@@ -37,6 +41,23 @@ const LETTER_TYPES = [
 ]
 
 const BODY_TEMPLATES = {
+  'Commencement of Operations': `TO WHOMSOEVER IT MAY CONCERN
+
+This is to certify that [Equipment Name] (Equipment No. [Equipment Number]) has been successfully deployed and has formally commenced operations at [Project/Site Name], [Site Location], with effect from [Commencement Date].
+
+All pre-operational safety checks have been carried out and the equipment has been verified to be in satisfactory working condition.
+
+Deployment Details:
+
+Project / Site       : [Project/Site Name]
+Equipment            : [Equipment Name]
+Equipment No.        : [Equipment Number]
+Commencement Date    : [Commencement Date]
+Operator             : [Operator Name]
+Client               : [Client Name]
+
+This certificate is issued confirming the commencement of operations at the above-mentioned site.`,
+
   'Experience Certificate': `TO WHOMSOEVER IT MAY CONCERN
 
 This is to certify that [Employee Name], [Designation], has been employed with us from [Start Date] to [End Date].
@@ -168,6 +189,47 @@ export default function LettersPage() {
       editorRef.current.innerHTML = plainToHtml(BODY_TEMPLATES['Experience Certificate'])
     }
   }, []) // eslint-disable-line
+
+  // ── Commencement of Operations — project / equipment data ───────────────
+  const [projects,  setProjects]  = useState([])
+  const [eqList,    setEqList]    = useState([])
+  const [commData,  setCommData]  = useState({ projectId: '', equipmentId: '', site: '', operatorName: '', clientName: '' })
+  const setCD = (k, v) => setCommData(p => ({ ...p, [k]: v }))
+  const isCommType = EQUIPMENT_LETTER_TYPES.has(form.letterType)
+
+  // Fetch projects + equipment once
+  useEffect(() => {
+    if (!companyId) return
+    supabase.from('projects').select('id,project_name,project_number')
+      .eq('company_id', companyId).order('project_name')
+      .then(({ data }) => setProjects(data || []))
+    supabase.from('equipment').select('id,name,equipment_number,category')
+      .eq('company_id', companyId).order('name')
+      .then(({ data }) => setEqList(data || []))
+  }, [companyId])
+
+  // Auto-fill body when commencement fields change
+  useEffect(() => {
+    if (!isCommType || !editorRef.current) return
+    const proj = projects.find(p => p.id === commData.projectId)
+    const eq   = eqList.find(e => e.id === commData.equipmentId)
+    const fmtD = form.date
+      ? new Date(form.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' })
+      : '[Commencement Date]'
+
+    const filled = (BODY_TEMPLATES['Commencement of Operations'] || '')
+      .replace(/\[Equipment Name\]/g,    eq?.name            || '[Equipment Name]')
+      .replace(/\[Equipment Number\]/g,  eq?.equipment_number || '[Equipment Number]')
+      .replace(/\[Equipment Type\]/g,    eq?.category         || '[Equipment Type]')
+      .replace(/\[Project\/Site Name\]/g, proj?.project_name  || '[Project/Site Name]')
+      .replace(/\[Site Location\]/g,     commData.site        || '[Site Location]')
+      .replace(/\[Operator Name\]/g,     commData.operatorName|| '[Operator Name]')
+      .replace(/\[Client Name\]/g,       commData.clientName  || '[Client Name]')
+      .replace(/\[Commencement Date\]/g, fmtD)
+
+    editorRef.current.innerHTML = plainToHtml(filled)
+  }, [commData, form.date, form.letterType, projects, eqList]) // eslint-disable-line
+
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
   const hideToBlock = HIDE_TO_BLOCK.has(form.letterType)
 
@@ -179,11 +241,16 @@ export default function LettersPage() {
     if (isTemplate && editorRef.current) {
       editorRef.current.innerHTML = plainToHtml(BODY_TEMPLATES[type] || '')
     }
+    // Reset commencement fields when switching away
+    if (!EQUIPMENT_LETTER_TYPES.has(type)) {
+      setCommData({ projectId: '', equipmentId: '', site: '', operatorName: '', clientName: '' })
+    }
   }
 
   const handleReset = () => {
     if (!window.confirm('Clear this letter?')) return
     if (editorRef.current) editorRef.current.innerHTML = '<div><br></div>'
+    setCommData({ projectId: '', equipmentId: '', site: '', operatorName: '', clientName: '' })
     setForm({
       letterType: 'General Letter', refNumber: '', date: todayStr(),
       toName: '', toAddress: '', subject: '',
@@ -205,6 +272,23 @@ export default function LettersPage() {
         partyName: form.toName || form.letterType, amount: null,
       })
       await generateLetterPDF(company, { ...form, refNumber: refNo, bodyHtml }, verifyUrl)
+
+      // ── Save commencement record to DB ─────────────────────────────────
+      if (isCommType && commData.equipmentId) {
+        const { error: cErr } = await supabase.from('equipment_commissionings').insert({
+          company_id:        companyId,
+          project_id:        commData.projectId   || null,
+          equipment_id:      commData.equipmentId,
+          commissioned_date: form.date,
+          site_location:     commData.site         || null,
+          client_name:       commData.clientName   || null,
+          operator_name:     commData.operatorName || null,
+          doc_ref:           verifyUrl             || null,
+          ref_number:        refNo,
+          created_by:        (await supabase.auth.getUser()).data?.user?.id || null,
+        })
+        if (!cErr) toast.success('Deployment record saved to project')
+      }
     } catch (e) {
       toast.error('PDF generation failed: ' + e.message)
     } finally {
@@ -375,6 +459,43 @@ export default function LettersPage() {
             <label className="text-xs text-slate-400 mb-1 block">Subject</label>
             <input className={inp} value={form.subject} onChange={e => setF('subject', e.target.value)} placeholder="Issue of Experience Certificate for Mr. Ravi Kumar" />
           </div>
+
+          {/* ── Commencement of Operations extra fields ──────────────────── */}
+          {isCommType && (
+            <div className="bg-dark-700/50 border border-dark-600 rounded-xl p-4 space-y-3">
+              <p className="text-xs font-semibold text-emerald-400 flex items-center gap-1.5">
+                <span>🏗</span> Deployment Details — auto-filled into the certificate
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-slate-400 mb-1 block">Project *</label>
+                  <select className={inp} value={commData.projectId} onChange={e => setCD('projectId', e.target.value)}>
+                    <option value="">Select Project</option>
+                    {projects.map(p => <option key={p.id} value={p.id}>{p.project_name}{p.project_number ? ` (${p.project_number})` : ''}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-slate-400 mb-1 block">Equipment *</label>
+                  <select className={inp} value={commData.equipmentId} onChange={e => setCD('equipmentId', e.target.value)}>
+                    <option value="">Select Equipment</option>
+                    {eqList.map(e => <option key={e.id} value={e.id}>{e.name}{e.equipment_number ? ` — ${e.equipment_number}` : ''}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-slate-400 mb-1 block">Site Location</label>
+                  <input className={inp} value={commData.site} onChange={e => setCD('site', e.target.value)} placeholder="e.g. Perambalur NH-81 Bypass" />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-400 mb-1 block">Client Name</label>
+                  <input className={inp} value={commData.clientName} onChange={e => setCD('clientName', e.target.value)} placeholder="Client / Contractor Name" />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="text-xs text-slate-400 mb-1 block">Operator Name</label>
+                  <input className={inp} value={commData.operatorName} onChange={e => setCD('operatorName', e.target.value)} placeholder="Assigned Operator / Driver" />
+                </div>
+              </div>
+            </div>
+          )}
 
           <div>
             <label className="text-xs text-slate-400 mb-1.5 block">Letter Body *</label>
