@@ -13,7 +13,7 @@ import { useRealtimeSync } from './hooks/useRealtimeSync'
 import {
   LayoutDashboard, Receipt, ClipboardList, BarChart3,
   Users, Wallet, Package, X, Truck, Wrench, FolderOpen,
-  Settings, ShoppingCart, TrendingUp, CalendarDays,
+  Settings, ShoppingCart, TrendingUp, CalendarDays, ReceiptText,
 } from 'lucide-react'
 
 // Lazy-load all pages for performance
@@ -35,6 +35,7 @@ const SettingsPage       = lazy(() => import('./pages/settings/SettingsPage'))
 const ProfilePage        = lazy(() => import('./pages/settings/ProfilePage'))
 const SuperAdminPage     = lazy(() => import('./pages/superadmin/SuperAdminPage'))
 const LettersPage        = lazy(() => import('./pages/letters/LettersPage'))
+const ExpensesPage       = lazy(() => import('./pages/expenses/ExpensesPage'))
 
 // ── Connectivity hook ─────────────────────────────────────────────────────────
 function useOnlineStatus() {
@@ -133,6 +134,7 @@ const ALL_PAGES = [
   { key: 'inventory',    Icon: Package,         label: 'Inventory'            },
   { key: 'projects',     Icon: FolderOpen,      label: 'Projects'             },
   { key: 'accounts',     Icon: Wallet,          label: 'Accounts'             },
+  { key: 'expenses',     Icon: ReceiptText,     label: 'Expenses'             },
   { key: 'planner',      Icon: CalendarDays,    label: 'Expense Planner'      },
   { key: 'sales',        Icon: TrendingUp,      label: 'Sales'                },
   { key: 'purchase',     Icon: ShoppingCart,    label: 'Purchase'             },
@@ -288,6 +290,12 @@ function AppShell() {
       case 'sales':        return wrap(SalesPage,          MODULES.SALES)
       case 'purchase':     return wrap(PurchasePage,       MODULES.PURCHASE)
       case 'reports':      return wrap(ReportsPage,        MODULES.REPORTS)
+      case 'expenses':
+        return hasModule(MODULES.ACCOUNTS) ? (
+          <Suspense fallback={<LoadingScreen message="Loading expenses…" />}>
+            <ExpensesPage onNavigate={handleNavigate} />
+          </Suspense>
+        ) : <ModuleNotActive page="expenses" />
       case 'hr':           return wrap(HRPage,             MODULES.HR_PAYROLL)
       case 'letters':      return wrap(LettersPage,         MODULES.CORE)
       case 'settings':     return wrap(SettingsPage,       MODULES.CORE)
