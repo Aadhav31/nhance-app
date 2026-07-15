@@ -590,13 +590,22 @@ export default function ExpensesPage({ onNavigate }) {
     })
   }, [allEntries, tab, dateFrom, dateTo, modeFilter, search])
 
-  // ── totals per type ─────────────────────────────────────────────────────────
+  // ── totals per type (ignores tab — always shows full picture for date/search/mode) ──
   const totals = useMemo(() => {
     const t = {}
     Object.keys(TYPE_CFG).forEach(k => { t[k] = 0 })
-    filtered.forEach(e => { t[e.type] = (t[e.type] || 0) + e.amount })
+    allEntries.filter(e => {
+      if (dateFrom && e.date < dateFrom) return false
+      if (dateTo   && e.date > dateTo)   return false
+      if (modeFilter && e.mode !== modeFilter) return false
+      if (search) {
+        const q = search.toLowerCase()
+        if (![e.title, e.sub1, e.sub2, e.ref].filter(Boolean).join(' ').toLowerCase().includes(q)) return false
+      }
+      return true
+    }).forEach(e => { t[e.type] = (t[e.type] || 0) + e.amount })
     return t
-  }, [filtered])
+  }, [allEntries, dateFrom, dateTo, modeFilter, search])
 
   const grandTotal = filtered.reduce((s, e) => s + e.amount, 0)
 
