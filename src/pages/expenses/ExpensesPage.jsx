@@ -422,7 +422,7 @@ export default function ExpensesPage({ onNavigate }) {
       const { data } = await supabase.from('expenses')
         .select('*, equipment(name, equipment_number), projects(project_name)')
         .eq('company_id', companyId)
-        .neq('source', 'field_expense')   // exclude — already pulled from field_expenses
+        .is('field_expense_id', null)   // exclude synced field_expenses rows (they have this set)
         .order('expense_date', { ascending: false })
         .limit(500)
       return data || []
