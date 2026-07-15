@@ -1503,13 +1503,32 @@ function PaymentsMadeTab({ companyId, session }) {
     setShowCreate(true)
   }
 
+  // Recompute bill balance from all payments — call after any create/update/delete
+  const recomputeBillBalance = async (bId) => {
+    if (!bId) return
+    const [{ data: pays }, { data: bill }] = await Promise.all([
+      supabase.from('payments_made').select('amount').eq('bill_id', bId),
+      supabase.from('bills').select('total_amount').eq('id', bId).single(),
+    ])
+    const totalPaid = (pays || []).reduce((s, p) => s + Number(p.amount || 0), 0)
+    const balance   = Math.max(0, (bill?.total_amount || 0) - totalPaid)
+    await supabase.from('bills').update({
+      paid_amount: totalPaid,
+      balance_due: balance,
+      status: balance <= 0 ? 'paid' : totalPaid > 0 ? 'partial' : 'pending',
+    }).eq('id', bId)
+  }
+
   const deletePayment = async (p) => {
     if (!window.confirm(`Delete Payment ${p.payment_number}?`)) return
     try {
+      const linkedBillId = p.bill_id
       // Remove ledger entry first
       await supabase.from('account_transactions').delete().eq('reference_type', 'payment_made').eq('reference_id', p.id)
       const { error } = await supabase.from('payments_made').delete().eq('id', p.id)
       if (error) throw error
+      // Revert bill balance if this payment was linked to a bill
+      if (linkedBillId) await recomputeBillBalance(linkedBillId)
       toast.success(`Payment ${p.payment_number} deleted`)
       qc.invalidateQueries(['payments_made', companyId]); qc.invalidateQueries(['bills', companyId])
       qc.invalidateQueries(['ledger', companyId])
@@ -1554,6 +1573,7 @@ function PaymentsMadeTab({ companyId, session }) {
       const amt = parseFloat(form.amount)
       const vendor = vendors.find(v => v.id === form.vendor_id)
       if (editing) {
+        const prevBillId = editing.bill_id   // in case the bill link changed
         const { error } = await supabase.from('payments_made').update({
           vendor_id: form.vendor_id, vendor_name: vendor?.name || '',
           payment_date: form.payment_date, bill_id: billId || null,
@@ -1568,6 +1588,9 @@ function PaymentsMadeTab({ companyId, session }) {
           payment_mode: form.payment_mode, bank_reference: form.bank_reference || null,
           notes: form.notes || null,
         }).eq('reference_type', 'payment_made').eq('reference_id', editing.id)
+        // Recompute bill balances (handles bill change, amount change)
+        if (prevBillId)       await recomputeBillBalance(prevBillId)
+        if (billId && billId !== prevBillId) await recomputeBillBalance(billId)
         toast.success(`Payment ${editing.payment_number} updated`)
         closeModal()
         qc.invalidateQueries(['payments_made', companyId]); qc.invalidateQueries(['bills', companyId])
@@ -1593,6 +1616,8 @@ function PaymentsMadeTab({ companyId, session }) {
         reference_type: 'payment_made', reference_id: pm.id,
         notes: form.notes || null, created_by: session.user.id,
       })
+      // Update linked bill's balance / status
+      if (billId) await recomputeBillBalance(billId)
       toast.success(`Payment ${pmNum} recorded — ${fmtINR(form.amount)}`)
       closeModal()
       qc.invalidateQueries(['payments_made', companyId])

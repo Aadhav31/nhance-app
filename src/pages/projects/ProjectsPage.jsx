@@ -9,7 +9,7 @@ import {
   Droplet, Building2, Trash2, Edit2, IndianRupee, ExternalLink,
   Cpu, Phone, Mail, FolderOpen, Navigation, UserPlus, RefreshCw, Clock,
   Upload, Download, Eye, File, ShoppingBag, Briefcase, PenLine, LayoutGrid,
-  AlertTriangle, CheckCircle2,
+  AlertTriangle, CheckCircle2, Paperclip,
 } from 'lucide-react'
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -434,7 +434,9 @@ const INIT_FORM = {
   project_name: '', project_code: '', division: '', client_id: '', status: 'tender',
   site_name: '', address: '', city: '', state: '', pincode: '',
   site_lat: '', site_lng: '',
-  mobilization_date: '', start_date: '', expected_end_date: '', actual_end_date: '',
+  mobilization_date: '', start_date: '', start_time: '',
+  expected_end_date: '', actual_end_date: '',
+  mob_attachment_url: '', comm_attachment_url: '',
   nature_of_job: '', contract_value: '', billing_cycle: '', mobilization_advance: '',
   retention_pct: '', gst_rate: '18', payment_terms: '',
   hsd_supplied_by: 'company', hsd_consumption_norm: '', hsd_rate_per_liter: '',
@@ -475,6 +477,9 @@ function AddEditModal({ project, clients, onClose, onSaved }) {
   const [rateItems, setRateItems]   = useState([])
   const [ratesLoaded, setRatesLoaded] = useState(false)
   const [saving, setSaving]         = useState(false)
+  // Pending file uploads for timeline attachments
+  const [mobFile,  setMobFile]  = useState(null)
+  const [commFile, setCommFile] = useState(null)
 
   // Dynamic site supervisors list
   const mkContact = () => ({ _k: Math.random().toString(36).slice(2), name: '', phone: '' })
@@ -616,6 +621,9 @@ function AddEditModal({ project, clients, onClose, onSaved }) {
         shift_start_time: form.shift_start_time || null,
         shift_end_time:   form.shift_end_time   || null,
         shift_grace_mins: form.shift_grace_mins ? Number(form.shift_grace_mins) : 30,
+        start_time:          form.start_time          || null,
+        mob_attachment_url:  form.mob_attachment_url  || null,
+        comm_attachment_url: form.comm_attachment_url || null,
         updated_at:  new Date().toISOString(),
       }
 
@@ -628,6 +636,28 @@ function AddEditModal({ project, clients, onClose, onSaved }) {
         const { data, error } = await supabase.from('projects').insert(payload).select().single()
         if (error) throw error
         projectId = data.id
+      }
+
+      // ── Upload timeline attachments (if new files selected) ────────────────
+      const attachUpdates = {}
+      if (mobFile) {
+        const ext = mobFile.name.split('.').pop()
+        const path = `${companyId}/${projectId}/mob_attachment.${ext}`
+        const { error: upErr } = await supabase.storage
+          .from(BUCKET).upload(path, mobFile, { cacheControl: '3600', upsert: true })
+        if (!upErr) attachUpdates.mob_attachment_url = path
+        else toast.error('Mobilization file upload failed')
+      }
+      if (commFile) {
+        const ext = commFile.name.split('.').pop()
+        const path = `${companyId}/${projectId}/comm_attachment.${ext}`
+        const { error: upErr } = await supabase.storage
+          .from(BUCKET).upload(path, commFile, { cacheControl: '3600', upsert: true })
+        if (!upErr) attachUpdates.comm_attachment_url = path
+        else toast.error('Commencement file upload failed')
+      }
+      if (Object.keys(attachUpdates).length > 0) {
+        await supabase.from('projects').update(attachUpdates).eq('id', projectId)
       }
 
       // Save rate items — replace all
@@ -844,17 +874,49 @@ function AddEditModal({ project, clients, onClose, onSaved }) {
       <div className="space-y-3">
         <Sec icon={Calendar} label="Timeline" />
         <div className={half}>
+          {/* Mobilization Date + attachment */}
           <F label="Mobilization Date"
             hint={form.status === 'mobilization' && !project?.mobilization_date
               ? 'Auto-set today when status changed to Mobilization'
               : undefined}>
-            <input className={inp()} type="date" value={form.mobilization_date}
-              onChange={e=>set('mobilization_date',e.target.value)}/>
+            <div className="flex items-center gap-2">
+              <input className={inp('flex-1')} type="date" value={form.mobilization_date}
+                onChange={e=>set('mobilization_date',e.target.value)}/>
+              <input type="file" id="mob-file-input" className="hidden"
+                accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+                onChange={e => { if (e.target.files[0]) setMobFile(e.target.files[0]) }}/>
+              <label htmlFor="mob-file-input" title="Attach mobilization document"
+                className={`flex items-center gap-1 px-2.5 py-2 rounded-lg border cursor-pointer text-xs font-medium transition-colors
+                  ${mobFile || form.mob_attachment_url
+                    ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-400'
+                    : 'border-dark-600 bg-dark-700 text-slate-400 hover:text-slate-200 hover:border-primary-500'}`}>
+                <Paperclip className="w-3.5 h-3.5"/>
+                {mobFile ? mobFile.name.split('.').pop().toUpperCase() : (form.mob_attachment_url ? '✓' : 'Attach')}
+              </label>
+            </div>
           </F>
+
+          {/* Commencement Date + time + attachment */}
           <F label="Commencement Date"
             hint="Auto-set from Daily Operations when first equipment shift is recorded">
-            <input className={inp()} type="date" value={form.start_date}
-              onChange={e=>set('start_date',e.target.value)}/>
+            <div className="flex items-center gap-2">
+              <input className={inp('flex-1')} type="date" value={form.start_date}
+                onChange={e=>set('start_date',e.target.value)}/>
+              <input className={inp('w-28')} type="time" value={form.start_time}
+                title="Commencement hour"
+                onChange={e=>set('start_time',e.target.value)}/>
+              <input type="file" id="comm-file-input" className="hidden"
+                accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+                onChange={e => { if (e.target.files[0]) setCommFile(e.target.files[0]) }}/>
+              <label htmlFor="comm-file-input" title="Attach commencement document"
+                className={`flex items-center gap-1 px-2.5 py-2 rounded-lg border cursor-pointer text-xs font-medium transition-colors
+                  ${commFile || form.comm_attachment_url
+                    ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-400'
+                    : 'border-dark-600 bg-dark-700 text-slate-400 hover:text-slate-200 hover:border-primary-500'}`}>
+                <Paperclip className="w-3.5 h-3.5"/>
+                {commFile ? commFile.name.split('.').pop().toUpperCase() : (form.comm_attachment_url ? '✓' : 'Attach')}
+              </label>
+            </div>
           </F>
         </div>
         <div className={half}>
@@ -1909,10 +1971,35 @@ function ProjectDetail({ project, companyId, docTotals, onClose, onEdit, onDelet
           <div>
             <Sec icon={Calendar} label="Timeline"/>
             <div className="mt-2">
-              <Row label="Mobilization"     value={fmtDate(project.mobilization_date)}/>
-              <Row label="Commencement"     value={fmtDate(project.start_date)}/>
-              <Row label="Expected End"     value={fmtDate(project.expected_end_date)}/>
-              <Row label="Actual End"       value={fmtDate(project.actual_end_date)}/>
+              <Row label="Mobilization" value={fmtDate(project.mobilization_date)}/>
+              {project.mob_attachment_url && (
+                <div className="flex justify-between py-1.5 border-b border-dark-700/50">
+                  <span className="text-xs text-slate-500">Mob. Document</span>
+                  <button onClick={async () => {
+                    const { data } = await supabase.storage.from(BUCKET).createSignedUrl(project.mob_attachment_url, 120)
+                    if (data?.signedUrl) window.open(data.signedUrl, '_blank')
+                    else toast.error('Could not open document')
+                  }} className="text-xs text-primary-400 hover:text-primary-300 flex items-center gap-1">
+                    <Eye className="w-3 h-3"/> View
+                  </button>
+                </div>
+              )}
+              <Row label="Commencement"
+                value={[fmtDate(project.start_date), project.start_time ? project.start_time.slice(0,5) : null].filter(Boolean).join(' · ')}/>
+              {project.comm_attachment_url && (
+                <div className="flex justify-between py-1.5 border-b border-dark-700/50">
+                  <span className="text-xs text-slate-500">Comm. Document</span>
+                  <button onClick={async () => {
+                    const { data } = await supabase.storage.from(BUCKET).createSignedUrl(project.comm_attachment_url, 120)
+                    if (data?.signedUrl) window.open(data.signedUrl, '_blank')
+                    else toast.error('Could not open document')
+                  }} className="text-xs text-primary-400 hover:text-primary-300 flex items-center gap-1">
+                    <Eye className="w-3 h-3"/> View
+                  </button>
+                </div>
+              )}
+              <Row label="Expected End" value={fmtDate(project.expected_end_date)}/>
+              <Row label="Actual End"   value={fmtDate(project.actual_end_date)}/>
             </div>
           </div>
         </div>
