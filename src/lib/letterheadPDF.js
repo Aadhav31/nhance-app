@@ -195,6 +195,7 @@ export async function generateLetterPDF(company, letterData = {}, verifyUrl = nu
     bodyFont              = 'helvetica',
     bodyBold              = false,
     bodyItalic            = false,
+    bodyHtml              = null,       // rich text HTML from contentEditable editor
   } = letterData
 
   const pdf = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' })
