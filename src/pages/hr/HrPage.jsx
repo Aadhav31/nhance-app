@@ -2063,12 +2063,110 @@ function PayslipModal({ item, month, year, onClose }) {
 // ── Payroll Tab ────────────────────────────────────────────────────────────────
 function PayrollTab({ companyId }) {
   const qc = useQueryClient()
+  const { session } = useAuth()
   const now = new Date()
   const [month, setMonth]           = useState(now.getMonth() + 1)
   const [year,  setYear]            = useState(now.getFullYear())
   const [processing, setProcessing] = useState(false)
   const [markingAll, setMarkingAll] = useState(false)
+  const [postingSalary, setPostingSalary] = useState(false)
   const [payslipItem, setPayslipItem] = useState(null)
+
+  // Check if salary already posted to P&L for this month/year
+  const { data: existingPosting, refetch: refetchPosting } = useQuery({
+    queryKey: ['payroll_posting', companyId, month, year],
+    queryFn: async () => {
+      const { data } = await supabase.from('payroll_postings')
+        .select('*').eq('company_id', companyId).eq('month', month).eq('year', year).maybeSingle()
+      return data
+    },
+    enabled: !!companyId,
+  })
+
+  const postSalariesToPL = async () => {
+    if (!payrollItems.length) return toast.error('No payroll items to post')
+    if (existingPosting) {
+      if (!window.confirm(`Salary for ${MONTHS[month-1]} ${year} was already posted on ${new Date(existingPosting.posted_at).toLocaleDateString('en-IN')}. Re-post and overwrite?`)) return
+      // Delete previous salary expense entries for this posting
+      await supabase.from('expenses').delete()
+        .eq('company_id', companyId)
+        .eq('source', 'payroll')
+        .ilike('reference_number', `PAYROLL-${year}-${month}-%`)
+    }
+
+    setPostingSalary(true)
+    try {
+      const monthStr = String(month).padStart(2, '0')
+      const daysInMonth = new Date(year, month, 0).getDate()
+      const startDate = `${year}-${monthStr}-01`
+      const endDate   = `${year}-${monthStr}-${String(daysInMonth).padStart(2,'0')}`
+
+      let totalSalary = 0
+
+      for (const item of payrollItems) {
+        const emp = item.hr_employees
+        const grossPay = Number(item.gross_pay || 0)
+        if (!grossPay) continue
+
+        // Find which machine this employee worked on most in the month (by shift hours)
+        const { data: shifts } = await supabase.from('shifts')
+          .select('equipment_id, working_hours')
+          .eq('company_id', companyId)
+          .eq('operator_id', item.employee_id)
+          .gte('shift_date', startDate)
+          .lte('shift_date', endDate)
+          .not('equipment_id', 'is', null)
+
+        let primaryEquipId = null
+        if (shifts?.length) {
+          const eqHours = {}
+          shifts.forEach(s => {
+            if (s.equipment_id) {
+              eqHours[s.equipment_id] = (eqHours[s.equipment_id] || 0) + Number(s.working_hours || 0)
+            }
+          })
+          const sorted = Object.entries(eqHours).sort((a, b) => b[1] - a[1])
+          primaryEquipId = sorted[0]?.[0] || null
+        }
+
+        await supabase.from('expenses').insert({
+          company_id:      companyId,
+          expense_date:    endDate,
+          category:        'salary',
+          description:     `Salary — ${emp?.name || 'Employee'} — ${MONTHS[month-1]} ${year}`,
+          vendor_name:     emp?.name || null,
+          amount:          grossPay,
+          total_amount:    grossPay,
+          payment_mode:    'bank',
+          equipment_id:    primaryEquipId,
+          expense_scope:   primaryEquipId ? 'equipment' : 'administrative',
+          reference_number: `PAYROLL-${year}-${month}-${item.employee_id}`,
+          source:          'payroll',
+          created_by:      session?.user?.id || null,
+        })
+
+        totalSalary += grossPay
+      }
+
+      // Record the posting
+      await supabase.from('payroll_postings').upsert({
+        company_id:     companyId,
+        payroll_id:     payroll?.id || null,
+        month, year,
+        posted_at:      new Date().toISOString(),
+        posted_by:      session?.user?.id || null,
+        total_salary:   totalSalary,
+        employee_count: payrollItems.length,
+      }, { onConflict: 'company_id,month,year' })
+
+      await refetchPosting()
+      toast.success(`₹${totalSalary.toLocaleString('en-IN')} salary posted to Equipment P&L`)
+    } catch (err) {
+      toast.error(err.message || 'Failed to post salaries')
+    } finally {
+      setPostingSalary(false)
+    }
+  }
 
   const { data: payroll } = useQuery({
     queryKey: ['hr_payroll', companyId, month, year],
@@ -2372,6 +2470,49 @@ function PayrollTab({ companyId }) {
           </div>
         )}
       </div>
+
+      {/* Post Salaries to Equipment P&L */}
+      {payroll && payrollItems.length > 0 && (
+        <div className={`mx-4 mb-4 rounded-xl border p-4 ${
+          existingPosting
+            ? 'bg-emerald-500/5 border-emerald-700/30'
+            : 'bg-primary-500/5 border-primary-700/30'
+        }`}>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                <Banknote className="w-3.5 h-3.5 text-primary-400"/>
+                Post Salaries to Equipment P&amp;L
+              </p>
+              {existingPosting ? (
+                <p className="text-[11px] text-emerald-400 mt-0.5">
+                  ✓ Posted on {new Date(existingPosting.posted_at).toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' })}
+                  {' · '}₹{Number(existingPosting.total_salary||0).toLocaleString('en-IN')}
+                  {' · '}{existingPosting.employee_count} employees
+                </p>
+              ) : (
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Auto-tags each salary to the machine the operator worked on most this month
+                </p>
+              )}
+            </div>
+            <button
+              onClick={postSalariesToPL}
+              disabled={postingSalary}
+              className={`shrink-0 text-xs px-3 py-2 rounded-lg flex items-center gap-1.5 font-medium transition-colors ${
+                existingPosting
+                  ? 'bg-dark-700 border border-dark-600 text-slate-400 hover:text-slate-200'
+                  : 'bg-primary-600 hover:bg-primary-700 text-white'
+              }`}
+            >
+              {postingSalary
+                ? <><Loader2 className="w-3.5 h-3.5 animate-spin"/>Posting…</>
+                : existingPosting ? 'Re-post' : 'Post to P&L'
+              }
+            </button>
+          </div>
+        </div>
+      )}
 
       {payslipItem && (
         <PayslipModal

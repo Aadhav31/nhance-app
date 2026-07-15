@@ -12,7 +12,7 @@ import {
   ArrowUpCircle, ArrowDownCircle, ChevronRight, ChevronDown,
   Link, Copy, ExternalLink, Share2, Bell, AlertTriangle, CheckCircle2,
   Download, FileText, FileSpreadsheet, ToggleLeft, ToggleRight, CalendarRange,
-  ShieldOff,
+  ShieldOff, Wrench, Building2,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format, startOfMonth, endOfMonth, parseISO } from 'date-fns'
@@ -1198,11 +1198,13 @@ function AddExpenseModal({ companyId, session, equipmentList, onClose, onSaved }
     expense_date: today(), category: 'salary', description: '',
     vendor_name: '', amount: '', gst_amount: '',
     vendor_gstin: '', payment_mode: 'cash', bank_reference: '',
-    equipment_id: '', notes: '',
+    expense_scope: '', equipment_id: '', notes: '',
   })
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
 
   const handleSave = async () => {
+    if (!form.expense_scope) return toast.error('Select Machine or Administrative')
+    if (form.expense_scope === 'equipment' && !form.equipment_id) return toast.error('Select which machine this expense belongs to')
     if (!form.description.trim()) return toast.error('Description required')
     const amount = parseFloat(form.amount)
     if (!amount || amount <= 0) return toast.error('Enter valid amount')
@@ -1217,7 +1219,8 @@ function AddExpenseModal({ companyId, session, equipmentList, onClose, onSaved }
         vendor_gstin: form.vendor_gstin.trim() || null,
         payment_mode: form.payment_mode,
         bank_reference: form.bank_reference.trim() || null,
-        equipment_id: form.equipment_id || null,
+        expense_scope: form.expense_scope,
+        equipment_id: form.expense_scope === 'equipment' ? (form.equipment_id || null) : null,
         source: 'manual',
         created_by: session.user.id,
       }).select().single()
@@ -1284,14 +1287,37 @@ function AddExpenseModal({ companyId, session, equipmentList, onClose, onSaved }
             <label className="text-xs text-slate-400 mb-1 block">Bill / Ref No</label>
             <input className={inp()} value={form.bank_reference} onChange={e => setF('bank_reference', e.target.value)} placeholder="Optional" />
           </div>
+          {/* Cost Centre */}
           <div className="col-span-2">
-            <label className="text-xs text-slate-400 mb-1 block">Equipment (optional — for cost tracking)</label>
-            <select className={inp()} value={form.equipment_id} onChange={e => setF('equipment_id', e.target.value)}>
-              <option value="">— No specific equipment —</option>
-              {(equipmentList || []).map(eq => (
-                <option key={eq.id} value={eq.id}>{eq.name}{eq.equipment_number ? ` (${eq.equipment_number})` : ''}</option>
-              ))}
-            </select>
+            <label className="text-xs text-slate-400 mb-1.5 block">Cost Centre <span className="text-red-400">*</span></label>
+            <div className="grid grid-cols-2 gap-2 mb-2">
+              <button type="button" onClick={() => setF('expense_scope', 'equipment')}
+                className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border transition-all text-left text-xs ${
+                  form.expense_scope === 'equipment'
+                    ? 'bg-primary-500/15 border-primary-500 text-primary-300 ring-1 ring-primary-500'
+                    : 'bg-dark-700 border-dark-600 text-slate-400 hover:border-dark-500'
+                }`}>
+                <Wrench className="w-3.5 h-3.5 shrink-0" />
+                <div><p className="font-semibold">Machine</p><p className="text-[10px] text-slate-500">Tag to equipment</p></div>
+              </button>
+              <button type="button" onClick={() => { setF('expense_scope', 'administrative'); setF('equipment_id', '') }}
+                className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border transition-all text-left text-xs ${
+                  form.expense_scope === 'administrative'
+                    ? 'bg-indigo-500/15 border-indigo-500 text-indigo-300 ring-1 ring-indigo-500'
+                    : 'bg-dark-700 border-dark-600 text-slate-400 hover:border-dark-500'
+                }`}>
+                <Building2 className="w-3.5 h-3.5 shrink-0" />
+                <div><p className="font-semibold">Admin Overhead</p><p className="text-[10px] text-slate-500">Company-wide cost</p></div>
+              </button>
+            </div>
+            {form.expense_scope === 'equipment' && (
+              <select className={inp()} value={form.equipment_id} onChange={e => setF('equipment_id', e.target.value)}>
+                <option value="">— Select machine —</option>
+                {(equipmentList || []).map(eq => (
+                  <option key={eq.id} value={eq.id}>{eq.name}{eq.equipment_number ? ` (${eq.equipment_number})` : ''}</option>
+                ))}
+              </select>
+            )}
           </div>
           <div className="col-span-2">
             <label className="text-xs text-slate-400 mb-1 block">Notes</label>
@@ -2370,6 +2396,7 @@ function EditExpenseModal({ exp, companyId, equipmentList, onClose, onSaved }) {
     gst_amount:    String(exp.gst_amount || ''),
     payment_mode:  exp.payment_mode || 'cash',
     bank_reference: exp.bank_reference || '',
+    expense_scope: exp.expense_scope || (exp.equipment_id ? 'equipment' : 'administrative'),
     equipment_id:  exp.equipment_id || '',
     notes:         exp.notes || '',
   })
@@ -2393,7 +2420,8 @@ function EditExpenseModal({ exp, companyId, equipmentList, onClose, onSaved }) {
         total_amount:   amount,
         payment_mode:   form.payment_mode,
         bank_reference: form.bank_reference.trim() || null,
-        equipment_id:   form.equipment_id || null,
+        expense_scope:  form.expense_scope,
+        equipment_id:   form.expense_scope === 'equipment' ? (form.equipment_id || null) : null,
       }).eq('id', exp.id)
       if (ee) throw ee
 
@@ -2456,14 +2484,37 @@ function EditExpenseModal({ exp, companyId, equipmentList, onClose, onSaved }) {
             <label className="text-xs text-slate-400 mb-1 block">Bill / Ref No</label>
             <input className={inp()} value={form.bank_reference} onChange={e => setF('bank_reference', e.target.value)} placeholder="Optional" />
           </div>
+          {/* Cost Centre */}
           <div className="col-span-2">
-            <label className="text-xs text-slate-400 mb-1 block">Equipment (optional)</label>
-            <select className={inp()} value={form.equipment_id} onChange={e => setF('equipment_id', e.target.value)}>
-              <option value="">— No specific equipment —</option>
-              {(equipmentList || []).map(eq => (
-                <option key={eq.id} value={eq.id}>{eq.name}{eq.equipment_number ? ` (${eq.equipment_number})` : ''}</option>
-              ))}
-            </select>
+            <label className="text-xs text-slate-400 mb-1.5 block">Cost Centre <span className="text-red-400">*</span></label>
+            <div className="grid grid-cols-2 gap-2 mb-2">
+              <button type="button" onClick={() => setF('expense_scope', 'equipment')}
+                className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border transition-all text-left text-xs ${
+                  form.expense_scope === 'equipment'
+                    ? 'bg-primary-500/15 border-primary-500 text-primary-300 ring-1 ring-primary-500'
+                    : 'bg-dark-700 border-dark-600 text-slate-400 hover:border-dark-500'
+                }`}>
+                <Wrench className="w-3.5 h-3.5 shrink-0" />
+                <div><p className="font-semibold">Machine</p><p className="text-[10px] text-slate-500">Tag to equipment</p></div>
+              </button>
+              <button type="button" onClick={() => { setF('expense_scope', 'administrative'); setF('equipment_id', '') }}
+                className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border transition-all text-left text-xs ${
+                  form.expense_scope === 'administrative'
+                    ? 'bg-indigo-500/15 border-indigo-500 text-indigo-300 ring-1 ring-indigo-500'
+                    : 'bg-dark-700 border-dark-600 text-slate-400 hover:border-dark-500'
+                }`}>
+                <Building2 className="w-3.5 h-3.5 shrink-0" />
+                <div><p className="font-semibold">Admin Overhead</p><p className="text-[10px] text-slate-500">Company-wide cost</p></div>
+              </button>
+            </div>
+            {form.expense_scope === 'equipment' && (
+              <select className={inp()} value={form.equipment_id} onChange={e => setF('equipment_id', e.target.value)}>
+                <option value="">— Select machine —</option>
+                {(equipmentList || []).map(eq => (
+                  <option key={eq.id} value={eq.id}>{eq.name}{eq.equipment_number ? ` (${eq.equipment_number})` : ''}</option>
+                ))}
+              </select>
+            )}
           </div>
           <div className="col-span-2">
             <label className="text-xs text-slate-400 mb-1 block">Notes</label>

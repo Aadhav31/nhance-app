@@ -16,6 +16,7 @@ import {
   FileText, Download, Loader2, RotateCcw,
   ClipboardList, ExternalLink, ShieldCheck, ShieldOff,
   RefreshCw, Trash2, RotateCcw as Restore, Lock, AlertTriangle,
+  Bold, Italic, AlignLeft, AlignCenter, AlignRight, AlignJustify, Type,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
@@ -128,6 +129,9 @@ export default function LettersPage() {
     toName: '', toAddress: '', subject: '',
     body: BODY_TEMPLATES['Experience Certificate'],
     signatoryName: '', signatoryDesignation: '',
+    // Body formatting
+    bodyAlign: 'left', bodyFontSize: '10', bodyFont: 'helvetica',
+    bodyBold: false, bodyItalic: false,
   })
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
   const hideToBlock = HIDE_TO_BLOCK.has(form.letterType)
@@ -142,7 +146,13 @@ export default function LettersPage() {
 
   const handleReset = () => {
     if (!window.confirm('Clear this letter?')) return
-    setForm({ letterType: 'General Letter', refNumber: '', date: todayStr(), toName: '', toAddress: '', subject: '', body: '', signatoryName: '', signatoryDesignation: '' })
+    setForm({
+      letterType: 'General Letter', refNumber: '', date: todayStr(),
+      toName: '', toAddress: '', subject: '', body: '',
+      signatoryName: '', signatoryDesignation: '',
+      bodyAlign: 'left', bodyFontSize: '10', bodyFont: 'helvetica',
+      bodyBold: false, bodyItalic: false,
+    })
   }
 
   const handleDownload = async () => {
@@ -328,14 +338,88 @@ export default function LettersPage() {
           </div>
 
           <div>
-            <label className="text-xs text-slate-400 mb-1 block">Letter Body *</label>
+            <label className="text-xs text-slate-400 mb-1.5 block">Letter Body *</label>
+
+            {/* ── Formatting toolbar ──────────────────────────────────────── */}
+            <div className="flex items-center gap-0.5 px-2 py-1.5 bg-dark-700 border border-dark-600 rounded-t-lg flex-wrap">
+
+              {/* Bold / Italic */}
+              <button type="button" title="Bold"
+                onClick={() => setF('bodyBold', !form.bodyBold)}
+                className={`flex items-center justify-center w-7 h-7 rounded text-sm font-bold transition-colors ${form.bodyBold ? 'bg-primary-600 text-white' : 'text-slate-400 hover:bg-dark-600 hover:text-slate-100'}`}>
+                <Bold className="w-3.5 h-3.5" />
+              </button>
+              <button type="button" title="Italic"
+                onClick={() => setF('bodyItalic', !form.bodyItalic)}
+                className={`flex items-center justify-center w-7 h-7 rounded transition-colors ${form.bodyItalic ? 'bg-primary-600 text-white' : 'text-slate-400 hover:bg-dark-600 hover:text-slate-100'}`}>
+                <Italic className="w-3.5 h-3.5" />
+              </button>
+
+              <div className="w-px h-5 bg-dark-500 mx-1.5" />
+
+              {/* Alignment */}
+              {[
+                { align: 'left',    Icon: AlignLeft,    tip: 'Align Left' },
+                { align: 'center',  Icon: AlignCenter,  tip: 'Align Center' },
+                { align: 'right',   Icon: AlignRight,   tip: 'Align Right' },
+                { align: 'justify', Icon: AlignJustify, tip: 'Justify' },
+              ].map(({ align, Icon, tip }) => (
+                <button type="button" key={align} title={tip}
+                  onClick={() => setF('bodyAlign', align)}
+                  className={`flex items-center justify-center w-7 h-7 rounded transition-colors ${form.bodyAlign === align ? 'bg-primary-600 text-white' : 'text-slate-400 hover:bg-dark-600 hover:text-slate-100'}`}>
+                  <Icon className="w-3.5 h-3.5" />
+                </button>
+              ))}
+
+              <div className="w-px h-5 bg-dark-500 mx-1.5" />
+
+              {/* Font size */}
+              <div className="flex items-center gap-1">
+                <Type className="w-3 h-3 text-slate-500 shrink-0" />
+                <select
+                  value={form.bodyFontSize}
+                  onChange={e => setF('bodyFontSize', e.target.value)}
+                  className="bg-dark-600 border border-dark-500 rounded text-xs text-slate-200 px-1.5 py-0.5 focus:outline-none focus:border-primary-500 cursor-pointer">
+                  {['8','9','10','11','12','14','16'].map(s => (
+                    <option key={s} value={s}>{s} pt</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="w-px h-5 bg-dark-500 mx-1.5" />
+
+              {/* Font family */}
+              <select
+                value={form.bodyFont}
+                onChange={e => setF('bodyFont', e.target.value)}
+                className="bg-dark-600 border border-dark-500 rounded text-xs text-slate-200 px-1.5 py-0.5 focus:outline-none focus:border-primary-500 cursor-pointer">
+                <option value="helvetica">Helvetica</option>
+                <option value="times">Times Roman</option>
+                <option value="courier">Courier</option>
+              </select>
+
+              <span className="ml-auto text-[10px] text-slate-500 hidden sm:block">
+                Formatting applies to PDF output
+              </span>
+            </div>
+
+            {/* ── Body textarea ───────────────────────────────────────────── */}
             <textarea
-              className={`${inp} min-h-[220px] resize-y font-mono text-xs leading-relaxed`}
+              className="w-full bg-dark-700 border border-dark-600 border-t-0 rounded-b-lg px-3 py-2.5 text-slate-100 focus:outline-none focus:border-primary-500 min-h-[240px] resize-y leading-relaxed placeholder:text-slate-500"
+              style={{
+                textAlign:  form.bodyAlign,
+                fontSize:   `${Number(form.bodyFontSize) + 3}px`,
+                fontFamily: form.bodyFont === 'times'   ? '"Times New Roman", Times, serif'
+                          : form.bodyFont === 'courier' ? '"Courier New", Courier, monospace'
+                          : 'Helvetica, Arial, sans-serif',
+                fontWeight: form.bodyBold   ? 'bold'   : 'normal',
+                fontStyle:  form.bodyItalic ? 'italic' : 'normal',
+              }}
               value={form.body}
               onChange={e => setF('body', e.target.value)}
               placeholder="Type the letter content here. Replace [placeholders] with actual values."
             />
-            <p className="text-[10px] text-slate-500 mt-1">Replace [placeholders] before downloading.</p>
+            <p className="text-[10px] text-slate-500 mt-1">Replace [placeholders] before downloading. Formatting is applied in the PDF.</p>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

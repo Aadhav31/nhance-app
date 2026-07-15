@@ -159,6 +159,7 @@ function ExpenseForm({ companyId, userId, userRole, userName, onSuccess, onBack 
 
   const INIT = {
     expense_date: todayStr(),
+    expense_scope: '',      // 'equipment' | 'administrative' — required
     equipment_id: '',
     project_id: '',
     category: '',
@@ -310,6 +311,8 @@ function ExpenseForm({ companyId, userId, userRole, userName, onSuccess, onBack 
   }
 
   const handleSubmit = async () => {
+    if (!form.expense_scope) return toast.error('Select Machine or Administrative for this expense')
+    if (form.expense_scope === 'equipment' && !form.equipment_id) return toast.error('Select which machine this expense belongs to')
     if (!form.category)     return toast.error('Select expense category')
     if (!form.payee_name.trim()) return toast.error('Enter payee name')
     if (!form.amount || parseFloat(form.amount) <= 0) return toast.error('Enter valid amount')
@@ -401,21 +404,12 @@ function ExpenseForm({ companyId, userId, userRole, userName, onSuccess, onBack 
     <div className="flex-1 overflow-y-auto pb-8">
       <div className="max-w-lg mx-auto px-4 pt-4 space-y-5">
 
-        {/* Date + Equipment + Project */}
+        {/* Date */}
         <div className="bg-dark-800 border border-dark-700 rounded-2xl p-4 space-y-3">
           <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Basic Details</p>
           <div>
             <label className="text-xs text-slate-400 mb-1 block">Expense Date <span className="text-red-400">*</span> <span className="text-slate-600 font-normal">(past or future dates allowed)</span></label>
             <input type="date" className={inp()} value={form.expense_date} onChange={e => set('expense_date', e.target.value)} />
-          </div>
-          <div>
-            <label className="text-xs text-slate-400 mb-1 block">Equipment / Machine</label>
-            <select className={inp()} value={form.equipment_id} onChange={e => set('equipment_id', e.target.value)}>
-              <option value="">— Select equipment (optional) —</option>
-              {equipment.map(eq => (
-                <option key={eq.id} value={eq.id}>{eq.name} {eq.equipment_number ? `(${eq.equipment_number})` : ''}</option>
-              ))}
-            </select>
           </div>
           <div>
             <label className="text-xs text-slate-400 mb-1 block">Project / Site</label>
@@ -424,6 +418,59 @@ function ExpenseForm({ companyId, userId, userRole, userName, onSuccess, onBack 
               {projects.map(p => <option key={p.id} value={p.id}>{p.project_name}</option>)}
             </select>
           </div>
+        </div>
+
+        {/* Cost Centre — REQUIRED */}
+        <div className="bg-dark-800 border border-dark-700 rounded-2xl p-4 space-y-3">
+          <div>
+            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+              Cost Centre <span className="text-red-400">*</span>
+            </p>
+            <p className="text-[11px] text-slate-500 mt-0.5">Every expense must be tagged to a machine or classified as admin overhead</p>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => set('expense_scope', 'equipment')}
+              className={`flex items-center gap-2.5 px-3 py-3 rounded-xl border transition-all text-left ${
+                form.expense_scope === 'equipment'
+                  ? 'bg-primary-500/15 border-primary-500 text-primary-300 ring-1 ring-primary-500'
+                  : 'bg-dark-700 border-dark-600 text-slate-400 hover:border-dark-500'
+              }`}
+            >
+              <Wrench className="w-4 h-4 shrink-0" />
+              <div>
+                <p className="text-xs font-semibold leading-tight">Machine</p>
+                <p className="text-[10px] text-slate-500 leading-tight">Tag to equipment</p>
+              </div>
+            </button>
+            <button
+              type="button"
+              onClick={() => { set('expense_scope', 'administrative'); set('equipment_id', '') }}
+              className={`flex items-center gap-2.5 px-3 py-3 rounded-xl border transition-all text-left ${
+                form.expense_scope === 'administrative'
+                  ? 'bg-indigo-500/15 border-indigo-500 text-indigo-300 ring-1 ring-indigo-500'
+                  : 'bg-dark-700 border-dark-600 text-slate-400 hover:border-dark-500'
+              }`}
+            >
+              <Building2 className="w-4 h-4 shrink-0" />
+              <div>
+                <p className="text-xs font-semibold leading-tight">Admin Overhead</p>
+                <p className="text-[10px] text-slate-500 leading-tight">Company-wide cost</p>
+              </div>
+            </button>
+          </div>
+          {form.expense_scope === 'equipment' && (
+            <div>
+              <label className="text-xs text-slate-400 mb-1 block">Machine <span className="text-red-400">*</span></label>
+              <select className={inp()} value={form.equipment_id} onChange={e => set('equipment_id', e.target.value)}>
+                <option value="">— Select machine —</option>
+                {equipment.map(eq => (
+                  <option key={eq.id} value={eq.id}>{eq.name}{eq.equipment_number ? ` (${eq.equipment_number})` : ''}</option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
 
         {/* Category picker */}
@@ -763,6 +810,7 @@ function EditFieldExpenseModal({ exp, companyId, onClose, onSaved }) {
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState({
     expense_date:    exp.expense_date || todayStr(),
+    expense_scope:   exp.equipment_id ? 'equipment' : (exp.expense_scope || 'administrative'),
     equipment_id:    exp.equipment_id || '',
     project_id:      exp.project_id || '',
     category:        exp.category || '',
@@ -803,6 +851,8 @@ function EditFieldExpenseModal({ exp, companyId, onClose, onSaved }) {
   })
 
   const handleSave = async () => {
+    if (!form.expense_scope) return toast.error('Select Machine or Administrative')
+    if (form.expense_scope === 'equipment' && !form.equipment_id) return toast.error('Select which machine this expense belongs to')
     if (!form.category)           return toast.error('Select a category')
     if (!form.payee_name.trim())  return toast.error('Enter payee name')
     if (!form.amount || parseFloat(form.amount) <= 0) return toast.error('Enter a valid amount')
@@ -841,6 +891,8 @@ function EditFieldExpenseModal({ exp, companyId, onClose, onSaved }) {
         total_amount:   parseFloat(form.amount),
         payment_mode:   form.payment_mode,
         bank_reference: form.transaction_ref || null,
+        equipment_id:   form.expense_scope === 'equipment' ? (form.equipment_id || null) : null,
+        expense_scope:  form.expense_scope || 'administrative',
       }).eq('field_expense_id', exp.id)
 
       await supabase.from('account_transactions').update({
@@ -890,15 +942,37 @@ function EditFieldExpenseModal({ exp, companyId, onClose, onSaved }) {
             <input type="date" className={inp()} value={form.expense_date} onChange={e => set('expense_date', e.target.value)} />
           </div>
 
-          {/* Equipment */}
-          <div>
-            <label className="text-xs text-slate-400 mb-1 block">Equipment / Machine</label>
-            <select className={inp()} value={form.equipment_id} onChange={e => set('equipment_id', e.target.value)}>
-              <option value="">— None —</option>
-              {equipment.map(eq => (
-                <option key={eq.id} value={eq.id}>{eq.name} {eq.equipment_number ? `(${eq.equipment_number})` : ''}</option>
-              ))}
-            </select>
+          {/* Cost Centre — required */}
+          <div className="space-y-2">
+            <label className="text-xs text-slate-400 block">Cost Centre <span className="text-red-400">*</span></label>
+            <div className="grid grid-cols-2 gap-2">
+              <button type="button" onClick={() => set('expense_scope', 'equipment')}
+                className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border transition-all text-left text-xs ${
+                  form.expense_scope === 'equipment'
+                    ? 'bg-primary-500/15 border-primary-500 text-primary-300 ring-1 ring-primary-500'
+                    : 'bg-dark-700 border-dark-600 text-slate-400 hover:border-dark-500'
+                }`}>
+                <Wrench className="w-3.5 h-3.5 shrink-0" />
+                <div><p className="font-semibold">Machine</p><p className="text-[10px] text-slate-500">Tag to equipment</p></div>
+              </button>
+              <button type="button" onClick={() => { set('expense_scope', 'administrative'); set('equipment_id', '') }}
+                className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border transition-all text-left text-xs ${
+                  form.expense_scope === 'administrative'
+                    ? 'bg-indigo-500/15 border-indigo-500 text-indigo-300 ring-1 ring-indigo-500'
+                    : 'bg-dark-700 border-dark-600 text-slate-400 hover:border-dark-500'
+                }`}>
+                <Building2 className="w-3.5 h-3.5 shrink-0" />
+                <div><p className="font-semibold">Admin Overhead</p><p className="text-[10px] text-slate-500">Company-wide cost</p></div>
+              </button>
+            </div>
+            {form.expense_scope === 'equipment' && (
+              <select className={inp()} value={form.equipment_id} onChange={e => set('equipment_id', e.target.value)}>
+                <option value="">— Select machine —</option>
+                {equipment.map(eq => (
+                  <option key={eq.id} value={eq.id}>{eq.name}{eq.equipment_number ? ` (${eq.equipment_number})` : ''}</option>
+                ))}
+              </select>
+            )}
           </div>
 
           {/* Project */}

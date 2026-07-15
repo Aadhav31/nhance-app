@@ -146,6 +146,12 @@ export async function generateLetterPDF(company, letterData = {}, verifyUrl = nu
     body                  = '',
     signatoryName         = '',
     signatoryDesignation  = '',
+    // Body formatting
+    bodyAlign             = 'left',
+    bodyFontSize          = '10',
+    bodyFont              = 'helvetica',
+    bodyBold              = false,
+    bodyItalic            = false,
   } = letterData
 
   const pdf = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' })
@@ -227,12 +233,28 @@ export async function generateLetterPDF(company, letterData = {}, verifyUrl = nu
   }
 
   // ── Body ──────────────────────────────────────────────────────────────────
-  const LINE_H        = 5.5
+  const bodyPtSize    = Math.max(8, Math.min(16, Number(bodyFontSize) || 10))
+  const LINE_H        = bodyPtSize * 0.352 * 1.5   // pt → mm at 150% leading
   const BOTTOM_MARGIN = 60
   const PAGE_H        = 297
 
-  pdf.setFont('helvetica', 'normal')
-  pdf.setFontSize(9.5)
+  // Font family & style
+  const safeFont  = ['helvetica', 'times', 'courier'].includes(bodyFont) ? bodyFont : 'helvetica'
+  const fontStyle = bodyBold && bodyItalic ? 'bolditalic'
+                  : bodyBold              ? 'bold'
+                  : bodyItalic            ? 'italic'
+                  : 'normal'
+
+  // PDF text alignment (jsPDF doesn't support justify — falls back to left)
+  const pdfAlign = bodyAlign === 'center' ? 'center'
+                 : bodyAlign === 'right'  ? 'right'
+                 : 'left'
+  const textX    = pdfAlign === 'center' ? W / 2
+                 : pdfAlign === 'right'  ? W - MR - 4
+                 : ML + 4
+
+  pdf.setFont(safeFont, fontStyle)
+  pdf.setFontSize(bodyPtSize)
   pdf.setTextColor(...BLACK)
 
   function addLine(text) {
@@ -241,13 +263,15 @@ export async function generateLetterPDF(company, letterData = {}, verifyUrl = nu
       drawPageBorder(pdf)
       y = CONT_Y
     }
-    pdf.text(text, ML + 4, y)
+    pdf.text(text, textX, y, { align: pdfAlign })
     y += LINE_H
   }
 
+  // Wrap width narrows slightly for centered text to avoid edge clipping
+  const wrapW = pdfAlign === 'center' ? IW - 16 : IW - 8
   body.split('\n').forEach((para, pi, arr) => {
     if (para.trim() === '') { y += LINE_H * 0.5; return }
-    pdf.splitTextToSize(para, IW - 8).forEach(line => addLine(line))
+    pdf.splitTextToSize(para, wrapW).forEach(line => addLine(line))
     if (pi < arr.length - 1) y += 1.5
   })
 
@@ -260,6 +284,7 @@ export async function generateLetterPDF(company, letterData = {}, verifyUrl = nu
     y = CONT_Y
   }
 
+  // Always use helvetica for signatory block (consistent regardless of body font)
   pdf.setFont('helvetica', 'normal')
   pdf.setFontSize(9.5)
   pdf.setTextColor(...BLACK)

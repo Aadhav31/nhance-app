@@ -351,9 +351,9 @@ function EquipPLReport({ companyId, from, to }) {
         .gte('transaction_date', from).lte('transaction_date', to)
         .in('equipment_id', eqIds)
 
-      // ── 8. Direct expenses tagged to equipment ─────────────────────────────
+      // ── 8. Direct expenses tagged to equipment (incl. salary, EMI, accommodation, etc.)
       const { data: exps } = await supabase.from('expenses')
-        .select('equipment_id,total_amount').eq('company_id', companyId)
+        .select('equipment_id,total_amount,category').eq('company_id', companyId)
         .gte('expense_date', from).lte('expense_date', to)
         .in('equipment_id', eqIds)
 
@@ -404,8 +404,14 @@ function EquipPLReport({ companyId, from, to }) {
         // Spare parts cost
         const sparesCost = (spares||[]).filter(sp=>sp.equipment_id===eq.id).reduce((s,sp)=>s+(Number(sp.total_cost)||0),0)
 
-        // Direct expense cost
-        const directCost = (exps||[]).filter(e=>e.equipment_id===eq.id).reduce((s,e)=>s+(Number(e.total_amount)||0),0)
+        // Direct expense cost — with per-category breakdown
+        const expFiltered = (exps||[]).filter(e=>e.equipment_id===eq.id)
+        const directCost = expFiltered.reduce((s,e)=>s+(Number(e.total_amount)||0),0)
+        const byCategory = expFiltered.reduce((acc,e)=>{
+          const cat = (e.category||'misc').toLowerCase()
+          acc[cat] = (acc[cat]||0) + (Number(e.total_amount)||0)
+          return acc
+        }, {})
 
         const totalExpense = fuelCost + operatorCost + maintCost + sparesCost + directCost
         const netPL        = calcRevenue_ - totalExpense
@@ -435,7 +441,7 @@ function EquipPLReport({ companyId, from, to }) {
           workingHrs, shiftDays, totalShiftCount, maxShiftsPerDay,
           calcRevenue: calcRevenue_, revenueSource,
           fuelCost, fuelQtyOwn, fuelByClient,
-          operatorCost, maintCost, sparesCost, directCost,
+          operatorCost, maintCost, sparesCost, directCost, byCategory,
           totalExpense, netPL, fuelAlert,
         }
       }).filter(Boolean).sort((a,b)=>b.netPL-a.netPL)
@@ -563,7 +569,28 @@ function EquipPLReport({ companyId, from, to }) {
                       <div className="flex justify-between text-xs"><span className="text-slate-400">Operator salary</span><span className="text-orange-300">{fmt(r.operatorCost)}</span></div>
                       <div className="flex justify-between text-xs"><span className="text-slate-400">Maintenance</span><span className="text-orange-400">{fmt(r.maintCost)}</span></div>
                       <div className="flex justify-between text-xs"><span className="text-slate-400">Spare parts</span><span className="text-orange-400">{fmt(r.sparesCost)}</span></div>
-                      <div className="flex justify-between text-xs"><span className="text-slate-400">Other expenses</span><span className="text-orange-400">{fmt(r.directCost)}</span></div>
+                      {/* Per-category expense breakdown */}
+                      {r.directCost > 0 && Object.keys(r.byCategory).length > 0 ? (
+                        <>
+                          {Object.entries(r.byCategory).map(([cat, amt]) => {
+                            const catLabel = {
+                              salary: 'Salary', emi: 'EMI / Loan', fuel: 'Fuel (exp)',
+                              accommodation: 'Accommodation', travel: 'Travel',
+                              food: 'Food / Meals', repairs: 'Repairs',
+                              misc: 'Miscellaneous',
+                            }[cat] || cat.charAt(0).toUpperCase() + cat.slice(1)
+                            return (
+                              <div key={cat} className="flex justify-between text-xs pl-2">
+                                <span className="text-slate-500">↳ {catLabel}</span>
+                                <span className="text-orange-400">{fmt(amt)}</span>
+                              </div>
+                            )
+                          })}
+                          <div className="flex justify-between text-xs font-semibold"><span className="text-slate-400">Total tagged expenses</span><span className="text-orange-400">{fmt(r.directCost)}</span></div>
+                        </>
+                      ) : (
+                        <div className="flex justify-between text-xs"><span className="text-slate-400">Other expenses</span><span className="text-orange-400">{fmt(r.directCost)}</span></div>
+                      )}
                       <div className="flex justify-between text-xs font-semibold border-t border-dark-600 pt-1 mt-1"><span className="text-slate-300">Total Expenses</span><span className="text-red-400">{fmt(r.totalExpense)}</span></div>
                     </div>
                   </div>
