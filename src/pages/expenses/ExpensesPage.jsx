@@ -4,9 +4,9 @@ import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import toast from 'react-hot-toast'
 import {
-  Search, Plus, Download, FileDown, Sheet, Loader2, ChevronDown,
+  Search, Plus, Sheet, Loader2, ChevronDown,
   Receipt, ShoppingCart, Users, Wrench, CreditCard, Lock, Pencil, Trash2,
-  Filter, X, ReceiptText, TrendingDown,
+  X, TrendingDown,
 } from 'lucide-react'
 import * as XLSX from 'xlsx'
 
@@ -416,7 +416,7 @@ export default function ExpensesPage({ onNavigate }) {
           <div className="flex justify-center py-20"><Loader2 className="w-6 h-6 animate-spin text-primary-400" /></div>
         ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center py-20 gap-3 text-slate-600">
-            <ReceiptText className="w-10 h-10" />
+            <Receipt className="w-10 h-10" />
             <p className="text-sm">No expenses found for the selected filters</p>
           </div>
         ) : (

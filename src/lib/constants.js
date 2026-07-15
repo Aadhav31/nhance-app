@@ -180,7 +180,7 @@ export const NAV_ITEMS = [
     items: [
       { key: 'accounts',  label: 'Accounts',        icon: 'Wallet',       module: MODULES.ACCOUNTS,
         roles: [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
-      { key: 'expenses',  label: 'Expenses',         icon: 'ReceiptText',  module: MODULES.ACCOUNTS,
+      { key: 'expenses',  label: 'Expenses',         icon: 'Wallet',       module: MODULES.ACCOUNTS,
         roles: [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
       { key: 'planner',   label: 'Expense Planner',  icon: 'CalendarDays', module: MODULES.ACCOUNTS,
         roles: [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },

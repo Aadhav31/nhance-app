@@ -13,7 +13,7 @@ import { useRealtimeSync } from './hooks/useRealtimeSync'
 import {
   LayoutDashboard, Receipt, ClipboardList, BarChart3,
   Users, Wallet, Package, X, Truck, Wrench, FolderOpen,
-  Settings, ShoppingCart, TrendingUp, CalendarDays, ReceiptText,
+  Settings, ShoppingCart, TrendingUp, CalendarDays,
 } from 'lucide-react'
 
 // Lazy-load all pages for performance
@@ -134,7 +134,7 @@ const ALL_PAGES = [
   { key: 'inventory',    Icon: Package,         label: 'Inventory'            },
   { key: 'projects',     Icon: FolderOpen,      label: 'Projects'             },
   { key: 'accounts',     Icon: Wallet,          label: 'Accounts'             },
-  { key: 'expenses',     Icon: ReceiptText,     label: 'Expenses'             },
+  { key: 'expenses',     Icon: Wallet,          label: 'Expenses'             },
   { key: 'planner',      Icon: CalendarDays,    label: 'Expense Planner'      },
   { key: 'sales',        Icon: TrendingUp,      label: 'Sales'                },
   { key: 'purchase',     Icon: ShoppingCart,    label: 'Purchase'             },
