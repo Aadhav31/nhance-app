@@ -7,7 +7,7 @@
  *  3. Deleted (Admin)   — soft-deleted letters only; restore within 30 days; archived after
  */
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useAuth } from '../../contexts/AuthContext'
 import { supabase } from '../../lib/supabase'
 import { generateLetterPDF, HIDE_TO_BLOCK } from '../../lib/letterheadPDF'
@@ -127,36 +127,75 @@ export default function LettersPage() {
   const [form, setForm] = useState({
     letterType: 'Experience Certificate', refNumber: '', date: todayStr(),
     toName: '', toAddress: '', subject: '',
-    body: BODY_TEMPLATES['Experience Certificate'],
     signatoryName: '', signatoryDesignation: '',
-    // Body formatting
-    bodyAlign: 'left', bodyFontSize: '10', bodyFont: 'helvetica',
-    bodyBold: false, bodyItalic: false,
+    bodyFontSize: '10', bodyFont: 'helvetica',
   })
+
+  // ── Rich text editor refs ───────────────────────────────────────────────
+  const editorRef = useRef(null)
+  const [activeFormats, setActiveFormats] = useState({ bold: false, italic: false, align: 'left' })
+
+  /** Convert plain template text → HTML divs for contentEditable */
+  const plainToHtml = text =>
+    (text || '').split('\n').map(line =>
+      line.trim() === '' ? '<div><br></div>' : `<div>${line}</div>`
+    ).join('')
+
+  /** Read selection state and update toolbar highlights */
+  const syncFormats = () => {
+    try {
+      setActiveFormats({
+        bold:   document.queryCommandState('bold'),
+        italic: document.queryCommandState('italic'),
+        align:  document.queryCommandState('justifyCenter') ? 'center'
+              : document.queryCommandState('justifyRight')  ? 'right'
+              : document.queryCommandState('justifyFull')   ? 'justify'
+              : 'left',
+      })
+    } catch {}
+  }
+
+  /** Apply a format command to the current selection */
+  const execCmd = (cmd) => {
+    editorRef.current?.focus()
+    document.execCommand(cmd, false, null)
+    syncFormats()
+  }
+
+  /** Initialise editor with the Experience Certificate template on mount */
+  useEffect(() => {
+    if (editorRef.current) {
+      editorRef.current.innerHTML = plainToHtml(BODY_TEMPLATES['Experience Certificate'])
+    }
+  }, []) // eslint-disable-line
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
   const hideToBlock = HIDE_TO_BLOCK.has(form.letterType)
 
   const handleTypeChange = type => {
-    const currentIsTemplate = Object.values(BODY_TEMPLATES).includes(form.body)
-    setForm(p => ({
-      ...p, letterType: type,
-      body: currentIsTemplate ? (BODY_TEMPLATES[type] || '') : p.body,
-    }))
+    // Only overwrite editor content if it still matches a template
+    const currentText = (editorRef.current?.innerText || '').replace(/\r\n/g, '\n').trim()
+    const isTemplate = Object.values(BODY_TEMPLATES).some(t => t.trim() === currentText) || !currentText
+    setForm(p => ({ ...p, letterType: type }))
+    if (isTemplate && editorRef.current) {
+      editorRef.current.innerHTML = plainToHtml(BODY_TEMPLATES[type] || '')
+    }
   }
 
   const handleReset = () => {
     if (!window.confirm('Clear this letter?')) return
+    if (editorRef.current) editorRef.current.innerHTML = '<div><br></div>'
     setForm({
       letterType: 'General Letter', refNumber: '', date: todayStr(),
-      toName: '', toAddress: '', subject: '', body: '',
+      toName: '', toAddress: '', subject: '',
       signatoryName: '', signatoryDesignation: '',
-      bodyAlign: 'left', bodyFontSize: '10', bodyFont: 'helvetica',
-      bodyBold: false, bodyItalic: false,
+      bodyFontSize: '10', bodyFont: 'helvetica',
     })
   }
 
   const handleDownload = async () => {
-    if (!form.body.trim()) return toast.error('Letter body cannot be empty')
+    const bodyHtml = editorRef.current?.innerHTML || ''
+    const bodyText = (editorRef.current?.innerText || '').trim()
+    if (!bodyText) return toast.error('Letter body cannot be empty')
     setDownloading(true)
     try {
       const refNo = form.refNumber.trim() ||
@@ -165,7 +204,7 @@ export default function LettersPage() {
         docType: 'letter', docNumber: refNo, docDate: form.date,
         partyName: form.toName || form.letterType, amount: null,
       })
-      await generateLetterPDF(company, { ...form, refNumber: refNo }, verifyUrl)
+      await generateLetterPDF(company, { ...form, refNumber: refNo, bodyHtml }, verifyUrl)
     } catch (e) {
       toast.error('PDF generation failed: ' + e.message)
     } finally {
@@ -340,57 +379,61 @@ export default function LettersPage() {
           <div>
             <label className="text-xs text-slate-400 mb-1.5 block">Letter Body *</label>
 
-            {/* ── Body textarea ───────────────────────────────────────────── */}
-            <textarea
-              className="w-full bg-dark-700 border border-dark-600 border-b-0 rounded-t-lg px-3 py-2.5 text-slate-100 focus:outline-none focus:border-primary-500 min-h-[240px] resize-y leading-relaxed placeholder:text-slate-500"
+            {/* ── Body editor (contentEditable — per-line formatting) ───── */}
+            <div
+              ref={editorRef}
+              contentEditable
+              suppressContentEditableWarning
+              onInput={syncFormats}
+              onKeyUp={syncFormats}
+              onMouseUp={syncFormats}
+              onSelect={syncFormats}
               style={{
-                textAlign:  form.bodyAlign,
                 fontSize:   `${Number(form.bodyFontSize) + 3}px`,
                 fontFamily: form.bodyFont === 'times'   ? '"Times New Roman", Times, serif'
                           : form.bodyFont === 'courier' ? '"Courier New", Courier, monospace'
                           : 'Helvetica, Arial, sans-serif',
-                fontWeight: form.bodyBold   ? 'bold'   : 'normal',
-                fontStyle:  form.bodyItalic ? 'italic' : 'normal',
+                minHeight: '240px',
+                lineHeight: '1.7',
+                wordBreak: 'break-word',
               }}
-              value={form.body}
-              onChange={e => setF('body', e.target.value)}
-              placeholder="Type the letter content here. Replace [placeholders] with actual values."
+              className="w-full bg-dark-700 border border-dark-600 border-b-0 rounded-t-lg px-3 py-2.5 text-slate-100 focus:outline-none overflow-auto"
             />
 
             {/* ── Formatting toolbar ──────────────────────────────────────── */}
             <div className="flex items-center gap-0.5 px-2 py-1.5 bg-dark-700 border border-dark-600 rounded-b-lg flex-wrap">
 
-              {/* Bold / Italic */}
+              {/* Bold / Italic — apply to selection */}
               <button type="button" title="Bold"
-                onClick={() => setF('bodyBold', !form.bodyBold)}
-                className={`flex items-center justify-center w-7 h-7 rounded text-sm font-bold transition-colors ${form.bodyBold ? 'bg-primary-600 text-white' : 'text-slate-400 hover:bg-dark-600 hover:text-slate-100'}`}>
+                onClick={() => execCmd('bold')}
+                className={`flex items-center justify-center w-7 h-7 rounded font-bold transition-colors ${activeFormats.bold ? 'bg-primary-600 text-white' : 'text-slate-400 hover:bg-dark-600 hover:text-slate-100'}`}>
                 <Bold className="w-3.5 h-3.5" />
               </button>
               <button type="button" title="Italic"
-                onClick={() => setF('bodyItalic', !form.bodyItalic)}
-                className={`flex items-center justify-center w-7 h-7 rounded transition-colors ${form.bodyItalic ? 'bg-primary-600 text-white' : 'text-slate-400 hover:bg-dark-600 hover:text-slate-100'}`}>
+                onClick={() => execCmd('italic')}
+                className={`flex items-center justify-center w-7 h-7 rounded transition-colors ${activeFormats.italic ? 'bg-primary-600 text-white' : 'text-slate-400 hover:bg-dark-600 hover:text-slate-100'}`}>
                 <Italic className="w-3.5 h-3.5" />
               </button>
 
               <div className="w-px h-5 bg-dark-500 mx-1.5" />
 
-              {/* Alignment */}
+              {/* Alignment — applies to current paragraph only */}
               {[
-                { align: 'left',    Icon: AlignLeft,    tip: 'Align Left' },
-                { align: 'center',  Icon: AlignCenter,  tip: 'Align Center' },
-                { align: 'right',   Icon: AlignRight,   tip: 'Align Right' },
-                { align: 'justify', Icon: AlignJustify, tip: 'Justify' },
-              ].map(({ align, Icon, tip }) => (
+                { align: 'left',    cmd: 'justifyLeft',   Icon: AlignLeft,    tip: 'Align Left' },
+                { align: 'center',  cmd: 'justifyCenter', Icon: AlignCenter,  tip: 'Align Center' },
+                { align: 'right',   cmd: 'justifyRight',  Icon: AlignRight,   tip: 'Align Right' },
+                { align: 'justify', cmd: 'justifyFull',   Icon: AlignJustify, tip: 'Justify' },
+              ].map(({ align, cmd, Icon, tip }) => (
                 <button type="button" key={align} title={tip}
-                  onClick={() => setF('bodyAlign', align)}
-                  className={`flex items-center justify-center w-7 h-7 rounded transition-colors ${form.bodyAlign === align ? 'bg-primary-600 text-white' : 'text-slate-400 hover:bg-dark-600 hover:text-slate-100'}`}>
+                  onClick={() => execCmd(cmd)}
+                  className={`flex items-center justify-center w-7 h-7 rounded transition-colors ${activeFormats.align === align ? 'bg-primary-600 text-white' : 'text-slate-400 hover:bg-dark-600 hover:text-slate-100'}`}>
                   <Icon className="w-3.5 h-3.5" />
                 </button>
               ))}
 
               <div className="w-px h-5 bg-dark-500 mx-1.5" />
 
-              {/* Font size */}
+              {/* Font size — global */}
               <div className="flex items-center gap-1">
                 <Type className="w-3 h-3 text-slate-500 shrink-0" />
                 <select
@@ -405,7 +448,7 @@ export default function LettersPage() {
 
               <div className="w-px h-5 bg-dark-500 mx-1.5" />
 
-              {/* Font family */}
+              {/* Font family — global */}
               <select
                 value={form.bodyFont}
                 onChange={e => setF('bodyFont', e.target.value)}
@@ -416,10 +459,10 @@ export default function LettersPage() {
               </select>
 
               <span className="ml-auto text-[10px] text-slate-500 hidden sm:block">
-                Formatting applies to PDF output
+                Select text to format · Alignment is per line
               </span>
             </div>
-            <p className="text-[10px] text-slate-500 mt-1">Replace [placeholders] before downloading. Formatting is applied in the PDF.</p>
+            <p className="text-[10px] text-slate-500 mt-1">Replace [placeholders] before downloading. All formatting reflects in the PDF.</p>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

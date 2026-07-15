@@ -131,6 +131,48 @@ async function drawHeader(pdf, company) {
   return divY
 }
 
+// ── Parse rich HTML body → array of { text, align, bold, italic } blocks ─────
+function htmlToBlocks(html) {
+  if (!html) return []
+  const parser = new DOMParser()
+  const doc    = parser.parseFromString('<div id="r">' + html + '</div>', 'text/html')
+  const root   = doc.getElementById('r')
+  if (!root) return []
+
+  const blocks = []
+
+  root.childNodes.forEach(node => {
+    if (node.nodeType === 3 /* TEXT */) {
+      const text = node.textContent || ''
+      if (text.trim()) blocks.push({ text: text.trim(), align: 'left', bold: false, italic: false })
+      return
+    }
+    if (node.nodeType !== 1 /* ELEMENT */) return
+
+    const tag = node.tagName.toLowerCase()
+
+    if (tag === 'br') {
+      blocks.push({ text: '', align: 'left', empty: true }); return
+    }
+
+    // Get inline alignment style (set by execCommand justify*)
+    const rawAlign = (node.style && node.style.textAlign) || node.getAttribute('align') || 'left'
+    const align    = ['center','right','justify'].includes(rawAlign.toLowerCase()) ? rawAlign.toLowerCase() : 'left'
+
+    const inner = node.innerHTML || ''
+    if (inner === '<br>' || inner === '' || (node.textContent || '').replace(/\n/g,'').trim() === '') {
+      blocks.push({ text: '', align, empty: true }); return
+    }
+
+    const bold   = !!node.querySelector('b, strong')
+    const italic = !!node.querySelector('i, em')
+    const text   = (node.textContent || '').replace(/\n/g, ' ').trim()
+    blocks.push({ text, align, bold, italic })
+  })
+
+  return blocks
+}
+
 // ── Letter types that hide To/Address block in PDF ────────────────────────────
 export const HIDE_TO_BLOCK = new Set(['Experience Certificate'])
 
@@ -238,41 +280,49 @@ export async function generateLetterPDF(company, letterData = {}, verifyUrl = nu
   const BOTTOM_MARGIN = 60
   const PAGE_H        = 297
 
-  // Font family & style
-  const safeFont  = ['helvetica', 'times', 'courier'].includes(bodyFont) ? bodyFont : 'helvetica'
-  const fontStyle = bodyBold && bodyItalic ? 'bolditalic'
-                  : bodyBold              ? 'bold'
-                  : bodyItalic            ? 'italic'
-                  : 'normal'
+  const safeFont = ['helvetica', 'times', 'courier'].includes(bodyFont) ? bodyFont : 'helvetica'
 
-  // PDF text alignment (jsPDF doesn't support justify — falls back to left)
-  const pdfAlign = bodyAlign === 'center' ? 'center'
-                 : bodyAlign === 'right'  ? 'right'
-                 : 'left'
-  const textX    = pdfAlign === 'center' ? W / 2
-                 : pdfAlign === 'right'  ? W - MR - 4
-                 : ML + 4
-
-  pdf.setFont(safeFont, fontStyle)
   pdf.setFontSize(bodyPtSize)
   pdf.setTextColor(...BLACK)
 
-  function addLine(text) {
+  function addLine(text, textX, align) {
     if (y + LINE_H > PAGE_H - BOTTOM_MARGIN) {
       pdf.addPage()
       drawPageBorder(pdf)
       y = CONT_Y
     }
-    pdf.text(text, textX, y, { align: pdfAlign })
+    pdf.text(text, textX, y, { align })
     y += LINE_H
   }
 
-  // Wrap width narrows slightly for centered text to avoid edge clipping
-  const wrapW = pdfAlign === 'center' ? IW - 16 : IW - 8
-  body.split('\n').forEach((para, pi, arr) => {
-    if (para.trim() === '') { y += LINE_H * 0.5; return }
-    pdf.splitTextToSize(para, wrapW).forEach(line => addLine(line))
-    if (pi < arr.length - 1) y += 1.5
+  // Parse HTML if available (rich text), otherwise fall back to plain body string
+  const blocks = bodyHtml
+    ? htmlToBlocks(bodyHtml)
+    : body.split('\n').map(line => ({ text: line, align: 'left', bold: false, italic: false }))
+
+  blocks.forEach((block, bi, arr) => {
+    if (block.empty || !block.text || block.text.trim() === '') {
+      y += LINE_H * 0.5; return
+    }
+
+    // Per-block font style (HTML bold/italic tags take priority)
+    const bStyle = block.bold && block.italic ? 'bolditalic'
+                 : block.bold   ? 'bold'
+                 : block.italic ? 'italic'
+                 : 'normal'
+    pdf.setFont(safeFont, bStyle)
+
+    // Per-block alignment (justify → left in PDF; jsPDF doesn't support it)
+    const bAlign = block.align === 'center' ? 'center'
+                 : block.align === 'right'  ? 'right'
+                 : 'left'
+    const textX  = bAlign === 'center' ? W / 2
+                 : bAlign === 'right'  ? W - MR - 4
+                 : ML + 4
+    const wrapW  = bAlign === 'center' ? IW - 16 : IW - 8
+
+    pdf.splitTextToSize(block.text, wrapW).forEach(line => addLine(line, textX, bAlign))
+    if (bi < arr.length - 1) y += 1.5
   })
 
   y += 8
