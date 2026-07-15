@@ -357,7 +357,9 @@ const VENDOR_DOCS = [
 function VendorsTab({ companyId, session }) {
   const qc = useQueryClient()
   const [showCreate, setShowCreate] = useState(false)
+  const [editMode, setEditMode] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState(null)
   const [form, setForm] = useState(BLANK_VENDOR)
@@ -376,7 +378,43 @@ function VendorsTab({ companyId, session }) {
   const openCreate = () => {
     setForm(BLANK_VENDOR)
     setDocs({ aadhar: null, pan: null, cheque: null, gst_cert: null })
+    setEditMode(false)
     setShowCreate(true)
+  }
+
+  const openEdit = (vendor) => {
+    setForm({
+      id:                vendor.id,
+      name:              vendor.name              || '',
+      vendor_code:       vendor.vendor_code       || '',
+      category:          vendor.category          || 'general',
+      gstin:             vendor.gstin             || '',
+      contact_name:      vendor.contact_name      || '',
+      contact_phone:     vendor.contact_phone     || '',
+      contact_email:     vendor.contact_email     || '',
+      address:           vendor.address           || '',
+      bank_name:         vendor.bank_name         || '',
+      bank_account_name: vendor.bank_account_name || '',
+      bank_account:      vendor.bank_account      || '',
+      bank_ifsc:         vendor.bank_ifsc         || '',
+      notes:             vendor.notes             || '',
+    })
+    setDocs({ aadhar: null, pan: null, cheque: null, gst_cert: null })
+    setEditMode(true)
+    setSelected(null)
+    setShowCreate(true)
+  }
+
+  const deleteVendor = async (vendor) => {
+    if (!window.confirm(`Delete vendor "${vendor.name}"? This cannot be undone.`)) return
+    setDeleting(true)
+    try {
+      const { error } = await supabase.from('vendors').delete().eq('id', vendor.id)
+      if (error) throw error
+      toast.success('Vendor deleted')
+      setSelected(null)
+      qc.invalidateQueries(['vendors', companyId])
+    } catch (e) { toast.error(e.message) } finally { setDeleting(false) }
   }
 
   const selectedBank = INDIAN_BANKS.find(b => b.name === form.bank_name)
@@ -400,29 +438,45 @@ function VendorsTab({ companyId, session }) {
     }
     setSaving(true)
     try {
-      // Generate vendor code at save time (not on open) to avoid wasting sequences
-      const vendorCode = form.vendor_code.trim() || await nextDocNumber(companyId, 'vendor').catch(() => '')
-      // Upload documents first
+      const vendorCode = form.vendor_code.trim() || (!editMode ? await nextDocNumber(companyId, 'vendor').catch(() => '') : '')
+      // Upload any newly attached documents
       const docUrls = {}
       for (const d of VENDOR_DOCS) {
         if (docs[d.key]) {
-          docUrls[d.urlKey] = await uploadVendorDoc(docs[d.key], d.key, vendorCode)
+          docUrls[d.urlKey] = await uploadVendorDoc(docs[d.key], d.key, vendorCode || form.vendor_code)
         }
       }
-      const { error } = await supabase.from('vendors').insert({
-        company_id: companyId, name: form.name.trim(),
-        vendor_code: vendorCode || null, category: form.category,
-        gstin: form.gstin.trim() || null, contact_name: form.contact_name.trim() || null,
-        contact_phone: form.contact_phone.trim() || null, contact_email: form.contact_email.trim() || null,
-        address: form.address.trim() || null, bank_name: form.bank_name || null,
+      const payload = {
+        name: form.name.trim(),
+        category: form.category,
+        gstin: form.gstin.trim() || null,
+        contact_name: form.contact_name.trim() || null,
+        contact_phone: form.contact_phone.trim() || null,
+        contact_email: form.contact_email.trim() || null,
+        address: form.address.trim() || null,
+        bank_name: form.bank_name || null,
         bank_account_name: form.bank_account_name.trim() || null,
-        bank_account: form.bank_account.trim() || null, bank_ifsc: form.bank_ifsc.trim().toUpperCase() || null,
-        notes: form.notes.trim() || null, created_by: session.user.id,
+        bank_account: form.bank_account.trim() || null,
+        bank_ifsc: form.bank_ifsc.trim().toUpperCase() || null,
+        notes: form.notes.trim() || null,
         ...docUrls,
-      })
-      if (error) throw error
-      toast.success('Vendor added')
+      }
+
+      if (editMode) {
+        const { error } = await supabase.from('vendors').update(payload).eq('id', form.id)
+        if (error) throw error
+        toast.success('Vendor updated')
+      } else {
+        const { error } = await supabase.from('vendors').insert({
+          company_id: companyId, vendor_code: vendorCode || null,
+          created_by: session.user.id, ...payload,
+        })
+        if (error) throw error
+        toast.success('Vendor added')
+      }
+
       setShowCreate(false)
+      setEditMode(false)
       setForm(BLANK_VENDOR)
       setDocs({ aadhar: null, pan: null, cheque: null, gst_cert: null })
       qc.invalidateQueries(['vendors', companyId])
@@ -470,7 +524,22 @@ function VendorsTab({ companyId, session }) {
 
       {/* Vendor Detail Modal */}
       {selected && (
-        <Modal title={selected.name} subtitle={selected.category?.replace(/_/g,' ')} onClose={() => setSelected(null)}>
+        <Modal
+          title={selected.name}
+          subtitle={selected.category?.replace(/_/g,' ')}
+          onClose={() => setSelected(null)}
+          footer={
+            <div className="flex gap-2 w-full">
+              <button onClick={() => deleteVendor(selected)} disabled={deleting}
+                className="flex-1 btn-ghost text-red-400 hover:text-red-300 hover:bg-red-900/20 border border-red-800/40">
+                {deleting ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : 'Delete'}
+              </button>
+              <button onClick={() => openEdit(selected)} className="flex-1 btn-primary">
+                Edit
+              </button>
+            </div>
+          }
+        >
           <div className="grid grid-cols-2 gap-4">
             {selected.contact_name && <div><p className="text-xs text-slate-500 mb-0.5">Contact</p><p className="text-sm text-slate-100 flex items-center gap-1"><User className="w-3.5 h-3.5" />{selected.contact_name}</p></div>}
             {selected.contact_phone && <div><p className="text-xs text-slate-500 mb-0.5">Phone</p><p className="text-sm text-slate-100 flex items-center gap-1"><Phone className="w-3.5 h-3.5" />{selected.contact_phone}</p></div>}
@@ -509,12 +578,12 @@ function VendorsTab({ companyId, session }) {
       )}
 
       {showCreate && (
-        <Modal title="Add Vendor" onClose={() => setShowCreate(false)}
-          footer={<><button onClick={() => setShowCreate(false)} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Add Vendor'}</button></>}>
+        <Modal title={editMode ? 'Edit Vendor' : 'Add Vendor'} onClose={() => { setShowCreate(false); setEditMode(false) }}
+          footer={<><button onClick={() => { setShowCreate(false); setEditMode(false) }} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : editMode ? 'Save Changes' : 'Add Vendor'}</button></>}>
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2"><Field label="Vendor Name *"><input className={inp()} value={form.name} onChange={e => setF('name', e.target.value)} /></Field></div>
-            <Field label="Vendor Code (auto)">
-              <input className={inp('font-mono bg-dark-700 text-slate-400 cursor-not-allowed')} value={form.vendor_code} readOnly />
+            <Field label="Vendor Code">
+              <input className={inp('font-mono bg-dark-700 text-slate-400 cursor-not-allowed')} value={form.vendor_code || (editMode ? '' : 'Auto-generated')} readOnly />
             </Field>
             <Field label="Category">
               <select className={inp()} value={form.category} onChange={e => setF('category', e.target.value)}>
