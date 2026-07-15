@@ -371,8 +371,10 @@ function ExpandedDetail({ entry, onNavigate }) {
           <DetailRow label="Description"   value={r.fixed_expenses?.description} />
           <DetailRow label="Period"        value={r.period_month ? `${MONTHS_SHORT[(r.period_month % 100) - 1]} ${Math.floor(r.period_month / 100)}` : null} />
           <DetailRow label="Status"        value={r.status} />
-          <DetailRow label="Payment Mode"  value={r.payment_mode?.toUpperCase()} />
+          <DetailRow label="Paid Date"     value={r.paid_date ? fmtDate(r.paid_date) : null} />
           <DetailRow label="Due Date"      value={r.due_date ? fmtDate(r.due_date) : null} />
+          <DetailRow label="Payment Mode"  value={r.payment_mode?.toUpperCase()} />
+          <DetailRow label="Ref"           value={r.transaction_ref} />
         </>)}
 
         {/* Navigate to source */}
@@ -420,7 +422,7 @@ export default function ExpensesPage({ onNavigate }) {
     queryKey: ['core_expenses_unified', companyId],
     queryFn: async () => {
       const { data } = await supabase.from('expenses')
-        .select('*, equipment(name, equipment_number), projects(project_name)')
+        .select('*')
         .eq('company_id', companyId)
         .is('field_expense_id', null)   // exclude synced field_expenses rows (they have this set)
         .order('expense_date', { ascending: false })
@@ -457,7 +459,7 @@ export default function ExpensesPage({ onNavigate }) {
       const { data } = await supabase.from('fixed_expense_payments')
         .select('*, fixed_expenses(name, category, payee_name, description, amount, frequency)')
         .in('fixed_expense_id', ids)
-        .order('payment_date', { ascending: false })
+        .order('due_date', { ascending: false })
         .limit(300)
       return data || []
     },
@@ -555,7 +557,7 @@ export default function ExpensesPage({ onNavigate }) {
         _key:      `fx-${r.id}`,
         source_id: r.id,
         type:      'fixed',
-        date:      r.payment_date,
+        date:      r.paid_date || r.due_date,
         amount:    Number(r.amount || 0),
         mode:      r.payment_mode || 'cash',
         title:     fe?.name || 'Fixed Expense',
