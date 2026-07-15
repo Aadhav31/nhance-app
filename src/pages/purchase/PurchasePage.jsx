@@ -1653,7 +1653,7 @@ function PaymentsMadeTab({ companyId, session }) {
   const { data: payments = [], isLoading } = useQuery({
     queryKey: ['payments_made', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('payments_made').select('*, vendors(vendor_name)').eq('company_id', companyId).order('created_at', { ascending: false }).limit(200)
+      const { data } = await supabase.from('payments_made').select('*, vendors!left(vendor_name)').eq('company_id', companyId).order('created_at', { ascending: false }).limit(200)
       return data || []
     },
     enabled: !!companyId,
