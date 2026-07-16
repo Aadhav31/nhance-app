@@ -1726,7 +1726,8 @@ function AttendanceTab({ companyId }) {
   const [editRec,     setEditRec]     = useState(null)
   const [typeFilter,  setTypeFilter]  = useState('all')  // 'all' | 'shift' | 'daily' | 'monthly'
   // Local shift time state: { [empId]: { start: '', end: '' } }
-  const [shiftTimes,  setShiftTimes]  = useState({})
+  const [shiftTimes,   setShiftTimes]  = useState({})
+  const [subPickerFor, setSubPickerFor] = useState(null)  // empId whose card shows "In Absence Of" picker
 
   const date        = `${year}-${String(month).padStart(2,'0')}-${String(selectedDay).padStart(2,'0')}`
   const daysInMonth = new Date(year, month, 0).getDate()
@@ -1819,6 +1820,67 @@ function AttendanceTab({ companyId }) {
       shift_end_time:   end,
       ot_hours:         otHrs,
     })
+  }
+
+  // Add "In Absence Of" substitution — covering operator gets extra_shifts credit;
+  // absent employee gets covered_by recorded on their attendance record.
+  const addSubstitution = async (coveringEmp, absentEmpId) => {
+    const absentEmp = employees.find(e => e.id === absentEmpId)
+    if (!absentEmp) return
+    setSubPickerFor(null)
+
+    const coveringRec = attMap[coveringEmp.id]
+    if (!coveringRec) { toast.error('Mark your own attendance first before adding a substitution'); return }
+
+    const existingSubs = Array.isArray(coveringRec.substitutions_given) ? coveringRec.substitutions_given : []
+    if (existingSubs.find(s => s.id === absentEmpId)) { toast.error(`Already covering for ${absentEmp.name}`); return }
+
+    // 1. Update covering employee
+    const newSubs = [...existingSubs, { id: absentEmpId, name: absentEmp.name }]
+    await supabase.from('hr_attendance').update({
+      extra_shifts:        (Number(coveringRec.extra_shifts) || 0) + 1,
+      substitutions_given: newSubs,
+    }).eq('id', coveringRec.id)
+
+    // 2. Upsert absent employee record — mark absent, record who covered
+    const absentRec = attMap[absentEmpId]
+    if (absentRec) {
+      await supabase.from('hr_attendance').update({
+        covered_by_id:   coveringEmp.id,
+        covered_by_name: coveringEmp.name,
+      }).eq('id', absentRec.id)
+    } else {
+      await supabase.from('hr_attendance').insert({
+        company_id:      companyId,
+        employee_id:     absentEmpId,
+        attendance_date: date,
+        status:          'absent',
+        source:          'manual',
+        covered_by_id:   coveringEmp.id,
+        covered_by_name: coveringEmp.name,
+      })
+    }
+
+    refetch(); refetchMonth()
+    toast.success(`${coveringEmp.name} — 1 extra shift added (covering ${absentEmp.name})`)
+  }
+
+  const removeSubstitution = async (coveringEmpId, absentEmpId) => {
+    const coveringRec = attMap[coveringEmpId]
+    if (!coveringRec) return
+    const newSubs = (Array.isArray(coveringRec.substitutions_given) ? coveringRec.substitutions_given : [])
+      .filter(s => s.id !== absentEmpId)
+    await supabase.from('hr_attendance').update({
+      extra_shifts:        Math.max(0, (Number(coveringRec.extra_shifts) || 0) - 1),
+      substitutions_given: newSubs,
+    }).eq('id', coveringRec.id)
+    // Clear covered_by on absent employee
+    const absentRec = attMap[absentEmpId]
+    if (absentRec) {
+      await supabase.from('hr_attendance').update({ covered_by_id: null, covered_by_name: null }).eq('id', absentRec.id)
+    }
+    refetch(); refetchMonth()
+    toast.success('Substitution removed')
   }
 
   const markAll = async (status) => {
@@ -1949,21 +2011,29 @@ function AttendanceTab({ companyId }) {
           </div>
         ) : (
           visibleEmployees.map(emp => {
-            const att      = attMap[emp.id]
-            const status   = att?.status || null
-            const isShift  = isShiftWorker(emp)
-            const isAuto   = att?.source === 'shift_auto'
-            const otHours  = Number(att?.ot_hours || 0)
-            const localT   = shiftTimes[emp.id] || { start: '', end: '' }
+            const att        = attMap[emp.id]
+            const status     = att?.status || null
+            const isShift    = isShiftWorker(emp)
+            const isAuto     = att?.source === 'shift_auto'
+            const otHours    = Number(att?.ot_hours || 0)
+            const extraShifts = Number(att?.extra_shifts || 0)
+            const subs       = Array.isArray(att?.substitutions_given) ? att.substitutions_given : []
+            const coveredBy  = att?.covered_by_name || null
+            const localT     = shiftTimes[emp.id] || { start: '', end: '' }
+            const showPicker = subPickerFor === emp.id
 
-            // Live hours preview from local input (before save)
-            const liveHours = (localT.start && localT.end)
-              ? calcShiftHours(localT.start, localT.end) : null
+            // Live hours preview
+            const liveHours   = (localT.start && localT.end) ? calcShiftHours(localT.start, localT.end) : null
             const otThreshold = Number(emp.ot_threshold_hours || 12)
-            const liveOT = liveHours != null ? calcOtHours(liveHours, otThreshold) : 0
+            const liveOT      = liveHours != null ? calcOtHours(liveHours, otThreshold) : 0
 
             const setTime = (empId, field, val) =>
               setShiftTimes(prev => ({ ...prev, [empId]: { ...(prev[empId] || {}), [field]: val } }))
+
+            // Employees available to substitute for (not self, not already in subs)
+            const subOptions = employees.filter(e =>
+              e.id !== emp.id && !subs.find(s => s.id === e.id)
+            )
 
             return (
               <div key={emp.id} className={`bg-dark-800 border rounded-xl p-3 transition-all ${
@@ -1987,7 +2057,7 @@ function AttendanceTab({ companyId }) {
                       {isAuto && <span className="ml-1.5 text-sky-400/70">· auto from shift</span>}
                     </p>
                   </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
+                  <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
                     {status ? (
                       <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${
                         ATTENDANCE_STATUS.find(s=>s.value===status)?.cls || 'border-dark-600 text-slate-400'
@@ -1998,6 +2068,12 @@ function AttendanceTab({ companyId }) {
                     ) : (
                       <span className="text-[10px] text-slate-600 italic">Not marked</span>
                     )}
+                    {/* Extra shift badge */}
+                    {extraShifts > 0 && (
+                      <span className="text-xs px-2 py-0.5 rounded-full border border-orange-600/40 bg-orange-500/10 text-orange-400 font-medium">
+                        +{extraShifts} Extra {extraShifts === 1 ? 'Shift' : 'Shifts'}
+                      </span>
+                    )}
                     {isAdmin && att && (
                       <button onClick={() => setEditRec({ record: att, empName: emp.name })}
                         className="p-1.5 rounded-lg text-slate-500 hover:text-slate-200 hover:bg-dark-700">
@@ -2007,7 +2083,33 @@ function AttendanceTab({ companyId }) {
                   </div>
                 </div>
 
-                {/* Shift workers — clock-in / clock-out row */}
+                {/* Covered-by banner — shown on the absent employee's card */}
+                {coveredBy && (
+                  <div className="mb-2.5 flex items-center gap-2 bg-blue-500/10 border border-blue-700/30 rounded-lg px-3 py-1.5">
+                    <span className="text-xs text-blue-400">🔄 Covered by <span className="font-semibold">{coveredBy}</span></span>
+                  </div>
+                )}
+
+                {/* Substitutions given — shown on covering operator's card */}
+                {subs.length > 0 && (
+                  <div className="mb-2.5 space-y-1">
+                    {subs.map(sub => (
+                      <div key={sub.id} className="flex items-center gap-2 bg-orange-500/10 border border-orange-700/30 rounded-lg px-3 py-1.5">
+                        <span className="flex-1 text-xs text-orange-300">
+                          In absence of <span className="font-semibold">{sub.name}</span>
+                        </span>
+                        {isAdmin && (
+                          <button onClick={() => removeSubstitution(emp.id, sub.id)}
+                            className="text-slate-500 hover:text-red-400 transition-colors">
+                            <X className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Shift workers — clock-in / clock-out */}
                 {isShift && (
                   <div className="mb-2.5 bg-dark-700/60 rounded-lg px-3 py-2 space-y-2">
                     <div className="flex items-center gap-3">
@@ -2033,15 +2135,12 @@ function AttendanceTab({ companyId }) {
                         <div className="text-center min-w-[52px]">
                           <p className="text-[10px] text-slate-500 mb-1">Hours</p>
                           <p className="text-sm font-bold text-slate-100">{liveHours}h</p>
-                          {liveOT > 0 && (
-                            <p className="text-[10px] text-orange-400 font-semibold">+{liveOT}h OT</p>
-                          )}
+                          {liveOT > 0 && <p className="text-[10px] text-orange-400 font-semibold">+{liveOT}h OT</p>}
                         </div>
                       )}
                     </div>
                     {localT.start && localT.end && (
-                      <button
-                        onClick={() => saveShiftTimes(emp, localT.start, localT.end)}
+                      <button onClick={() => saveShiftTimes(emp, localT.start, localT.end)}
                         className="w-full py-1.5 text-xs font-medium rounded-lg bg-primary-600/80 hover:bg-primary-600 text-white transition-colors">
                         Save Shift Times
                       </button>
@@ -2049,7 +2148,7 @@ function AttendanceTab({ companyId }) {
                   </div>
                 )}
 
-                {/* Status buttons — all types */}
+                {/* Status buttons */}
                 <div className="flex gap-1.5 flex-wrap">
                   {ATTENDANCE_STATUS.map(s => (
                     <button key={s.value} onClick={() => markAttendance(emp.id, s.value)}
@@ -2062,6 +2161,37 @@ function AttendanceTab({ companyId }) {
                     </button>
                   ))}
                 </div>
+
+                {/* "In Absence Of" section — only when employee has a status */}
+                {status && isAdmin && (
+                  <div className="mt-2.5 pt-2.5 border-t border-dark-700">
+                    {!showPicker ? (
+                      <button
+                        onClick={() => setSubPickerFor(emp.id)}
+                        className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-orange-400 transition-colors">
+                        <span className="text-base leading-none">🔄</span>
+                        In Absence Of — add extra shift
+                      </button>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <select
+                          autoFocus
+                          defaultValue=""
+                          onChange={e => { if (e.target.value) addSubstitution(emp, e.target.value) }}
+                          className="flex-1 bg-dark-700 border border-orange-600/40 text-slate-100 text-xs rounded-lg px-2 py-1.5 focus:outline-none focus:border-orange-500">
+                          <option value="" disabled>Select absent employee…</option>
+                          {subOptions.map(o => (
+                            <option key={o.id} value={o.id}>{o.name}{o.designation ? ` (${o.designation})` : ''}</option>
+                          ))}
+                        </select>
+                        <button onClick={() => setSubPickerFor(null)}
+                          className="p-1.5 rounded-lg text-slate-500 hover:text-slate-200 hover:bg-dark-700">
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )
           })
