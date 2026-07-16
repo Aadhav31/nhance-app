@@ -1822,6 +1822,41 @@ function AttendanceTab({ companyId }) {
     })
   }
 
+  // Unmark — deletes the attendance record and cleans up any substitution links
+  const unmarkAttendance = async (emp) => {
+    const att = attMap[emp.id]
+    if (!att) return
+
+    // If this employee was covering for others → clear covered_by on those absent employees
+    const subs = Array.isArray(att.substitutions_given) ? att.substitutions_given : []
+    for (const sub of subs) {
+      const absentRec = attMap[sub.id]
+      if (absentRec) {
+        await supabase.from('hr_attendance')
+          .update({ covered_by_id: null, covered_by_name: null })
+          .eq('id', absentRec.id)
+      }
+    }
+
+    // If this employee was covered by someone → remove them from covering employee's substitutions_given
+    if (att.covered_by_id) {
+      const coveringRec = attMap[att.covered_by_id]
+      if (coveringRec) {
+        const newSubs = (Array.isArray(coveringRec.substitutions_given) ? coveringRec.substitutions_given : [])
+          .filter(s => s.id !== emp.id)
+        await supabase.from('hr_attendance').update({
+          extra_shifts:        Math.max(0, (Number(coveringRec.extra_shifts) || 0) - 1),
+          substitutions_given: newSubs,
+        }).eq('id', coveringRec.id)
+      }
+    }
+
+    // Delete the record itself
+    await supabase.from('hr_attendance').delete().eq('id', att.id)
+    refetch(); refetchMonth()
+    toast.success(`${emp.name}'s attendance cleared`)
+  }
+
   // Add "In Absence Of" substitution — covering operator gets extra_shifts credit;
   // absent employee gets covered_by recorded on their attendance record.
   const addSubstitution = async (coveringEmp, absentEmpId) => {
@@ -2161,6 +2196,17 @@ function AttendanceTab({ companyId }) {
                     </button>
                   ))}
                 </div>
+
+                {/* Unmark — clear the attendance record entirely */}
+                {status && isAdmin && (
+                  <div className="mt-2 flex justify-end">
+                    <button
+                      onClick={() => unmarkAttendance(emp)}
+                      className="text-[11px] text-slate-600 hover:text-red-400 transition-colors flex items-center gap-1">
+                      <X className="w-3 h-3" /> Unmark
+                    </button>
+                  </div>
+                )}
 
                 {/* "In Absence Of" section — only when employee has a status */}
                 {status && isAdmin && (
