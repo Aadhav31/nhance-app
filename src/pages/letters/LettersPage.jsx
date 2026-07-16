@@ -12,6 +12,7 @@ import { useAuth } from '../../contexts/AuthContext'
 import { supabase } from '../../lib/supabase'
 import { generateLetterPDF, HIDE_TO_BLOCK } from '../../lib/letterheadPDF'
 import { createVerification } from '../../lib/docVerify'
+import { nextDocNumber } from '../../utils/docNumbers'
 import {
   FileText, Download, Loader2, RotateCcw,
   ClipboardList, ExternalLink, ShieldCheck, ShieldOff,
@@ -266,7 +267,7 @@ export default function LettersPage() {
     setDownloading(true)
     try {
       const refNo = form.refNumber.trim() ||
-        `LTR-${new Date().toISOString().slice(0, 10)}-${Date.now().toString().slice(-4)}`
+        await nextDocNumber(companyId, 'letter').catch(() => `LTR-${new Date().getFullYear()}-${Date.now().toString().slice(-4)}`)
       const verifyUrl = await createVerification(supabase, companyId, {
         docType: 'letter', docNumber: refNo, docDate: form.date,
         partyName: form.toName || form.letterType, amount: null,

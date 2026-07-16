@@ -26,6 +26,8 @@ export const DOC_TYPES = {
   stock_out:        { prefix: 'ISS', yearBased: true,  pad: 4 },
   stock_transfer:   { prefix: 'TRF', yearBased: true,  pad: 4 },
   stock_adjustment: { prefix: 'ADJ', yearBased: true,  pad: 4 },
+  // Letters
+  letter:           { prefix: 'LTR', yearBased: true,  pad: 4 },
   // Master records (lifetime, never reset)
   vendor:           { prefix: 'V',   yearBased: false, pad: 4 },
   employee:         { prefix: 'EMP', yearBased: false, pad: 4 },
