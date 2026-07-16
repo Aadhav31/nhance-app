@@ -1763,7 +1763,7 @@ function InvoicePreviewModal({ inv, lineItems, company, onClose, onDownload }) {
 // ─────────────────────────────────────────────────────────────────────────────
 function InvoicesTab({ companyId, session }) {
   const qc = useQueryClient()
-  const { company } = useAuth()
+  const { company, userProfile } = useAuth()
   const [statusFilter, setStatusFilter] = useState('all')
   const [search, setSearch] = useState('')
   const [showCreate, setShowCreate] = useState(false)
@@ -1786,9 +1786,12 @@ function InvoicesTab({ companyId, session }) {
         .eq('invoice_id', inv.id)
         .order('sort_order')
       if (error) throw error
+      const docType = inv.invoice_type === 'proforma' ? 'proforma' : 'invoice'
       const verifyUrl = await createVerification(supabase, companyId, {
-        docType: 'invoice', docNumber: inv.invoice_number,
+        docType, docNumber: inv.invoice_number,
         docDate: inv.invoice_date, partyName: inv.client_name, amount: inv.total_amount,
+        companyName:   company?.name          || null,
+        issuedByName:  userProfile?.full_name || null,
       })
       await generateInvoicePDF(inv, lineItems || [], company, verifyUrl)
     } catch (e) {
@@ -1803,8 +1806,9 @@ function InvoicesTab({ companyId, session }) {
     setVoidingId(inv.id)
     setVoidConfirm(null)
     try {
+      const docType = inv.invoice_type === 'proforma' ? 'proforma' : 'invoice'
       const result = await voidVerification(supabase, companyId, {
-        docType:   'invoice',
+        docType,
         docNumber: inv.invoice_number,
       })
       if (!result) {

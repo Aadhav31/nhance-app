@@ -58,10 +58,10 @@ export function buildSigPayload({ docType, docNumber, docDate, partyName, amount
 /**
  * @param {import('@supabase/supabase-js').SupabaseClient} supabase
  * @param {string} companyId
- * @param {{ docType: string, docNumber: string, docDate?: string, partyName?: string, amount?: number }} opts
+ * @param {{ docType: string, docNumber: string, docDate?: string, partyName?: string, amount?: number, companyName?: string, issuedByName?: string }} opts
  * @returns {Promise<string|null>} Full verification URL (with sig param), or null on failure
  */
-export async function createVerification(supabase, companyId, { docType, docNumber, docDate, partyName, amount }) {
+export async function createVerification(supabase, companyId, { docType, docNumber, docDate, partyName, amount, companyName, issuedByName }) {
   if (!supabase || !companyId || !docNumber) return null
   try {
     // 1. Sign the canonical document payload
@@ -70,17 +70,21 @@ export async function createVerification(supabase, companyId, { docType, docNumb
     )
 
     // 2. Store record + sig in DB
+    //    company_name + issued_by_name are stored as text snapshots so the public
+    //    verify page can display them without needing to join RLS-protected tables.
     const { data, error } = await supabase
       .from('document_verifications')
       .insert({
-        company_id: companyId,
-        doc_type:   docType,
-        doc_number: docNumber,
-        doc_date:   docDate   || null,
-        party_name: partyName || null,
-        amount:     amount    != null ? Number(amount) : null,
-        status:     'active',
+        company_id:     companyId,
+        doc_type:       docType,
+        doc_number:     docNumber,
+        doc_date:       docDate       || null,
+        party_name:     partyName     || null,
+        amount:         amount        != null ? Number(amount) : null,
+        status:         'active',
         sig,
+        company_name:   companyName   || null,
+        issued_by_name: issuedByName  || null,
       })
       .select('token')
       .single()

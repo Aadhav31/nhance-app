@@ -415,7 +415,7 @@ function CreateInvoiceModal({ companyId, session, onClose, onSaved, initialDoc =
 
 function InvoicesTab({ companyId, session }) {
   const qc = useQueryClient()
-  const { company } = useAuth()
+  const { company, userProfile } = useAuth()
   const [showCreate, setShowCreate] = useState(false)
   const [editingDoc, setEditingDoc] = useState(null)
   const [search, setSearch] = useState('')
@@ -424,7 +424,7 @@ function InvoicesTab({ companyId, session }) {
   const dlPDF = async (inv) => {
     try {
       const { data: ld } = await supabase.from('invoice_line_items').select('*').eq('invoice_id', inv.id).order('sort_order')
-      const verifyUrl = await createVerification(supabase, companyId, { docType: 'invoice', docNumber: inv.invoice_number, docDate: inv.invoice_date, partyName: inv.client_name, amount: inv.total_amount })
+      const verifyUrl = await createVerification(supabase, companyId, { docType: 'invoice', docNumber: inv.invoice_number, docDate: inv.invoice_date, partyName: inv.client_name, amount: inv.total_amount , companyName: company?.name || null, issuedByName: userProfile?.full_name || null })
       await downloadInvoicePDF(inv, ld || [], company, verifyUrl)
     } catch(e) { toast.error(e.message) }
   }
@@ -686,7 +686,7 @@ function CreateQuoteModal({ companyId, session, onClose, onSaved, initialDoc = n
 
 function QuotesTab({ companyId, session }) {
   const qc = useQueryClient()
-  const { company } = useAuth()
+  const { company, userProfile } = useAuth()
   const [showCreate, setShowCreate] = useState(false)
   const [editingDoc, setEditingDoc] = useState(null)
   const [search, setSearch] = useState('')
@@ -714,7 +714,7 @@ function QuotesTab({ companyId, session }) {
   const dlPDF = async (q) => {
     try {
       const { data: ld } = await supabase.from('quote_line_items').select('*').eq('quote_id', q.id).order('sort_order')
-      const verifyUrl = await createVerification(supabase, companyId, { docType: 'quote', docNumber: q.quote_number, docDate: q.quote_date, partyName: q.client_name, amount: q.total_amount })
+      const verifyUrl = await createVerification(supabase, companyId, { docType: 'quote', docNumber: q.quote_number, docDate: q.quote_date, partyName: q.client_name, amount: q.total_amount , companyName: company?.name || null, issuedByName: userProfile?.full_name || null })
       await downloadQuotePDF(q, ld || [], company, verifyUrl)
     } catch(e) { toast.error(e.message) }
   }
@@ -810,7 +810,7 @@ function QuotesTab({ companyId, session }) {
 // ── SALES ORDERS TAB ──────────────────────────────────────────────────────────
 function SalesOrdersTab({ companyId, session }) {
   const qc = useQueryClient()
-  const { company } = useAuth()
+  const { company, userProfile } = useAuth()
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving] = useState(false)
   const blankSOForm = () => ({ client_name: '', client_gstin: '', project_name: '', so_date: todayStr(), expected_delivery: '', notes: '', cgst_rate: 9, sgst_rate: 9, igst_rate: 18, use_igst: false, discount_amount: 0, is_tax_invoice: true })
@@ -831,7 +831,7 @@ function SalesOrdersTab({ companyId, session }) {
   }
 
   const dlPDFso = async (o) => {
-    try { const { data: ld } = await supabase.from('so_line_items').select('*').eq('so_id', o.id).order('sort_order'); const verifyUrl = await createVerification(supabase, companyId, { docType: 'so', docNumber: o.so_number, docDate: o.so_date, partyName: o.client_name, amount: o.total_amount }); await downloadSOPDF(o, ld||[], company, verifyUrl) } catch(e) { toast.error(e.message) }
+    try { const { data: ld } = await supabase.from('so_line_items').select('*').eq('so_id', o.id).order('sort_order'); const verifyUrl = await createVerification(supabase, companyId, { docType: 'so', docNumber: o.so_number, docDate: o.so_date, partyName: o.client_name, amount: o.total_amount , companyName: company?.name || null, issuedByName: userProfile?.full_name || null }); await downloadSOPDF(o, ld||[], company, verifyUrl) } catch(e) { toast.error(e.message) }
   }
   const dlXLSXso = async (o) => {
     try { const { data: ld } = await supabase.from('so_line_items').select('*').eq('so_id', o.id).order('sort_order'); downloadSOXLSX(o, ld||[], company) } catch(e) { toast.error(e.message) }
@@ -1003,7 +1003,7 @@ function SalesOrdersTab({ companyId, session }) {
 // ── DELIVERY CHALLANS TAB ─────────────────────────────────────────────────────
 function DeliveryChallansTab({ companyId, session }) {
   const qc = useQueryClient()
-  const { company } = useAuth()
+  const { company, userProfile } = useAuth()
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving] = useState(false)
   const blankDCForm = () => ({ client_name: '', delivery_address: '', vehicle_number: '', driver_name: '', dc_date: todayStr(), notes: '' })
@@ -1024,7 +1024,7 @@ function DeliveryChallansTab({ companyId, session }) {
   }
 
   const dlPDFdc = async (dc) => {
-    try { const { data: ld } = await supabase.from('dc_line_items').select('*').eq('dc_id', dc.id).order('sort_order'); const verifyUrl = await createVerification(supabase, companyId, { docType: 'dc', docNumber: dc.dc_number, docDate: dc.dc_date, partyName: dc.client_name, amount: null }); await downloadDCPDF(dc, ld||[], company, verifyUrl) } catch(e) { toast.error(e.message) }
+    try { const { data: ld } = await supabase.from('dc_line_items').select('*').eq('dc_id', dc.id).order('sort_order'); const verifyUrl = await createVerification(supabase, companyId, { docType: 'dc', docNumber: dc.dc_number, docDate: dc.dc_date, partyName: dc.client_name, amount: null , companyName: company?.name || null, issuedByName: userProfile?.full_name || null }); await downloadDCPDF(dc, ld||[], company, verifyUrl) } catch(e) { toast.error(e.message) }
   }
   const dlXLSXdc = async (dc) => {
     try { const { data: ld } = await supabase.from('dc_line_items').select('*').eq('dc_id', dc.id).order('sort_order'); downloadDCXLSX(dc, ld||[], company) } catch(e) { toast.error(e.message) }
@@ -1180,7 +1180,7 @@ function DeliveryChallansTab({ companyId, session }) {
 // ── CREDIT NOTES TAB ──────────────────────────────────────────────────────────
 function CreditNotesTab({ companyId, session }) {
   const qc = useQueryClient()
-  const { company } = useAuth()
+  const { company, userProfile } = useAuth()
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving] = useState(false)
   const blankCNForm = () => ({ client_name: '', client_gstin: '', reason: '', cn_date: todayStr(), cgst_rate: 9, sgst_rate: 9, notes: '', use_igst: false, igst_rate: 18, is_tax_invoice: true })
@@ -1201,7 +1201,7 @@ function CreditNotesTab({ companyId, session }) {
   }
 
   const dlPDFcn = async (cn) => {
-    try { const { data: ld } = await supabase.from('cn_line_items').select('*').eq('cn_id', cn.id).order('sort_order'); const verifyUrl = await createVerification(supabase, companyId, { docType: 'cn', docNumber: cn.cn_number, docDate: cn.cn_date, partyName: cn.client_name, amount: cn.total_amount }); await downloadCNPDF(cn, ld||[], company, verifyUrl) } catch(e) { toast.error(e.message) }
+    try { const { data: ld } = await supabase.from('cn_line_items').select('*').eq('cn_id', cn.id).order('sort_order'); const verifyUrl = await createVerification(supabase, companyId, { docType: 'cn', docNumber: cn.cn_number, docDate: cn.cn_date, partyName: cn.client_name, amount: cn.total_amount , companyName: company?.name || null, issuedByName: userProfile?.full_name || null }); await downloadCNPDF(cn, ld||[], company, verifyUrl) } catch(e) { toast.error(e.message) }
   }
   const dlXLSXcn = async (cn) => {
     try { const { data: ld } = await supabase.from('cn_line_items').select('*').eq('cn_id', cn.id).order('sort_order'); downloadCNXLSX(cn, ld||[], company) } catch(e) { toast.error(e.message) }
@@ -1360,7 +1360,7 @@ function CreditNotesTab({ companyId, session }) {
 // ── PAYMENTS RECEIVED TAB ─────────────────────────────────────────────────────
 function PaymentsReceivedTab({ companyId, session }) {
   const qc = useQueryClient()
-  const { company } = useAuth()
+  const { company, userProfile } = useAuth()
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving] = useState(false)
   const blankPRForm = () => ({ client_name: '', amount: '', payment_date: todayStr(), payment_mode: 'bank', bank_reference: '', notes: '' })

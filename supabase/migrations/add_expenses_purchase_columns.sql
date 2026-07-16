@@ -10,6 +10,7 @@
 -- ─────────────────────────────────────────────────────────────────────────────
 
 ALTER TABLE expenses
+  ADD COLUMN IF NOT EXISTS gst_amount     NUMERIC(12,2) DEFAULT 0,
   ADD COLUMN IF NOT EXISTS bill_number    TEXT,
   ADD COLUMN IF NOT EXISTS bill_photo_url TEXT,
   ADD COLUMN IF NOT EXISTS total_amount   NUMERIC(12,2),
@@ -17,3 +18,6 @@ ALTER TABLE expenses
   ADD COLUMN IF NOT EXISTS inv_item_name  TEXT,
   ADD COLUMN IF NOT EXISTS inv_quantity   NUMERIC(12,4),
   ADD COLUMN IF NOT EXISTS inv_unit       TEXT;
+
+-- Reload PostgREST schema cache so new columns are immediately visible
+NOTIFY pgrst, 'reload schema';

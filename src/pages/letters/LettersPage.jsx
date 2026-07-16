@@ -138,7 +138,7 @@ const inp = 'w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function LettersPage() {
-  const { company, companyId, role } = useAuth()
+  const { company, companyId, role, userProfile } = useAuth()
   const isAdmin = role === 'admin'
 
   const [tab, setTab] = useState('compose')   // 'compose' | 'history' | 'deleted'
@@ -270,6 +270,7 @@ export default function LettersPage() {
       const verifyUrl = await createVerification(supabase, companyId, {
         docType: 'letter', docNumber: refNo, docDate: form.date,
         partyName: form.toName || form.letterType, amount: null,
+        companyName: company?.name || null, issuedByName: userProfile?.full_name || null,
       })
       await generateLetterPDF(company, { ...form, refNumber: refNo, bodyHtml }, verifyUrl)
 

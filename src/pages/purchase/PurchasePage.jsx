@@ -856,7 +856,7 @@ function ExpensesTab({ companyId, session }) {
 // ── BILLS TAB ─────────────────────────────────────────────────────────────────
 function BillsTab({ companyId, session }) {
   const qc = useQueryClient()
-  const { company } = useAuth()
+  const { company, userProfile } = useAuth()
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving] = useState(false)
   const blankForm = () => ({ vendor_id: '', vendor_gstin: '', bill_date: todayStr(), due_date: '', bill_ref: '', cgst_rate: 9, sgst_rate: 9, igst_rate: 18, use_igst: false, discount_amount: 0, notes: '', is_tax_invoice: true })
@@ -898,7 +898,7 @@ function BillsTab({ companyId, session }) {
   }
 
   const dlPDFbill = async (b) => {
-    try { const { data: ld } = await supabase.from('bill_line_items').select('*').eq('bill_id', b.id).order('sort_order'); const verifyUrl = await createVerification(supabase, companyId, { docType: 'bill', docNumber: b.bill_number, docDate: b.bill_date, partyName: b.vendor_name, amount: b.total_amount }); await downloadBillPDF(b, ld||[], company, verifyUrl) } catch(e) { toast.error(e.message) }
+    try { const { data: ld } = await supabase.from('bill_line_items').select('*').eq('bill_id', b.id).order('sort_order'); const verifyUrl = await createVerification(supabase, companyId, { docType: 'bill', docNumber: b.bill_number, docDate: b.bill_date, partyName: b.vendor_name, amount: b.total_amount , companyName: company?.name || null, issuedByName: userProfile?.full_name || null }); await downloadBillPDF(b, ld||[], company, verifyUrl) } catch(e) { toast.error(e.message) }
   }
   const voidQRbill = async (b) => {
     if (!window.confirm(`Void QR code for ${b.bill_number}?\nAny printed copy will immediately show as invalid.`)) return
@@ -1214,7 +1214,7 @@ function BillsTab({ companyId, session }) {
 // ── PURCHASE ORDERS TAB ───────────────────────────────────────────────────────
 function PurchaseOrdersTab({ companyId, session }) {
   const qc = useQueryClient()
-  const { company } = useAuth()
+  const { company, userProfile } = useAuth()
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving] = useState(false)
   const blankForm = () => ({ vendor_id: '', vendor_gstin: '', po_date: todayStr(), expected_delivery: '', delivery_address: '', notes: '', cgst_rate: 9, sgst_rate: 9, igst_rate: 18, use_igst: false, discount_amount: 0, is_tax_invoice: true })
@@ -1247,7 +1247,7 @@ function PurchaseOrdersTab({ companyId, session }) {
   }
 
   const dlPDFpo = async (po) => {
-    try { const { data: ld } = await supabase.from('po_line_items').select('*').eq('po_id', po.id).order('sort_order'); const verifyUrl = await createVerification(supabase, companyId, { docType: 'po', docNumber: po.po_number, docDate: po.po_date, partyName: po.vendor_name, amount: po.total_amount }); await downloadPOPDF(po, ld||[], company, verifyUrl) } catch(e) { toast.error(e.message) }
+    try { const { data: ld } = await supabase.from('po_line_items').select('*').eq('po_id', po.id).order('sort_order'); const verifyUrl = await createVerification(supabase, companyId, { docType: 'po', docNumber: po.po_number, docDate: po.po_date, partyName: po.vendor_name, amount: po.total_amount , companyName: company?.name || null, issuedByName: userProfile?.full_name || null }); await downloadPOPDF(po, ld||[], company, verifyUrl) } catch(e) { toast.error(e.message) }
   }
   const voidQRpo = async (po) => {
     if (!window.confirm(`Void QR code for ${po.po_number}?\nAny printed copy will immediately show as invalid.`)) return
@@ -1450,7 +1450,7 @@ function PurchaseOrdersTab({ companyId, session }) {
 // ── VENDOR CREDITS TAB ────────────────────────────────────────────────────────
 function VendorCreditsTab({ companyId, session }) {
   const qc = useQueryClient()
-  const { company } = useAuth()
+  const { company, userProfile } = useAuth()
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState({ vendor_id: '', cn_date: todayStr(), reason: '', amount: '', notes: '' })
@@ -1467,7 +1467,7 @@ function VendorCreditsTab({ companyId, session }) {
     setShowCreate(true)
   }
 
-  const dlPDFvc = async (vc) => { try { const verifyUrl = await createVerification(supabase, companyId, { docType: 'vendor_credit', docNumber: vc.vc_number, docDate: vc.cn_date, partyName: vc.vendor_name, amount: vc.total_amount }); await downloadVendorCreditPDF(vc, company, verifyUrl) } catch(e) { toast.error(e.message) } }
+  const dlPDFvc = async (vc) => { try { const verifyUrl = await createVerification(supabase, companyId, { docType: 'vendor_credit', docNumber: vc.vc_number, docDate: vc.cn_date, partyName: vc.vendor_name, amount: vc.total_amount , companyName: company?.name || null, issuedByName: userProfile?.full_name || null }); await downloadVendorCreditPDF(vc, company, verifyUrl) } catch(e) { toast.error(e.message) } }
   const voidQRvc = async (vc) => {
     if (!window.confirm(`Void QR code for ${vc.vc_number}?\nAny printed copy will immediately show as invalid.`)) return
     const r = await voidVerification(supabase, companyId, { docType: 'vc', docNumber: vc.vc_number })
@@ -1599,7 +1599,7 @@ function VendorCreditsTab({ companyId, session }) {
 // ── PAYMENTS MADE TAB ─────────────────────────────────────────────────────────
 function PaymentsMadeTab({ companyId, session }) {
   const qc = useQueryClient()
-  const { company } = useAuth()
+  const { company, userProfile } = useAuth()
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState({ vendor_id: '', amount: '', payment_date: todayStr(), payment_mode: 'bank', bank_reference: '', notes: '' })
