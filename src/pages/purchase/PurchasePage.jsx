@@ -1228,6 +1228,13 @@ function BillsTab({ companyId, session }) {
       })
       if (error) throw error
 
+      // Register in Issued Documents registry (non-blocking)
+      createVerification(supabase, companyId, {
+        docType: 'bill', docNumber: blNum, docDate: form.bill_date,
+        partyName: vendor?.name || '', amount: total,
+        companyName: company?.name || null, issuedByName: userProfile?.full_name || null,
+      }).catch(() => {})
+
       // Save line items
       const items = validLines.map((l, i) => ({
         bill_id: id, description: l.description.trim(),

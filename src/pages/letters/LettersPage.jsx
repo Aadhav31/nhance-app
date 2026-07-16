@@ -18,6 +18,7 @@ import {
   ClipboardList, ExternalLink, ShieldCheck, ShieldOff,
   RefreshCw, Trash2, RotateCcw as Restore, Lock, AlertTriangle,
   Bold, Italic, AlignLeft, AlignCenter, AlignRight, AlignJustify, Type,
+  Pencil,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
@@ -27,6 +28,13 @@ import toast from 'react-hot-toast'
 
 // Letter types that need project + equipment fields
 const EQUIPMENT_LETTER_TYPES = new Set(['Commencement of Operations'])
+
+// Map doc_type → source page route for "Go to Document" navigation
+const DOC_SOURCE_ROUTE = {
+  bill: '/purchase', po: '/purchase', vendor_credit: '/purchase',
+  invoice: '/sales', quote: '/sales', so: '/sales', dc: '/sales', cn: '/sales',
+  letter: '/letters',
+}
 
 const LETTER_TYPES = [
   { value: 'Commencement of Operations', label: 'Commencement of Operations Certificate' },
@@ -686,6 +694,7 @@ export default function LettersPage() {
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center justify-end gap-2">
+                            {/* Verify / View */}
                             <a
                               href={`/verify/${doc.token}`}
                               target="_blank"
@@ -695,6 +704,16 @@ export default function LettersPage() {
                             >
                               <ExternalLink className="w-3.5 h-3.5" />
                             </a>
+                            {/* Go to source document (view / download / edit) */}
+                            {DOC_SOURCE_ROUTE[doc.doc_type] && (
+                              <button
+                                onClick={() => { window.location.href = DOC_SOURCE_ROUTE[doc.doc_type] }}
+                                className="text-primary-400 hover:text-primary-300 transition-colors"
+                                title={`Go to ${doc.doc_type === 'letter' ? 'Letters' : doc.doc_type === 'bill' || doc.doc_type === 'po' || doc.doc_type === 'vendor_credit' ? 'Purchase' : 'Sales'} page`}
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                              </button>
+                            )}
                             {/* Delete — letters only */}
                             {doc.doc_type === 'letter' ? (
                               <button
