@@ -81,7 +81,7 @@ function Field({ label, children, required }) {
   )
 }
 
-const blankLine = () => ({ _id: Math.random().toString(36).slice(2), description: '', hsn_sac: '', quantity: 1, unit: 'nos', rate: '', amount: 0, _gst_rate: null, _gst_desc: null, _hsn_open: false })
+const blankLine = () => ({ _id: Math.random().toString(36).slice(2), description: '', hsn_sac: '', quantity: 1, unit: 'nos', rate: '', amount: 0, gst_rate: null, _gst_desc: null, _hsn_open: false })
 
 const INV_CATEGORIES = [
   { value: 'raw_material',  label: 'Raw Material' },
@@ -94,21 +94,22 @@ const INV_CATEGORIES = [
 
 const LINE_UNITS = ['unit','nos','hrs','days','kg','ton','m3','km','ls','set','mtr','sqm','sqft','cum','rmt','ltr']
 
-function LineItemsEditor({ lines, setLines, onGstRate, isTax }) {
+function LineItemsEditor({ lines, setLines, isTax }) {
   const update = (id, key, val) => setLines(p => p.map(l => {
     if (l._id !== id) return l
     const u = { ...l, [key]: val }
     if (key === 'quantity' || key === 'rate') u.amount = (parseFloat(u.quantity) || 0) * (parseFloat(u.rate) || 0)
     if (key === 'hsn_sac') {
       const found = lookupHsnSac(val)
-      u._gst_rate = found ? found.gst : null
-      u._gst_desc = found ? found.desc : null
-      if (found && onGstRate) onGstRate(found)
+      // Auto-fill rate from HSN lookup; keep existing manual rate if no match
+      if (found) { u.gst_rate = found.gst; u._gst_desc = found.desc }
+      else { u._gst_desc = null }
     }
     return u
   }))
   const toggleHsn = (id) => setLines(p => p.map(l => l._id === id ? { ...l, _hsn_open: !l._hsn_open } : l))
-  const clearHsn  = (id) => setLines(p => p.map(l => l._id === id ? { ...l, hsn_sac: '', _gst_rate: null, _gst_desc: null, _hsn_open: false } : l))
+  const clearHsn  = (id) => setLines(p => p.map(l => l._id === id ? { ...l, hsn_sac: '', gst_rate: null, _gst_desc: null, _hsn_open: false } : l))
+  const setLineGst = (id, val) => setLines(p => p.map(l => l._id === id ? { ...l, gst_rate: val === '' ? null : parseFloat(val) } : l))
   const total = lines.reduce((s, l) => s + (l.amount || 0), 0)
 
   return (
@@ -150,7 +151,7 @@ function LineItemsEditor({ lines, setLines, onGstRate, isTax }) {
                   }}
                 />
 
-                {/* HSN/SAC row */}
+                {/* HSN/SAC + per-line GST rate row */}
                 {isTax && (
                   <div className="mt-1">
                     {!showHsn ? (
@@ -159,26 +160,33 @@ function LineItemsEditor({ lines, setLines, onGstRate, isTax }) {
                         + Add HSN / SAC code
                       </button>
                     ) : (
-                      <div className="flex items-center gap-1.5">
-                        <div className="relative w-32 shrink-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {/* HSN input */}
+                        <div className="relative shrink-0">
                           <input
                             autoFocus={l._hsn_open && !hsnFilled}
-                            className={`${inp()} text-xs font-mono uppercase py-1 pr-10`}
+                            className={`${inp()} text-xs font-mono uppercase py-1 pr-6 w-28`}
                             placeholder="e.g. 997313"
                             value={l.hsn_sac}
                             onChange={e => update(l._id, 'hsn_sac', e.target.value)}
                           />
-                          {l._gst_rate != null && (
-                            <span className="absolute right-6 top-1/2 -translate-y-1/2 text-[9px] font-bold bg-emerald-900/60 text-emerald-400 px-1.5 py-0.5 rounded-full">
-                              {l._gst_rate}%
-                            </span>
-                          )}
                           <button type="button" onClick={() => clearHsn(l._id)}
                             className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">
                             <X className="w-3 h-3" />
                           </button>
                         </div>
-                        {l._gst_desc && <span className="text-[9px] text-slate-500 truncate flex-1">{l._gst_desc}</span>}
+                        {/* Per-line GST rate — auto-filled from HSN, manually editable */}
+                        <div className="flex items-center gap-0.5 shrink-0">
+                          <input
+                            type="number" min="0" max="100" step="0.01"
+                            className={`${inp()} text-xs text-center py-1 w-14`}
+                            placeholder="GST%"
+                            value={l.gst_rate ?? ''}
+                            onChange={e => setLineGst(l._id, e.target.value)}
+                          />
+                          <span className="text-[10px] text-slate-500">%</span>
+                        </div>
+                        {l._gst_desc && <span className="text-[9px] text-slate-500 truncate max-w-[120px]">{l._gst_desc}</span>}
                       </div>
                     )}
                   </div>
@@ -236,14 +244,17 @@ function TaxTypeToggle({ isTax, onToggle, label = 'Bill' }) {
   )
 }
 
-function TaxSummary({ subtotal, form, setF }) {
+function TaxSummary({ lines, form, setF }) {
   const isTax    = form.is_tax_invoice !== false
+  const useIgst  = !!form.use_igst
+  const { subtotal, taxable: _taxable, cgst_amt, sgst_amt, igst_amt, total, slabs } = calcTotalFromLines(form, lines)
   const discount = parseFloat(form.discount_amount) || 0
-  const taxable  = subtotal - discount
-  const cgst_amt = (isTax && !form.use_igst) ? taxable * (parseFloat(form.cgst_rate) || 0) / 100 : 0
-  const sgst_amt = (isTax && !form.use_igst) ? taxable * (parseFloat(form.sgst_rate) || 0) / 100 : 0
-  const igst_amt = (isTax && form.use_igst)  ? taxable * (parseFloat(form.igst_rate) || 0) / 100 : 0
-  const total    = taxable + cgst_amt + sgst_amt + igst_amt
+
+  // Slab rows sorted ascending, excluding 0% (no-tax lines) from display
+  const slabEntries = Object.entries(slabs)
+    .filter(([r]) => parseFloat(r) > 0)
+    .sort(([a], [b]) => parseFloat(a) - parseFloat(b))
+
   return (
     <div className="grid grid-cols-2 gap-4">
       <div className="space-y-3">
@@ -251,16 +262,31 @@ function TaxSummary({ subtotal, form, setF }) {
           <>
             <SectionHead label="GST" />
             <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
-              <input type="checkbox" checked={form.use_igst} onChange={e => setF('use_igst', e.target.checked)} className="rounded" />
+              <input type="checkbox" checked={useIgst} onChange={e => setF('use_igst', e.target.checked)} className="rounded" />
               Use IGST (interstate)
             </label>
-            {!form.use_igst ? (
-              <div className="grid grid-cols-2 gap-2">
-                <Field label="CGST (%)"><input type="number" className={inp()} value={form.cgst_rate} onChange={e => setF('cgst_rate', e.target.value)} /></Field>
-                <Field label="SGST (%)"><input type="number" className={inp()} value={form.sgst_rate} onChange={e => setF('sgst_rate', e.target.value)} /></Field>
+
+            {/* Per-slab breakdown table */}
+            {slabEntries.length > 0 ? (
+              <div className="rounded-lg border border-dark-600 overflow-hidden text-[10px]">
+                <div className="grid grid-cols-4 gap-0 bg-dark-700/60 px-2 py-1 text-[9px] text-slate-500 font-semibold uppercase tracking-wider">
+                  <span>Slab</span>
+                  <span className="text-right">Taxable</span>
+                  <span className="text-right">{useIgst ? 'IGST' : 'CGST'}</span>
+                  {!useIgst && <span className="text-right">SGST</span>}
+                  {useIgst && <span />}
+                </div>
+                {slabEntries.map(([rate, s]) => (
+                  <div key={rate} className="grid grid-cols-4 gap-0 px-2 py-1.5 border-t border-dark-700/50">
+                    <span className="font-bold text-primary-400">{rate}%</span>
+                    <span className="text-right text-slate-400">{fmtINR(s.taxable)}</span>
+                    <span className="text-right text-slate-300">{fmtINR(useIgst ? s.igst : s.cgst)}</span>
+                    <span className="text-right text-slate-300">{useIgst ? '' : fmtINR(s.sgst)}</span>
+                  </div>
+                ))}
               </div>
             ) : (
-              <Field label="IGST (%)"><input type="number" className={inp()} value={form.igst_rate} onChange={e => setF('igst_rate', e.target.value)} /></Field>
+              <p className="text-[11px] text-slate-500 italic">Enter HSN/SAC codes with GST% on line items to auto-calculate per-slab tax.</p>
             )}
           </>
         ) : (
@@ -268,11 +294,12 @@ function TaxSummary({ subtotal, form, setF }) {
         )}
         <Field label="Discount (₹)"><input type="number" className={inp()} value={form.discount_amount} onChange={e => setF('discount_amount', e.target.value)} /></Field>
       </div>
+
       <div className="bg-dark-700 rounded-xl p-4 space-y-2 self-start">
         <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Summary</p>
         <div className="flex justify-between text-xs text-slate-400"><span>Subtotal</span><span>{fmtINR(subtotal)}</span></div>
         {discount > 0 && <div className="flex justify-between text-xs text-slate-400"><span>Discount</span><span>-{fmtINR(discount)}</span></div>}
-        {isTax && (form.use_igst
+        {isTax && (useIgst
           ? <div className="flex justify-between text-xs text-slate-400"><span>IGST</span><span>{fmtINR(igst_amt)}</span></div>
           : <>
               <div className="flex justify-between text-xs text-slate-400"><span>CGST</span><span>{fmtINR(cgst_amt)}</span></div>
@@ -288,14 +315,43 @@ function TaxSummary({ subtotal, form, setF }) {
   )
 }
 
-// ── Helper: compute bill total from form ──────────────────────────────────────
-function calcTotal(form, subtotal) {
+// ── Helper: compute bill total per-slab from line items ───────────────────────
+// Groups lines by their individual GST rate, computes CGST+SGST (or IGST) per slab.
+// Returns { subtotal, taxable, cgst_amt, sgst_amt, igst_amt, total, slabs }
+// slabs = { '18': { taxable, cgst, sgst, igst }, ... }
+function calcTotalFromLines(form, lines) {
   const isTax    = form.is_tax_invoice !== false
-  const taxable  = subtotal - (parseFloat(form.discount_amount) || 0)
-  const cgst_amt = (isTax && !form.use_igst) ? taxable * (parseFloat(form.cgst_rate) || 0) / 100 : 0
-  const sgst_amt = (isTax && !form.use_igst) ? taxable * (parseFloat(form.sgst_rate) || 0) / 100 : 0
-  const igst_amt = (isTax && form.use_igst)  ? taxable * (parseFloat(form.igst_rate) || 0) / 100 : 0
-  return { taxable, cgst_amt, sgst_amt, igst_amt, total: taxable + cgst_amt + sgst_amt + igst_amt }
+  const useIgst  = !!form.use_igst
+  const discount = parseFloat(form.discount_amount) || 0
+  const subtotal = lines.reduce((s, l) => s + (l.amount || 0), 0)
+  const discRatio = subtotal > 0 ? discount / subtotal : 0
+
+  let totalCgst = 0, totalSgst = 0, totalIgst = 0
+  const slabs = {}   // { rate: { taxable, cgst, sgst, igst } }
+
+  if (isTax) {
+    lines.forEach(l => {
+      const lineAmt = (l.amount || 0) * (1 - discRatio)  // proportional discount
+      const rate    = parseFloat(l.gst_rate) || 0
+      if (!slabs[rate]) slabs[rate] = { taxable: 0, cgst: 0, sgst: 0, igst: 0 }
+      slabs[rate].taxable += lineAmt
+      if (rate > 0) {
+        if (useIgst) {
+          const igst = lineAmt * rate / 100
+          slabs[rate].igst += igst; totalIgst += igst
+        } else {
+          const half = rate / 2
+          const cgst = lineAmt * half / 100
+          slabs[rate].cgst += cgst; slabs[rate].sgst += cgst
+          totalCgst += cgst; totalSgst += cgst
+        }
+      }
+    })
+  }
+
+  const taxable = subtotal - discount
+  const total   = taxable + totalCgst + totalSgst + totalIgst
+  return { subtotal, taxable, cgst_amt: totalCgst, sgst_amt: totalSgst, igst_amt: totalIgst, total, slabs }
 }
 
 // ── Indian banks with account number digit hints ──────────────────────────────
@@ -859,7 +915,7 @@ function BillsTab({ companyId, session }) {
   const { company, userProfile } = useAuth()
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving] = useState(false)
-  const blankForm = () => ({ vendor_id: '', vendor_gstin: '', bill_date: todayStr(), due_date: '', bill_ref: '', cgst_rate: 9, sgst_rate: 9, igst_rate: 18, use_igst: false, discount_amount: 0, notes: '', is_tax_invoice: true, payment_type: 'standard', credit_days: '30' })
+  const blankForm = () => ({ vendor_id: '', vendor_gstin: '', bill_date: todayStr(), due_date: '', bill_ref: '', use_igst: false, discount_amount: 0, notes: '', is_tax_invoice: true, payment_type: 'standard', credit_days: '30' })
 
   // Auto-compute due date from bill_date + credit_days
   const computeDueDate = (billDate, days) => {
@@ -891,20 +947,23 @@ function BillsTab({ companyId, session }) {
     setForm({
       vendor_id: bill.vendor_id || '', vendor_gstin: bill.vendor_gstin || '',
       bill_date: bill.bill_date || todayStr(), due_date: bill.due_date || '',
-      bill_ref: bill.bill_ref || '', cgst_rate: bill.cgst_rate ?? 9,
-      sgst_rate: bill.sgst_rate ?? 9, igst_rate: bill.igst_rate ?? 18,
-      use_igst: (bill.igst_rate || 0) > 0, discount_amount: bill.discount_amount || 0,
+      bill_ref: bill.bill_ref || '',
+      use_igst: (bill.igst_amount || 0) > 0, discount_amount: bill.discount_amount || 0,
       notes: bill.notes || '', is_tax_invoice: bill.is_tax_invoice !== false,
       payment_type: bill.payment_type === 'credit' ? 'credit' : 'standard',
       credit_days: String(bill.credit_days || 30),
     })
-    setLines(ld?.map(l => ({
-      _id: Math.random().toString(36).slice(2),
-      description: l.description || '', hsn_sac: l.hsn_sac || '',
-      quantity: String(l.quantity || 1), unit: l.unit || 'nos',
-      rate: String(l.rate || 0), amount: l.amount || 0,
-      _gst_rate: null, _gst_desc: null, _hsn_open: false,
-    })) || [blankLine()])
+    setLines(ld?.map(l => {
+      const found = l.hsn_sac ? lookupHsnSac(l.hsn_sac) : null
+      return {
+        _id: Math.random().toString(36).slice(2),
+        description: l.description || '', hsn_sac: l.hsn_sac || '',
+        quantity: String(l.quantity || 1), unit: l.unit || 'nos',
+        rate: String(l.rate || 0), amount: l.amount || 0,
+        gst_rate: found ? found.gst : null,
+        _gst_desc: found ? found.desc : null, _hsn_open: false,
+      }
+    }) || [blankLine()])
     setShowCreate(true)
   }
 
@@ -980,8 +1039,6 @@ function BillsTab({ companyId, session }) {
     enabled: !!companyId,
   })
 
-  const subtotal = useMemo(() => lines.reduce((s, l) => s + (l.amount || 0), 0), [lines])
-
   const isTax = form.is_tax_invoice !== false
 
   const save = async () => {
@@ -992,9 +1049,9 @@ function BillsTab({ companyId, session }) {
     if (!editing && addToInv && !invStore) return toast.error('Select a store / location')
     setSaving(true)
     try {
-      const { taxable, cgst_amt, sgst_amt, igst_amt, total } = calcTotal(form, subtotal)
-      const vendor = vendors.find(v => v.id === form.vendor_id)
       const validLines = lines.filter(l => l.description.trim())
+      const { subtotal, taxable, cgst_amt, sgst_amt, igst_amt, total } = calcTotalFromLines(form, validLines)
+      const vendor = vendors.find(v => v.id === form.vendor_id)
 
       const isCredit   = form.payment_type === 'credit'
       const creditDays = parseInt(form.credit_days) || 30
@@ -1008,9 +1065,7 @@ function BillsTab({ companyId, session }) {
           payment_type: form.payment_type, credit_days: isCredit ? creditDays : null,
           bill_ref: form.bill_ref || null,
           subtotal, discount_amount: parseFloat(form.discount_amount) || 0, taxable_amount: taxable,
-          cgst_rate: form.use_igst ? 0 : parseFloat(form.cgst_rate),
-          sgst_rate: form.use_igst ? 0 : parseFloat(form.sgst_rate),
-          igst_rate: form.use_igst ? parseFloat(form.igst_rate) : 0,
+          cgst_rate: 0, sgst_rate: 0, igst_rate: 0,
           cgst_amount: cgst_amt, sgst_amount: sgst_amt, igst_amount: igst_amt,
           total_amount: total, balance_due: Math.max(0, total - (Number(editing.paid_amount) || 0)),
           notes: form.notes || null,
@@ -1040,8 +1095,7 @@ function BillsTab({ companyId, session }) {
         payment_type: form.payment_type, credit_days: isCredit ? creditDays : null,
         bill_ref: form.bill_ref || null,
         subtotal, discount_amount: parseFloat(form.discount_amount) || 0, taxable_amount: taxable,
-        cgst_rate: form.use_igst ? 0 : parseFloat(form.cgst_rate), sgst_rate: form.use_igst ? 0 : parseFloat(form.sgst_rate),
-        igst_rate: form.use_igst ? parseFloat(form.igst_rate) : 0,
+        cgst_rate: 0, sgst_rate: 0, igst_rate: 0,
         cgst_amount: cgst_amt, sgst_amount: sgst_amt, igst_amount: igst_amt,
         total_amount: total,
         paid_amount: 0,
@@ -1248,8 +1302,7 @@ function BillsTab({ companyId, session }) {
             )}
             <div className="col-span-2"><Field label="Vendor Bill / Reference No."><input className={inp()} value={form.bill_ref} onChange={e => setF('bill_ref', e.target.value)} /></Field></div>
           </div>
-          <LineItemsEditor lines={lines} setLines={setLines} isTax={isTax}
-            onGstRate={r => { setF('cgst_rate', r.cgst); setF('sgst_rate', r.sgst); setF('igst_rate', r.igst) }} />
+          <LineItemsEditor lines={lines} setLines={setLines} isTax={isTax} />
 
           {/* ── Add to Inventory (create only) ── */}
           {!editing && (
@@ -1283,7 +1336,7 @@ function BillsTab({ companyId, session }) {
           </div>
           )}
 
-          <TaxSummary subtotal={subtotal} form={form} setF={setF} />
+          <TaxSummary lines={lines} form={form} setF={setF} />
           <Field label="Notes"><textarea className={inp()} rows={2} value={form.notes} onChange={e => setF('notes', e.target.value)} /></Field>
         </Modal>
       )}
@@ -1297,7 +1350,7 @@ function PurchaseOrdersTab({ companyId, session }) {
   const { company, userProfile } = useAuth()
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving] = useState(false)
-  const blankForm = () => ({ vendor_id: '', vendor_gstin: '', po_date: todayStr(), expected_delivery: '', delivery_address: '', notes: '', cgst_rate: 9, sgst_rate: 9, igst_rate: 18, use_igst: false, discount_amount: 0, is_tax_invoice: true })
+  const blankForm = () => ({ vendor_id: '', vendor_gstin: '', po_date: todayStr(), expected_delivery: '', delivery_address: '', notes: '', use_igst: false, discount_amount: 0, is_tax_invoice: true })
   const [form, setForm] = useState(blankForm())
   const [lines, setLines] = useState([blankLine()])
   const [editing, setEditing] = useState(null)
@@ -1314,17 +1367,20 @@ function PurchaseOrdersTab({ companyId, session }) {
       vendor_id: po.vendor_id || '', vendor_gstin: po.vendor_gstin || '',
       po_date: po.po_date || todayStr(), expected_delivery: po.expected_delivery || '',
       delivery_address: po.delivery_address || '', notes: po.notes || '',
-      cgst_rate: po.cgst_rate ?? 9, sgst_rate: po.sgst_rate ?? 9, igst_rate: po.igst_rate ?? 18,
-      use_igst: (po.igst_rate || 0) > 0, discount_amount: po.discount_amount || 0,
+      use_igst: (po.igst_amount || 0) > 0, discount_amount: po.discount_amount || 0,
       is_tax_invoice: po.is_tax_invoice !== false,
     })
-    setLines(ld?.map(l => ({
-      _id: Math.random().toString(36).slice(2),
-      description: l.description || '', hsn_sac: l.hsn_sac || '',
-      quantity: String(l.quantity || 1), unit: l.unit || 'nos',
-      rate: String(l.rate || 0), amount: l.amount || 0,
-      _gst_rate: null, _gst_desc: null, _hsn_open: false,
-    })) || [blankLine()])
+    setLines(ld?.map(l => {
+      const found = l.hsn_sac ? lookupHsnSac(l.hsn_sac) : null
+      return {
+        _id: Math.random().toString(36).slice(2),
+        description: l.description || '', hsn_sac: l.hsn_sac || '',
+        quantity: String(l.quantity || 1), unit: l.unit || 'nos',
+        rate: String(l.rate || 0), amount: l.amount || 0,
+        gst_rate: found ? found.gst : null,
+        _gst_desc: found ? found.desc : null, _hsn_open: false,
+      }
+    }) || [blankLine()])
     setShowCreate(true)
   }
 
@@ -1379,8 +1435,6 @@ function PurchaseOrdersTab({ companyId, session }) {
     enabled: !!companyId,
   })
 
-  const subtotal = useMemo(() => lines.reduce((s, l) => s + (l.amount || 0), 0), [lines])
-
   const isTax = form.is_tax_invoice !== false
 
   const save = async () => {
@@ -1389,9 +1443,9 @@ function PurchaseOrdersTab({ companyId, session }) {
     if (lines.every(l => !l.description.trim())) return toast.error('Add at least one line item')
     setSaving(true)
     try {
-      const { taxable, cgst_amt, sgst_amt, igst_amt, total } = calcTotal(form, subtotal)
-      const vendor = vendors.find(v => v.id === form.vendor_id)
       const validLines = lines.filter(l => l.description.trim())
+      const { subtotal, taxable, cgst_amt, sgst_amt, igst_amt, total } = calcTotalFromLines(form, validLines)
+      const vendor = vendors.find(v => v.id === form.vendor_id)
 
       if (editing) {
         // ── UPDATE ──
@@ -1400,9 +1454,7 @@ function PurchaseOrdersTab({ companyId, session }) {
           po_date: form.po_date, expected_delivery: form.expected_delivery || null,
           delivery_address: form.delivery_address || null,
           subtotal, discount_amount: parseFloat(form.discount_amount) || 0, taxable_amount: taxable,
-          cgst_rate: form.use_igst ? 0 : parseFloat(form.cgst_rate),
-          sgst_rate: form.use_igst ? 0 : parseFloat(form.sgst_rate),
-          igst_rate: form.use_igst ? parseFloat(form.igst_rate) : 0,
+          cgst_rate: 0, sgst_rate: 0, igst_rate: 0,
           cgst_amount: cgst_amt, sgst_amount: sgst_amt, igst_amount: igst_amt,
           total_amount: total, notes: form.notes || null,
         }).eq('id', editing.id)
@@ -1429,8 +1481,7 @@ function PurchaseOrdersTab({ companyId, session }) {
         po_date: form.po_date, expected_delivery: form.expected_delivery || null,
         delivery_address: form.delivery_address || null,
         subtotal, discount_amount: parseFloat(form.discount_amount) || 0, taxable_amount: taxable,
-        cgst_rate: form.use_igst ? 0 : parseFloat(form.cgst_rate), sgst_rate: form.use_igst ? 0 : parseFloat(form.sgst_rate),
-        igst_rate: form.use_igst ? parseFloat(form.igst_rate) : 0,
+        cgst_rate: 0, sgst_rate: 0, igst_rate: 0,
         cgst_amount: cgst_amt, sgst_amount: sgst_amt, igst_amount: igst_amt,
         total_amount: total, status: 'confirmed', notes: form.notes || null, created_by: session.user.id,
       })
@@ -1519,9 +1570,8 @@ function PurchaseOrdersTab({ companyId, session }) {
             <Field label="Expected Delivery"><input type="date" className={inp()} value={form.expected_delivery} onChange={e => setF('expected_delivery', e.target.value)} /></Field>
             <div className="col-span-2"><Field label="Delivery Address"><input className={inp()} value={form.delivery_address} onChange={e => setF('delivery_address', e.target.value)} /></Field></div>
           </div>
-          <LineItemsEditor lines={lines} setLines={setLines} isTax={isTax}
-            onGstRate={r => { setF('cgst_rate', r.cgst); setF('sgst_rate', r.sgst); setF('igst_rate', r.igst) }} />
-          <TaxSummary subtotal={subtotal} form={form} setF={setF} />
+          <LineItemsEditor lines={lines} setLines={setLines} isTax={isTax} />
+          <TaxSummary lines={lines} form={form} setF={setF} />
           <Field label="Notes"><textarea className={inp()} rows={2} value={form.notes} onChange={e => setF('notes', e.target.value)} /></Field>
         </Modal>
       )}
