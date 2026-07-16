@@ -1283,6 +1283,13 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
   const { role } = useAuth()
   const isAdmin  = ['admin', 'superadmin', 'manager'].includes(role)
 
+  // Always fetch fresh equipment data on mount — parent snapshot may be stale
+  // (e.g. background refetch hadn't completed when user reopened the modal)
+  useEffect(() => {
+    supabase.from('equipment').select('*').eq('id', equipmentProp.id).single()
+      .then(({ data }) => { if (data) setEquipment(data) })
+  }, [equipmentProp.id]) // eslint-disable-line
+
   // Refresh equipment when edit completes
   const refreshEquipment = async () => {
     const { data } = await supabase.from('equipment').select('*').eq('id', equipment.id).single()
@@ -1302,11 +1309,23 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
   }
 
   // ── Admin deploy state ───────────────────────────────────────────────────────
-  const [deployClientId,   setDeployClientId]   = useState(equipment.current_client_id  || '')
-  const [deployProjectId,  setDeployProjectId]  = useState(equipment.current_project_id || '')
-  const [deploySiteName,   setDeploySiteName]   = useState(equipment.current_site_name  || '')
+  const [deployClientId,   setDeployClientId]   = useState(equipmentProp.current_client_id  || '')
+  const [deployProjectId,  setDeployProjectId]  = useState(equipmentProp.current_project_id || '')
+  const [deploySiteName,   setDeploySiteName]   = useState(equipmentProp.current_site_name  || '')
   const [deployRateItemId, setDeployRateItemId] = useState('')
-  const [deployFuelByClient, setDeployFuelByClient] = useState(equipment.fuel_by_client || false)
+  const [deployFuelByClient, setDeployFuelByClient] = useState(equipmentProp.fuel_by_client || false)
+  const [deployFormSynced, setDeployFormSynced] = useState(false)
+
+  // Re-sync deploy form when fresh equipment data arrives (on mount fetch above)
+  useEffect(() => {
+    if (deployFormSynced) return   // don't overwrite user changes after initial sync
+    if (!equipment.current_project_id && !equipment.current_client_id) return
+    setDeployClientId(equipment.current_client_id  || '')
+    setDeployProjectId(equipment.current_project_id || '')
+    setDeploySiteName(equipment.current_site_name  || '')
+    setDeployFuelByClient(equipment.fuel_by_client || false)
+    setDeployFormSynced(true)
+  }, [equipment, deployFormSynced]) // eslint-disable-line
   const [deploySaving,     setDeploySaving]     = useState(false)
   const [newOperator,      setNewOperator]      = useState('')
   const [newShiftType,     setNewShiftType]     = useState('day')
@@ -1365,6 +1384,22 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
     },
     enabled: !!deployProjectId,
   })
+
+  // Active deployment record — pre-populate rate item on open
+  const { data: activeDeployment } = useQuery({
+    queryKey: ['active_deployment', equipmentProp.id],
+    queryFn: async () => {
+      const { data } = await supabase.from('equipment_deployments')
+        .select('rate_item_id').eq('equipment_id', equipmentProp.id).eq('status', 'active').maybeSingle()
+      return data
+    },
+    enabled: isAdmin,
+  })
+  useEffect(() => {
+    if (activeDeployment?.rate_item_id && !deployRateItemId) {
+      setDeployRateItemId(activeDeployment.rate_item_id)
+    }
+  }, [activeDeployment]) // eslint-disable-line
 
   // HR employees eligible to operate equipment (linked from HR module)
   const { data: hrOperators = [] } = useQuery({
