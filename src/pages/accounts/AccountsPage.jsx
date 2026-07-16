@@ -3893,6 +3893,21 @@ function FixedExpensesTab({ companyId }) {
     enabled: !!companyId,
   })
 
+  // Load all unpaid/partial credit bills — these are outstanding obligations in the planner
+  const { data: creditBills = [] } = useQuery({
+    queryKey: ['credit_bills_outstanding', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('bills')
+        .select('id, bill_number, vendor_name, vendor_id, total_amount, paid_amount, balance_due, due_date, credit_days, status, bill_date, notes')
+        .eq('company_id', companyId)
+        .eq('payment_type', 'credit')
+        .in('status', ['pending', 'partial'])
+        .order('due_date', { ascending: true })
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+
   // Load this month's payment instances
   const { data: payments = [], refetch: refetchPayments, isSuccess: paymentsLoaded } = useQuery({
     queryKey: ['fixed_expense_payments', companyId, currentMonth],
@@ -3949,6 +3964,14 @@ function FixedExpensesTab({ companyId }) {
   const paid      = payments.filter(p => p.status === 'paid')
   const overdue   = pending.filter(p => new Date(p.due_date) < todayDate)
   const dueSoon   = pending.filter(p => { const d = new Date(p.due_date); return d >= todayDate && d <= warnDate })
+
+  // Credit bill urgency helpers
+  const cbOverdue = creditBills.filter(b => b.due_date && new Date(b.due_date+'T00:00:00') < todayDate)
+  const cbDueSoon = creditBills.filter(b => {
+    if (!b.due_date) return false
+    const d = new Date(b.due_date+'T00:00:00'); return d >= todayDate && d <= warnDate
+  })
+  const creditBillsTotalDue = creditBills.reduce((s, b) => s + Number(b.balance_due || 0), 0)
   const totalDue  = pending.reduce((s, p) => s + Number(p.amount), 0)
   const totalPaid = paid.reduce((s, p) => s + Number(p.paid_amount || p.amount), 0)
 
@@ -3956,23 +3979,84 @@ function FixedExpensesTab({ companyId }) {
 
   return (
     <div className="flex-1 overflow-y-auto p-4 space-y-4">
-      {/* Alert banner */}
-      {(overdue.length > 0 || dueSoon.length > 0) && (
-        <div className={`rounded-xl border p-4 flex gap-3 ${overdue.length > 0 ? 'bg-red-950/40 border-red-700 nhance-alert-danger' : 'bg-amber-950/40 border-amber-700 nhance-alert-warn'}`}>
-          <AlertTriangle className={`w-5 h-5 shrink-0 mt-0.5 ${overdue.length > 0 ? 'text-red-400 nhance-alert-icon-danger' : 'text-amber-400 nhance-alert-icon-warn'}`} />
+      {/* Combined alert banner — fixed expenses + credit bills */}
+      {(overdue.length > 0 || dueSoon.length > 0 || cbOverdue.length > 0 || cbDueSoon.length > 0) && (
+        <div className={`rounded-xl border p-4 flex gap-3 ${(overdue.length > 0 || cbOverdue.length > 0) ? 'bg-red-950/40 border-red-700 nhance-alert-danger' : 'bg-amber-950/40 border-amber-700 nhance-alert-warn'}`}>
+          <AlertTriangle className={`w-5 h-5 shrink-0 mt-0.5 ${(overdue.length > 0 || cbOverdue.length > 0) ? 'text-red-400 nhance-alert-icon-danger' : 'text-amber-400 nhance-alert-icon-warn'}`} />
           <div className="space-y-0.5">
             {overdue.length > 0 && (
               <p className="text-sm font-bold text-red-300 nhance-alert-text-danger">
-                {overdue.length} overdue payment{overdue.length > 1 ? 's' : ''} — {fmt(overdue.reduce((s,p)=>s+Number(p.amount),0))} pending
+                {overdue.length} overdue fixed expense{overdue.length > 1 ? 's' : ''} — {fmt(overdue.reduce((s,p)=>s+Number(p.amount),0))} pending
+              </p>
+            )}
+            {cbOverdue.length > 0 && (
+              <p className="text-sm font-bold text-red-300 nhance-alert-text-danger">
+                {cbOverdue.length} overdue credit bill{cbOverdue.length > 1 ? 's' : ''} — {fmt(cbOverdue.reduce((s,b)=>s+Number(b.balance_due),0))} unpaid
               </p>
             )}
             {dueSoon.length > 0 && (
               <p className="text-sm font-semibold text-amber-300 nhance-alert-text-warn">
-                {dueSoon.length} payment{dueSoon.length > 1 ? 's' : ''} due within 3 days — {fmt(dueSoon.reduce((s,p)=>s+Number(p.amount),0))}
+                {dueSoon.length} fixed expense{dueSoon.length > 1 ? 's' : ''} due within 3 days — {fmt(dueSoon.reduce((s,p)=>s+Number(p.amount),0))}
               </p>
             )}
-            <p className="text-xs text-slate-500 mt-1">Review and mark paid in "This Month" view below</p>
+            {cbDueSoon.length > 0 && (
+              <p className="text-sm font-semibold text-amber-300 nhance-alert-text-warn">
+                {cbDueSoon.length} credit bill{cbDueSoon.length > 1 ? 's' : ''} due within 3 days — {fmt(cbDueSoon.reduce((s,b)=>s+Number(b.balance_due),0))}
+              </p>
+            )}
+            <p className="text-xs text-slate-500 mt-1">Review items below and make payments from Purchase → Payments Made</p>
           </div>
+        </div>
+      )}
+
+      {/* ── Credit Bills Outstanding ── */}
+      {creditBills.length > 0 && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">📋 Credit Bills Outstanding</p>
+            <span className="text-xs font-bold text-orange-400">{fmt(creditBillsTotalDue)} due</span>
+          </div>
+          {creditBills.map(b => {
+            const today  = new Date(); today.setHours(0,0,0,0)
+            const dueD   = b.due_date ? new Date(b.due_date+'T00:00:00') : null
+            const dLeft  = dueD ? Math.ceil((dueD - today) / 86400000) : null
+            const isOvd  = dueD && dueD < today
+            const isSoon = !isOvd && dLeft !== null && dLeft <= 7
+            return (
+              <div key={b.id} className={`bg-dark-800 border rounded-xl p-3.5 ${isOvd ? 'border-red-700/60' : isSoon ? 'border-amber-700/60' : 'border-dark-700'}`}>
+                <div className="flex items-start gap-3">
+                  <span className="text-xl mt-0.5">🗓️</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-slate-100 truncate">{b.vendor_name}</p>
+                    <p className="text-xs text-slate-500">
+                      {b.bill_number} · Bill date {fmtDate(b.bill_date)}
+                      {b.credit_days ? ` · ${b.credit_days}d credit` : ''}
+                    </p>
+                    {b.notes && <p className="text-xs text-slate-600 mt-0.5 italic truncate">{b.notes}</p>}
+                    {b.due_date && (
+                      isOvd
+                        ? <p className="text-xs text-red-400 font-semibold mt-0.5">⚠ Overdue by {Math.abs(dLeft)} day{Math.abs(dLeft)!==1?'s':''}</p>
+                        : isSoon
+                          ? <p className="text-xs text-amber-400 font-semibold mt-0.5">⏰ Due in {dLeft} day{dLeft!==1?'s':''} — {fmtDate(b.due_date)}</p>
+                          : <p className="text-xs text-slate-500 mt-0.5">Due {fmtDate(b.due_date)} · {dLeft} days left</p>
+                    )}
+                    {b.status === 'partial' && b.paid_amount > 0 && (
+                      <p className="text-xs text-emerald-400 mt-0.5">✓ Partial payment: {fmt(b.paid_amount)} received</p>
+                    )}
+                  </div>
+                  <div className="text-right shrink-0">
+                    <p className="text-sm font-bold text-slate-100">{fmt(b.balance_due)}</p>
+                    <p className="text-[10px] text-slate-500">of {fmt(b.total_amount)}</p>
+                    <span className={`mt-1 inline-block px-2 py-0.5 text-[10px] font-bold rounded-lg border ${
+                      isOvd ? 'bg-red-900/30 text-red-400 border-red-700' :
+                      b.status === 'partial' ? 'bg-amber-900/30 text-amber-400 border-amber-700' :
+                      'bg-dark-700 text-slate-400 border-dark-600'
+                    }`}>{isOvd ? 'OVERDUE' : b.status === 'partial' ? 'PARTIAL' : 'PENDING'}</span>
+                  </div>
+                </div>
+              </div>
+            )
+          })}
         </div>
       )}
 

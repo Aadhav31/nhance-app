@@ -859,7 +859,14 @@ function BillsTab({ companyId, session }) {
   const { company, userProfile } = useAuth()
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving] = useState(false)
-  const blankForm = () => ({ vendor_id: '', vendor_gstin: '', bill_date: todayStr(), due_date: '', bill_ref: '', cgst_rate: 9, sgst_rate: 9, igst_rate: 18, use_igst: false, discount_amount: 0, notes: '', is_tax_invoice: true })
+  const blankForm = () => ({ vendor_id: '', vendor_gstin: '', bill_date: todayStr(), due_date: '', bill_ref: '', cgst_rate: 9, sgst_rate: 9, igst_rate: 18, use_igst: false, discount_amount: 0, notes: '', is_tax_invoice: true, payment_type: 'credit', credit_days: '30' })
+
+  // Auto-compute due date from bill_date + credit_days
+  const computeDueDate = (billDate, days) => {
+    if (!billDate || !days) return ''
+    const d = new Date(billDate); d.setDate(d.getDate() + parseInt(days) || 0)
+    return d.toISOString().split('T')[0]
+  }
   const [form, setForm] = useState(blankForm())
   const [lines, setLines] = useState([blankLine()])
   const [addToInv, setAddToInv] = useState(false)
@@ -888,6 +895,8 @@ function BillsTab({ companyId, session }) {
       sgst_rate: bill.sgst_rate ?? 9, igst_rate: bill.igst_rate ?? 18,
       use_igst: (bill.igst_rate || 0) > 0, discount_amount: bill.discount_amount || 0,
       notes: bill.notes || '', is_tax_invoice: bill.is_tax_invoice !== false,
+      payment_type: bill.payment_type || 'credit',
+      credit_days: String(bill.credit_days || 30),
     })
     setLines(ld?.map(l => ({
       description: l.description || '', hsn_sac: l.hsn_sac || '',
@@ -985,18 +994,24 @@ function BillsTab({ companyId, session }) {
       const vendor = vendors.find(v => v.id === form.vendor_id)
       const validLines = lines.filter(l => l.description.trim())
 
+      const isCash    = form.payment_type === 'cash'
+      const creditDays = parseInt(form.credit_days) || 30
+      const dueDateVal = isCash ? form.bill_date : computeDueDate(form.bill_date, creditDays)
+
       if (editing) {
         // ── UPDATE ──
         const { error } = await supabase.from('bills').update({
           vendor_id: form.vendor_id, vendor_name: vendor?.name || '',
-          bill_date: form.bill_date, due_date: form.due_date || null,
+          bill_date: form.bill_date, due_date: dueDateVal || null,
+          payment_type: form.payment_type, credit_days: isCash ? null : creditDays,
           bill_ref: form.bill_ref || null,
           subtotal, discount_amount: parseFloat(form.discount_amount) || 0, taxable_amount: taxable,
           cgst_rate: form.use_igst ? 0 : parseFloat(form.cgst_rate),
           sgst_rate: form.use_igst ? 0 : parseFloat(form.sgst_rate),
           igst_rate: form.use_igst ? parseFloat(form.igst_rate) : 0,
           cgst_amount: cgst_amt, sgst_amount: sgst_amt, igst_amount: igst_amt,
-          total_amount: total, balance_due: Math.max(0, total - (Number(editing.paid_amount) || 0)),
+          total_amount: total, balance_due: isCash ? 0 : Math.max(0, total - (Number(editing.paid_amount) || 0)),
+          ...(isCash ? { paid_amount: total, status: 'paid' } : {}),
           notes: form.notes || null,
         }).eq('id', editing.id)
         if (error) throw error
@@ -1020,14 +1035,18 @@ function BillsTab({ companyId, session }) {
       const { error } = await supabase.from('bills').insert({
         id, company_id: companyId, bill_number: blNum,
         vendor_id: form.vendor_id, vendor_name: vendor?.name || '',
-        bill_date: form.bill_date, due_date: form.due_date || null,
+        bill_date: form.bill_date, due_date: dueDateVal || null,
+        payment_type: form.payment_type, credit_days: isCash ? null : creditDays,
         bill_ref: form.bill_ref || null,
         subtotal, discount_amount: parseFloat(form.discount_amount) || 0, taxable_amount: taxable,
         cgst_rate: form.use_igst ? 0 : parseFloat(form.cgst_rate), sgst_rate: form.use_igst ? 0 : parseFloat(form.sgst_rate),
         igst_rate: form.use_igst ? parseFloat(form.igst_rate) : 0,
         cgst_amount: cgst_amt, sgst_amount: sgst_amt, igst_amount: igst_amt,
-        total_amount: total, paid_amount: 0, balance_due: total,
-        status: 'pending', notes: form.notes || null, created_by: session.user.id,
+        total_amount: total,
+        paid_amount: isCash ? total : 0,
+        balance_due: isCash ? 0 : total,
+        status: isCash ? 'paid' : 'pending',
+        notes: form.notes || null, created_by: session.user.id,
       })
       if (error) throw error
 
@@ -1108,25 +1127,44 @@ function BillsTab({ companyId, session }) {
         {isLoading ? <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-primary-400" /></div>
         : bills.length === 0 ? <div className="flex flex-col items-center py-16 gap-2 text-slate-500"><FileText className="w-10 h-10 text-slate-700" /><p>No bills yet</p></div>
         : <div className="space-y-2">
-          {bills.map(b => (
-            <div key={b.id} className="bg-dark-800 border border-dark-700 rounded-xl p-4">
+          {bills.map(b => {
+            const today      = new Date(); today.setHours(0,0,0,0)
+            const dueD       = b.due_date ? new Date(b.due_date+'T00:00:00') : null
+            const daysLeft   = dueD ? Math.ceil((dueD - today) / 86400000) : null
+            const isOverdue  = b.payment_type !== 'cash' && dueD && dueD < today && !['paid','cancelled'].includes(b.status)
+            const isDueSoon  = b.payment_type !== 'cash' && daysLeft !== null && daysLeft >= 0 && daysLeft <= 7 && !['paid','cancelled'].includes(b.status)
+            const isCashBill = b.payment_type === 'cash'
+            return (
+            <div key={b.id} className={`bg-dark-800 border rounded-xl p-4 ${isOverdue ? 'border-red-700/60' : isDueSoon ? 'border-amber-700/60' : 'border-dark-700'}`}>
               <div className="flex items-start justify-between gap-3">
                 <div className="flex-1 min-w-0">
                   <div className="flex gap-2 items-center flex-wrap">
                     <p className="text-xs font-mono text-primary-500">{b.bill_number}</p>
                     <StatusBadge status={b.status} />
+                    {isCashBill
+                      ? <span className="text-[10px] px-1.5 py-0.5 rounded font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-700/40">💵 Cash</span>
+                      : <span className="text-[10px] px-1.5 py-0.5 rounded font-semibold bg-blue-500/10 text-blue-400 border border-blue-700/40">🗓️ {b.credit_days}d Credit</span>
+                    }
                   </div>
                   <p className="font-semibold text-slate-100 text-sm mt-0.5">{b.vendor_name || b.vendors?.vendor_name}</p>
                   {b.bill_ref && <p className="text-xs text-slate-500">Ref: {b.bill_ref}</p>}
+                  {/* Due date urgency line */}
+                  {!isCashBill && dueD && !['paid','cancelled'].includes(b.status) && (
+                    isOverdue
+                      ? <p className="text-xs text-red-400 font-semibold mt-0.5">⚠ Overdue by {Math.abs(daysLeft)} day{Math.abs(daysLeft)!==1?'s':''} — {fmtINR(b.balance_due)} pending</p>
+                      : isDueSoon
+                        ? <p className="text-xs text-amber-400 font-semibold mt-0.5">⏰ Due in {daysLeft} day{daysLeft!==1?'s':''} — {fmtDate(b.due_date)}</p>
+                        : <p className="text-xs text-slate-500 mt-0.5">Due {fmtDate(b.due_date)} · {daysLeft} days left</p>
+                  )}
                 </div>
                 <div className="text-right shrink-0">
                   <p className="text-lg font-black text-slate-100">{fmtINR(b.total_amount)}</p>
                   {b.paid_amount > 0 && <p className="text-xs text-emerald-400">Paid {fmtINR(b.paid_amount)}</p>}
-                  {b.balance_due > 0 && <p className="text-xs text-orange-400">Due {fmtINR(b.balance_due)}</p>}
+                  {b.balance_due > 0 && <p className="text-xs text-orange-400">Balance {fmtINR(b.balance_due)}</p>}
                 </div>
               </div>
               <div className="flex items-center justify-between mt-3">
-                <p className="text-xs text-slate-500">{fmtDate(b.bill_date)}{b.due_date ? ` · Due ${fmtDate(b.due_date)}` : ''}</p>
+                <p className="text-xs text-slate-500">{fmtDate(b.bill_date)}</p>
                 <div className="flex items-center gap-1">
                   {b.status === 'pending' && <button onClick={() => updateStatus(b.id, 'paid')} className="text-xs px-2 py-1 rounded-lg border border-emerald-700/40 text-emerald-400 hover:bg-emerald-900/20"><CheckCircle className="w-3 h-3 inline mr-1" />Mark Paid</button>}
                   {!['paid','cancelled'].includes(b.status) && <button onClick={() => openEdit(b)} className="p-1.5 rounded-lg text-slate-500 hover:text-blue-400 hover:bg-blue-900/20" title="Edit"><Pencil className="w-3.5 h-3.5" /></button>}
@@ -1138,7 +1176,7 @@ function BillsTab({ companyId, session }) {
                 </div>
               </div>
             </div>
-          ))}
+          )})}
         </div>}
       </div>
       {showCreate && (
@@ -1165,7 +1203,62 @@ function BillsTab({ companyId, session }) {
               </div>
             )}
             <Field label="Bill Date"><input type="date" className={inp()} value={form.bill_date} onChange={e => setF('bill_date', e.target.value)} /></Field>
-            <Field label="Due Date"><input type="date" className={inp()} value={form.due_date} onChange={e => setF('due_date', e.target.value)} /></Field>
+
+            {/* Payment type — Cash or Credit */}
+            <div className="col-span-2">
+              <p className="text-xs text-slate-400 font-medium mb-1.5">Payment Type</p>
+              <div className="flex gap-2">
+                {[{v:'cash',icon:'💵',label:'Cash Bill'},{v:'credit',icon:'🗓️',label:'Credit Bill'}].map(opt => (
+                  <button key={opt.v} type="button" onClick={() => setF('payment_type', opt.v)}
+                    className={`flex-1 py-2.5 rounded-xl border text-xs font-semibold transition-all flex items-center justify-center gap-1.5 ${
+                      form.payment_type === opt.v
+                        ? opt.v === 'cash'
+                          ? 'bg-emerald-600/20 border-emerald-600 text-emerald-300'
+                          : 'bg-blue-600/20 border-blue-600 text-blue-300'
+                        : 'border-dark-600 bg-dark-700 text-slate-500 hover:border-dark-500'
+                    }`}>
+                    <span>{opt.icon}</span> {opt.label}
+                  </button>
+                ))}
+              </div>
+              {form.payment_type === 'cash' && (
+                <p className="mt-1.5 text-[11px] text-emerald-400/70">Cash bill — marked as paid immediately on creation.</p>
+              )}
+            </div>
+
+            {/* Credit fields — shown only for credit bills */}
+            {form.payment_type === 'credit' && (
+              <>
+                <Field label="Credit Days">
+                  <div className="flex gap-1.5">
+                    {['15','30','45','60','90'].map(d => (
+                      <button key={d} type="button" onClick={() => setF('credit_days', d)}
+                        className={`px-2.5 py-1.5 rounded-lg border text-xs font-semibold transition-all ${
+                          form.credit_days === d ? 'bg-primary-600 border-primary-500 text-white' : 'border-dark-600 bg-dark-700 text-slate-400 hover:border-dark-500'
+                        }`}>{d}</button>
+                    ))}
+                    <input type="number" min="1" max="365"
+                      value={form.credit_days}
+                      onChange={e => setF('credit_days', e.target.value)}
+                      className={`${inp()} w-16 text-center`}
+                      placeholder="days"
+                    />
+                  </div>
+                </Field>
+                <Field label="Due Date (auto)">
+                  <div className={`${inp()} flex items-center gap-2 opacity-80`}>
+                    <span className="text-slate-300 text-xs">
+                      {computeDueDate(form.bill_date, form.credit_days)
+                        ? new Date(computeDueDate(form.bill_date, form.credit_days)+'T00:00:00').toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'})
+                        : '—'}
+                    </span>
+                    <span className="ml-auto text-[10px] text-slate-500">
+                      {form.credit_days && form.bill_date ? `${form.credit_days} days from bill date` : ''}
+                    </span>
+                  </div>
+                </Field>
+              </>
+            )}
             <div className="col-span-2"><Field label="Vendor Bill / Reference No."><input className={inp()} value={form.bill_ref} onChange={e => setF('bill_ref', e.target.value)} /></Field></div>
           </div>
           <LineItemsEditor lines={lines} setLines={setLines} isTax={isTax}
