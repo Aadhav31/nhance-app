@@ -38,12 +38,12 @@ const LEAVE_TYPES = [
 ]
 
 const ATTENDANCE_STATUS = [
-  { value: 'present',  full: 'Present',   cls: 'bg-emerald-500/15 text-emerald-700 border-emerald-600/40' },
-  { value: 'absent',   full: 'Absent',    cls: 'bg-red-500/15 text-red-700 border-red-600/40' },
-  { value: 'half_day', full: 'Half Day',  cls: 'bg-yellow-500/15 text-yellow-700 border-yellow-600/40' },
-  { value: 'leave',    full: 'Leave',     cls: 'bg-blue-500/15 text-blue-700 border-blue-600/40' },
-  { value: 'week_off', full: 'Week Off',  cls: 'bg-slate-500/10 text-slate-600 border-slate-400/40' },
-  { value: 'holiday',  full: 'Holiday',   cls: 'bg-purple-500/15 text-purple-700 border-purple-600/40' },
+  { value: 'present',  full: 'Present',  short: 'Present',  cls: 'bg-emerald-500/15 text-emerald-400 border-emerald-600/40' },
+  { value: 'absent',   full: 'Absent',   short: 'Absent',   cls: 'bg-red-500/15 text-red-400 border-red-600/40' },
+  { value: 'half_day', full: 'Half Day', short: 'Half',     cls: 'bg-yellow-500/15 text-yellow-400 border-yellow-600/40' },
+  { value: 'leave',    full: 'Leave',    short: 'Leave',    cls: 'bg-blue-500/15 text-blue-400 border-blue-600/40' },
+  { value: 'week_off', full: 'Week Off', short: 'W/Off',    cls: 'bg-slate-500/10 text-slate-400 border-slate-500/40' },
+  { value: 'holiday',  full: 'Holiday',  short: 'Holiday',  cls: 'bg-purple-500/15 text-purple-400 border-purple-600/40' },
 ]
 
 const WAGE_CATEGORIES = [
@@ -1714,9 +1714,8 @@ function EmployeesTab({ companyId }) {
 }
 
 // ── Attendance Tab ────────────────────────────────────────────────────────────
-// Purpose: govern attendance records only.
-// Shift start/end is controlled from Equipment page.
-// OT threshold is set per-employee when adding/editing the employee.
+// Shows ALL active employees. Shift workers get clock-in/out fields with auto
+// OT calculation. Daily/monthly workers get clean status buttons.
 function AttendanceTab({ companyId }) {
   const { role } = useAuth()
   const _now = new Date()
@@ -1725,11 +1724,15 @@ function AttendanceTab({ companyId }) {
   const [selectedDay, setSelectedDay] = useState(_now.getDate())
   const [saving,      setSaving]      = useState(false)
   const [editRec,     setEditRec]     = useState(null)
+  const [typeFilter,  setTypeFilter]  = useState('all')  // 'all' | 'shift' | 'daily' | 'monthly'
+  // Local shift time state: { [empId]: { start: '', end: '' } }
+  const [shiftTimes,  setShiftTimes]  = useState({})
 
-  const date       = `${year}-${String(month).padStart(2,'0')}-${String(selectedDay).padStart(2,'0')}`
+  const date        = `${year}-${String(month).padStart(2,'0')}-${String(selectedDay).padStart(2,'0')}`
   const daysInMonth = new Date(year, month, 0).getDate()
   const monthStart  = `${year}-${String(month).padStart(2,'0')}-01`
   const monthEnd    = `${year}-${String(month).padStart(2,'0')}-${String(daysInMonth).padStart(2,'0')}`
+  const isAdmin     = ['admin','manager'].includes(role)
 
   const prevMonth = () => { if (month === 1) { setYear(y=>y-1); setMonth(12) } else setMonth(m=>m-1) }
   const nextMonth = () => { if (month === 12) { setYear(y=>y+1); setMonth(1)  } else setMonth(m=>m+1) }
@@ -1739,7 +1742,7 @@ function AttendanceTab({ companyId }) {
     queryKey: ['hr_employees_active', companyId],
     queryFn: async () => {
       const { data } = await supabase.from('hr_employees')
-        .select('id, name, designation, employment_type, employee_number')
+        .select('id, name, designation, employment_type, employee_number, ot_threshold_hours')
         .eq('company_id', companyId).eq('status', 'active').order('name')
       return data || []
     },
@@ -1778,18 +1781,46 @@ function AttendanceTab({ companyId }) {
     return m
   }, [attendance])
 
-  const markAttendance = async (empId, status) => {
+  // Sync shift times from DB records when date or attendance changes
+  useEffect(() => {
+    const times = {}
+    attendance.forEach(a => {
+      times[a.employee_id] = {
+        start: a.shift_start_time || '',
+        end:   a.shift_end_time   || '',
+      }
+    })
+    setShiftTimes(times)
+  }, [attendance])
+
+  const markAttendance = async (empId, status, extra = {}) => {
     const existing = attMap[empId]
-    const payload  = { status, source: 'manual' }
+    const payload  = { status, source: 'manual', ...extra }
     if (existing) {
       await supabase.from('hr_attendance').update(payload).eq('id', existing.id)
     } else {
-      await supabase.from('hr_attendance').insert({ company_id: companyId, employee_id: empId, attendance_date: date, ...payload })
+      await supabase.from('hr_attendance').insert({
+        company_id: companyId, employee_id: empId, attendance_date: date, ...payload,
+      })
     }
     refetch(); refetchMonth()
   }
 
-  // Bulk mark — all employees (shift workers included — just sets the status flag)
+  // Save shift times + auto-derive status and OT
+  const saveShiftTimes = async (emp, start, end) => {
+    if (!start || !end) return
+    const hours  = calcShiftHours(start, end)
+    const status = calcShiftStatus(hours)
+    if (!status) return
+    const otThreshold = Number(emp.ot_threshold_hours || 12)
+    const otHrs = calcOtHours(hours, otThreshold)
+    await markAttendance(emp.id, status, {
+      shift_start_time: start,
+      shift_end_time:   end,
+      ot_hours:         otHrs,
+    })
+  }
+
   const markAll = async (status) => {
     setSaving(true)
     for (const emp of employees) {
@@ -1797,7 +1828,9 @@ function AttendanceTab({ companyId }) {
       if (existing) {
         await supabase.from('hr_attendance').update({ status, source: 'manual' }).eq('id', existing.id)
       } else {
-        await supabase.from('hr_attendance').insert({ company_id: companyId, employee_id: emp.id, attendance_date: date, status, source: 'manual' })
+        await supabase.from('hr_attendance').insert({
+          company_id: companyId, employee_id: emp.id, attendance_date: date, status, source: 'manual',
+        })
       }
     }
     refetch(); refetchMonth(); setSaving(false)
@@ -1814,15 +1847,44 @@ function AttendanceTab({ companyId }) {
     return s
   }, [employees, attMap])
 
+  // Employment type counts for filter tabs
+  const typeCounts = useMemo(() => {
+    const c = { shift: 0, daily: 0, monthly: 0 }
+    employees.forEach(e => {
+      const t = isShiftWorker(e) ? 'shift' : e.employment_type
+      c[t] = (c[t] || 0) + 1
+    })
+    return c
+  }, [employees])
+
+  const visibleEmployees = useMemo(() => {
+    if (typeFilter === 'all') return employees
+    if (typeFilter === 'shift')   return employees.filter(e => isShiftWorker(e))
+    if (typeFilter === 'daily')   return employees.filter(e => !isShiftWorker(e) && e.employment_type === 'daily')
+    if (typeFilter === 'monthly') return employees.filter(e => !isShiftWorker(e) && e.employment_type === 'monthly')
+    return employees
+  }, [employees, typeFilter])
+
+  const TYPE_TABS = [
+    { value: 'all',     label: 'All',     count: employees.length },
+    { value: 'shift',   label: '🔄 Shift',   count: typeCounts.shift   || 0 },
+    { value: 'daily',   label: '📅 Daily',   count: typeCounts.daily   || 0 },
+    { value: 'monthly', label: '📆 Monthly', count: typeCounts.monthly || 0 },
+  ].filter(t => t.value === 'all' || t.count > 0)
+
   return (
     <div className="flex flex-col h-full">
       <div className="px-4 py-2 shrink-0 space-y-2">
 
         {/* Month navigator */}
         <div className="flex items-center gap-1">
-          <button onClick={prevMonth} className="p-1 rounded-lg hover:bg-dark-700 text-slate-400 hover:text-slate-200"><ChevronLeft className="w-4 h-4" /></button>
+          <button onClick={prevMonth} className="p-1 rounded-lg hover:bg-dark-700 text-slate-400 hover:text-slate-200">
+            <ChevronLeft className="w-4 h-4" />
+          </button>
           <span className="flex-1 text-center text-sm font-semibold text-slate-100">{MONTH_NAMES[month-1]} {year}</span>
-          <button onClick={nextMonth} className="p-1 rounded-lg hover:bg-dark-700 text-slate-400 hover:text-slate-200"><ChevronRight className="w-4 h-4" /></button>
+          <button onClick={nextMonth} className="p-1 rounded-lg hover:bg-dark-700 text-slate-400 hover:text-slate-200">
+            <ChevronRight className="w-4 h-4" />
+          </button>
           <button onClick={goToday} className="text-xs text-primary-400 hover:text-primary-300 ml-1 px-2 py-1 rounded-lg hover:bg-dark-700">Today</button>
         </div>
 
@@ -1832,107 +1894,177 @@ function AttendanceTab({ companyId }) {
         {/* Selected day header + bulk actions */}
         <div className="flex items-center gap-2 pt-1 border-t border-dark-700">
           <span className="text-xs font-semibold text-slate-300">
-            {new Date(date+'T00:00:00').toLocaleDateString('en-IN',{weekday:'short',day:'numeric',month:'short'})}
+            {new Date(date+'T00:00:00').toLocaleDateString('en-IN',{weekday:'long',day:'numeric',month:'short',year:'numeric'})}
           </span>
           <div className="ml-auto flex gap-1.5">
             <button onClick={() => markAll('present')} disabled={saving}
-              className="text-xs px-2.5 py-1.5 rounded-lg bg-emerald-600/20 border border-emerald-700/40 text-emerald-400 hover:bg-emerald-600/30">
+              className="text-xs px-2.5 py-1.5 rounded-lg bg-emerald-600/20 border border-emerald-700/40 text-emerald-400 hover:bg-emerald-600/30 disabled:opacity-50">
               All Present
             </button>
             <button onClick={() => markAll('week_off')} disabled={saving}
-              className="text-xs px-2.5 py-1.5 rounded-lg bg-dark-700 border border-dark-600 text-slate-400 hover:border-dark-500">
+              className="text-xs px-2.5 py-1.5 rounded-lg bg-dark-700 border border-dark-600 text-slate-400 hover:border-dark-500 disabled:opacity-50">
               All Week Off
             </button>
           </div>
         </div>
 
-        {/* Summary pills — only marked statuses */}
-        <div className="flex gap-2 overflow-x-auto pb-0.5 text-xs">
-          {[
-            summary.present  > 0 && { label:`${summary.present} Present`,   cls:'text-emerald-400 bg-emerald-500/10 border-emerald-700/40' },
-            summary.absent   > 0 && { label:`${summary.absent} Absent`,     cls:'text-red-400 bg-red-500/10 border-red-700/40' },
-            summary.half_day > 0 && { label:`${summary.half_day} Half Day`, cls:'text-yellow-400 bg-yellow-500/10 border-yellow-700/40' },
-            summary.leave    > 0 && { label:`${summary.leave} Leave`,       cls:'text-blue-400 bg-blue-500/10 border-blue-700/40' },
-            summary.week_off > 0 && { label:`${summary.week_off} Week Off`, cls:'text-slate-400 border-slate-600 bg-dark-700' },
-            summary.holiday  > 0 && { label:`${summary.holiday} Holiday`,   cls:'text-purple-400 bg-purple-500/10 border-purple-700/40' },
-          ].filter(Boolean).map(c => (
-            <span key={c.label} className={`shrink-0 px-2.5 py-1 rounded-full border font-medium ${c.cls}`}>{c.label}</span>
-          ))}
-          {Object.values(summary).slice(0,6).every(v=>v===0) && (
-            <span className="text-xs text-slate-600 italic">No attendance recorded yet for this date</span>
+        {/* Summary pills */}
+        <div className="flex gap-1.5 overflow-x-auto pb-0.5 text-xs flex-wrap">
+          {summary.unmarked > 0 && (
+            <span className="shrink-0 px-2.5 py-1 rounded-full border border-slate-700 bg-dark-800 text-slate-500 font-medium">
+              {summary.unmarked} Unmarked
+            </span>
           )}
+          {summary.present  > 0 && <span className="shrink-0 px-2.5 py-1 rounded-full border border-emerald-700/40 bg-emerald-500/10 text-emerald-400 font-medium">{summary.present} Present</span>}
+          {summary.absent   > 0 && <span className="shrink-0 px-2.5 py-1 rounded-full border border-red-700/40    bg-red-500/10    text-red-400    font-medium">{summary.absent} Absent</span>}
+          {summary.half_day > 0 && <span className="shrink-0 px-2.5 py-1 rounded-full border border-yellow-700/40 bg-yellow-500/10 text-yellow-400 font-medium">{summary.half_day} Half Day</span>}
+          {summary.leave    > 0 && <span className="shrink-0 px-2.5 py-1 rounded-full border border-blue-700/40   bg-blue-500/10   text-blue-400   font-medium">{summary.leave} Leave</span>}
+          {summary.week_off > 0 && <span className="shrink-0 px-2.5 py-1 rounded-full border border-slate-600     bg-dark-700      text-slate-400  font-medium">{summary.week_off} Week Off</span>}
+          {summary.holiday  > 0 && <span className="shrink-0 px-2.5 py-1 rounded-full border border-purple-700/40 bg-purple-500/10 text-purple-400 font-medium">{summary.holiday} Holiday</span>}
         </div>
 
-        {/* Info banner */}
-        <div className="flex items-start gap-2 bg-dark-800 border border-dark-600 rounded-lg px-3 py-2">
-          <span className="text-slate-500 text-[11px] leading-relaxed">
-            Shift workers — attendance is auto-filled from the Equipment page when a shift ends. Use status buttons below only to override (e.g. mark absent, leave, or holiday).
-          </span>
-        </div>
+        {/* Employment type filter tabs */}
+        {TYPE_TABS.length > 1 && (
+          <div className="flex gap-1 bg-dark-800 border border-dark-700 rounded-xl p-1">
+            {TYPE_TABS.map(t => (
+              <button key={t.value} onClick={() => setTypeFilter(t.value)}
+                className={`flex-1 py-1.5 text-xs font-medium rounded-lg transition-colors ${
+                  typeFilter === t.value
+                    ? 'bg-primary-600 text-white'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}>
+                {t.label} <span className="opacity-70">({t.count})</span>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 pb-4">
+      {/* Employee list — ALL employees always visible */}
+      <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-2 pt-1">
         {employees.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 gap-2">
             <Users className="w-10 h-10 text-slate-600" />
             <p className="text-slate-400">No active employees</p>
           </div>
         ) : (
-          <div className="space-y-2 pt-1">
-            {/* Only show employees who have a record for this date */}
-            {employees.filter(emp => !!attMap[emp.id]).length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-16 gap-2 text-center">
-                <span className="text-3xl">📅</span>
-                <p className="text-sm text-slate-400">No attendance marked for this date</p>
-                <p className="text-xs text-slate-600">Use "All Present" or "All Week Off" above to bulk mark,<br/>or mark employees individually from the Employees tab.</p>
-              </div>
-            ) : null}
-            {employees.filter(emp => !!attMap[emp.id]).map(emp => {
-              const att    = attMap[emp.id]
-              const status = att?.status || null
-              const isAutoFill = att?.source === 'shift_auto'
+          visibleEmployees.map(emp => {
+            const att      = attMap[emp.id]
+            const status   = att?.status || null
+            const isShift  = isShiftWorker(emp)
+            const isAuto   = att?.source === 'shift_auto'
+            const otHours  = Number(att?.ot_hours || 0)
+            const localT   = shiftTimes[emp.id] || { start: '', end: '' }
 
-              return (
-                <div key={emp.id} className="bg-dark-800 border border-dark-700 rounded-xl p-3">
-                  <div className="flex items-center justify-between gap-2 mb-2">
-                    <div className="flex-1 min-w-0">
+            // Live hours preview from local input (before save)
+            const liveHours = (localT.start && localT.end)
+              ? calcShiftHours(localT.start, localT.end) : null
+            const otThreshold = Number(emp.ot_threshold_hours || 12)
+            const liveOT = liveHours != null ? calcOtHours(liveHours, otThreshold) : 0
+
+            const setTime = (empId, field, val) =>
+              setShiftTimes(prev => ({ ...prev, [empId]: { ...(prev[empId] || {}), [field]: val } }))
+
+            return (
+              <div key={emp.id} className={`bg-dark-800 border rounded-xl p-3 transition-all ${
+                status ? 'border-dark-600' : 'border-dark-700 border-dashed'
+              }`}>
+                {/* Header row */}
+                <div className="flex items-start justify-between gap-2 mb-2.5">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
                       <p className="text-sm font-semibold text-slate-100 truncate">{emp.name}</p>
-                      <p className="text-xs text-slate-500">
-                        {emp.employee_number}{emp.designation ? ` · ${emp.designation}` : ''}
-                        {isAutoFill && <span className="ml-1.5 text-sky-400/70">· from shift</span>}
-                      </p>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0 ${
+                        isShift ? 'bg-sky-500/15 text-sky-400 border border-sky-700/40'
+                        : emp.employment_type === 'daily' ? 'bg-amber-500/15 text-amber-400 border border-amber-700/40'
+                        : 'bg-violet-500/15 text-violet-400 border border-violet-700/40'
+                      }`}>
+                        {isShift ? 'Shift' : emp.employment_type === 'daily' ? 'Daily' : 'Monthly'}
+                      </span>
                     </div>
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      {status && (
-                        <span className={`text-xs px-2 py-0.5 rounded-full border font-medium
-                          ${ATTENDANCE_STATUS.find(s=>s.value===status)?.cls || 'border-dark-600 text-slate-400'}`}>
-                          {ATTENDANCE_STATUS.find(s=>s.value===status)?.full}
-                          {att?.ot_hours > 0 && <span className="ml-1 text-orange-400">+{att.ot_hours}h OT</span>}
-                        </span>
-                      )}
-                      {['admin','manager'].includes(role) && att && (
-                        <button onClick={() => setEditRec({ record: att, empName: emp.name })}
-                          className="p-1.5 rounded-lg text-slate-500 hover:text-slate-200 hover:bg-dark-700">
-                          <Edit2 className="w-3.5 h-3.5" />
-                        </button>
-                      )}
-                    </div>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      {emp.employee_number}{emp.designation ? ` · ${emp.designation}` : ''}
+                      {isAuto && <span className="ml-1.5 text-sky-400/70">· auto from shift</span>}
+                    </p>
                   </div>
-
-                  {/* Status buttons — all employees get the same set */}
-                  <div className="flex gap-1.5 flex-wrap">
-                    {ATTENDANCE_STATUS.map(s => (
-                      <button key={s.value} onClick={() => markAttendance(emp.id, s.value)}
-                        className={`px-2.5 py-1 rounded-lg border text-xs font-medium transition-all
-                          ${status===s.value ? s.cls : 'border-dark-600 bg-dark-700 text-slate-500 hover:border-dark-500'}`}>
-                        {s.full}
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {status ? (
+                      <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${
+                        ATTENDANCE_STATUS.find(s=>s.value===status)?.cls || 'border-dark-600 text-slate-400'
+                      }`}>
+                        {ATTENDANCE_STATUS.find(s=>s.value===status)?.full}
+                        {otHours > 0 && <span className="ml-1 text-orange-400">+{otHours}h OT</span>}
+                      </span>
+                    ) : (
+                      <span className="text-[10px] text-slate-600 italic">Not marked</span>
+                    )}
+                    {isAdmin && att && (
+                      <button onClick={() => setEditRec({ record: att, empName: emp.name })}
+                        className="p-1.5 rounded-lg text-slate-500 hover:text-slate-200 hover:bg-dark-700">
+                        <Edit2 className="w-3.5 h-3.5" />
                       </button>
-                    ))}
+                    )}
                   </div>
                 </div>
-              )
-            })}
-          </div>
+
+                {/* Shift workers — clock-in / clock-out row */}
+                {isShift && (
+                  <div className="mb-2.5 bg-dark-700/60 rounded-lg px-3 py-2 space-y-2">
+                    <div className="flex items-center gap-3">
+                      <div className="flex-1">
+                        <p className="text-[10px] text-slate-500 mb-1">Clock In</p>
+                        <input type="time"
+                          value={localT.start}
+                          onChange={e => setTime(emp.id, 'start', e.target.value)}
+                          onBlur={() => saveShiftTimes(emp, localT.start, localT.end)}
+                          className="w-full bg-dark-600 border border-dark-500 rounded-lg px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
+                        />
+                      </div>
+                      <div className="flex-1">
+                        <p className="text-[10px] text-slate-500 mb-1">Clock Out</p>
+                        <input type="time"
+                          value={localT.end}
+                          onChange={e => setTime(emp.id, 'end', e.target.value)}
+                          onBlur={() => saveShiftTimes(emp, localT.start, localT.end)}
+                          className="w-full bg-dark-600 border border-dark-500 rounded-lg px-2 py-1.5 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
+                        />
+                      </div>
+                      {liveHours != null && (
+                        <div className="text-center min-w-[52px]">
+                          <p className="text-[10px] text-slate-500 mb-1">Hours</p>
+                          <p className="text-sm font-bold text-slate-100">{liveHours}h</p>
+                          {liveOT > 0 && (
+                            <p className="text-[10px] text-orange-400 font-semibold">+{liveOT}h OT</p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    {localT.start && localT.end && (
+                      <button
+                        onClick={() => saveShiftTimes(emp, localT.start, localT.end)}
+                        className="w-full py-1.5 text-xs font-medium rounded-lg bg-primary-600/80 hover:bg-primary-600 text-white transition-colors">
+                        Save Shift Times
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {/* Status buttons — all types */}
+                <div className="flex gap-1.5 flex-wrap">
+                  {ATTENDANCE_STATUS.map(s => (
+                    <button key={s.value} onClick={() => markAttendance(emp.id, s.value)}
+                      className={`px-2.5 py-1 rounded-lg border text-xs font-medium transition-all ${
+                        status === s.value
+                          ? s.cls
+                          : 'border-dark-600 bg-dark-700 text-slate-500 hover:border-dark-500 hover:text-slate-300'
+                      }`}>
+                      {s.short || s.full}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )
+          })
         )}
       </div>
 
