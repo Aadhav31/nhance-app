@@ -266,8 +266,7 @@ export default function LettersPage() {
     if (!bodyText) return toast.error('Letter body cannot be empty')
     setDownloading(true)
     try {
-      const refNo = form.refNumber.trim() ||
-        await nextDocNumber(companyId, 'letter').catch(() => `LTR-${new Date().getFullYear()}-${Date.now().toString().slice(-4)}`)
+      const refNo = await nextDocNumber(companyId, 'letter').catch(() => `LTR-${new Date().getFullYear()}-${Date.now().toString().slice(-4)}`)
       const verifyUrl = await createVerification(supabase, companyId, {
         docType: 'letter', docNumber: refNo, docDate: form.date,
         partyName: form.toName || form.letterType, amount: null,
@@ -435,7 +434,10 @@ export default function LettersPage() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-xs text-slate-400 mb-1 block">Ref Number</label>
-                <input className={inp} value={form.refNumber} onChange={e => setF('refNumber', e.target.value)} placeholder="SRA/HR/001/2026" />
+                <div className={`${inp} flex items-center gap-2 text-slate-400 cursor-not-allowed select-none`}>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary-500/15 border border-primary-500/30 text-primary-400 font-medium shrink-0">Auto</span>
+                  <span className="text-xs text-slate-500">LTR-{new Date().getFullYear()}-XXXX</span>
+                </div>
               </div>
               <div>
                 <label className="text-xs text-slate-400 mb-1 block">Date *</label>
