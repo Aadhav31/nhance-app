@@ -535,7 +535,8 @@ function AddEditModal({ project, clients, onClose, onSaved }) {
   }, [form.status])
 
   // Load existing rate items when editing
-  useQuery({
+  // TanStack Query v5 removed onSuccess — use data + useEffect instead
+  const { data: _fetchedRateItems } = useQuery({
     queryKey: ['rate_items', project?.id],
     queryFn: async () => {
       const { data } = await supabase
@@ -545,9 +546,12 @@ function AddEditModal({ project, clients, onClose, onSaved }) {
         .order('sort_order')
       return data || []
     },
-    enabled: !!project?.id && !ratesLoaded,
-    onSuccess: (d) => {
-      setRateItems(d.map(r => ({
+    enabled: !!project?.id,
+  })
+
+  useEffect(() => {
+    if (_fetchedRateItems && !ratesLoaded) {
+      setRateItems(_fetchedRateItems.map(r => ({
         ...r,
         _k:                    r.id,
         billing_basis:          r.billing_basis          || 'daily',
@@ -561,8 +565,8 @@ function AddEditModal({ project, clients, onClose, onSaved }) {
         allowance_per_day:      r.allowance_per_day      || '',
       })))
       setRatesLoaded(true)
-    },
-  })
+    }
+  }, [_fetchedRateItems, ratesLoaded])
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
