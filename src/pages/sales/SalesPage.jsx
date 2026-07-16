@@ -1366,13 +1366,17 @@ function PaymentsReceivedTab({ companyId, session }) {
   const blankPRForm = () => ({ client_name: '', amount: '', payment_date: todayStr(), payment_mode: 'bank', bank_reference: '', notes: '' })
   const [form, setForm] = useState(blankPRForm())
   const [editing, setEditing] = useState(null)
+  const [linkedInv, setLinkedInv] = useState(null) // carries project/equipment context from selected invoice
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
-  const closeModal = () => { setShowCreate(false); setEditing(null); setForm(blankPRForm()); setInvoiceId('') }
-  const openCreate = () => { setEditing(null); setForm(blankPRForm()); setInvoiceId(''); setShowCreate(true) }
+  const closeModal = () => { setShowCreate(false); setEditing(null); setForm(blankPRForm()); setInvoiceId(''); setLinkedInv(null) }
+  const openCreate = () => { setEditing(null); setForm(blankPRForm()); setInvoiceId(''); setLinkedInv(null); setShowCreate(true) }
   const openEdit = (p) => {
     setEditing(p)
     setForm({ client_name: p.client_name || '', amount: String(p.amount || ''), payment_date: p.payment_date || todayStr(), payment_mode: p.payment_mode || 'bank', bank_reference: p.bank_reference || '', notes: p.notes || '' })
     setInvoiceId(p.invoice_id || '')
+    setLinkedInv(p.project_id || p.inv_equipment_id
+      ? { project_id: p.project_id, inv_equipment_id: p.inv_equipment_id, project_name: p.project_name }
+      : null)
     setShowCreate(true)
   }
   const deletePayment = async (p) => {
@@ -1400,7 +1404,7 @@ function PaymentsReceivedTab({ companyId, session }) {
   const { data: invoices = [] } = useQuery({
     queryKey: ['invoices_for_payment', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('client_invoices').select('id, invoice_number, client_name, balance_due').eq('company_id', companyId).in('status', ['sent','partial','overdue']).order('created_at', { ascending: false })
+      const { data } = await supabase.from('client_invoices').select('id, invoice_number, client_name, balance_due, project_id, inv_equipment_id, project_name').eq('company_id', companyId).in('status', ['sent','partial','overdue']).order('created_at', { ascending: false })
       return data || []
     },
     enabled: !!companyId && showCreate,
@@ -1414,13 +1418,18 @@ function PaymentsReceivedTab({ companyId, session }) {
     if (!form.amount || parseFloat(form.amount) <= 0) return toast.error('Enter valid amount')
     setSaving(true)
     try {
-      const amt = parseFloat(form.amount)
+      const amt    = parseFloat(form.amount)
+      // Context automatically pulled from the linked invoice
+      const projId   = invoiceId ? (linkedInv?.project_id       || null) : null
+      const equipId  = invoiceId ? (linkedInv?.inv_equipment_id || null) : null
+      const projName = invoiceId ? (linkedInv?.project_name     || null) : null
       if (editing) {
         const { error } = await supabase.from('payments_received').update({
           payment_date: form.payment_date, invoice_id: invoiceId || null,
           client_name: form.client_name.trim(), amount: amt,
           payment_mode: form.payment_mode, bank_reference: form.bank_reference || null,
           notes: form.notes || null,
+          project_id: projId, inv_equipment_id: equipId, project_name: projName,
         }).eq('id', editing.id)
         if (error) throw error
         // Keep ledger in sync
@@ -1429,6 +1438,7 @@ function PaymentsReceivedTab({ companyId, session }) {
           description: `Payment received — ${editing.payment_number} (${form.client_name.trim()})`,
           payment_mode: form.payment_mode, bank_reference: form.bank_reference || null,
           notes: form.notes || null,
+          project_id: projId, inv_equipment_id: equipId,
         }).eq('reference_type', 'payment_received').eq('reference_id', editing.id)
         toast.success(`Payment ${editing.payment_number} updated`)
         closeModal()
@@ -1444,6 +1454,7 @@ function PaymentsReceivedTab({ companyId, session }) {
         client_name: form.client_name.trim(), amount: amt,
         payment_mode: form.payment_mode, bank_reference: form.bank_reference || null,
         notes: form.notes || null, created_by: session.user.id,
+        project_id: projId, inv_equipment_id: equipId, project_name: projName,
       }).select().single()
       if (error) throw error
       // Write to ledger immediately
@@ -1454,6 +1465,7 @@ function PaymentsReceivedTab({ companyId, session }) {
         bank_reference: form.bank_reference || null,
         reference_type: 'payment_received', reference_id: pr.id,
         notes: form.notes || null, created_by: session.user.id,
+        project_id: projId, inv_equipment_id: equipId,
       })
       toast.success(`Payment ${prNum} recorded — ${fmtINR(form.amount)}`)
       closeModal()
@@ -1482,6 +1494,12 @@ function PaymentsReceivedTab({ companyId, session }) {
                   <p className="text-xs font-mono text-primary-500">{p.payment_number}</p>
                   <p className="font-semibold text-slate-100 text-sm">{p.client_name}</p>
                   <p className="text-xs text-slate-500">{fmtDate(p.payment_date)} · {p.payment_mode?.toUpperCase()}{p.bank_reference ? ` · ${p.bank_reference}` : ''}</p>
+                  {(p.project_name || p.inv_equipment_id) && (
+                    <div className="flex items-center gap-2 mt-0.5">
+                      {p.project_name && <span className="text-[11px] text-teal-400">📍 {p.project_name}</span>}
+                      {p.inv_equipment_id && <span className="text-[11px] text-amber-400">🚧 Equipment</span>}
+                    </div>
+                  )}
                 </div>
                 <p className="text-xl font-black text-emerald-400 shrink-0">{fmtINR(p.amount)}</p>
               </div>
@@ -1500,10 +1518,26 @@ function PaymentsReceivedTab({ companyId, session }) {
           footer={<><button onClick={closeModal} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : editing ? 'Update Payment' : 'Record Payment'}</button></>}>
           <Field label="Client Name *"><ClientPicker companyId={companyId} value={form.client_name} onChange={n => setF('client_name', n)} onSelect={c => setF('client_name', c.name)} placeholder="Who paid?" className={inp()} /></Field>
           {invoices.length > 0 && <Field label="Link to Invoice (optional)">
-            <select className={inp()} value={invoiceId} onChange={e => { setInvoiceId(e.target.value); const inv = invoices.find(i => i.id === e.target.value); if (inv) setF('client_name', inv.client_name) }}>
+            <select className={inp()} value={invoiceId} onChange={e => {
+              const id = e.target.value
+              setInvoiceId(id)
+              const inv = invoices.find(i => i.id === id)
+              if (inv) {
+                setF('client_name', inv.client_name)
+                setLinkedInv((inv.project_id || inv.inv_equipment_id || inv.project_name) ? inv : null)
+              } else {
+                setLinkedInv(null)
+              }
+            }}>
               <option value="">-- Select invoice --</option>
               {invoices.map(i => <option key={i.id} value={i.id}>{i.invoice_number} · {i.client_name} · Due {fmtINR(i.balance_due)}</option>)}
             </select>
+            {linkedInv && (linkedInv.project_name || linkedInv.inv_equipment_id) && (
+              <div className="flex items-center gap-3 mt-1.5 text-xs">
+                {linkedInv.project_name && <span className="text-teal-400 flex items-center gap-1">📍 {linkedInv.project_name}</span>}
+                {linkedInv.inv_equipment_id && <span className="text-amber-400 flex items-center gap-1">🚧 Equipment linked</span>}
+              </div>
+            )}
           </Field>}
           <div className="grid grid-cols-2 gap-3">
             <Field label="Amount (₹) *"><input type="number" className={inp()} value={form.amount} onChange={e => setF('amount', e.target.value)} placeholder="0" step="0.01" /></Field>
