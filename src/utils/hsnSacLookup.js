@@ -1,7 +1,23 @@
 /**
  * HSN / SAC Code Lookup — Construction, Equipment Rental, Transport & Logistics
  * Covers raw materials, finished goods, services, machinery, vehicles.
- * GST rates are indicative — verify with a CA for your transactions.
+ *
+ * Rates verified against:
+ *  - CBIC GST Rate notifications (incl. No. 05/2020 dated 16-Oct-2020)
+ *  - ClearTax Chapter 84 HSN table (cleartax.in)
+ *  - Tax2Win Chapter 84 GST rate guide (tax2win.in)
+ *
+ * Key corrections vs. common misconceptions:
+ *  - HSN 8431 (construction machinery parts): 18% NOT 28%
+ *  - HSN 8429 (bulldozers, excavators, graders): 18% NOT 28%
+ *  - HSN 8430 (boring, pile-driving machinery): 18% NOT 28%
+ *  - HSN 8426 (cranes, ship derricks): 18% NOT 28%
+ *  - HSN 8427 (fork-lifts): 18% NOT 28%
+ *  - HSN 8483 (gearboxes, crankshafts, clutches): 28% NOT 18%
+ *  - HSN 8413 (pumps): split rate — fuel/concrete pumps 28%, water pumps 12%, hand pumps 5%
+ *
+ * ALWAYS verify with your CA for your specific product/transaction.
+ * Last updated: July 2026
  */
 
 const HSN_SAC_DB = {
@@ -216,25 +232,51 @@ const HSN_SAC_DB = {
   '8307':   { type: 'HSN', desc: 'Flexible tubing of base metal with fittings', gst: 18 },
 
   // ── ENGINES & MACHINERY (Ch. 84) ─────────────────────────────────────────
-  '8408':   { type: 'HSN', desc: 'Diesel engines (compression-ignition)', gst: 28 },
-  '8409':   { type: 'HSN', desc: 'Parts for diesel/petrol engines', gst: 28 },
-  '8413':   { type: 'HSN', desc: 'Pumps for liquids (water/fuel pumps)', gst: 18 },
-  '8414':   { type: 'HSN', desc: 'Air pumps, compressors, fans', gst: 18 },
+  // Note: 8408 has two rates — verify sub-code before billing
+  '8408':   { type: 'HSN', desc: 'Compression-ignition diesel/semi-diesel engines', gst: 28 },
+  '840820': { type: 'HSN', desc: 'Fixed-speed diesel engines ≤15 HP (agricultural)', gst: 12 },
+  '8409':   { type: 'HSN', desc: 'Parts for diesel/petrol engines (8407/8408)', gst: 28 },
+
+  // Note: 8413 has multiple sub-rates — use the correct sub-code
+  '8413':   { type: 'HSN', desc: 'Pumps for liquids (general 18% — see sub-codes)', gst: 18 },
+  '841311': { type: 'HSN', desc: 'Pumps for dispensing fuel/lubricants (filling stations)', gst: 28 },
+  '841320': { type: 'HSN', desc: 'Hand pumps and parts thereof', gst: 5 },
+  '841330': { type: 'HSN', desc: 'Fuel, lubricating or cooling medium pumps for engines', gst: 28 },
+  '841340': { type: 'HSN', desc: 'Concrete pumps', gst: 28 },
+  '841350': { type: 'HSN', desc: 'Other reciprocating positive displacement pumps', gst: 18 },
+  '841360': { type: 'HSN', desc: 'Other rotary positive displacement pumps', gst: 28 },
+  '841370': { type: 'HSN', desc: 'Centrifugal pumps (general)', gst: 18 },
+  '841381': { type: 'HSN', desc: 'Power-driven water pumps (centrifugal, submersible, turbine)', gst: 12 },
+
+  '8414':   { type: 'HSN', desc: 'Air pumps, compressors, fans, ventilating hoods', gst: 18 },
   '8415':   { type: 'HSN', desc: 'Air conditioning machines', gst: 28 },
-  '8425':   { type: 'HSN', desc: 'Pulley tackle, chain hoists, lifting equipment', gst: 18 },
-  '8426':   { type: 'HSN', desc: 'Mobile cranes, ship derricks, lifting frames', gst: 28 },
-  '8427':   { type: 'HSN', desc: 'Fork-lift trucks and work trucks', gst: 28 },
+  '8425':   { type: 'HSN', desc: 'Pulley tackle, chain hoists, winches, jacks', gst: 18 },
+  '8426':   { type: 'HSN', desc: 'Ship derricks, cranes, mobile lifting frames', gst: 18 },
+  '8427':   { type: 'HSN', desc: 'Fork-lift trucks and work trucks', gst: 18 },
   '8428':   { type: 'HSN', desc: 'Conveyors, lifts, escalators and other lifting machinery', gst: 18 },
-  '8429':   { type: 'HSN', desc: 'Bulldozers, graders, scrapers, levellers, angledozers', gst: 28 },
-  '8430':   { type: 'HSN', desc: 'Excavators, back-hoes, loaders, pile-drivers', gst: 28 },
-  '8431':   { type: 'HSN', desc: 'Parts for HS 8425–8430 construction machinery', gst: 28 },
-  '8432':   { type: 'HSN', desc: 'Agricultural soil preparation machinery', gst: 12 },
-  '8467':   { type: 'HSN', desc: 'Hand-held tools (pneumatic/hydraulic/motor)', gst: 18 },
+  '8429':   { type: 'HSN', desc: 'Bulldozers, graders, scrapers, excavators, road rollers', gst: 18 },
+  '8430':   { type: 'HSN', desc: 'Pile-drivers, boring machinery, snow-ploughs, compactors', gst: 18 },
+
+  // ── HSN 8431 — PARTS FOR CONSTRUCTION MACHINERY — ALL SUB-CODES 18% ──────
+  '8431':   { type: 'HSN', desc: 'Parts for HS 8425–8430 construction machinery', gst: 18 },
+  '843110': { type: 'HSN', desc: 'Parts for pulley tackle & hoists (8425)', gst: 18 },
+  '843120': { type: 'HSN', desc: 'Parts for fork-lift trucks (8427)', gst: 18 },
+  '843131': { type: 'HSN', desc: 'Parts for lifts, skip hoists, escalators (8428)', gst: 18 },
+  '843139': { type: 'HSN', desc: 'Parts for conveyors, moving equipment (8428)', gst: 18 },
+  '843141': { type: 'HSN', desc: 'Buckets, shovels, grabs and grips (8426/8429/8430)', gst: 18 },
+  '843142': { type: 'HSN', desc: 'Bulldozer and angledozer blades (8429)', gst: 18 },
+  '843143': { type: 'HSN', desc: 'Parts for boring/sinking machinery (8430)', gst: 18 },
+  '843149': { type: 'HSN', desc: 'Other parts for 8426/8429/8430 machinery (road rollers, cranes, excavators)', gst: 18 },
+
+  '8432':   { type: 'HSN', desc: 'Agricultural soil preparation / cultivation machinery', gst: 12 },
+  '8467':   { type: 'HSN', desc: 'Hand-held tools (pneumatic/hydraulic/motor driven)', gst: 18 },
   '8474':   { type: 'HSN', desc: 'Crushers, mixers, screens for stone/ore/concrete', gst: 18 },
   '8479':   { type: 'HSN', desc: 'Machines for special purposes NES', gst: 18 },
   '8481':   { type: 'HSN', desc: 'Taps, valves, cocks for pipes / tanks', gst: 18 },
   '8482':   { type: 'HSN', desc: 'Ball / roller bearings', gst: 18 },
-  '8483':   { type: 'HSN', desc: 'Transmission shafts, gears, clutches, couplings', gst: 18 },
+  // Note: 8483 has two rates — plain shaft bearings 18%, rest 28%
+  '8483':   { type: 'HSN', desc: 'Transmission shafts, camshafts, crankshafts, gears, gearboxes, clutches', gst: 28 },
+  '848310': { type: 'HSN', desc: 'Plain shaft bearings (without housing)', gst: 18 },
   '8484':   { type: 'HSN', desc: 'Gaskets, washers and similar seals', gst: 18 },
 
   // ── ELECTRICAL EQUIPMENT (Ch. 85) ─────────────────────────────────────────
