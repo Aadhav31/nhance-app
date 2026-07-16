@@ -726,6 +726,9 @@ function ExpensesTab({ companyId, session }) {
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState({ description: '', amount: '', expense_date: todayStr(), category: 'spares', vendor_id: '', payment_mode: 'cash', reference: '', notes: '' })
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
+  const [editing, setEditing] = useState(null)   // { _kind, _raw }
+  const [editForm, setEditForm] = useState({})
+  const setEF = (k, v) => setEditForm(p => ({ ...p, [k]: v }))
 
   // Direct purchase expenses (manually recorded)
   const { data: expenses = [], isLoading: loadingExp } = useQuery({
@@ -774,7 +777,7 @@ function ExpensesTab({ companyId, session }) {
   // Merge and sort both streams by date descending
   const allEntries = useMemo(() => {
     const expRows = expenses.map(e => ({
-      _key: `exp-${e.id}`, _kind: 'expense',
+      _key: `exp-${e.id}`, _kind: 'expense', _raw: e,
       date: e.expense_date, label: e.description,
       sub: e.category?.replace(/_/g, ' '),
       vendor: e.vendor_name, mode: e.payment_mode,
@@ -782,7 +785,7 @@ function ExpensesTab({ companyId, session }) {
       amount: Number(e.amount || 0),
     }))
     const payRows = billPayments.map(p => ({
-      _key: `pay-${p.id}`, _kind: 'payment',
+      _key: `pay-${p.id}`, _kind: 'payment', _raw: p,
       date: p.payment_date, label: `Payment — ${p.vendor_name || ''}`,
       sub: p.bills?.bill_number ? `Bill ${p.bills.bill_number}` : 'Bill Payment',
       vendor: p.vendor_name, mode: p.payment_mode,
@@ -835,6 +838,90 @@ function ExpensesTab({ companyId, session }) {
     } catch (e) { toast.error(e.message) } finally { setSaving(false) }
   }
 
+  const openEdit = (entry) => {
+    setEditing(entry)
+    if (entry._kind === 'expense') {
+      const e = entry._raw
+      setEditForm({ description: e.description || '', amount: String(e.amount || ''), expense_date: e.expense_date || todayStr(), category: e.category || 'spares', payment_mode: e.payment_mode || 'cash', reference: e.bank_reference || '' })
+    } else {
+      const p = entry._raw
+      setEditForm({ description: entry.label, amount: String(p.amount || ''), expense_date: p.payment_date || todayStr(), payment_mode: p.payment_mode || 'cash', reference: p.bank_reference || '' })
+    }
+  }
+
+  const saveEdit = async () => {
+    if (!editForm.amount || parseFloat(editForm.amount) <= 0) return toast.error('Enter valid amount')
+    setSaving(true)
+    try {
+      const amt = parseFloat(editForm.amount)
+      if (editing._kind === 'expense') {
+        await supabase.from('expenses').update({
+          expense_date: editForm.expense_date, category: editForm.category,
+          description: editForm.description.trim(), amount: amt, total_amount: amt,
+          payment_mode: editForm.payment_mode, bank_reference: editForm.reference || null,
+        }).eq('id', editing._raw.id)
+        await supabase.from('account_transactions').update({
+          description: editForm.description.trim(), amount: amt,
+          txn_date: editForm.expense_date, payment_mode: editForm.payment_mode,
+          bank_reference: editForm.reference || null,
+        }).eq('reference_id', editing._raw.id).eq('reference_type', 'expense')
+        qc.invalidateQueries(['purchase_expenses', companyId])
+      } else {
+        const p = editing._raw
+        await supabase.from('payments_made').update({
+          amount: amt, payment_date: editForm.expense_date,
+          payment_mode: editForm.payment_mode, bank_reference: editForm.reference || null,
+        }).eq('id', p.id)
+        // Recalculate bill balance
+        if (p.bill_id) {
+          const { data: rem } = await supabase.from('payments_made').select('amount').eq('bill_id', p.bill_id)
+          const totalPaid = (rem || []).reduce((s, r) => s + Number(r.amount), 0)
+          const { data: bill } = await supabase.from('bills').select('total_amount').eq('id', p.bill_id).single()
+          if (bill) {
+            const balance = Math.max(0, bill.total_amount - totalPaid)
+            await supabase.from('bills').update({
+              paid_amount: totalPaid, balance_due: balance,
+              status: totalPaid <= 0 ? 'pending' : balance <= 0 ? 'paid' : 'partial',
+            }).eq('id', p.bill_id)
+          }
+        }
+        qc.invalidateQueries(['purchase_bill_payments', companyId])
+        qc.invalidateQueries(['bills', companyId])
+      }
+      toast.success('Updated')
+      setEditing(null)
+    } catch (e) { toast.error(e.message) } finally { setSaving(false) }
+  }
+
+  const deleteEntry = async (entry) => {
+    if (!window.confirm(`Delete "${entry.label}"? This cannot be undone.`)) return
+    try {
+      if (entry._kind === 'expense') {
+        await supabase.from('account_transactions').delete().eq('reference_id', entry._raw.id).eq('reference_type', 'expense')
+        await supabase.from('expenses').delete().eq('id', entry._raw.id)
+        qc.invalidateQueries(['purchase_expenses', companyId])
+      } else {
+        const p = entry._raw
+        await supabase.from('payments_made').delete().eq('id', p.id)
+        if (p.bill_id) {
+          const { data: rem } = await supabase.from('payments_made').select('amount').eq('bill_id', p.bill_id)
+          const totalPaid = (rem || []).reduce((s, r) => s + Number(r.amount), 0)
+          const { data: bill } = await supabase.from('bills').select('total_amount').eq('id', p.bill_id).single()
+          if (bill) {
+            const balance = Math.max(0, bill.total_amount - totalPaid)
+            await supabase.from('bills').update({
+              paid_amount: totalPaid, balance_due: balance,
+              status: totalPaid <= 0 ? 'pending' : balance <= 0 ? 'paid' : 'partial',
+            }).eq('id', p.bill_id)
+          }
+        }
+        qc.invalidateQueries(['purchase_bill_payments', companyId])
+        qc.invalidateQueries(['bills', companyId])
+      }
+      toast.success('Deleted')
+    } catch (e) { toast.error(e.message) }
+  }
+
   return (
     <div className="flex flex-col h-full">
       <div className="px-4 py-3 border-b border-dark-800 shrink-0 flex items-center justify-between">
@@ -857,7 +944,7 @@ function ExpensesTab({ companyId, session }) {
             : <div className="space-y-2">
               {allEntries.map(e => (
                 <div key={e._key} className="bg-dark-800 border border-dark-700 rounded-xl p-4 flex items-center justify-between gap-3">
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <p className="font-semibold text-slate-100 text-sm truncate">{e.label}</p>
                       {e._kind === 'payment' && (
@@ -871,7 +958,11 @@ function ExpensesTab({ companyId, session }) {
                       {e.ref  && <> · <span className="text-primary-500">{e.ref}</span></>}
                     </p>
                   </div>
-                  <p className="text-lg font-black text-red-400 shrink-0">{fmtINR(e.amount)}</p>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <p className="text-lg font-black text-red-400 mr-2">{fmtINR(e.amount)}</p>
+                    <button onClick={() => openEdit(e)} className="p-1.5 rounded-lg text-slate-500 hover:text-blue-400 hover:bg-blue-900/20" title="Edit"><Pencil className="w-3.5 h-3.5" /></button>
+                    <button onClick={() => deleteEntry(e)} className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-900/20" title="Delete"><Trash2 className="w-3.5 h-3.5" /></button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -903,6 +994,38 @@ function ExpensesTab({ companyId, session }) {
             <div className="col-span-2"><Field label="Reference No."><input className={inp()} value={form.reference} onChange={e => setF('reference', e.target.value)} placeholder="Bill / receipt no." /></Field></div>
           </div>
           <Field label="Notes"><textarea className={inp()} rows={2} value={form.notes} onChange={e => setF('notes', e.target.value)} /></Field>
+        </Modal>
+      )}
+
+      {/* ── Edit Modal ── */}
+      {editing && (
+        <Modal
+          title={editing._kind === 'expense' ? 'Edit Expense' : 'Edit Bill Payment'}
+          onClose={() => setEditing(null)}
+          footer={<><button onClick={() => setEditing(null)} className="flex-1 btn-ghost">Cancel</button><button onClick={saveEdit} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save Changes'}</button></>}>
+          {editing._kind === 'expense' && (
+            <Field label="Description *"><input className={inp()} value={editForm.description} onChange={e => setEF('description', e.target.value)} /></Field>
+          )}
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Amount (₹) *"><input type="number" className={inp()} value={editForm.amount} onChange={e => setEF('amount', e.target.value)} step="0.01" /></Field>
+            <Field label="Date"><input type="date" className={inp()} value={editForm.expense_date} onChange={e => setEF('expense_date', e.target.value)} /></Field>
+            {editing._kind === 'expense' && (
+              <Field label="Category">
+                <select className={inp()} value={editForm.category} onChange={e => setEF('category', e.target.value)}>
+                  {CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+                </select>
+              </Field>
+            )}
+            <Field label="Payment Mode">
+              <select className={inp()} value={editForm.payment_mode} onChange={e => setEF('payment_mode', e.target.value)}>
+                {MODES.map(m => <option key={m} value={m}>{m.toUpperCase()}</option>)}
+              </select>
+            </Field>
+            <div className="col-span-2"><Field label="Reference No."><input className={inp()} value={editForm.reference} onChange={e => setEF('reference', e.target.value)} placeholder="Bill / receipt no." /></Field></div>
+          </div>
+          {editing._kind === 'payment' && (
+            <p className="text-[11px] text-slate-500 italic">Editing a bill payment will automatically recalculate the bill balance.</p>
+          )}
         </Modal>
       )}
     </div>
