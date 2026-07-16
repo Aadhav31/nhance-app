@@ -42,9 +42,7 @@ const LETTER_TYPES = [
 ]
 
 const BODY_TEMPLATES = {
-  'Commencement of Operations': `TO WHOMSOEVER IT MAY CONCERN
-
-This is to certify that [Equipment Name] (Equipment No. [Equipment Number]) has been successfully deployed and has formally commenced operations at [Project/Site Name], [Site Location], with effect from [Commencement Date].
+  'Commencement of Operations': `This is to certify that [Equipment Name] (Equipment No. [Equipment Number]) has been successfully deployed and has formally commenced operations at [Project/Site Name], [Site Location], with effect from [Commencement Date].
 
 All pre-operational safety checks have been carried out and the equipment has been verified to be in satisfactory working condition.
 
@@ -229,6 +227,8 @@ export default function LettersPage() {
       .replace(/\[Commencement Date\]/g, fmtD)
 
     editorRef.current.innerHTML = plainToHtml(filled)
+    // Auto-fill "To" name from client name
+    if (commData.clientName) setF('toName', commData.clientName)
   }, [commData, form.date, form.letterType, projects, eqList]) // eslint-disable-line
 
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
