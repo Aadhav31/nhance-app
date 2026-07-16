@@ -201,8 +201,8 @@ export default function LettersPage() {
   // Fetch projects + equipment once
   useEffect(() => {
     if (!companyId) return
-    supabase.from('projects').select('id,project_name,project_number')
-      .eq('company_id', companyId).order('project_name')
+    supabase.from('projects').select('id,project_name,project_code')
+      .eq('company_id', companyId).eq('is_active', true).order('project_name')
       .then(({ data }) => setProjects(data || []))
     supabase.from('equipment').select('id,name,equipment_number,category')
       .eq('company_id', companyId).order('name')
@@ -475,7 +475,7 @@ export default function LettersPage() {
                   <label className="text-xs text-slate-400 mb-1 block">Project *</label>
                   <select className={inp} value={commData.projectId} onChange={e => setCD('projectId', e.target.value)}>
                     <option value="">Select Project</option>
-                    {projects.map(p => <option key={p.id} value={p.id}>{p.project_name}{p.project_number ? ` (${p.project_number})` : ''}</option>)}
+                    {projects.map(p => <option key={p.id} value={p.id}>{p.project_name}{p.project_code ? ` (${p.project_code})` : ''}</option>)}
                   </select>
                 </div>
                 <div>
