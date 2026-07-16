@@ -859,7 +859,7 @@ function AttendanceReport({ companyId, from, to }) {
     queryFn: async () => {
       const { data: emps } = await supabase.from('hr_employees').select('id,name,designation,employee_number,department').eq('company_id', companyId).eq('is_active', true)
       if (!emps?.length) return []
-      const { data: att } = await supabase.from('hr_attendance').select('employee_id,date,status,ot_hours').eq('company_id', companyId).gte('date', from).lte('date', to)
+      const { data: att } = await supabase.from('hr_attendance').select('employee_id,attendance_date,status,ot_hours').eq('company_id', companyId).gte('attendance_date', from).lte('attendance_date', to)
       const attMap = {}
       for (const a of att||[]) {
         if (!attMap[a.employee_id]) attMap[a.employee_id] = { present:0, absent:0, halfday:0, leave:0, ot:0 }
