@@ -899,9 +899,11 @@ function BillsTab({ companyId, session }) {
       credit_days: String(bill.credit_days || 30),
     })
     setLines(ld?.map(l => ({
+      _id: Math.random().toString(36).slice(2),
       description: l.description || '', hsn_sac: l.hsn_sac || '',
       quantity: String(l.quantity || 1), unit: l.unit || 'nos',
       rate: String(l.rate || 0), amount: l.amount || 0,
+      _gst_rate: null, _gst_desc: null, _hsn_open: false,
     })) || [blankLine()])
     setShowCreate(true)
   }
@@ -1317,9 +1319,11 @@ function PurchaseOrdersTab({ companyId, session }) {
       is_tax_invoice: po.is_tax_invoice !== false,
     })
     setLines(ld?.map(l => ({
+      _id: Math.random().toString(36).slice(2),
       description: l.description || '', hsn_sac: l.hsn_sac || '',
       quantity: String(l.quantity || 1), unit: l.unit || 'nos',
       rate: String(l.rate || 0), amount: l.amount || 0,
+      _gst_rate: null, _gst_desc: null, _hsn_open: false,
     })) || [blankLine()])
     setShowCreate(true)
   }
