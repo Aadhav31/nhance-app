@@ -115,10 +115,11 @@ function CatDot({ color, size = 8 }) {
 }
 
 // ── Month Forecast Column ─────────────────────────────────────────────────────
-function MonthColumn({ year, month, plans, hrPayroll, isCurrent, fixedExpenses = [], fepStats = { paid: 0, pending: 0 }, overdueItems = [], today = '' }) {
-  const fixedTotal = fixedExpenses.reduce((s, fe) => s + fixedMonthlyAmount(fe), 0)
-  const plansTotal = plans.reduce((s, p) => s + monthlyAmount(p), 0)
-  const total      = plansTotal + hrPayroll + fixedTotal
+function MonthColumn({ year, month, plans, hrPayroll, isCurrent, fixedExpenses = [], fepStats = { paid: 0, pending: 0 }, overdueItems = [], today = '', pendingBills = [] }) {
+  const fixedTotal        = fixedExpenses.reduce((s, fe) => s + fixedMonthlyAmount(fe), 0)
+  const plansTotal        = plans.reduce((s, p) => s + monthlyAmount(p), 0)
+  const pendingBillsTotal = pendingBills.reduce((s, b) => s + Number(b.balance_due || 0), 0)
+  const total             = plansTotal + hrPayroll + fixedTotal + pendingBillsTotal
 
   // Split overdue items: same-month (in-period warning) vs prior-month carryover
   const todayMs = today ? new Date(today).getTime() : Date.now()
@@ -146,7 +147,7 @@ function MonthColumn({ year, month, plans, hrPayroll, isCurrent, fixedExpenses =
     byCategory[cat].items.push(p)
   })
 
-  const itemCount = plans.length + (hrPayroll > 0 ? 1 : 0) + fixedExpenses.length
+  const itemCount = plans.length + (hrPayroll > 0 ? 1 : 0) + fixedExpenses.length + pendingBills.length
 
   return (
     <div className={`flex-1 min-w-0 rounded-xl border ${isCurrent ? 'border-primary-500/50 bg-primary-500/5' : 'border-dark-700 bg-dark-800'} p-4 flex flex-col gap-3`}>
@@ -190,6 +191,9 @@ function MonthColumn({ year, month, plans, hrPayroll, isCurrent, fixedExpenses =
           {fixedTotal > 0 && (
             <div style={{ width: `${(fixedTotal / total) * 100}%`, background: '#0d9488' }} />
           )}
+          {pendingBillsTotal > 0 && (
+            <div style={{ width: `${(pendingBillsTotal / total) * 100}%`, background: '#f59e0b' }} />
+          )}
           {Object.entries(byCategory).map(([cat, { total: ct, color }]) => (
             <div key={cat} style={{ width: `${(ct / total) * 100}%`, background: color || '#64748b' }} />
           ))}
@@ -226,6 +230,31 @@ function MonthColumn({ year, month, plans, hrPayroll, isCurrent, fixedExpenses =
               <div key={fe.id} className="flex items-center justify-between">
                 <p className="text-xs text-slate-300 truncate">{fe.name}</p>
                 <p className="text-xs text-slate-400 shrink-0 ml-2">{fmtINRShort(fixedMonthlyAmount(fe))}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Pending Bills section */}
+      {pendingBills.length > 0 && (
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <div className="flex items-center gap-1.5">
+              <CatDot color="#f59e0b" />
+              <p className="text-[11px] font-semibold text-amber-400 uppercase tracking-wide">Pending Bills</p>
+              <span className="text-[9px] px-1 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-amber-400">Due</span>
+            </div>
+            <p className="text-xs text-amber-400">{fmtINRShort(pendingBillsTotal)}</p>
+          </div>
+          <div className="space-y-1 pl-3">
+            {pendingBills.map(b => (
+              <div key={b.id} className="flex items-center justify-between">
+                <div className="min-w-0">
+                  <p className="text-xs text-slate-300 truncate">{b.vendors?.name || b.bill_number}</p>
+                  <p className="text-[10px] text-slate-500">{b.bill_number}{b.due_date ? ` · due ${b.due_date}` : ''}</p>
+                </div>
+                <p className="text-xs text-amber-300 shrink-0 ml-2 font-medium">{fmtINRShort(b.balance_due)}</p>
               </div>
             ))}
           </div>
@@ -310,7 +339,7 @@ function MonthColumn({ year, month, plans, hrPayroll, isCurrent, fixedExpenses =
         </div>
       )}
 
-      {plans.length === 0 && hrPayroll === 0 && fixedExpenses.length === 0 && sameMonthOverdue.length === 0 && carryoverItems.length === 0 && (
+      {plans.length === 0 && hrPayroll === 0 && fixedExpenses.length === 0 && pendingBills.length === 0 && sameMonthOverdue.length === 0 && carryoverItems.length === 0 && (
         <p className="text-xs text-slate-600 text-center py-4">No expenses planned</p>
       )}
     </div>
@@ -570,6 +599,35 @@ export default function ExpensePlannerPage() {
     staleTime: 60_000,
   })
 
+  // Pending bills auto-pull
+  const { data: pendingBills = [] } = useQuery({
+    queryKey: ['pending_bills_planner', companyId],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('bills')
+        .select('id,bill_number,due_date,bill_date,balance_due,total_amount,status,payment_type,vendors(name)')
+        .eq('company_id', companyId)
+        .in('status', ['pending', 'partial'])
+        .gt('balance_due', 0)
+        .order('due_date', { ascending: true })
+      if (error) throw error
+      return data || []
+    },
+    enabled: !!companyId,
+    staleTime: 30_000,
+  })
+
+  // Bills whose due_date falls in each displayed month
+  const pendingBillsByMonth = useMemo(() =>
+    months.map(({ year, month }) => {
+      const key = `${year}-${String(month + 1).padStart(2, '0')}`
+      return pendingBills.filter(b => {
+        const dStr = b.due_date || b.bill_date
+        return dStr ? dStr.startsWith(key) : false
+      })
+    }),
+    [months, pendingBills]
+  )
+
   // Fixed expenses that apply to each displayed month
   const fixedMonthPlans = useMemo(() =>
     months.map(({ year, month }) =>
@@ -688,11 +746,12 @@ export default function ExpensePlannerPage() {
     [months, plansWithColor]
   )
 
-  // Totals for summary (manual plans + HR payroll + fixed expenses)
+  // Totals for summary (manual plans + HR payroll + fixed expenses + pending bills)
   const totals = monthPlans.map((mp, i) =>
     mp.reduce((s, p) => s + monthlyAmount(p), 0) +
     hrPayroll +
-    fixedMonthPlans[i].reduce((s, fe) => s + fixedMonthlyAmount(fe), 0)
+    fixedMonthPlans[i].reduce((s, fe) => s + fixedMonthlyAmount(fe), 0) +
+    (pendingBillsByMonth[i] || []).reduce((s, b) => s + Number(b.balance_due || 0), 0)
   )
 
   // ── Delete ────────────────────────────────────────────────────────────────────
@@ -724,6 +783,7 @@ export default function ExpensePlannerPage() {
             {MONTHS[months[0].month].slice(0,3)} · {MONTHS[months[1].month].slice(0,3)} · {MONTHS[months[2].month].slice(0,3)} {months[0].year !== months[2].year ? `${months[0].year}–${months[2].year}` : months[0].year}
             {hrPayroll > 0 && <span className="ml-2 text-indigo-400">· Payroll {fmtINRShort(hrPayroll)}/mo</span>}
             {fixedExpenses.length > 0 && <span className="ml-2 text-teal-400">· {fixedExpenses.length} fixed auto-pulled</span>}
+            {pendingBills.length > 0 && <span className="ml-2 text-amber-400">· {pendingBills.length} pending bill{pendingBills.length !== 1 ? 's' : ''}</span>}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -778,6 +838,7 @@ export default function ExpensePlannerPage() {
                 fepStats={fepStatsByMonth[i] || { paid: 0, pending: 0 }}
                 overdueItems={overdueByMonth[i] || []}
                 today={todayStr}
+                pendingBills={pendingBillsByMonth[i] || []}
               />
             ))}
           </div>
@@ -842,6 +903,55 @@ export default function ExpensePlannerPage() {
                       ))}
                     </div>
                   )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ── Pending Bills ─────────────────────────────────────────────────────── */}
+      {pendingBills.length > 0 && (
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-xs font-semibold text-amber-400 uppercase tracking-wider flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-amber-500 inline-block" />
+              Pending Bills ({pendingBills.length})
+            </h2>
+            <span className="text-xs text-slate-500">Pulled from Purchase → Bills</span>
+          </div>
+          <div className="space-y-2">
+            {pendingBills.map(b => {
+              const isOverdue = b.due_date && b.due_date < todayStr
+              return (
+                <div key={b.id} className={`card flex items-center justify-between px-4 py-3 ${isOverdue ? 'border-red-800/40' : 'border-amber-800/30'}`}>
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span className="text-base">🧾</span>
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-slate-200 truncate">{b.vendors?.name || '—'}</p>
+                      <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                        <span className="text-[10px] text-amber-400 font-mono">{b.bill_number}</span>
+                        {b.due_date && (
+                          <>
+                            <span className="text-slate-600">·</span>
+                            <span className={`text-[10px] ${isOverdue ? 'text-red-400 font-semibold' : 'text-slate-500'}`}>
+                              {isOverdue ? '⚠ Overdue · ' : 'Due '}
+                              {b.due_date}
+                            </span>
+                          </>
+                        )}
+                        <span className={`text-[9px] px-1 py-0.5 rounded border ${b.status === 'partial' ? 'text-orange-400 bg-orange-500/10 border-orange-600/30' : 'text-amber-400 bg-amber-500/10 border-amber-600/30'}`}>
+                          {b.status === 'partial' ? 'Partial' : 'Unpaid'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="text-right shrink-0 ml-3">
+                    <p className={`text-sm font-semibold ${isOverdue ? 'text-red-300' : 'text-amber-300'}`}>{fmtINR(b.balance_due)}</p>
+                    {b.status === 'partial' && (
+                      <p className="text-[10px] text-slate-500">of {fmtINRShort(b.total_amount)}</p>
+                    )}
+                  </div>
                 </div>
               )
             })}
