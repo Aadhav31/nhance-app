@@ -16,7 +16,7 @@ DO $$ BEGIN
   END IF;
 END $$;
 
--- minimum_stock → min_stock_level
+-- minimum_stock → min_stock_levela
 -- (a new empty min_stock_level may already exist from a previous migration — copy + drop old)
 DO $$ BEGIN
   IF EXISTS (
