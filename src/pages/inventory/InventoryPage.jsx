@@ -508,7 +508,7 @@ function useInventoryData(companyId) {
   const { data: equipment = [] } = useQuery({
     queryKey: ['equipment_list', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('equipment').select('id, equipment_name, fleet_number').eq('company_id', companyId).order('fleet_number').limit(100)
+      const { data } = await supabase.from('equipment').select('id, name, equipment_number').eq('company_id', companyId).order('equipment_number').limit(100)
       return data || []
     },
     enabled: !!companyId,
@@ -749,7 +749,7 @@ function StockOutTab({ companyId, session }) {
             <Field label="Link to Equipment">
               <select className={inp()} value={form.equipment_id} onChange={e => setF('equipment_id', e.target.value)}>
                 <option value="">-- Equipment (optional) --</option>
-                {equipment.map(e => <option key={e.id} value={e.id}>{e.fleet_number} — {e.equipment_name}</option>)}
+                {equipment.map(e => <option key={e.id} value={e.id}>{e.equipment_number} — {e.name}</option>)}
               </select>
             </Field>
             <Field label="Link to Project">
