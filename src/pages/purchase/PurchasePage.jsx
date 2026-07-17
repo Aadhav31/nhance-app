@@ -1304,7 +1304,7 @@ function BillsTab({ companyId, session }) {
               const { data: newItem, error: nie } = await supabase.from('inventory_items').insert({
                 company_id: companyId, item_name: l.description.trim(),
                 item_code: itemCode, category: invCategory,
-                unit: l.unit, is_active: true, created_by: session.user.id,
+                unit: l.unit, is_active: true,
               }).select('id').single()
               if (nie) { invErrors++; toast.error(`Item error: ${nie.message}`); continue }
               itemId = newItem.id
