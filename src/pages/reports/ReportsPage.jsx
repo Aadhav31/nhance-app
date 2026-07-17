@@ -869,7 +869,7 @@ function AttendanceReport({ companyId, from, to }) {
   const { data=[], isLoading } = useQuery({
     queryKey: ['rpt_attendance', companyId, from, to],
     queryFn: async () => {
-      const { data: emps } = await supabase.from('hr_employees').select('id,name,designation,employee_number,department').eq('company_id', companyId).eq('is_active', true)
+      const { data: emps } = await supabase.from('hr_employees').select('id,name,designation,employee_number,department').eq('company_id', companyId).neq('is_active', false)
       if (!emps?.length) return []
       const { data: att } = await supabase.from('hr_attendance').select('employee_id,attendance_date,status,ot_hours').eq('company_id', companyId).gte('attendance_date', from).lte('attendance_date', to)
       const attMap = {}
