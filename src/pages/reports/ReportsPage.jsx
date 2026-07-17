@@ -357,6 +357,14 @@ function EquipPLReport({ companyId, from, to }) {
         .gte('expense_date', from).lte('expense_date', to)
         .in('equipment_id', eqIds)
 
+      // ── 8b. Bills tagged to equipment (vendor bills for repairs, spares, services etc.)
+      const { data: billExps } = await supabase.from('bills')
+        .select('equipment_id,total_amount')
+        .eq('company_id', companyId)
+        .gte('bill_date', from).lte('bill_date', to)
+        .neq('status', 'cancelled')
+        .in('equipment_id', eqIds)
+
       // ── 9. Build P&L per equipment ─────────────────────────────────────────
       const fromDate = new Date(from); const toDate = new Date(to)
       const periodDays   = Math.max(Math.round((toDate-fromDate)/86400000)+1, 1)
@@ -413,7 +421,11 @@ function EquipPLReport({ companyId, from, to }) {
           return acc
         }, {})
 
-        const totalExpense = fuelCost + operatorCost + maintCost + sparesCost + directCost
+        // Vendor bills tagged to equipment
+        const billCost = (billExps||[]).filter(b=>b.equipment_id===eq.id).reduce((s,b)=>s+(Number(b.total_amount)||0),0)
+        if (billCost > 0) byCategory['vendor bills'] = (byCategory['vendor bills']||0) + billCost
+
+        const totalExpense = fuelCost + operatorCost + maintCost + sparesCost + directCost + billCost
         const netPL        = calcRevenue_ - totalExpense
 
         // Fuel consumption alert
@@ -441,7 +453,7 @@ function EquipPLReport({ companyId, from, to }) {
           workingHrs, shiftDays, totalShiftCount, maxShiftsPerDay,
           calcRevenue: calcRevenue_, revenueSource,
           fuelCost, fuelQtyOwn, fuelByClient,
-          operatorCost, maintCost, sparesCost, directCost, byCategory,
+          operatorCost, maintCost, sparesCost, directCost, billCost, byCategory,
           totalExpense, netPL, fuelAlert,
         }
       }).filter(Boolean).sort((a,b)=>b.netPL-a.netPL)

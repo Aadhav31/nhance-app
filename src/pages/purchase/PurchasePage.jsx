@@ -9,7 +9,7 @@ import {
   ArrowUpCircle, RefreshCcw, Wallet, Search, ChevronRight,
   CheckCircle, User, Phone, Mail, MapPin, Hash, Upload, ExternalLink,
   Pencil, Trash2, Ban, FileDown, Sheet, ShieldOff,
-  Paperclip, Camera, Eye,
+  Paperclip, Camera, Eye, Link2, Unlink, FolderOpen, Wrench,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format } from 'date-fns'
@@ -1039,7 +1039,7 @@ function BillsTab({ companyId, session }) {
   const { company, userProfile } = useAuth()
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving] = useState(false)
-  const blankForm = () => ({ vendor_id: '', vendor_gstin: '', bill_date: todayStr(), due_date: '', bill_ref: '', use_igst: false, discount_amount: 0, notes: '', is_tax_invoice: true, payment_type: 'standard', credit_days: '30' })
+  const blankForm = () => ({ vendor_id: '', vendor_gstin: '', bill_date: todayStr(), due_date: '', bill_ref: '', use_igst: false, discount_amount: 0, notes: '', is_tax_invoice: true, payment_type: 'standard', credit_days: '30', project_id: '', equipment_id: '' })
 
   // Auto-compute due date from bill_date + credit_days
   const computeDueDate = (billDate, days) => {
@@ -1053,10 +1053,14 @@ function BillsTab({ companyId, session }) {
   const [invCategory, setInvCategory] = useState('')
   const [invStore, setInvStore] = useState('')
   const [editing, setEditing] = useState(null)
-  const [attachFile, setAttachFile] = useState(null)        // File selected for upload
-  const [attachPreview, setAttachPreview] = useState(null)  // local object URL for preview
-  const [attachUrl, setAttachUrl] = useState(null)          // existing saved URL (edit mode)
+  const [attachFile, setAttachFile] = useState(null)
+  const [attachPreview, setAttachPreview] = useState(null)
+  const [attachUrl, setAttachUrl] = useState(null)
   const [attachUploading, setAttachUploading] = useState(false)
+  // Link payment modal
+  const [linkPayBill, setLinkPayBill] = useState(null)      // bill being linked
+  const [linkSelIds, setLinkSelIds] = useState(new Set())   // selected payment IDs
+  const [linkSaving, setLinkSaving] = useState(false)
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
 
   const clearAttach = () => {
@@ -1087,6 +1091,7 @@ function BillsTab({ companyId, session }) {
       notes: bill.notes || '', is_tax_invoice: bill.is_tax_invoice !== false,
       payment_type: bill.payment_type === 'credit' ? 'credit' : 'standard',
       credit_days: String(bill.credit_days || 30),
+      project_id: bill.project_id || '', equipment_id: bill.equipment_id || '',
     })
     clearAttach(); setAttachUrl(bill.attachment_url || null)
     setLines(ld?.map(l => {
@@ -1151,6 +1156,38 @@ function BillsTab({ companyId, session }) {
     qc.invalidateQueries(['bills', companyId])
   }
 
+  const recalcBillBalance = async (billId) => {
+    const { data: pays } = await supabase.from('payments_made').select('amount').eq('bill_id', billId)
+    const totalPaid = (pays || []).reduce((s, p) => s + Number(p.amount), 0)
+    const { data: bill } = await supabase.from('bills').select('total_amount').eq('id', billId).single()
+    if (!bill) return
+    const balance = Math.max(0, bill.total_amount - totalPaid)
+    await supabase.from('bills').update({
+      paid_amount: totalPaid, balance_due: balance,
+      status: totalPaid <= 0 ? 'pending' : balance <= 0 ? 'paid' : 'partial',
+    }).eq('id', billId)
+  }
+
+  const confirmLinkPayments = async () => {
+    if (!linkPayBill || linkSelIds.size === 0) return
+    setLinkSaving(true)
+    try {
+      // Link all selected payments to this bill
+      for (const payId of linkSelIds) {
+        const { error } = await supabase.from('payments_made')
+          .update({ bill_id: linkPayBill.id })
+          .eq('id', payId)
+        if (error) throw error
+      }
+      // Recalculate bill paid_amount / balance_due
+      await recalcBillBalance(linkPayBill.id)
+      toast.success(`${linkSelIds.size} payment${linkSelIds.size > 1 ? 's' : ''} linked to ${linkPayBill.bill_number}`)
+      setLinkPayBill(null); setLinkSelIds(new Set())
+      qc.invalidateQueries(['bills', companyId])
+      qc.invalidateQueries(['purchase_bill_payments', companyId])
+    } catch (e) { toast.error(e.message) } finally { setLinkSaving(false) }
+  }
+
   const { data: bills = [], isLoading } = useQuery({
     queryKey: ['bills', companyId],
     queryFn: async () => {
@@ -1186,6 +1223,37 @@ function BillsTab({ companyId, session }) {
     },
     enabled: !!companyId,
   })
+  const { data: billProjects = [] } = useQuery({
+    queryKey: ['projects_active', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('projects').select('id, project_name, project_code').eq('company_id', companyId).eq('is_active', true).order('project_name')
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+  const { data: billEquipment = [] } = useQuery({
+    queryKey: ['equipment_active', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('equipment').select('id, name, equipment_number, category').eq('company_id', companyId).order('name')
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+  // Unlinked payments for "Link Payment" modal — fetched on demand
+  const { data: unlinkedPays = [], refetch: refetchUnlinked } = useQuery({
+    queryKey: ['unlinked_pays', companyId, linkPayBill?.vendor_id],
+    queryFn: async () => {
+      if (!linkPayBill) return []
+      const { data } = await supabase.from('payments_made')
+        .select('id, payment_number, payment_date, amount, payment_mode, notes')
+        .eq('company_id', companyId)
+        .eq('vendor_id', linkPayBill.vendor_id)
+        .is('bill_id', null)
+        .order('payment_date', { ascending: false })
+      return data || []
+    },
+    enabled: !!linkPayBill,
+  })
 
   const isTax = form.is_tax_invoice !== false
 
@@ -1207,6 +1275,8 @@ function BillsTab({ companyId, session }) {
 
       if (editing) {
         // ── UPDATE ──
+        const selProj = billProjects.find(p => p.id === form.project_id)
+        const selEq   = billEquipment.find(e => e.id === form.equipment_id)
         const { error } = await supabase.from('bills').update({
           vendor_id: form.vendor_id, vendor_name: vendor?.name || '',
           bill_date: form.bill_date, due_date: dueDateVal || null,
@@ -1217,6 +1287,10 @@ function BillsTab({ companyId, session }) {
           cgst_amount: cgst_amt, sgst_amount: sgst_amt, igst_amount: igst_amt,
           total_amount: total, balance_due: Math.max(0, total - (Number(editing.paid_amount) || 0)),
           notes: form.notes || null,
+          project_id:     form.project_id   || null,
+          equipment_id:   form.equipment_id || null,
+          project_name:   selProj?.project_name || null,
+          equipment_name: selEq?.name || null,
         }).eq('id', editing.id)
         if (error) throw error
         await supabase.from('bill_line_items').delete().eq('bill_id', editing.id)
@@ -1241,6 +1315,8 @@ function BillsTab({ companyId, session }) {
       }
 
       // ── CREATE ──
+      const selProj = billProjects.find(p => p.id === form.project_id)
+      const selEq   = billEquipment.find(e => e.id === form.equipment_id)
       const id = crypto.randomUUID()
       const blNum = await nextDocNumber(companyId, 'bill').catch(() => `BL-${Date.now()}`)
       const { error } = await supabase.from('bills').insert({
@@ -1257,6 +1333,10 @@ function BillsTab({ companyId, session }) {
         balance_due: total,
         status: 'pending',
         notes: form.notes || null, created_by: session.user.id,
+        project_id:     form.project_id   || null,
+        equipment_id:   form.equipment_id || null,
+        project_name:   selProj?.project_name || null,
+        equipment_name: selEq?.name || null,
       })
       if (error) throw error
 
@@ -1370,6 +1450,13 @@ function BillsTab({ companyId, session }) {
                   </div>
                   <p className="font-semibold text-slate-100 text-sm mt-0.5">{b.vendor_name || b.vendors?.vendor_name}</p>
                   {b.bill_ref && <p className="text-xs text-slate-500">Ref: {b.bill_ref}</p>}
+                  {/* Project / Equipment tags */}
+                  {(b.project_name || b.equipment_name) && (
+                    <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                      {b.project_name && <span className="text-[10px] px-1.5 py-0.5 rounded bg-teal-500/10 border border-teal-700/30 text-teal-400 flex items-center gap-1"><FolderOpen className="w-2.5 h-2.5" />{b.project_name}</span>}
+                      {b.equipment_name && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 border border-amber-700/30 text-amber-400 flex items-center gap-1"><Wrench className="w-2.5 h-2.5" />{b.equipment_name}</span>}
+                    </div>
+                  )}
                   {/* Due date urgency line */}
                   {isCredit && dueD && !['paid','cancelled'].includes(b.status) && (
                     isOverdue
@@ -1398,6 +1485,7 @@ function BillsTab({ companyId, session }) {
                 </div>
                 <div className="flex items-center gap-1">
                   {b.status !== 'cancelled' && <button onClick={() => openEdit(b)} className="p-1.5 rounded-lg text-slate-500 hover:text-blue-400 hover:bg-blue-900/20" title="Edit"><Pencil className="w-3.5 h-3.5" /></button>}
+                  {b.status !== 'cancelled' && <button onClick={() => { setLinkPayBill(b); setLinkSelIds(new Set()) }} className="p-1.5 rounded-lg text-slate-500 hover:text-violet-400 hover:bg-violet-900/20" title="Link advance payment to this bill"><Link2 className="w-3.5 h-3.5" /></button>}
                   {b.status !== 'cancelled' && <button onClick={() => voidBill(b)} className="p-1.5 rounded-lg text-slate-500 hover:text-yellow-400 hover:bg-yellow-900/20" title="Void"><Ban className="w-3.5 h-3.5" /></button>}
                   {<button onClick={() => deleteBill(b)} className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-900/20" title="Delete"><Trash2 className="w-3.5 h-3.5" /></button>}
                   <button onClick={() => voidQRbill(b)} className="p-1.5 rounded-lg text-slate-500 hover:text-amber-400 hover:bg-amber-900/20" title="Void QR Code"><ShieldOff className="w-3.5 h-3.5" /></button>
@@ -1409,6 +1497,75 @@ function BillsTab({ companyId, session }) {
           )})}
         </div>}
       </div>
+      {/* ── Link Payment Modal ── */}
+      {linkPayBill && (
+        <Modal
+          title={`Link Advance Payment → ${linkPayBill.bill_number}`}
+          onClose={() => { setLinkPayBill(null); setLinkSelIds(new Set()) }}
+          footer={
+            <>
+              <button onClick={() => { setLinkPayBill(null); setLinkSelIds(new Set()) }} className="flex-1 btn-ghost">Cancel</button>
+              <button
+                onClick={confirmLinkPayments}
+                disabled={linkSelIds.size === 0 || linkSaving}
+                className="flex-1 btn-primary"
+              >
+                {linkSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : `Link ${linkSelIds.size > 0 ? linkSelIds.size + ' ' : ''}Payment${linkSelIds.size !== 1 ? 's' : ''}`}
+              </button>
+            </>
+          }
+        >
+          <div className="mb-3 p-3 rounded-xl bg-dark-700/60 border border-dark-600 text-xs text-slate-400">
+            Showing unlinked payments from <span className="text-slate-200 font-semibold">{linkPayBill.vendor_name}</span>.
+            Select one or more advance payments to link against <span className="text-primary-400 font-semibold">{linkPayBill.bill_number}</span> (₹{Number(linkPayBill.total_amount).toLocaleString('en-IN')}).
+          </div>
+          {unlinkedPays.length === 0 ? (
+            <div className="py-10 text-center text-slate-500 text-sm flex flex-col items-center gap-2">
+              <Unlink className="w-8 h-8 text-slate-700" />
+              <p>No unlinked payments found for this vendor.</p>
+              <p className="text-xs">Payments already linked to a bill won't appear here.</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {unlinkedPays.map(pay => {
+                const checked = linkSelIds.has(pay.id)
+                return (
+                  <label key={pay.id} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${checked ? 'border-violet-600/60 bg-violet-500/5' : 'border-dark-600 bg-dark-800/40 hover:border-dark-500'}`}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => {
+                        const n = new Set(linkSelIds)
+                        if (checked) n.delete(pay.id); else n.add(pay.id)
+                        setLinkSelIds(n)
+                      }}
+                      className="w-4 h-4 accent-violet-500 cursor-pointer shrink-0"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-mono text-primary-400">{pay.payment_number || '—'}</span>
+                        <span className="text-[10px] text-slate-500">{pay.payment_date}</span>
+                        <span className="text-[10px] text-slate-500">{pay.payment_mode}</span>
+                      </div>
+                      {pay.notes && <p className="text-[10px] text-slate-500 truncate mt-0.5">{pay.notes}</p>}
+                    </div>
+                    <span className="text-sm font-bold text-emerald-400 shrink-0">₹{Number(pay.amount).toLocaleString('en-IN')}</span>
+                  </label>
+                )
+              })}
+              {linkSelIds.size > 0 && (
+                <div className="p-3 rounded-xl bg-violet-500/5 border border-violet-700/30 text-xs text-violet-300 flex items-center justify-between">
+                  <span>Selected total</span>
+                  <span className="font-bold">
+                    ₹{unlinkedPays.filter(p => linkSelIds.has(p.id)).reduce((s,p) => s + Number(p.amount), 0).toLocaleString('en-IN')}
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+        </Modal>
+      )}
+
       {showCreate && (
         <Modal title={editing ? `Edit Bill · ${editing.bill_number}` : 'New Bill'} onClose={closeModal} wide
           footer={<><button onClick={closeModal} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : editing ? 'Update Bill' : 'Create Bill'}</button></>}>
@@ -1480,6 +1637,37 @@ function BillsTab({ companyId, session }) {
               </>
             )}
             <div className="col-span-2"><Field label="Vendor Bill / Reference No."><input className={inp()} value={form.bill_ref} onChange={e => setF('bill_ref', e.target.value)} /></Field></div>
+
+            {/* Project & Equipment tagging */}
+            <div className="col-span-2 pt-1">
+              <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                <FolderOpen className="w-3.5 h-3.5" /> Project & Equipment (for P&L tracking)
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Project">
+                  <select className={inp()} value={form.project_id} onChange={e => setF('project_id', e.target.value)}>
+                    <option value="">-- No project --</option>
+                    {billProjects.map(p => (
+                      <option key={p.id} value={p.id}>{p.project_name}{p.project_code ? ` (${p.project_code})` : ''}</option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Equipment / Machine">
+                  <select className={inp()} value={form.equipment_id} onChange={e => setF('equipment_id', e.target.value)}>
+                    <option value="">-- No machine --</option>
+                    {billEquipment.map(eq => (
+                      <option key={eq.id} value={eq.id}>{eq.name}{eq.equipment_number ? ` · ${eq.equipment_number}` : ''}</option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
+              {(form.project_id || form.equipment_id) && (
+                <p className="text-[10px] text-teal-400 mt-1.5 flex items-center gap-1">
+                  <Wrench className="w-3 h-3" />
+                  Bill amount will appear in Equipment P&amp;L report
+                </p>
+              )}
+            </div>
           </div>
           <LineItemsEditor lines={lines} setLines={setLines} isTax={isTax} />
 
