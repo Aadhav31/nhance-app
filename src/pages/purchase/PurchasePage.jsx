@@ -2227,7 +2227,7 @@ function PaymentsMadeTab({ companyId, session }) {
   const { data: payments = [], isLoading } = useQuery({
     queryKey: ['payments_made', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('payments_made').select('*').eq('company_id', companyId).order('created_at', { ascending: false }).limit(200)
+      const { data } = await supabase.from('payments_made').select('*, bills(bill_number)').eq('company_id', companyId).order('created_at', { ascending: false }).limit(200)
       return data || []
     },
     enabled: !!companyId,
@@ -2329,9 +2329,15 @@ function PaymentsMadeTab({ companyId, session }) {
             <div key={p.id} className="bg-dark-800 border border-dark-700 rounded-xl p-4">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <p className="text-xs font-mono text-primary-500">{p.payment_number}</p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-xs font-mono text-primary-500">{p.payment_number}</p>
+                    {p.source_type === 'field_expense' && (
+                      <span className="text-[10px] bg-violet-900/40 text-violet-300 border border-violet-700/40 rounded px-1.5 py-0.5 font-medium">Via Field Exp</span>
+                    )}
+                  </div>
                   <p className="font-semibold text-slate-100 text-sm">{p.vendor_name || p.vendors?.vendor_name}</p>
                   <p className="text-xs text-slate-500">{fmtDate(p.payment_date)} · {p.payment_mode?.toUpperCase()}{p.bank_reference ? ` · ${p.bank_reference}` : ''}</p>
+                  {p.bills?.bill_number && <p className="text-[10px] text-slate-500">Against {p.bills.bill_number}</p>}
                 </div>
                 <p className="text-xl font-black text-red-400 shrink-0">{fmtINR(p.amount)}</p>
               </div>

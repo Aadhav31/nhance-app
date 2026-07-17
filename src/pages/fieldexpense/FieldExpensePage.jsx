@@ -1190,6 +1190,8 @@ function ExpenseHistory({ companyId, userId, userRole }) {
         amount:          amt,
         payment_mode:    linkExp.payment_mode || 'cash',
         notes:           `From field expense: ${linkExp.description || linkExp.payee_name || ''}`.trim(),
+        source_type:     'field_expense',
+        source_id:       linkExp.id,
       }).select('id').single()
       if (pmErr) throw pmErr
       // Write to account_transactions ledger
@@ -1238,7 +1240,9 @@ function ExpenseHistory({ companyId, userId, userRole }) {
     return matchSearch && matchCat && matchMode
   })
 
-  const totalAmt = filtered.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0)
+  // Exclude expenses already recorded as bill payments — those are counted in Payments Made
+  const linkedCount = filtered.filter(e => !!e.linked_bill_id).length
+  const totalAmt = filtered.reduce((s, e) => s + (e.linked_bill_id ? 0 : (parseFloat(e.amount) || 0)), 0)
 
   const handleDelete = async (id) => {
     const { error } = await supabase.from('field_expenses').delete().eq('id', id)
@@ -1263,6 +1267,7 @@ function ExpenseHistory({ companyId, userId, userRole }) {
           <div>
             <p className="text-xs text-slate-500">{isAdmin ? 'All Expenses' : 'My Expenses'}</p>
             <p className="text-xl font-black text-slate-100">{fmtINR(totalAmt)}</p>
+            {linkedCount > 0 && <p className="text-[10px] text-slate-500 mt-0.5">{linkedCount} bill payment{linkedCount > 1 ? 's' : ''} excluded (see Payments Made)</p>}
           </div>
           <div className="text-right">
             <p className="text-xs text-slate-500">Entries</p>
