@@ -9,6 +9,7 @@ import {
   ArrowUpCircle, RefreshCcw, Wallet, Search, ChevronRight,
   CheckCircle, User, Phone, Mail, MapPin, Hash, Upload, ExternalLink,
   Pencil, Trash2, Ban, FileDown, Sheet, ShieldOff,
+  Paperclip, Camera, Eye,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format } from 'date-fns'
@@ -1052,16 +1053,27 @@ function BillsTab({ companyId, session }) {
   const [invCategory, setInvCategory] = useState('')
   const [invStore, setInvStore] = useState('')
   const [editing, setEditing] = useState(null)
+  const [attachFile, setAttachFile] = useState(null)        // File selected for upload
+  const [attachPreview, setAttachPreview] = useState(null)  // local object URL for preview
+  const [attachUrl, setAttachUrl] = useState(null)          // existing saved URL (edit mode)
+  const [attachUploading, setAttachUploading] = useState(false)
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
+
+  const clearAttach = () => {
+    if (attachPreview) URL.revokeObjectURL(attachPreview)
+    setAttachFile(null); setAttachPreview(null)
+  }
 
   const closeModal = () => {
     setShowCreate(false); setEditing(null); setForm(blankForm())
     setLines([blankLine()]); setAddToInv(false); setInvCategory(''); setInvStore('')
+    clearAttach(); setAttachUrl(null)
   }
 
   const openCreate = () => {
     setEditing(null); setForm(blankForm()); setLines([blankLine()])
-    setAddToInv(false); setInvCategory(''); setInvStore(''); setShowCreate(true)
+    setAddToInv(false); setInvCategory(''); setInvStore('')
+    clearAttach(); setAttachUrl(null); setShowCreate(true)
   }
 
   const openEdit = async (bill) => {
@@ -1076,6 +1088,7 @@ function BillsTab({ companyId, session }) {
       payment_type: bill.payment_type === 'credit' ? 'credit' : 'standard',
       credit_days: String(bill.credit_days || 30),
     })
+    clearAttach(); setAttachUrl(bill.attachment_url || null)
     setLines(ld?.map(l => {
       const found = l.hsn_sac ? lookupHsnSac(l.hsn_sac) : null
       return {
@@ -1088,6 +1101,18 @@ function BillsTab({ companyId, session }) {
       }
     }) || [blankLine()])
     setShowCreate(true)
+  }
+
+  const uploadBillAttachment = async (billId, file) => {
+    const ext  = file.name.split('.').pop().toLowerCase()
+    const path = `bill-attachments/${companyId}/${billId}/vendor-bill.${ext}`
+    setAttachUploading(true)
+    try {
+      const { error } = await supabase.storage.from('nhance-photos').upload(path, file, { upsert: true })
+      if (error) throw error
+      const { data: { publicUrl } } = supabase.storage.from('nhance-photos').getPublicUrl(path)
+      return publicUrl
+    } finally { setAttachUploading(false) }
   }
 
   const dlPDFbill = async (b) => {
@@ -1202,6 +1227,13 @@ function BillsTab({ companyId, session }) {
           rate: parseFloat(l.rate) || 0, amount: l.amount, sort_order: i,
         }))
         if (updItems.length > 0) { const { error: le } = await supabase.from('bill_line_items').insert(updItems); if (le) throw le }
+        // Upload new attachment if selected during edit
+        if (attachFile) {
+          try {
+            const url = await uploadBillAttachment(editing.id, attachFile)
+            await supabase.from('bills').update({ attachment_url: url }).eq('id', editing.id)
+          } catch (e) { toast.error(`Attachment upload failed: ${e.message}`) }
+        }
         toast.success(`Bill ${editing.bill_number} updated`)
         closeModal()
         qc.invalidateQueries(['bills', companyId])
@@ -1234,6 +1266,14 @@ function BillsTab({ companyId, session }) {
         partyName: vendor?.name || '', amount: total,
         companyName: company?.name || null, issuedByName: userProfile?.full_name || null,
       }).catch(() => {})
+
+      // Upload vendor bill attachment if provided
+      if (attachFile) {
+        try {
+          const url = await uploadBillAttachment(id, attachFile)
+          await supabase.from('bills').update({ attachment_url: url }).eq('id', id)
+        } catch (e) { toast.error(`Attachment upload failed: ${e.message}`) }
+      }
 
       // Save line items
       const items = validLines.map((l, i) => ({
@@ -1346,7 +1386,16 @@ function BillsTab({ companyId, session }) {
                 </div>
               </div>
               <div className="flex items-center justify-between mt-3">
-                <p className="text-xs text-slate-500">{fmtDate(b.bill_date)}</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-xs text-slate-500">{fmtDate(b.bill_date)}</p>
+                  {b.attachment_url && (
+                    <a href={b.attachment_url} target="_blank" rel="noreferrer"
+                      className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-primary-500/10 border border-primary-500/30 text-primary-400 hover:text-primary-300 transition-colors"
+                      title="View vendor bill attachment">
+                      <Paperclip className="w-2.5 h-2.5" /> Bill
+                    </a>
+                  )}
+                </div>
                 <div className="flex items-center gap-1">
                   {b.status !== 'cancelled' && <button onClick={() => openEdit(b)} className="p-1.5 rounded-lg text-slate-500 hover:text-blue-400 hover:bg-blue-900/20" title="Edit"><Pencil className="w-3.5 h-3.5" /></button>}
                   {b.status !== 'cancelled' && <button onClick={() => voidBill(b)} className="p-1.5 rounded-lg text-slate-500 hover:text-yellow-400 hover:bg-yellow-900/20" title="Void"><Ban className="w-3.5 h-3.5" /></button>}
@@ -1468,6 +1517,81 @@ function BillsTab({ companyId, session }) {
 
           <TaxSummary lines={lines} form={form} setF={setF} />
           <Field label="Notes"><textarea className={inp()} rows={2} value={form.notes} onChange={e => setF('notes', e.target.value)} /></Field>
+
+          {/* ── Vendor Bill Attachment ── */}
+          <div className="rounded-xl border border-dark-700 bg-dark-800/40 p-3">
+            <div className="flex items-center gap-2 mb-2">
+              <Paperclip className="w-4 h-4 text-slate-400" />
+              <span className="text-sm font-semibold text-slate-200">Vendor Bill Attachment</span>
+              <span className="text-[10px] text-slate-500 ml-1">Photo or PDF</span>
+            </div>
+
+            {/* Show existing saved attachment (edit mode) */}
+            {attachUrl && !attachFile && (
+              <div className="flex items-center gap-2 mb-2 p-2 rounded-lg bg-dark-700 border border-dark-600">
+                {attachUrl.match(/\.(jpg|jpeg|png|webp)$/i)
+                  ? <img src={attachUrl} alt="attachment" className="w-12 h-12 object-cover rounded-lg border border-dark-600" />
+                  : <div className="w-12 h-12 flex items-center justify-center rounded-lg bg-dark-600 border border-dark-500"><FileText className="w-5 h-5 text-slate-400" /></div>
+                }
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs text-slate-300 truncate">Existing attachment</p>
+                  <p className="text-[10px] text-slate-500">Select a new file below to replace</p>
+                </div>
+                <a href={attachUrl} target="_blank" rel="noreferrer" className="p-1.5 rounded-lg bg-dark-600 hover:bg-dark-500 text-primary-400 transition-colors" title="View attachment">
+                  <Eye className="w-4 h-4" />
+                </a>
+              </div>
+            )}
+
+            {/* New file selected — preview */}
+            {attachFile && (
+              <div className="flex items-center gap-2 mb-2 p-2 rounded-lg bg-emerald-500/5 border border-emerald-700/40">
+                {attachPreview && attachFile.type.startsWith('image/')
+                  ? <img src={attachPreview} alt="preview" className="w-12 h-12 object-cover rounded-lg border border-dark-600" />
+                  : <div className="w-12 h-12 flex items-center justify-center rounded-lg bg-dark-600 border border-dark-500"><FileText className="w-5 h-5 text-emerald-400" /></div>
+                }
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs text-slate-200 truncate">{attachFile.name}</p>
+                  <p className="text-[10px] text-slate-500">{(attachFile.size / 1024).toFixed(0)} KB · Will upload on save</p>
+                </div>
+                <button type="button" onClick={clearAttach} className="p-1.5 rounded-lg bg-dark-700 hover:bg-dark-600 text-rose-400 transition-colors" title="Remove">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
+            {/* Upload buttons */}
+            <div className="flex gap-2">
+              <label className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-dashed border-dark-500 bg-dark-700/50 hover:bg-dark-700 text-xs text-slate-400 hover:text-slate-200 cursor-pointer transition-colors">
+                <Upload className="w-3.5 h-3.5" />
+                Upload File
+                <input type="file" accept="image/*,application/pdf" className="hidden"
+                  onChange={e => {
+                    const f = e.target.files?.[0]; if (!f) return
+                    if (f.size > 10 * 1024 * 1024) return toast.error('File too large (max 10 MB)')
+                    clearAttach()
+                    setAttachFile(f)
+                    if (f.type.startsWith('image/')) setAttachPreview(URL.createObjectURL(f))
+                    e.target.value = ''
+                  }}
+                />
+              </label>
+              <label className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-dashed border-dark-500 bg-dark-700/50 hover:bg-dark-700 text-xs text-slate-400 hover:text-slate-200 cursor-pointer transition-colors">
+                <Camera className="w-3.5 h-3.5" />
+                Camera
+                <input type="file" accept="image/*" capture="environment" className="hidden"
+                  onChange={e => {
+                    const f = e.target.files?.[0]; if (!f) return
+                    clearAttach()
+                    setAttachFile(f)
+                    setAttachPreview(URL.createObjectURL(f))
+                    e.target.value = ''
+                  }}
+                />
+              </label>
+              {attachUploading && <div className="flex items-center px-3 text-xs text-primary-400 gap-1"><Loader2 className="w-3.5 h-3.5 animate-spin" />Uploading…</div>}
+            </div>
+          </div>
         </Modal>
       )}
     </div>
