@@ -163,7 +163,7 @@ function buildDocPDF(opts) {
 
   // Document title — right-aligned, below the QR code (QR occupies y+2..y+20)
   pdf.setFont('helvetica','bold')
-  pdf.setFontSize(16)
+  pdf.setFontSize(11)
   pdf.setTextColor(30,30,30)
   pdf.text(docTitle, W-MR-3, y+28, { align:'right' })
 
