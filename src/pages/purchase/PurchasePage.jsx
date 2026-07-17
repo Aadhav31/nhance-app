@@ -1121,7 +1121,15 @@ function BillsTab({ companyId, session }) {
   }
 
   const dlPDFbill = async (b) => {
-    try { const { data: ld } = await supabase.from('bill_line_items').select('*').eq('bill_id', b.id).order('sort_order'); const verifyUrl = await createVerification(supabase, companyId, { docType: 'bill', docNumber: b.bill_number, docDate: b.bill_date, partyName: b.vendor_name, amount: b.total_amount , companyName: company?.name || null, issuedByName: userProfile?.full_name || null }); await downloadBillPDF(b, ld||[], company, verifyUrl) } catch(e) { toast.error(e.message) }
+    try {
+      const [{ data: ld }, { data: vendor }] = await Promise.all([
+        supabase.from('bill_line_items').select('*').eq('bill_id', b.id).order('sort_order'),
+        b.vendor_id ? supabase.from('vendors').select('address, contact_phone, gstin').eq('id', b.vendor_id).single() : { data: null },
+      ])
+      const enriched = { ...b, vendor_address: vendor?.address || null, vendor_phone: vendor?.contact_phone || null, vendor_gstin: b.vendor_gstin || vendor?.gstin || null }
+      const verifyUrl = await createVerification(supabase, companyId, { docType: 'bill', docNumber: b.bill_number, docDate: b.bill_date, partyName: b.vendor_name, amount: b.total_amount, companyName: company?.name || null, issuedByName: userProfile?.full_name || null })
+      await downloadBillPDF(enriched, ld||[], company, verifyUrl)
+    } catch(e) { toast.error(e.message) }
   }
   const voidQRbill = async (b) => {
     if (!window.confirm(`Void QR code for ${b.bill_number}?\nAny printed copy will immediately show as invalid.`)) return

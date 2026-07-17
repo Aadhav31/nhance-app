@@ -106,8 +106,8 @@ function numToWords(amount) {
  */
 function buildDocPDF(opts) {
   const {
-    company, docTitle, docNumber, docDate, terms, dueDate, placeOfSupply,
-    partyLabel = 'Bill To', partyName, partyAddress, partyGstin,
+    company, docTitle, docNumber, docDate, terms, termsLabel = 'Terms', dueDate, placeOfSupply,
+    partyLabel = 'Bill To', partyName, partyAddress, partyGstin, partyPhone,
     lineItems = [], subtotal = 0, discountAmount = 0, taxableAmount,
     cgst_rate, cgst_amount = 0, sgst_rate, sgst_amount = 0,
     igst_rate, igst_amount = 0, total = 0, paidAmount = 0, balanceDue,
@@ -120,7 +120,25 @@ function buildDocPDF(opts) {
 
   // ── 1. HEADER ──────────────────────────────────────────────────────────────
   let y = MT
-  const headerH = 46
+
+  // Pre-compute company text dimensions for tight-fit header
+  pdf.setFont('helvetica','bold')
+  pdf.setFontSize(13)
+  const coName = (company?.name || 'Your Company').toUpperCase()
+  const coNameLines = pdf.splitTextToSize(coName, 110)
+
+  pdf.setFont('helvetica','normal')
+  pdf.setFontSize(7.5)
+  const coDetails = [
+    company?.address,
+    company?.gstin ? `GSTIN ${company.gstin}` : null,
+    company?.contact_phone,
+    company?.contact_email,
+  ].filter(Boolean)
+
+  const textH = 8 + coNameLines.length * 6 + 1 + coDetails.length * 4.5 + 4
+  // QR sits at y+2..y+20 (18mm), title below at y+26 → needs ~34mm
+  const headerH = Math.max(textH, 36)
 
   // outer rect
   pdf.setDrawColor(180)
@@ -131,8 +149,6 @@ function buildDocPDF(opts) {
   pdf.setFont('helvetica','bold')
   pdf.setFontSize(13)
   pdf.setTextColor(15,15,15)
-  const coName = (company?.name || 'Your Company').toUpperCase()
-  const coNameLines = pdf.splitTextToSize(coName, 110)
   coNameLines.forEach((line, i) => pdf.text(line, ML+3, y+8+i*6))
 
   // Company details (smaller)
@@ -140,22 +156,16 @@ function buildDocPDF(opts) {
   pdf.setFontSize(7.5)
   pdf.setTextColor(60,60,60)
   const detailStart = y + 8 + coNameLines.length * 6 + 1
-  const coDetails = [
-    company?.address,
-    company?.gstin ? `GSTIN ${company.gstin}` : null,
-    company?.contact_phone,
-    company?.contact_email,
-  ].filter(Boolean)
   coDetails.forEach((line, i) => {
     const wrapped = pdf.splitTextToSize(line, 110)
     wrapped.forEach((wl, wi) => pdf.text(wl, ML+3, detailStart + i*4.5 + wi*4))
   })
 
-  // Document title (right)
+  // Document title — right-aligned, below the QR code (QR occupies y+2..y+20)
   pdf.setFont('helvetica','bold')
-  pdf.setFontSize(20)
+  pdf.setFontSize(16)
   pdf.setTextColor(30,30,30)
-  pdf.text(docTitle, W-MR-3, y+20, { align:'right' })
+  pdf.text(docTitle, W-MR-3, y+28, { align:'right' })
 
   y += headerH + 2
 
@@ -179,7 +189,7 @@ function buildDocPDF(opts) {
   const metaRows = [
     [`${docTitle.includes('BILL') ? 'Bill' : docTitle.includes('QUOTE') || docTitle.includes('QUOTATION') ? 'Quote' : docTitle.includes('ORDER') ? 'Order' : docTitle.includes('CHALLAN') ? 'Challan' : docTitle.includes('CREDIT') ? 'Credit Note' : 'Invoice'} No.#`, docNumber],
     [`${docTitle.includes('CHALLAN') ? 'Challan' : docTitle.includes('ORDER') ? 'Order' : docTitle.includes('BILL') ? 'Bill' : 'Invoice'} Date`, fmtDate(docDate)],
-    ...(terms ? [['Terms', terms]] : []),
+    ...(terms ? [[termsLabel, terms]] : []),
     ...(dueDate ? [['Due Date', fmtDate(dueDate)]] : []),
     ...extraMetaLeft,
   ]
@@ -211,9 +221,30 @@ function buildDocPDF(opts) {
   y += metaH + 2
 
   // ── 3. PARTY SECTION ────────────────────────────────────────────────────────
+  // Pre-compute dimensions for dynamic height
+  pdf.setFont('helvetica','bold')
+  pdf.setFontSize(9.5)
+  const partyNameLines = pdf.splitTextToSize(partyName || '—', W-ML-MR-6)
+
+  pdf.setFont('helvetica','normal')
+  pdf.setFontSize(7.5)
+  const partyDetailItems = [
+    partyAddress,
+    partyPhone ? `Ph: ${partyPhone}` : null,
+    partyGstin ? `GSTIN: ${partyGstin}` : null,
+  ].filter(Boolean)
+  let totalDetailH = 0
+  const partyDetailWrapped = partyDetailItems.map(item => {
+    const wrapped = pdf.splitTextToSize(item, W-ML-MR-6)
+    totalDetailH += wrapped.length * 4
+    return wrapped
+  })
+
+  const partyH = Math.max(22, 6 + Math.min(partyNameLines.length, 2) * 5 + 3 + totalDetailH + 4)
+
   pdf.setDrawColor(180)
   pdf.setLineWidth(0.3)
-  pdf.rect(ML, y, W-ML-MR, 22)
+  pdf.rect(ML, y, W-ML-MR, partyH)
   pdf.setFillColor(240,242,245)
   pdf.rect(ML, y, W-ML-MR, 6, 'F')
 
@@ -225,19 +256,17 @@ function buildDocPDF(opts) {
   pdf.setFont('helvetica','bold')
   pdf.setFontSize(9.5)
   pdf.setTextColor(10,10,10)
-  const partyNameLines = pdf.splitTextToSize(partyName || '—', W-ML-MR-6)
   partyNameLines.slice(0,2).forEach((l, i) => pdf.text(l, ML+3, y+11+i*5))
 
   pdf.setFont('helvetica','normal')
   pdf.setFontSize(7.5)
   pdf.setTextColor(80,80,80)
-  const partyDetails = [partyAddress, partyGstin ? `GSTIN: ${partyGstin}` : null].filter(Boolean)
-  partyDetails.forEach((l, i) => {
-    const wrapped = pdf.splitTextToSize(l, W-ML-MR-6)
-    pdf.text(wrapped, ML+3, y+15.5+i*4)
+  let detailY = y + 11 + Math.min(partyNameLines.length, 2) * 5 + 1
+  partyDetailWrapped.forEach(lines => {
+    lines.forEach(l => { pdf.text(l, ML+3, detailY); detailY += 4 })
   })
 
-  y += 24
+  y += partyH + 2
 
   // Optional free-form body (for payment receipts etc.)
   if (bodyText) {
@@ -274,7 +303,7 @@ function buildDocPDF(opts) {
       alternateRowStyles: { fillColor: [248,249,252] },
       columnStyles: {
         0: { cellWidth: 8,  halign: 'center' },
-        1: { cellWidth: 78 },
+        1: { cellWidth: 88 },
         2: { cellWidth: 22, halign: 'center' },
         3: { cellWidth: 16, halign: 'right' },
         4: { cellWidth: 24, halign: 'right' },
@@ -362,7 +391,7 @@ function buildDocPDF(opts) {
     const bd = balanceDue ?? Math.max(0, total - paidAmount)
     pdf.text('Balance Due', totX, ty+6)
     pdf.text(`Rs.${fmtINR(bd)}`, W-MR-2, ty+6, { align:'right' })
-    ty += 14
+    ty += 32
 
     // Signature line
     const sigLineY = Math.max(ty, wordsEndY + (notes ? 30 : 10))
@@ -549,10 +578,13 @@ export async function downloadBillPDF(bill, lineItems, company, verifyUrl = null
     docTitle: bill.is_tax_invoice !== false ? 'PURCHASE BILL' : 'BILL',
     docNumber: bill.bill_number,
     docDate: bill.bill_date,
-    terms: bill.bill_ref ? `Ref: ${bill.bill_ref}` : undefined,
+    terms: bill.bill_ref || undefined,
+    termsLabel: 'Vendor Invoice No.',
     dueDate: bill.due_date,
     partyLabel: 'Vendor',
     partyName: bill.vendor_name,
+    partyAddress: bill.vendor_address || null,
+    partyPhone: bill.vendor_phone || null,
     partyGstin: bill.vendor_gstin,
     lineItems,
     subtotal: bill.subtotal || 0,
