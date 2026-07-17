@@ -746,18 +746,18 @@ function StockOutTab({ companyId, session }) {
                 <p className="text-[10px] text-slate-500 mt-0.5">Available: {fmtQty(availableStock, '')}</p>}
             </Field>
             <Field label="Issued To"><input className={inp()} value={form.issued_to} onChange={e => setF('issued_to', e.target.value)} placeholder="Person / department" /></Field>
-            {projects.length > 0 && <Field label="Link to Project">
-              <select className={inp()} value={form.project_id} onChange={e => setF('project_id', e.target.value)}>
-                <option value="">-- Project (optional) --</option>
-                {projects.map(p => <option key={p.id} value={p.id}>{p.project_name}</option>)}
-              </select>
-            </Field>}
-            {equipment.length > 0 && <Field label="Link to Equipment">
+            <Field label="Link to Equipment">
               <select className={inp()} value={form.equipment_id} onChange={e => setF('equipment_id', e.target.value)}>
                 <option value="">-- Equipment (optional) --</option>
                 {equipment.map(e => <option key={e.id} value={e.id}>{e.fleet_number} — {e.equipment_name}</option>)}
               </select>
-            </Field>}
+            </Field>
+            <Field label="Link to Project">
+              <select className={inp()} value={form.project_id} onChange={e => setF('project_id', e.target.value)}>
+                <option value="">-- Project (optional) --</option>
+                {projects.map(p => <option key={p.id} value={p.id}>{p.project_name}</option>)}
+              </select>
+            </Field>
             <div className="col-span-2"><Field label="Notes"><input className={inp()} value={form.notes} onChange={e => setF('notes', e.target.value)} /></Field></div>
           </div>
         </Modal>
