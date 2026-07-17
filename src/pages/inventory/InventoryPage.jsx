@@ -516,7 +516,7 @@ function useInventoryData(companyId) {
   const { data: vendors = [] } = useQuery({
     queryKey: ['vendors_list', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('vendors').select('id, vendor_name').eq('company_id', companyId).order('vendor_name').limit(100)
+      const { data } = await supabase.from('vendors').select('id, name').eq('company_id', companyId).order('name').limit(100)
       return data || []
     },
     enabled: !!companyId,
@@ -628,7 +628,7 @@ function StockInTab({ companyId, session }) {
             {vendors.length > 0 && <Field label="Vendor">
               <select className={inp()} value={form.vendor_id} onChange={e => setF('vendor_id', e.target.value)}>
                 <option value="">-- Vendor (optional) --</option>
-                {vendors.map(v => <option key={v.id} value={v.id}>{v.vendor_name}</option>)}
+                {vendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
               </select>
             </Field>}
             <div className="col-span-2"><Field label="Notes / Reference (e.g. Bill No.)"><input className={inp()} value={form.notes} onChange={e => setF('notes', e.target.value)} /></Field></div>
