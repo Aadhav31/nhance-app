@@ -16,6 +16,7 @@ import {
   Banknote, CreditCard, FileText, Search, Filter, Download,
   Package, Wrench, Droplets, Users, Home, Utensils, Fuel,
   Building2, Zap, MoreHorizontal, Eye, Trash2, Clock, Car, HeartPulse, Pencil,
+  Link2, CheckCircle,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format } from 'date-fns'
@@ -1115,6 +1116,12 @@ function ExpenseHistory({ companyId, userId, userRole }) {
   const [modeFilter, setModeFilter] = useState('')
   const [deleteId, setDeleteId] = useState(null)
   const [editExp, setEditExp] = useState(null)
+  // "Record as Bill Payment" state
+  const [linkExp, setLinkExp]           = useState(null)   // field expense being linked
+  const [linkVendorId, setLinkVendorId] = useState('')
+  const [linkBillId, setLinkBillId]     = useState('')
+  const [linkAmt, setLinkAmt]           = useState('')
+  const [linkSaving, setLinkSaving]     = useState(false)
   const qc = useQueryClient()
 
   const { data: expenses = [], isLoading } = useQuery({
@@ -1127,6 +1134,101 @@ function ExpenseHistory({ companyId, userId, userRole }) {
     },
     enabled: !!companyId,
   })
+
+  // Vendors list for "Record as Bill Payment" modal
+  const { data: feVendors = [] } = useQuery({
+    queryKey: ['vendors_list', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('vendors').select('id, name').eq('company_id', companyId).order('name')
+      return data || []
+    },
+    enabled: !!companyId && canEdit,
+  })
+
+  // Bills for selected vendor (pending/partial only)
+  const { data: feVendorBills = [] } = useQuery({
+    queryKey: ['vendor_bills_open', companyId, linkVendorId],
+    queryFn: async () => {
+      if (!linkVendorId) return []
+      const { data } = await supabase.from('bills')
+        .select('id, bill_number, bill_date, total_amount, balance_due, status')
+        .eq('company_id', companyId)
+        .eq('vendor_id', linkVendorId)
+        .in('status', ['pending', 'partial'])
+        .order('bill_date', { ascending: false })
+      return data || []
+    },
+    enabled: !!linkVendorId,
+  })
+
+  const openLinkModal = (exp) => {
+    setLinkExp(exp)
+    setLinkVendorId('')
+    setLinkBillId('')
+    setLinkAmt(String(exp.amount || ''))
+  }
+
+  const confirmLinkAsBillPayment = async () => {
+    if (!linkVendorId) return toast.error('Select a vendor')
+    if (!linkBillId)   return toast.error('Select a bill')
+    const amt = parseFloat(linkAmt)
+    if (!amt || amt <= 0) return toast.error('Enter a valid amount')
+    setLinkSaving(true)
+    try {
+      const vendor = feVendors.find(v => v.id === linkVendorId)
+      const bill   = feVendorBills.find(b => b.id === linkBillId)
+      // Generate payment number
+      const pmNum = await nextDocNumber(companyId, 'payment_made').catch(() => `PM-${Date.now()}`)
+      // Create payments_made record linked to the bill
+      const { data: pm, error: pmErr } = await supabase.from('payments_made').insert({
+        company_id:      companyId,
+        payment_number:  pmNum,
+        payment_date:    linkExp.expense_date,
+        vendor_id:       linkVendorId,
+        vendor_name:     vendor?.name || '',
+        bill_id:         linkBillId,
+        amount:          amt,
+        payment_mode:    linkExp.payment_mode || 'cash',
+        notes:           `From field expense: ${linkExp.description || linkExp.payee_name || ''}`.trim(),
+      }).select('id').single()
+      if (pmErr) throw pmErr
+      // Write to account_transactions ledger
+      await supabase.from('account_transactions').insert({
+        company_id:      companyId,
+        txn_date:        linkExp.expense_date,
+        type:            'expense',
+        description:     `Payment made — ${pmNum} (${vendor?.name || ''}) [from field expense]`,
+        amount:          amt,
+        payment_mode:    linkExp.payment_mode || 'cash',
+        reference_type:  'payment_made',
+        reference_id:    pm.id,
+        notes:           `Linked from field expense`,
+      })
+      // Recalculate bill paid_amount / balance_due / status
+      const { data: allPays } = await supabase.from('payments_made').select('amount').eq('bill_id', linkBillId)
+      const totalPaid = (allPays || []).reduce((s, p) => s + Number(p.amount), 0)
+      const { data: billRow } = await supabase.from('bills').select('total_amount').eq('id', linkBillId).single()
+      if (billRow) {
+        const balance = Math.max(0, billRow.total_amount - totalPaid)
+        await supabase.from('bills').update({
+          paid_amount: totalPaid,
+          balance_due: balance,
+          status: totalPaid <= 0 ? 'pending' : balance <= 0 ? 'paid' : 'partial',
+        }).eq('id', linkBillId)
+      }
+      // Mark the field expense as linked
+      await supabase.from('field_expenses').update({
+        linked_bill_id:     linkBillId,
+        linked_bill_number: bill?.bill_number || null,
+      }).eq('id', linkExp.id)
+
+      toast.success(`${pmNum} created · ${bill?.bill_number} balance updated`)
+      setLinkExp(null)
+      qc.invalidateQueries({ queryKey: ['field_expenses'] })
+      qc.invalidateQueries({ queryKey: ['bills', companyId] })
+      qc.invalidateQueries({ queryKey: ['payments_made', companyId] })
+    } catch (e) { toast.error(e.message) } finally { setLinkSaving(false) }
+  }
 
   const filtered = expenses.filter(e => {
     const matchSearch = !search || [e.payee_name, e.description, e.bill_number, e.equipment_name, e.project_name]
@@ -1251,6 +1353,13 @@ function ExpenseHistory({ companyId, userId, userRole }) {
                           <Eye className="w-3 h-3" /> View Bill Photo
                         </a>
                       )}
+                      {/* Linked bill badge */}
+                      {exp.linked_bill_number && (
+                        <div className="mt-2 flex items-center gap-1.5 text-[11px] text-emerald-400">
+                          <CheckCircle className="w-3 h-3" />
+                          <span>Recorded as payment against <span className="font-mono font-semibold">{exp.linked_bill_number}</span></span>
+                        </div>
+                      )}
 
                       {/* Submitted by (admin view) */}
                       {isAdmin && exp.created_by_name && (
@@ -1261,7 +1370,7 @@ function ExpenseHistory({ companyId, userId, userRole }) {
 
                   {/* Admin actions */}
                   {isAdmin && (
-                    <div className="mt-3 pt-3 border-t border-dark-700 flex items-center justify-between">
+                    <div className="mt-3 pt-3 border-t border-dark-700 flex items-center justify-between flex-wrap gap-y-2">
                       {/* Edit — admin/accounts only */}
                       {canEdit && deleteId !== exp.id && (
                         <button
@@ -1269,6 +1378,15 @@ function ExpenseHistory({ companyId, userId, userRole }) {
                           className="flex items-center gap-1 text-[11px] text-slate-500 hover:text-primary-400 transition-colors"
                         >
                           <Pencil className="w-3 h-3" /> Edit
+                        </button>
+                      )}
+                      {/* Record as Bill Payment */}
+                      {canEdit && !exp.linked_bill_id && deleteId !== exp.id && (
+                        <button
+                          onClick={() => openLinkModal(exp)}
+                          className="flex items-center gap-1 text-[11px] text-slate-500 hover:text-violet-400 transition-colors"
+                        >
+                          <Link2 className="w-3 h-3" /> Record as Bill Payment
                         </button>
                       )}
                       {/* Delete confirm */}
@@ -1311,6 +1429,111 @@ function ExpenseHistory({ companyId, userId, userRole }) {
             qc.invalidateQueries({ queryKey: ['field_expenses'] })
           }}
         />
+      )}
+
+      {/* ── Record as Bill Payment modal ── */}
+      {linkExp && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="w-full max-w-md bg-dark-900 border border-dark-700 rounded-2xl shadow-2xl flex flex-col max-h-[90vh]">
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-dark-700">
+              <div>
+                <h3 className="font-bold text-slate-100 flex items-center gap-2"><Link2 className="w-4 h-4 text-violet-400" /> Record as Bill Payment</h3>
+                <p className="text-xs text-slate-500 mt-0.5">{linkExp.description || linkExp.payee_name} · {fmtINR(linkExp.amount)} · {fmtDate(linkExp.expense_date)}</p>
+              </div>
+              <button onClick={() => setLinkExp(null)} className="p-1.5 rounded-lg hover:bg-dark-700 text-slate-500 hover:text-slate-200 transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+              <p className="text-xs text-slate-400 bg-dark-800 border border-dark-700 rounded-xl p-3">
+                This will create a <span className="text-violet-300 font-semibold">Payments Made</span> entry linked to the selected bill and update the bill's balance. The field expense stays as-is for voucher/expense tracking.
+              </p>
+
+              {/* Vendor */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-400 mb-1.5">Vendor *</label>
+                <select
+                  className={inp()}
+                  value={linkVendorId}
+                  onChange={e => { setLinkVendorId(e.target.value); setLinkBillId('') }}
+                >
+                  <option value="">-- Select vendor --</option>
+                  {feVendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+                </select>
+              </div>
+
+              {/* Bill */}
+              {linkVendorId && (
+                <div>
+                  <label className="block text-xs font-semibold text-slate-400 mb-1.5">Bill to pay against *</label>
+                  {feVendorBills.length === 0 ? (
+                    <p className="text-xs text-slate-500 py-3 text-center">No pending/partial bills for this vendor</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {feVendorBills.map(b => (
+                        <label key={b.id} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${linkBillId === b.id ? 'border-violet-600/60 bg-violet-500/5' : 'border-dark-600 bg-dark-800/40 hover:border-dark-500'}`}>
+                          <input
+                            type="radio"
+                            name="link_bill"
+                            checked={linkBillId === b.id}
+                            onChange={() => setLinkBillId(b.id)}
+                            className="accent-violet-500 shrink-0"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-mono text-primary-400">{b.bill_number}</p>
+                            <p className="text-[10px] text-slate-500">{fmtDate(b.bill_date)}</p>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <p className="text-xs font-bold text-slate-200">{fmtINR(b.total_amount)}</p>
+                            <p className="text-[10px] text-orange-400">Balance {fmtINR(b.balance_due)}</p>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Amount */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-400 mb-1.5">Payment amount *</label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-sm">₹</span>
+                  <input
+                    type="number"
+                    className={inp('pl-7')}
+                    value={linkAmt}
+                    onChange={e => setLinkAmt(e.target.value)}
+                    placeholder="0.00"
+                    min="0"
+                    step="0.01"
+                  />
+                </div>
+                <p className="text-[10px] text-slate-600 mt-1">Pre-filled from field expense · edit if partial</p>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="px-5 py-4 border-t border-dark-700 flex gap-3">
+              <button
+                onClick={() => setLinkExp(null)}
+                className="flex-1 py-2.5 rounded-xl border border-dark-600 text-slate-400 hover:text-slate-200 text-sm font-semibold transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmLinkAsBillPayment}
+                disabled={!linkVendorId || !linkBillId || !linkAmt || linkSaving}
+                className="flex-1 py-2.5 rounded-xl bg-violet-600 hover:bg-violet-500 disabled:opacity-40 text-white text-sm font-bold transition-colors flex items-center justify-center gap-2"
+              >
+                {linkSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <><Link2 className="w-4 h-4" /> Record Payment</>}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )
