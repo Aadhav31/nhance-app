@@ -1375,7 +1375,7 @@ function ExpenseHistory({ companyId, userId, userRole }) {
 
                   {/* Admin actions */}
                   {isAdmin && (
-                    <div className="mt-3 pt-3 border-t border-dark-700 flex items-center justify-between flex-wrap gap-y-2">
+                    <div className="mt-3 pt-3 border-t border-dark-700 flex items-center flex-wrap gap-x-4 gap-y-2">
                       {/* Edit — admin/accounts only */}
                       {canEdit && deleteId !== exp.id && (
                         <button
