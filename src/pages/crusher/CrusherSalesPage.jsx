@@ -114,6 +114,148 @@ function InvoicesTab({ companyId }) {
   )
 }
 
+// ── Quick Add / Edit Client Modal ────────────────────────────────────────────
+function QuickClientModal({ companyId, existing, onClose }) {
+  const qc = useQueryClient()
+  const isEdit = !!existing?.id
+  const [form, setForm] = useState({
+    display_name:  existing?.display_name || existing?.business_name || '',
+    gstin:         existing?.gstin         || '',
+    contact_phone: existing?.contact_phone || existing?.phone || '',
+    contact_email: existing?.contact_email || existing?.email || '',
+    registered_address: existing?.registered_address || existing?.address || '',
+    // Also set credit settings inline
+    credit_period_days:   '',
+    statement_day:        '',
+    payment_due_days:     '7',
+  })
+  const [saving, setSaving] = useState(false)
+  const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
+
+  const handleSave = async () => {
+    if (!form.display_name.trim()) { toast.error('Client name is required'); return }
+    setSaving(true)
+    try {
+      const clientPayload = {
+        company_id:          companyId,
+        display_name:        form.display_name.trim(),
+        business_name:       form.display_name.trim(),
+        name:                form.display_name.trim(),
+        gstin:               form.gstin.trim() || null,
+        contact_phone:       form.contact_phone.trim() || null,
+        contact_email:       form.contact_email.trim() || null,
+        registered_address:  form.registered_address.trim() || null,
+        address:             form.registered_address.trim() || null,
+        client_type:         'business',
+        currency:            'INR',
+        tax_preference:      'tax_payer',
+      }
+
+      let clientId = existing?.id
+      if (isEdit) {
+        const { error } = await supabase.from('clients').update(clientPayload).eq('id', clientId)
+        if (error) throw error
+      } else {
+        const { data, error } = await supabase.from('clients').insert(clientPayload).select('id').single()
+        if (error) throw error
+        clientId = data.id
+      }
+
+      // Save credit settings if any credit fields filled
+      if (form.credit_period_days) {
+        const creditPayload = {
+          company_id:        companyId,
+          client_id:         clientId,
+          credit_period_days: Number(form.credit_period_days),
+          statement_day:     form.statement_day ? Number(form.statement_day) : null,
+          payment_due_days:  Number(form.payment_due_days) || 7,
+          updated_at:        new Date().toISOString(),
+        }
+        await supabase.from('crusher_client_settings')
+          .upsert(creditPayload, { onConflict: 'company_id,client_id' })
+      }
+
+      await qc.invalidateQueries({ queryKey: ['clients', companyId] })
+      await qc.invalidateQueries({ queryKey: ['crusher_client_settings', companyId] })
+      toast.success(isEdit ? 'Client updated' : 'Client added')
+      onClose()
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Modal
+      title={isEdit ? `Edit — ${existing.display_name || existing.business_name}` : 'Add New Client'}
+      onClose={onClose}
+      wide
+      footer={
+        <>
+          <button onClick={onClose} className="btn-ghost">Cancel</button>
+          <button onClick={handleSave} disabled={saving} className="btn-primary">
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            {isEdit ? 'Update Client' : 'Add Client'}
+          </button>
+        </>
+      }
+    >
+      {/* Client details */}
+      <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Client Details</div>
+      <Field label="Company / Client Name" required>
+        <input className={inp()} value={form.display_name}
+          onChange={e => set('display_name', e.target.value)}
+          placeholder="e.g. ABC Constructions" />
+      </Field>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="GSTIN">
+          <input className={inp('font-mono')} value={form.gstin}
+            onChange={e => set('gstin', e.target.value.toUpperCase())}
+            placeholder="22AAAAA0000A1Z5" maxLength={15} />
+        </Field>
+        <Field label="Phone">
+          <input className={inp()} value={form.contact_phone}
+            onChange={e => set('contact_phone', e.target.value)}
+            placeholder="+91 98765 43210" />
+        </Field>
+      </div>
+      <Field label="Email">
+        <input type="email" className={inp()} value={form.contact_email}
+          onChange={e => set('contact_email', e.target.value)}
+          placeholder="billing@example.com" />
+      </Field>
+      <Field label="Address">
+        <textarea className={inp()} rows={2} value={form.registered_address}
+          onChange={e => set('registered_address', e.target.value)}
+          placeholder="Full billing address…" />
+      </Field>
+
+      {/* Credit settings (optional) */}
+      <div className="border-t border-dark-600 pt-3 mt-1">
+        <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Credit Settings <span className="font-normal normal-case text-slate-500">(optional — can set later)</span></div>
+        <div className="grid grid-cols-3 gap-3">
+          <Field label="Credit Period (days)">
+            <input type="number" className={inp()} value={form.credit_period_days}
+              onChange={e => set('credit_period_days', e.target.value)}
+              placeholder="e.g. 30" min={1} />
+          </Field>
+          <Field label="Statement Day (1–31)">
+            <input type="number" className={inp()} value={form.statement_day}
+              onChange={e => set('statement_day', e.target.value)}
+              placeholder="e.g. 1" min={1} max={31} />
+          </Field>
+          <Field label="Payment Due (days)">
+            <input type="number" className={inp()} value={form.payment_due_days}
+              onChange={e => set('payment_due_days', e.target.value)}
+              placeholder="7" min={0} />
+          </Field>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
 // ── Credit Settings Modal ─────────────────────────────────────────────────────
 function CreditSettingsModal({ client, companyId, existing, onClose }) {
   const qc = useQueryClient()
@@ -214,7 +356,8 @@ function CreditSettingsModal({ client, companyId, existing, onClose }) {
 
 // ── Clients Tab ───────────────────────────────────────────────────────────────
 function ClientsTab({ companyId }) {
-  const [creditModal, setCreditModal] = useState(null) // { client, existing }
+  const [creditModal, setCreditModal] = useState(null)   // { client, existing }
+  const [clientModal, setClientModal] = useState(null)   // null | { existing? }
 
   const { data: clients = [], isLoading } = useQuery({
     queryKey: ['clients', companyId],
@@ -251,19 +394,25 @@ function ClientsTab({ companyId }) {
 
   if (isLoading) return <div className="flex items-center justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-primary-400" /></div>
 
-  if (!clients.length) return (
-    <div className="text-center py-16 text-slate-500">
-      <Users className="w-10 h-10 mx-auto mb-3 opacity-40" />
-      <p className="text-sm">No clients yet. Add clients in the Sales module first.</p>
-    </div>
-  )
-
   return (
-    <div className="space-y-2">
-      <p className="text-xs text-slate-500 mb-3">
-        Set credit period, statement schedule, and default loading/unloading points per client.
-        Vehicles are managed in the <strong className="text-slate-400">Vehicles</strong> tab.
-      </p>
+    <div className="space-y-3">
+      <div className="flex items-center gap-3">
+        <button onClick={() => setClientModal({ existing: null })} className="btn-primary text-sm">
+          <Plus className="w-4 h-4" /> Add Client
+        </button>
+        <span className="text-xs text-slate-500 ml-auto">{clients.length} client{clients.length !== 1 ? 's' : ''}</span>
+      </div>
+
+      {!clients.length ? (
+        <div className="text-center py-16 text-slate-500">
+          <Users className="w-10 h-10 mx-auto mb-3 opacity-40" />
+          <p className="text-sm mb-3">No clients yet.</p>
+          <button onClick={() => setClientModal({ existing: null })} className="btn-primary text-sm">
+            <Plus className="w-4 h-4" /> Add First Client
+          </button>
+        </div>
+      ) : null}
+
       {clients.map(client => {
         const s = settingsMap[client.id]
         const vCount = vehicleCount[client.id] || 0
@@ -290,16 +439,33 @@ function ClientsTab({ companyId }) {
                 </p>
               )}
             </div>
-            <button
-              onClick={() => setCreditModal({ client, existing: s })}
-              className="flex-shrink-0 flex items-center gap-1.5 text-xs text-primary-400 hover:text-primary-300 bg-primary-500/10 hover:bg-primary-500/20 px-3 py-1.5 rounded-lg transition-all"
-            >
-              <Settings2 className="w-3.5 h-3.5" />
-              {s ? 'Edit Settings' : 'Set Credit'}
-            </button>
+            <div className="flex-shrink-0 flex gap-1.5">
+              <button
+                onClick={() => setClientModal({ existing: client })}
+                className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-200 bg-dark-600 hover:bg-dark-500 px-3 py-1.5 rounded-lg transition-all"
+              >
+                <Edit2 className="w-3.5 h-3.5" />
+                Edit
+              </button>
+              <button
+                onClick={() => setCreditModal({ client, existing: s })}
+                className="flex items-center gap-1.5 text-xs text-primary-400 hover:text-primary-300 bg-primary-500/10 hover:bg-primary-500/20 px-3 py-1.5 rounded-lg transition-all"
+              >
+                <Settings2 className="w-3.5 h-3.5" />
+                {s ? 'Credit' : 'Set Credit'}
+              </button>
+            </div>
           </div>
         )
       })}
+
+      {clientModal && (
+        <QuickClientModal
+          companyId={companyId}
+          existing={clientModal.existing}
+          onClose={() => setClientModal(null)}
+        />
+      )}
 
       {creditModal && (
         <CreditSettingsModal
