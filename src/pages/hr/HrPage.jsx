@@ -1728,6 +1728,7 @@ function AttendanceTab({ companyId }) {
   // Local shift time state: { [empId]: { start: '', end: '' } }
   const [shiftTimes,   setShiftTimes]  = useState({})
   const [subPickerFor, setSubPickerFor] = useState(null)  // empId whose card shows "In Absence Of" picker
+  const [editSubFor,   setEditSubFor]   = useState(null)  // { coveringEmpId, oldAbsentId } — edit flow
 
   const date        = `${year}-${String(month).padStart(2,'0')}-${String(selectedDay).padStart(2,'0')}`
   const daysInMonth = new Date(year, month, 0).getDate()
@@ -1916,6 +1917,13 @@ function AttendanceTab({ companyId }) {
     }
     refetch(); refetchMonth()
     toast.success('Substitution removed')
+  }
+
+  const editSubstitution = async (coveringEmp, oldAbsentId, newAbsentId) => {
+    if (oldAbsentId === newAbsentId) { setEditSubFor(null); return }
+    await removeSubstitution(coveringEmp.id, oldAbsentId)
+    await addSubstitution(coveringEmp, newAbsentId)
+    setEditSubFor(null)
   }
 
   const markAll = async (status) => {
@@ -2127,20 +2135,48 @@ function AttendanceTab({ companyId }) {
 
                 {/* Substitutions given — shown on covering operator's card */}
                 {subs.length > 0 && (
-                  <div className="mb-2.5 space-y-1">
-                    {subs.map(sub => (
-                      <div key={sub.id} className="flex items-center gap-2 bg-orange-500/10 border border-orange-700/30 rounded-lg px-3 py-1.5">
-                        <span className="flex-1 text-xs text-orange-300">
-                          In absence of <span className="font-semibold">{sub.name}</span>
-                        </span>
-                        {isAdmin && (
-                          <button onClick={() => removeSubstitution(emp.id, sub.id)}
-                            className="text-slate-500 hover:text-red-400 transition-colors">
-                            <X className="w-3 h-3" />
-                          </button>
-                        )}
-                      </div>
-                    ))}
+                  <div className="mb-2.5 space-y-1.5">
+                    {subs.map(sub => {
+                      const isEditing = editSubFor?.coveringEmpId === emp.id && editSubFor?.oldAbsentId === sub.id
+                      return (
+                        <div key={sub.id} className="bg-orange-500/10 border border-orange-700/30 rounded-lg px-3 py-2">
+                          <div className="flex items-center gap-2">
+                            <span className="flex-1 text-xs text-orange-300">
+                              In absence of <span className="font-semibold">{sub.name}</span>
+                            </span>
+                            {isAdmin && !isEditing && (
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  onClick={() => setEditSubFor({ coveringEmpId: emp.id, oldAbsentId: sub.id })}
+                                  className="text-slate-500 hover:text-primary-400 transition-colors"
+                                  title="Edit substitution">
+                                  <Edit2 className="w-3 h-3" />
+                                </button>
+                                <button
+                                  onClick={() => { if (window.confirm(`Remove substitution for ${sub.name}?`)) removeSubstitution(emp.id, sub.id) }}
+                                  className="text-slate-500 hover:text-red-400 transition-colors"
+                                  title="Delete substitution">
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                          {isEditing && (
+                            <div className="mt-2 flex items-center gap-2">
+                              <select
+                                defaultValue={sub.id}
+                                className="flex-1 bg-dark-700 border border-dark-500 rounded-lg px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-primary-500"
+                                onChange={e => editSubstitution(emp, sub.id, e.target.value)}>
+                                {employees.filter(e => e.id !== emp.id).map(e => (
+                                  <option key={e.id} value={e.id}>{e.name}</option>
+                                ))}
+                              </select>
+                              <button onClick={() => setEditSubFor(null)} className="text-slate-500 hover:text-slate-300 text-xs">Cancel</button>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
                   </div>
                 )}
 
@@ -2999,7 +3035,16 @@ function SubstitutionsTab({ companyId }) {
   const { role, userProfile } = useAuth()
   const qc = useQueryClient()
   const [showForm, setShowForm] = useState(false)
+  const [editSub, setEditSub]   = useState(null)   // existing record to edit
   const canLog = ['admin','manager','hr'].includes(role)
+
+  const deleteSub = async (s) => {
+    if (!window.confirm('Delete this substitution record?')) return
+    const { error } = await supabase.from('operator_substitutions').delete().eq('id', s.id)
+    if (error) { toast.error(error.message); return }
+    toast.success('Substitution deleted')
+    qc.invalidateQueries(['operator_substitutions', companyId])
+  }
 
   const { data: subs = [], isLoading } = useQuery({
     queryKey: ['operator_substitutions', companyId],
@@ -3063,7 +3108,23 @@ function SubstitutionsTab({ companyId }) {
                   <p className="text-[10px] text-slate-600 mt-1">Approved by {s.approver.full_name}</p>
                 )}
               </div>
-              <AlertTriangle className={`w-4 h-4 shrink-0 mt-0.5 ${s.reason === 'absent' ? 'text-red-400' : 'text-yellow-500'}`} />
+              <div className="flex items-center gap-1.5 shrink-0 mt-0.5">
+                <AlertTriangle className={`w-4 h-4 ${s.reason === 'absent' ? 'text-red-400' : 'text-yellow-500'}`} />
+                {canLog && (
+                  <>
+                    <button onClick={() => setEditSub(s)}
+                      className="text-slate-500 hover:text-primary-400 transition-colors p-0.5"
+                      title="Edit">
+                      <Edit2 className="w-3.5 h-3.5" />
+                    </button>
+                    <button onClick={() => deleteSub(s)}
+                      className="text-slate-500 hover:text-red-400 transition-colors p-0.5"
+                      title="Delete">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
           </div>
         ))}
@@ -3074,18 +3135,23 @@ function SubstitutionsTab({ companyId }) {
           onClose={() => setShowForm(false)}
           onSaved={() => { setShowForm(false); qc.invalidateQueries(['operator_substitutions', companyId]) }} />
       )}
+      {editSub && (
+        <SubstitutionFormModal companyId={companyId} userProfile={userProfile} existing={editSub}
+          onClose={() => setEditSub(null)}
+          onSaved={() => { setEditSub(null); qc.invalidateQueries(['operator_substitutions', companyId]) }} />
+      )}
     </div>
   )
 }
 
-function SubstitutionFormModal({ companyId, userProfile, onClose, onSaved }) {
-  const { role } = useAuth()
-  const [equipmentId, setEquipmentId] = useState('')
+function SubstitutionFormModal({ companyId, userProfile, existing, onClose, onSaved }) {
+  const isEdit = !!existing
+  const [equipmentId, setEquipmentId] = useState(existing?.equipment_id || '')
   const [origId,      setOrigId]      = useState('')
   const [subId,       setSubId]       = useState('')
-  const [shiftDate,   setShiftDate]   = useState(new Date().toISOString().split('T')[0])
-  const [shiftType,   setShiftType]   = useState('day')
-  const [reason,      setReason]      = useState('absent')
+  const [shiftDate,   setShiftDate]   = useState(existing?.shift_date || new Date().toISOString().split('T')[0])
+  const [shiftType,   setShiftType]   = useState(existing?.shift_type || 'day')
+  const [reason,      setReason]      = useState(existing?.reason || 'absent')
   const [saving,      setSaving]      = useState(false)
 
   const { data: equipment = [] } = useQuery({
@@ -3110,16 +3176,24 @@ function SubstitutionFormModal({ companyId, userProfile, onClose, onSaved }) {
     enabled: !!companyId,
   })
 
-  // Auto-fill original operator when equipment selected
+  // Pre-fill orig/sub when editing and operators are loaded
   useEffect(() => {
-    if (!equipmentId) return
+    if (!isEdit || !operators.length) return
+    const origOp = operators.find(o => o.user_id === existing.original_operator_id)
+    const subOp  = operators.find(o => o.user_id === existing.substitute_operator_id)
+    if (origOp) setOrigId(origOp.id)
+    if (subOp)  setSubId(subOp.id)
+  }, [isEdit, operators])  // eslint-disable-line
+
+  // Auto-fill original operator when equipment selected (new only)
+  useEffect(() => {
+    if (isEdit || !equipmentId) return
     const eq = equipment.find(e => e.id === equipmentId)
     if (eq?.assigned_operator_id) {
-      // find matching operator by user_id
       const op = operators.find(o => o.user_id === eq.assigned_operator_id)
       if (op) setOrigId(op.id)
     }
-  }, [equipmentId, equipment, operators])
+  }, [equipmentId, equipment, operators])  // eslint-disable-line
 
   const handleSave = async () => {
     if (!equipmentId) return toast.error('Select equipment')
@@ -3129,21 +3203,26 @@ function SubstitutionFormModal({ companyId, userProfile, onClose, onSaved }) {
     try {
       const origOp = operators.find(o => o.id === origId)
       const subOp  = operators.find(o => o.id === subId)
-
-      await supabase.from('operator_substitutions').insert({
-        company_id:             companyId,
+      const payload = {
         equipment_id:           equipmentId,
         original_operator_id:   origOp?.user_id || null,
         substitute_operator_id: subOp?.user_id  || subId,
         shift_date:  shiftDate,
         shift_type:  shiftType,
         reason,
-        approved_by:    userProfile?.id,
-        notified_admin: true,
-        notified_hr:    true,
-      })
-
-      toast.success('Substitution logged')
+      }
+      if (isEdit) {
+        const { error } = await supabase.from('operator_substitutions').update(payload).eq('id', existing.id)
+        if (error) throw error
+        toast.success('Substitution updated')
+      } else {
+        const { error } = await supabase.from('operator_substitutions').insert({
+          ...payload, company_id: companyId,
+          approved_by: userProfile?.id, notified_admin: true, notified_hr: true,
+        })
+        if (error) throw error
+        toast.success('Substitution logged')
+      }
       onSaved()
     } catch (err) { toast.error(err.message || 'Failed')
     } finally { setSaving(false) }
@@ -3152,13 +3231,13 @@ function SubstitutionFormModal({ companyId, userProfile, onClose, onSaved }) {
   const inp = 'w-full bg-dark-700 border border-dark-500 rounded-xl px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-primary-500'
 
   return (
-    <Modal title="Log Operator Substitution" onClose={onClose}
+    <Modal title={isEdit ? 'Edit Substitution' : 'Log Operator Substitution'} onClose={onClose}
       footer={<>
         <button onClick={onClose} className="btn-ghost flex-1">Cancel</button>
         <button onClick={handleSave} disabled={saving}
           className="flex-1 btn-primary flex items-center justify-center gap-1.5">
           {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-          Log Substitution
+          {isEdit ? 'Update' : 'Log Substitution'}
         </button>
       </>}>
 
