@@ -24,8 +24,9 @@ export function AuthProvider({ children }) {
     }
 
     // Check if Nhance super-admin
+    // IMPORTANT: VITE_NHANCE_ADMIN_EMAIL must be set in Vercel environment variables
     const nhanceAdminEmail = import.meta.env.VITE_NHANCE_ADMIN_EMAIL
-    if (authUser.email === nhanceAdminEmail) {
+    if (nhanceAdminEmail && authUser.email === nhanceAdminEmail) {
       setUserRole({ role: 'superadmin' })
       setUserProfile({ id: authUser.id, full_name: 'Nhance Admin', email: authUser.email })
       setCompany(null)
