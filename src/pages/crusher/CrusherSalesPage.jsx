@@ -360,8 +360,9 @@ function ClientsTab({ companyId }) {
   const { data: clients = [], isLoading } = useQuery({
     queryKey: ['clients', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('clients').select('*')
-        .eq('company_id', companyId).order('name')
+      const { data, error } = await supabase.from('clients').select('*')
+        .eq('company_id', companyId).order('display_name')
+      if (error) console.error('clients query:', error)
       return data || []
     },
   })
