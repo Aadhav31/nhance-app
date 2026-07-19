@@ -10,6 +10,7 @@ import {
 import toast from 'react-hot-toast'
 import Modal, { FormField } from '../../components/shared/Modal'
 import { MODULE_LABELS } from '../../lib/constants'
+import { INDUSTRY_LABELS, INDUSTRY_ICONS, getIndustryModules } from '../../lib/industryConfig'
 
 const ALL_MODULES = Object.keys(MODULE_LABELS)
 
@@ -33,7 +34,7 @@ function CompanyRow({ company, onSelect }) {
         <div className="text-xs text-slate-500">{company.contact_email || '—'}</div>
       </td>
       <td className="px-4 py-3">
-        <span className="text-xs text-slate-400 capitalize">{company.industry?.replace('_', ' ')}</span>
+        <span className="text-xs text-slate-400">{INDUSTRY_ICONS[company.industry] || '🏢'} {INDUSTRY_LABELS[company.industry] || company.industry?.replace('_', ' ')}</span>
       </td>
       <td className="px-4 py-3">
         <span className={`badge ${company.is_active ? 'badge-success' : 'badge-danger'}`}>
@@ -53,10 +54,10 @@ function CompanyRow({ company, onSelect }) {
 function NewCompanyModal({ onClose }) {
   const qc = useQueryClient()
   const [form, setForm] = useState({
-    name: '', industry: 'equipment_rental', contact_name: '', contact_email: '',
+    name: '', industry: 'construction', contact_name: '', contact_email: '',
     admin_name: '', admin_email: '', admin_password: '',
     contact_phone: '', gstin: '', address: '', max_users: 10,
-    modules: ['core'],
+    modules: getIndustryModules('construction'),
   })
   const [saving, setSaving]   = useState(false)
   const [showPwd, setShowPwd] = useState(false)
@@ -69,7 +70,11 @@ function NewCompanyModal({ onClose }) {
     setShowPwd(true)
   }
 
-  const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
+  const set = (k, v) => setForm(p => {
+    const next = { ...p, [k]: v }
+    if (k === 'industry') next.modules = getIndustryModules(v)
+    return next
+  })
 
   const toggleModule = (mod) => {
     if (mod === 'core') return // core always on
@@ -243,9 +248,9 @@ function NewCompanyModal({ onClose }) {
           </FormField>
           <FormField label="Industry">
             <select className="input" value={form.industry} onChange={e => set('industry', e.target.value)}>
-              <option value="equipment_rental">Equipment Rental</option>
-              <option value="transport">Transport & Logistics</option>
-              <option value="construction">Construction</option>
+              {Object.entries(INDUSTRY_LABELS).map(([val, label]) => (
+                <option key={val} value={val}>{INDUSTRY_ICONS[val]} {label}</option>
+              ))}
             </select>
           </FormField>
         </div>
@@ -371,9 +376,9 @@ function EditCompanyModal({ company, onClose, onUpdated }) {
           </FormField>
           <FormField label="Industry">
             <select className="input" value={form.industry} onChange={e => set('industry', e.target.value)}>
-              <option value="equipment_rental">Equipment Rental</option>
-              <option value="transport">Transport &amp; Logistics</option>
-              <option value="construction">Construction</option>
+              {Object.entries(INDUSTRY_LABELS).map(([val, label]) => (
+                <option key={val} value={val}>{INDUSTRY_ICONS[val]} {label}</option>
+              ))}
             </select>
           </FormField>
         </div>

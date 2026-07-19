@@ -300,6 +300,9 @@ function AppShell() {
       case 'letters':      return wrap(LettersPage,         MODULES.CORE)
       case 'settings':     return wrap(SettingsPage,       MODULES.CORE)
       case 'profile':      return wrap(ProfilePage,        MODULES.CORE)
+      // ── Industry-specific pages (Coming Soon until page is built) ──────────
+      case 'production':   return <ComingSoon page="Production Tracker" />
+      case 'showroom':     return <ComingSoon page="Vehicle Stock / Showroom" />
       default:             return <ComingSoon page={page} />
     }
   }

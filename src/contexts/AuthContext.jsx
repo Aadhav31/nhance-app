@@ -132,9 +132,10 @@ export function AuthProvider({ children }) {
     return modules.includes(moduleKey)
   }
 
-  const isSuperAdmin = () => userRole?.role === 'superadmin'
-  const isAdmin      = () => ['admin', 'superadmin'].includes(userRole?.role)
-  const role         = userRole?.role || null
+  const isSuperAdmin  = () => userRole?.role === 'superadmin'
+  const isAdmin       = () => ['admin', 'superadmin'].includes(userRole?.role)
+  const role          = userRole?.role || null
+  const industryType  = company?.industry || 'construction'
 
   const signOut = async () => {
     setAuthError(null)
@@ -146,7 +147,8 @@ export function AuthProvider({ children }) {
     userProfile,
     userRole,
     company,
-    companyId: company?.id ?? null,
+    companyId:    company?.id ?? null,
+    industryType,             // e.g. 'construction' | 'crusher' | 'readymix' | 'automobile'
     modules,
     loading,
     role,

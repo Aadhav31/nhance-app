@@ -2,13 +2,17 @@ import { useState } from 'react'
 import * as Icons from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
 import { NAV_ITEMS } from '../../lib/constants'
+import { getIndustryNav } from '../../lib/industryConfig'
 import { cn, initials } from '../../lib/utils'
 import { ChevronLeft, LogOut, User } from 'lucide-react'
 
 export default function Sidebar({ activePage, onNavigate, collapsed, onToggle }) {
-  const { userProfile, company, role, hasModule, signOut } = useAuth()
+  const { userProfile, company, role, hasModule, signOut, industryType } = useAuth()
 
-  const filteredNav = NAV_ITEMS.map(section => ({
+  // Use industry-specific nav if one is defined; fall back to NAV_ITEMS (construction/existing)
+  const sourceNav = getIndustryNav(industryType) ?? NAV_ITEMS
+
+  const filteredNav = sourceNav.map(section => ({
     ...section,
     items: section.items.filter(item =>
       hasModule(item.module) && item.roles.includes(role)
