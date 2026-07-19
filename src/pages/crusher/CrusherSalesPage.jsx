@@ -140,12 +140,10 @@ function QuickClientModal({ companyId, existing, onClose }) {
         company_id:          companyId,
         display_name:        form.display_name.trim(),
         business_name:       form.display_name.trim(),
-        name:                form.display_name.trim(),
         gstin:               form.gstin.trim() || null,
         contact_phone:       form.contact_phone.trim() || null,
         contact_email:       form.contact_email.trim() || null,
         registered_address:  form.registered_address.trim() || null,
-        address:             form.registered_address.trim() || null,
         client_type:         'business',
         currency:            'INR',
         tax_preference:      'tax_payer',
@@ -300,7 +298,7 @@ function CreditSettingsModal({ client, companyId, existing, onClose }) {
 
   return (
     <Modal
-      title={`Credit Settings — ${client.name}`}
+      title={`Credit Settings — ${client.display_name || client.business_name}`}
       onClose={onClose}
       footer={
         <>
@@ -419,11 +417,11 @@ function ClientsTab({ companyId }) {
         return (
           <div key={client.id} className="bg-dark-700 rounded-xl border border-dark-600 p-4 flex items-start gap-4">
             <div className="w-10 h-10 rounded-full bg-primary-600/20 flex items-center justify-center text-sm font-bold text-primary-400 flex-shrink-0">
-              {client.name?.[0]?.toUpperCase() || 'C'}
+              {(client.display_name || client.business_name)?.[0]?.toUpperCase() || 'C'}
             </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-sm font-semibold text-slate-200">{client.name}</span>
+                <span className="text-sm font-semibold text-slate-200">{client.display_name || client.business_name}</span>
                 {s ? (
                   <Badge label={`Credit: ${s.credit_period_days}d`} color="blue" />
                 ) : (
@@ -431,7 +429,7 @@ function ClientsTab({ companyId }) {
                 )}
                 {vCount > 0 && <Badge label={`${vCount} vehicle${vCount > 1 ? 's' : ''}`} color="green" />}
               </div>
-              {client.phone && <p className="text-xs text-slate-500 mt-0.5 flex items-center gap-1"><Phone className="w-3 h-3" />{client.phone}</p>}
+              {client.contact_phone && <p className="text-xs text-slate-500 mt-0.5 flex items-center gap-1"><Phone className="w-3 h-3" />{client.contact_phone}</p>}
               {s && (
                 <p className="text-[11px] text-slate-500 mt-1">
                   Statement: day {s.statement_day || '—'} of month · Due: {s.payment_due_days}d after statement
