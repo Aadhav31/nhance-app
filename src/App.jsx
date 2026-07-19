@@ -37,6 +37,7 @@ const SuperAdminPage          = lazy(() => import('./pages/superadmin/SuperAdmin
 const LettersPage             = lazy(() => import('./pages/letters/LettersPage'))
 const ExpensesPage            = lazy(() => import('./pages/expenses/ExpensesPage'))
 const ProductionTrackerPage   = lazy(() => import('./pages/production/ProductionTrackerPage'))
+const CrusherSalesPage        = lazy(() => import('./pages/crusher/CrusherSalesPage'))
 
 // ── Connectivity hook ─────────────────────────────────────────────────────────
 function useOnlineStatus() {
@@ -306,6 +307,12 @@ function AppShell() {
         return (
           <Suspense fallback={<LoadingScreen message="Loading production tracker…" />}>
             <ProductionTrackerPage />
+          </Suspense>
+        )
+      case 'crusher_sales':
+        return (
+          <Suspense fallback={<LoadingScreen message="Loading crusher sales…" />}>
+            <CrusherSalesPage />
           </Suspense>
         )
       case 'showroom':     return <ComingSoon page="Vehicle Stock / Showroom" />

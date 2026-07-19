@@ -104,9 +104,9 @@ export const INDUSTRY_NAV = {
     {
       section: 'Business',
       items: [
-        { key: 'sales',    label: 'Sales',    icon: 'TrendingUp',   module: MODULES.SALES,
+        { key: 'crusher_sales', label: 'Sales & Invoicing', icon: 'FileText',    module: MODULES.SALES,
           roles: [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
-        { key: 'purchase', label: 'Purchase', icon: 'ShoppingCart', module: MODULES.PURCHASE,
+        { key: 'purchase',      label: 'Purchase',          icon: 'ShoppingCart', module: MODULES.PURCHASE,
           roles: [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
       ],
     },
