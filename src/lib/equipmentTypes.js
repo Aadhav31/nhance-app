@@ -406,6 +406,190 @@ export const EQUIPMENT_TYPES = [
   },
 ]
 
+// ── Crusher / Quarry Equipment Types ─────────────────────────────────────────
+export const CRUSHER_EQUIPMENT_TYPES = [
+  // ── Primary Processing ────────────────────────────────────────────────────────
+  {
+    type: 'Primary Jaw Crusher',
+    prefix: 'JC',
+    meter_type: 'hours',
+    sub_categories: ['< 100 TPH', '100–200 TPH', '200–400 TPH', '> 400 TPH'],
+    attachments: ['Grizzly Feeder', 'Vibrating Feeder', 'Jaw Plates', 'Toggle Plate', 'Cheek Plates'],
+  },
+  {
+    type: 'Primary Cone Crusher',
+    prefix: 'PC1',
+    meter_type: 'hours',
+    sub_categories: ['< 100 TPH', '100–200 TPH', '200–400 TPH', '> 400 TPH'],
+    attachments: ['Mantle', 'Concave', 'Bowl Liner', 'Feed Plate'],
+  },
+  // ── Secondary Processing ──────────────────────────────────────────────────────
+  {
+    type: 'Secondary Cone Crusher',
+    prefix: 'CC2',
+    meter_type: 'hours',
+    sub_categories: ['< 100 TPH', '100–200 TPH', '200–300 TPH'],
+    attachments: ['Mantle', 'Concave', 'Bowl Liner', 'Feed Plate'],
+  },
+  {
+    type: 'Secondary Impact Crusher',
+    prefix: 'IC2',
+    meter_type: 'hours',
+    sub_categories: ['Horizontal Shaft (HSI)', 'Vertical Shaft (VSI)'],
+    attachments: ['Blow Bars', 'Curtain / Apron Liners', 'Feed Plate'],
+  },
+  // ── Tertiary / VSI ────────────────────────────────────────────────────────────
+  {
+    type: 'VSI / Tertiary Crusher',
+    prefix: 'VSI',
+    meter_type: 'hours',
+    sub_categories: ['Sand Making Unit', 'Aggregate Shaping', 'Rock-on-Rock', 'Rock-on-Steel'],
+    attachments: ['Rotor / Impeller', 'Wear Tip', 'Feed Tube', 'Anvils / Shoe & Table'],
+  },
+  // ── M Sand & P Sand Machines ──────────────────────────────────────────────────
+  {
+    type: 'M Sand Machine',
+    prefix: 'MS',
+    meter_type: 'hours',
+    sub_categories: ['Dry Process', 'Wet Process'],
+    attachments: ['Classifier', 'Dust Collector', 'Vibrating Screen'],
+  },
+  {
+    type: 'P Sand Machine',
+    prefix: 'PS',
+    meter_type: 'hours',
+    sub_categories: ['Standard', 'High Output'],
+    attachments: ['Classifier', 'Water Recycling Unit', 'Vibrating Screen'],
+  },
+  // ── Washing ───────────────────────────────────────────────────────────────────
+  {
+    type: 'Sand Washer (Screw / Bucket)',
+    prefix: 'SW',
+    meter_type: 'hours',
+    sub_categories: ['Single Screw', 'Double Screw', 'Bucket Wheel'],
+    attachments: ['Dewatering Screen', 'Cyclone Unit', 'Sump Pump'],
+  },
+  {
+    type: 'Aggregate Washer',
+    prefix: 'AW',
+    meter_type: 'hours',
+    sub_categories: ['Log Washer', 'Drum Scrubber', 'Attrition Scrubber'],
+    attachments: ['Screening Deck', 'Spray Bar Assembly', 'Dewatering Screen'],
+  },
+  // ── Screening & Classifying ───────────────────────────────────────────────────
+  {
+    type: 'Vibrating Screen',
+    prefix: 'VS',
+    meter_type: 'hours',
+    sub_categories: ['1 Deck', '2 Deck', '3 Deck', '4 Deck'],
+    attachments: ['Screen Mesh (Fine)', 'Screen Mesh (Medium)', 'Screen Mesh (Coarse)', 'Spray Bars', 'Chutes'],
+  },
+  {
+    type: 'Grizzly Feeder',
+    prefix: 'GF',
+    meter_type: 'hours',
+    sub_categories: ['Static Grizzly', 'Vibrating Grizzly'],
+    attachments: ['Grizzly Bars', 'Scalp Screen'],
+  },
+  // ── Conveying ─────────────────────────────────────────────────────────────────
+  {
+    type: 'Conveyor Belt',
+    prefix: 'CV',
+    meter_type: 'hours',
+    sub_categories: ['Feed Conveyor (< 20 m)', 'Transfer Conveyor (20–50 m)', 'Overland Conveyor (> 50 m)', 'Radial Stacker'],
+    attachments: ['Belt Scraper', 'Belt Scale / Weigher', 'Metal Detector', 'Skirting Rubber', 'Troughing Idlers'],
+  },
+  // ── Earth Moving ──────────────────────────────────────────────────────────────
+  {
+    type: 'Excavator (Hydraulic)',
+    prefix: 'EX',
+    meter_type: 'hours',
+    sub_categories: ['Medium (14–30T)', 'Large (30–50T)', 'Heavy / Mining (> 50T)'],
+    attachments: ['Digging Bucket (Standard)', 'Rock Bucket', 'Hydraulic Breaker / Rock Hammer', 'Ripper'],
+  },
+  {
+    type: 'Wheel Loader',
+    prefix: 'WL',
+    meter_type: 'hours',
+    sub_categories: ['Small (< 2 m³)', 'Medium (2–3.5 m³)', 'Large (> 3.5 m³)'],
+    attachments: ['Standard Bucket', 'Rock / High-Tip Bucket'],
+  },
+  // ── Transport ─────────────────────────────────────────────────────────────────
+  {
+    type: 'Tipper / Dumper',
+    prefix: 'TI',
+    meter_type: 'both',
+    sub_categories: ['6-Wheeler (5 m³)', '10-Wheeler (8 m³)', '10-Wheeler (10 m³)', '12-Wheeler (12 m³)', '14-Wheeler (14–16 m³)'],
+    attachments: ['Tarpaulin Frame / Cover', 'Rock Body (Special)', 'Tail-Gate'],
+  },
+  {
+    type: 'Pickup Truck',
+    prefix: 'PU',
+    meter_type: 'kilometers',
+    sub_categories: ['Double Cab', 'Single Cab', 'Extended Cab'],
+    attachments: ['Canopy / Tonneau Cover', 'Bull Bar', 'Tow Bar'],
+  },
+  // ── Lifting ───────────────────────────────────────────────────────────────────
+  {
+    type: 'Mobile Crane',
+    prefix: 'MC',
+    meter_type: 'both',
+    sub_categories: ['10T', '14T', '20T', '30T', '50T'],
+    attachments: ['Standard Hook Block', 'Spreader Beam', 'Man Basket'],
+  },
+  {
+    type: 'Forklift',
+    prefix: 'FL',
+    meter_type: 'hours',
+    sub_categories: ['1–2T Counterbalance', '2–3.5T Counterbalance', 'Rough-Terrain Forklift'],
+    attachments: ['Standard Fork', 'Side Shifter', 'Jib / Crane Arm'],
+  },
+  // ── Support Equipment ─────────────────────────────────────────────────────────
+  {
+    type: 'Water Tanker',
+    prefix: 'WT',
+    meter_type: 'both',
+    sub_categories: ['5 KL', '8 KL', '10 KL', '12 KL'],
+    attachments: ['Water Sprinkler Bar (Front)', 'Rear Sprinkler Nozzle', 'Suction Hose Assembly'],
+  },
+  {
+    type: 'Generator / DG Set',
+    prefix: 'GN',
+    meter_type: 'hours',
+    sub_categories: ['< 25 kVA (Portable)', '25–62.5 kVA', '62.5–125 kVA', '125–250 kVA', '250–500 kVA'],
+    attachments: ['AMF Panel', 'Acoustic Canopy'],
+  },
+  {
+    type: 'Air Compressor',
+    prefix: 'AC',
+    meter_type: 'hours',
+    sub_categories: ['< 100 CFM (Portable)', '100–250 CFM', '250–600 CFM'],
+    attachments: ['Rock Drill', 'Pneumatic Drill / Jack Hammer'],
+  },
+  {
+    type: 'Dewatering Pump',
+    prefix: 'DP',
+    meter_type: 'hours',
+    sub_categories: ['Diesel (< 100 m³/hr)', 'Diesel (100–300 m³/hr)', 'Electric Submersible'],
+    attachments: ['Suction Hose', 'Delivery Hose'],
+  },
+  // ── Other ─────────────────────────────────────────────────────────────────────
+  {
+    type: 'Other',
+    prefix: 'OT',
+    meter_type: 'hours',
+    sub_categories: ['General Equipment'],
+    attachments: [],
+  },
+]
+
+// ── Industry-aware equipment type resolver ────────────────────────────────────
+export function getEquipmentTypes(industryType) {
+  if (industryType === 'crusher') return CRUSHER_EQUIPMENT_TYPES
+  // construction, equipment_rental, transport, readymix, automobile → default list
+  return EQUIPMENT_TYPES
+}
+
 // ── Backward-compatible exports ───────────────────────────────────────────────
 export const EQUIPMENT_CATEGORIES = EQUIPMENT_TYPES.map(e => ({
   category: e.type,
@@ -414,20 +598,21 @@ export const EQUIPMENT_CATEGORIES = EQUIPMENT_TYPES.map(e => ({
 
 export const CATEGORY_NAMES = EQUIPMENT_TYPES.map(e => e.type)
 
-export function getMeterType(category) {
-  return EQUIPMENT_TYPES.find(e => e.type === category)?.meter_type || 'hours'
+// All helpers accept an optional typesList so callers can pass an industry-specific array
+export function getMeterType(category, typesList = EQUIPMENT_TYPES) {
+  return typesList.find(e => e.type === category)?.meter_type || 'hours'
 }
 
-export function getPrefix(category) {
-  return EQUIPMENT_TYPES.find(e => e.type === category)?.prefix || 'EQ'
+export function getPrefix(category, typesList = EQUIPMENT_TYPES) {
+  return typesList.find(e => e.type === category)?.prefix || 'EQ'
 }
 
-export function getSubCategories(category) {
-  return EQUIPMENT_TYPES.find(e => e.type === category)?.sub_categories || []
+export function getSubCategories(category, typesList = EQUIPMENT_TYPES) {
+  return typesList.find(e => e.type === category)?.sub_categories || []
 }
 
-export function getAttachments(category) {
-  return EQUIPMENT_TYPES.find(e => e.type === category)?.attachments || []
+export function getAttachments(category, typesList = EQUIPMENT_TYPES) {
+  return typesList.find(e => e.type === category)?.attachments || []
 }
 
 // ── Status colours ────────────────────────────────────────────────────────────

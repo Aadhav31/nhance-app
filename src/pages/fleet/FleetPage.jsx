@@ -6,6 +6,7 @@ import { useAuth } from '../../contexts/AuthContext'
 import { nextEquipmentNumber } from '../../utils/docNumbers'
 import {
   EQUIPMENT_TYPES, EQUIPMENT_CATEGORIES, getMeterType, getPrefix, getSubCategories, getAttachments,
+  getEquipmentTypes,
   STATUS_COLORS, INCIDENT_SEVERITY
 } from '../../lib/equipmentTypes'
 import {
@@ -243,6 +244,8 @@ const OWNERSHIP_TYPES = [
 function EquipmentFormModal({ companyId, initialValues, onClose, onSaved }) {
   const qc      = useQueryClient()
   const isEdit  = !!initialValues?.id
+  const { industryType } = useAuth()
+  const activeTypes = getEquipmentTypes(industryType)
   const blankForm = {
     equipment_number: '', name: '', category: '', sub_category: '', make: '', model: '',
     year_of_manufacture: '', registration_number: '', chassis_number: '',
@@ -261,14 +264,14 @@ function EquipmentFormModal({ companyId, initialValues, onClose, onSaved }) {
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
 
   const handleCategoryChange = (cat) => {
-    const prefix    = getPrefix(cat)
-    const subCats   = getSubCategories(cat)
+    const prefix    = getPrefix(cat, activeTypes)
+    const subCats   = getSubCategories(cat, activeTypes)
     const curNum    = form.equipment_number
-    const oldPrefix = getPrefix(form.category)
+    const oldPrefix = getPrefix(form.category, activeTypes)
     const shouldUpdateNum = !curNum || curNum === `${oldPrefix}-` || curNum.startsWith(`${oldPrefix}-`)
     set('category',     cat)
     set('sub_category', subCats.length > 0 ? subCats[0] : '')
-    set('meter_type',   getMeterType(cat))
+    set('meter_type',   getMeterType(cat, activeTypes))
     // Just set the prefix placeholder — actual number generated on save
     if (shouldUpdateNum) set('equipment_number', `${prefix}-`)
   }
@@ -278,7 +281,7 @@ function EquipmentFormModal({ companyId, initialValues, onClose, onSaved }) {
     if (!form.category.trim()) { toast.error('Category is required'); return }
     setSaving(true)
     try {
-      const prefix = getPrefix(form.category)
+      const prefix = getPrefix(form.category, activeTypes)
       const rawNum = form.equipment_number.trim()
       const equipment_number = (!isEdit && (!rawNum || rawNum === `${prefix}-`))
         ? await nextEquipmentNumber(companyId, prefix).catch(() => `${prefix}-${Date.now()}`)
@@ -347,13 +350,13 @@ function EquipmentFormModal({ companyId, initialValues, onClose, onSaved }) {
       <Field label="Equipment Type" required>
         <select className={inp()} value={form.category} onChange={e => handleCategoryChange(e.target.value)}>
           <option value="">Select equipment type…</option>
-          {EQUIPMENT_TYPES.map(e => <option key={e.type} value={e.type}>{e.type}</option>)}
+          {activeTypes.map(e => <option key={e.type} value={e.type}>{e.type}</option>)}
         </select>
       </Field>
-      {form.category && getSubCategories(form.category).length > 0 && (
+      {form.category && getSubCategories(form.category, activeTypes).length > 0 && (
         <Field label="Classification / Sub-category">
           <select className={inp()} value={form.sub_category} onChange={e => set('sub_category', e.target.value)}>
-            {getSubCategories(form.category).map(s => <option key={s} value={s}>{s}</option>)}
+            {getSubCategories(form.category, activeTypes).map(s => <option key={s} value={s}>{s}</option>)}
           </select>
         </Field>
       )}
@@ -363,7 +366,7 @@ function EquipmentFormModal({ companyId, initialValues, onClose, onSaved }) {
         <Field label="Equipment No." required>
           <input className={inp()} value={form.equipment_number}
             onChange={e => set('equipment_number', e.target.value)}
-            placeholder={form.category ? `${getPrefix(form.category)}-001` : 'Select type first…'} />
+            placeholder={form.category ? `${getPrefix(form.category, activeTypes)}-001` : 'Select type first…'} />
         </Field>
         <Field label="Status">
           <select className={inp()} value={form.status} onChange={e => set('status', e.target.value)}>
@@ -763,7 +766,8 @@ function AttachmentsSection({ equipment, companyId, isAdmin }) {
   const fileRef = useRef(null)
   const [showAdd,   setShowAdd]   = useState(false)
   const [editItem,  setEditItem]  = useState(null)
-  const availableAttachments = getAttachments(equipment.category || '')
+  const { industryType } = useAuth()
+  const availableAttachments = getAttachments(equipment.category || '', getEquipmentTypes(industryType))
 
   const { data: attachments = [], isLoading } = useQuery({
     queryKey: ['equipment_attachments', equipment.id],
