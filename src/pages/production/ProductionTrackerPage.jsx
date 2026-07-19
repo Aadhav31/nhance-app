@@ -669,12 +669,17 @@ function GradesTab({ companyId }) {
   const seedDefaults = async () => {
     setSeeding(true)
     const defaults = [
-      { grade_name: '40mm', sort_order: 1 },
-      { grade_name: '20mm', sort_order: 2 },
-      { grade_name: '12mm', sort_order: 3 },
-      { grade_name: '6mm',  sort_order: 4 },
-      { grade_name: 'Dust', sort_order: 5 },
-      { grade_name: 'Rejects', sort_order: 6 },
+      { grade_name: 'M Sand',   description: 'Manufactured Sand — fine aggregate for concrete', sort_order: 1 },
+      { grade_name: 'P Sand',   description: 'Plastering Sand — fine grade for plastering',     sort_order: 2 },
+      { grade_name: 'Power',    description: 'Power Sand',                                       sort_order: 3 },
+      { grade_name: 'GSB',      description: 'Granular Sub Base — road base layer',              sort_order: 4 },
+      { grade_name: 'Wetmix',   description: 'Wet Mix Macadam — road construction layer',        sort_order: 5 },
+      { grade_name: '40mm',     description: 'Coarse aggregate 40mm',                            sort_order: 6 },
+      { grade_name: '20mm',     description: 'Coarse aggregate 20mm',                            sort_order: 7 },
+      { grade_name: '12mm',     description: 'Coarse aggregate 12mm',                            sort_order: 8 },
+      { grade_name: '6mm',      description: 'Fine aggregate 6mm',                               sort_order: 9 },
+      { grade_name: 'Dust',     description: 'Quarry dust / fines',                              sort_order: 10 },
+      { grade_name: 'Rejects',  description: 'Rejected / waste material',                        sort_order: 11 },
     ]
     try {
       for (const d of defaults) {
@@ -754,7 +759,7 @@ function GradesTab({ companyId }) {
               <div className="flex flex-col items-center py-16 gap-3 text-slate-600">
                 <Layers className="w-10 h-10 opacity-30" />
                 <p className="text-sm">No grades yet</p>
-                <p className="text-xs text-slate-600">Click "Seed Defaults" to add standard crusher grades (40mm, 20mm, 12mm, 6mm, Dust, Rejects)</p>
+                <p className="text-xs text-slate-600">Click "Seed Defaults" to add standard grades (M Sand, P Sand, Power, GSB, Wetmix, aggregates)</p>
               </div>
             )
             : grades.map((g, i) => (
