@@ -33,9 +33,10 @@ const ExpensePlannerPage = lazy(() => import('./pages/planner/ExpensePlannerPage
 const FieldExpensePage   = lazy(() => import('./pages/fieldexpense/FieldExpensePage'))
 const SettingsPage       = lazy(() => import('./pages/settings/SettingsPage'))
 const ProfilePage        = lazy(() => import('./pages/settings/ProfilePage'))
-const SuperAdminPage     = lazy(() => import('./pages/superadmin/SuperAdminPage'))
-const LettersPage        = lazy(() => import('./pages/letters/LettersPage'))
-const ExpensesPage       = lazy(() => import('./pages/expenses/ExpensesPage'))
+const SuperAdminPage          = lazy(() => import('./pages/superadmin/SuperAdminPage'))
+const LettersPage             = lazy(() => import('./pages/letters/LettersPage'))
+const ExpensesPage            = lazy(() => import('./pages/expenses/ExpensesPage'))
+const ProductionTrackerPage   = lazy(() => import('./pages/production/ProductionTrackerPage'))
 
 // ── Connectivity hook ─────────────────────────────────────────────────────────
 function useOnlineStatus() {
@@ -300,8 +301,13 @@ function AppShell() {
       case 'letters':      return wrap(LettersPage,         MODULES.CORE)
       case 'settings':     return wrap(SettingsPage,       MODULES.CORE)
       case 'profile':      return wrap(ProfilePage,        MODULES.CORE)
-      // ── Industry-specific pages (Coming Soon until page is built) ──────────
-      case 'production':   return <ComingSoon page="Production Tracker" />
+      // ── Industry-specific pages ────────────────────────────────────────────
+      case 'production':
+        return (
+          <Suspense fallback={<LoadingScreen message="Loading production tracker…" />}>
+            <ProductionTrackerPage />
+          </Suspense>
+        )
       case 'showroom':     return <ComingSoon page="Vehicle Stock / Showroom" />
       default:             return <ComingSoon page={page} />
     }
