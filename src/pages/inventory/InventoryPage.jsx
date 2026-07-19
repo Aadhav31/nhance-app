@@ -771,6 +771,7 @@ function TransfersTab({ companyId, session }) {
   const qc = useQueryClient()
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving]         = useState(false)
+  const [reversing, setReversing]   = useState(null)
   const [form, setForm] = useState({ item_id:'', store_id:'', to_store_id:'', quantity:'', txn_date: todayStr(), notes:'' })
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
   const { items, stores } = useInventoryData(companyId)
@@ -778,11 +779,33 @@ function TransfersTab({ companyId, session }) {
   const { data: txns = [], isLoading } = useQuery({
     queryKey: ['stxn_transfer', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('stock_transactions').select('*, inventory_items(item_name, unit), stores!store_id(store_name)').eq('company_id', companyId).eq('txn_type', 'transfer').order('created_at', { ascending: false }).limit(100)
+      const { data } = await supabase.from('stock_transactions')
+        .select('*, inventory_items(item_name, unit), from_store:stores!store_id(store_name), to_store:stores!to_store_id(store_name)')
+        .eq('company_id', companyId).eq('txn_type', 'transfer')
+        .order('created_at', { ascending: false }).limit(100)
       return data || []
     },
     enabled: !!companyId,
   })
+
+  const reverseTransfer = async (t) => {
+    if (!window.confirm(`Reverse transfer of ${fmtQty(t.quantity, t.inventory_items?.unit)} back from "${t.to_store?.store_name}" to "${t.from_store?.store_name}"?`)) return
+    setReversing(t.id)
+    try {
+      const trfNum = await nextDocNumber(companyId, 'stock_transfer').catch(() => `TRF-${Date.now()}`)
+      const { error } = await supabase.from('stock_transactions').insert({
+        company_id: companyId, txn_number: trfNum, txn_type: 'transfer',
+        txn_date: todayStr(), item_id: t.item_id,
+        store_id: t.to_store_id, to_store_id: t.store_id,   // swapped
+        quantity: t.quantity, notes: `Reversal of ${t.txn_number}`,
+        created_by: session.user.id,
+      })
+      if (error) throw error
+      toast.success(`Transfer reversed — ${trfNum}`)
+      qc.invalidateQueries(['stxn_transfer', companyId])
+      qc.invalidateQueries(['inv_stock', companyId])
+    } catch (e) { toast.error(e.message) } finally { setReversing(null) }
+  }
 
   const save = async () => {
     if (!form.item_id)     return toast.error('Select an item')
@@ -820,13 +843,28 @@ function TransfersTab({ companyId, session }) {
         : txns.length === 0 ? <div className="flex flex-col items-center py-16 gap-2 text-slate-500"><Shuffle className="w-10 h-10 text-slate-700" /><p>No transfers yet</p></div>
         : <div className="space-y-2">
           {txns.map(t => (
-            <div key={t.id} className="bg-dark-800 border border-dark-700 rounded-xl p-4 flex items-center justify-between">
-              <div>
+            <div key={t.id} className="bg-dark-800 border border-dark-700 rounded-xl p-4 flex items-center justify-between gap-3">
+              <div className="flex-1 min-w-0">
                 <p className="text-xs font-mono text-primary-500">{t.txn_number}</p>
-                <p className="font-semibold text-slate-100 text-sm">{t.inventory_items?.item_name}</p>
-                <p className="text-xs text-slate-500">{t.stores?.store_name} → {fmtDate(t.txn_date)}</p>
+                <p className="font-semibold text-slate-100 text-sm truncate">{t.inventory_items?.item_name}</p>
+                <p className="text-xs text-slate-400">
+                  <span className="text-slate-300">{t.from_store?.store_name || '—'}</span>
+                  <span className="mx-1 text-slate-600">→</span>
+                  <span className="text-slate-300">{t.to_store?.store_name || '—'}</span>
+                </p>
+                <p className="text-xs text-slate-600 mt-0.5">{fmtDate(t.txn_date)}</p>
               </div>
-              <p className="text-lg font-black text-blue-400 shrink-0">{fmtQty(t.quantity, t.inventory_items?.unit)}</p>
+              <div className="flex items-center gap-2 shrink-0">
+                <p className="text-lg font-black text-blue-400">{fmtQty(t.quantity, t.inventory_items?.unit)}</p>
+                <button
+                  onClick={() => reverseTransfer(t)}
+                  disabled={reversing === t.id}
+                  className="text-xs flex items-center gap-1 px-2 py-1 rounded-lg bg-dark-700 text-orange-400 hover:bg-orange-500/10 border border-orange-700/30 hover:border-orange-500/50 transition-colors disabled:opacity-50"
+                  title="Reverse this transfer">
+                  {reversing === t.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCcw className="w-3 h-3" />}
+                  <span>Reverse</span>
+                </button>
+              </div>
             </div>
           ))}
         </div>}
