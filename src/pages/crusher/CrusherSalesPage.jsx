@@ -132,13 +132,12 @@ function InvoiceFormModal({ companyId, onClose, prefill = null, onAfterSave = nu
   })
 
   const { data: vehicles = [] } = useQuery({
-    queryKey: ['vehicles-inv', companyId, form.client_id],
+    queryKey: ['vehicles-inv', companyId],
     queryFn: async () => {
-      let q = supabase.from('crusher_client_vehicles')
-        .select('id, vehicle_number, vehicle_type, billing_basis, capacity_tonnes, capacity_uom, owner_type')
+      const { data, error } = await supabase.from('crusher_client_vehicles')
+        .select('id, vehicle_number, vehicle_type, billing_basis, capacity_tonnes, capacity_uom, owner_type, client_id, transporter_name')
         .eq('company_id', companyId).eq('is_active', true)
-      if (form.client_id) q = q.eq('client_id', form.client_id)
-      const { data, error } = await q.order('vehicle_number')
+        .order('vehicle_number')
       if (error) console.error(error)
       return data || []
     },
@@ -435,17 +434,21 @@ function InvoiceFormModal({ companyId, onClose, prefill = null, onAfterSave = nu
         ) : (
           <select className={inp()} value={form.vehicle_id} onChange={e => handleVehicleChange(e.target.value)}>
             <option value="">— Select registered vehicle —</option>
-            {vehicles.map(v => <option key={v.id} value={v.id}>{v.vehicle_number} ({v.vehicle_type})</option>)}
+            {vehicles.map(v => {
+              const ownerTag = v.owner_type === 'own' ? ' [Own Fleet]' : v.owner_type === 'third_party' ? ` [${v.transporter_name || 'Third-party'}]` : ''
+              return <option key={v.id} value={v.id}>{v.vehicle_number} ({v.vehicle_type}){ownerTag}</option>
+            })}
           </select>
         )}
       </div>
 
       {/* Vehicle info chip (only for registry vehicles) */}
       {!form.vehicle_manual && selectedVehicle && (
-        <div className="bg-dark-700 rounded-lg px-3 py-2 text-xs text-slate-400 flex gap-4 border border-dark-600">
+        <div className="bg-dark-700 rounded-lg px-3 py-2 text-xs text-slate-400 flex gap-4 flex-wrap border border-dark-600">
+          <span>Type: <strong className="text-slate-200">{selectedVehicle.owner_type === 'own' ? 'Own Fleet' : selectedVehicle.owner_type === 'third_party' ? 'Third-party' : 'Client Vehicle'}</strong></span>
           <span>Billing: <strong className="text-slate-200">{selectedVehicle.billing_basis === 'fixed_capacity' ? 'Fixed Capacity' : 'Weigh-Based'}</strong></span>
           {selectedVehicle.billing_basis === 'fixed_capacity' && (
-            <span>Capacity: <strong className="text-slate-200">{selectedVehicle.capacity_tonnes} {(selectedVehicle.capacity_uom || 'tonnes').toUpperCase()}</strong></span>
+            <span>Capacity: <strong className="text-primary-300">{selectedVehicle.capacity_tonnes} {(selectedVehicle.capacity_uom || 'tonnes').toUpperCase()}</strong></span>
           )}
         </div>
       )}
@@ -792,13 +795,12 @@ function TokenFormModal({ companyId, onClose, onSaved }) {
   })
 
   const { data: vehicles = [] } = useQuery({
-    queryKey: ['vehicles-inv', companyId, form.client_id],
+    queryKey: ['vehicles-inv', companyId],
     queryFn: async () => {
-      let q = supabase.from('crusher_client_vehicles')
-        .select('id, vehicle_number, vehicle_type')
+      const { data } = await supabase.from('crusher_client_vehicles')
+        .select('id, vehicle_number, vehicle_type, owner_type, transporter_name')
         .eq('company_id', companyId).eq('is_active', true)
-      if (form.client_id) q = q.eq('client_id', form.client_id)
-      const { data } = await q.order('vehicle_number')
+        .order('vehicle_number')
       return data || []
     },
   })
@@ -938,7 +940,10 @@ function TokenFormModal({ companyId, onClose, onSaved }) {
               placeholder="e.g. TN38AB1234" />
           : <select className={inp()} value={form.vehicle_id} onChange={e => set('vehicle_id', e.target.value)}>
               <option value="">— Select vehicle —</option>
-              {vehicles.map(v => <option key={v.id} value={v.id}>{v.vehicle_number} ({v.vehicle_type})</option>)}
+              {vehicles.map(v => {
+                const ownerTag = v.owner_type === 'own' ? ' [Own Fleet]' : v.owner_type === 'third_party' ? ` [${v.transporter_name || 'Third-party'}]` : ''
+                return <option key={v.id} value={v.id}>{v.vehicle_number} ({v.vehicle_type}){ownerTag}</option>
+              })}
             </select>
         }
       </div>
@@ -1077,13 +1082,12 @@ function TokenEditModal({ companyId, token, onClose, onSaved }) {
     },
   })
   const { data: vehicles = [] } = useQuery({
-    queryKey: ['vehicles-inv', companyId, form.client_id],
+    queryKey: ['vehicles-inv', companyId],
     queryFn: async () => {
-      let q = supabase.from('crusher_client_vehicles')
-        .select('id, vehicle_number, vehicle_type')
+      const { data } = await supabase.from('crusher_client_vehicles')
+        .select('id, vehicle_number, vehicle_type, owner_type, transporter_name')
         .eq('company_id', companyId).eq('is_active', true)
-      if (form.client_id) q = q.eq('client_id', form.client_id)
-      const { data } = await q.order('vehicle_number')
+        .order('vehicle_number')
       return data || []
     },
   })
@@ -1195,7 +1199,10 @@ function TokenEditModal({ companyId, token, onClose, onSaved }) {
               onChange={e => set('vehicle_number', e.target.value.toUpperCase())} placeholder="e.g. TN38AB1234" />
           : <select className={inp()} value={form.vehicle_id} onChange={e => set('vehicle_id', e.target.value)}>
               <option value="">— Select vehicle —</option>
-              {vehicles.map(v => <option key={v.id} value={v.id}>{v.vehicle_number} ({v.vehicle_type})</option>)}
+              {vehicles.map(v => {
+                const ownerTag = v.owner_type === 'own' ? ' [Own Fleet]' : v.owner_type === 'third_party' ? ` [${v.transporter_name || 'Third-party'}]` : ''
+                return <option key={v.id} value={v.id}>{v.vehicle_number} ({v.vehicle_type}){ownerTag}</option>
+              })}
             </select>
         }
       </div>
@@ -3260,16 +3267,17 @@ function VehicleFormModal({ companyId, clients, fleet, existing, onClose }) {
   const qc = useQueryClient()
   const isEdit = !!existing?.id
   const [form, setForm] = useState({
-    vehicle_number:   existing?.vehicle_number  ?? '',
-    vehicle_type:     existing?.vehicle_type    ?? 'Tipper (10-Wheeler)',
-    owner_type:       existing?.owner_type      ?? 'client',
-    client_id:        existing?.client_id       ?? '',
-    equipment_id:     existing?.equipment_id    ?? '',
-    billing_basis:    existing?.billing_basis   ?? 'fixed_capacity',
-    capacity_tonnes:  existing?.capacity_tonnes ?? '',
-    capacity_uom:     existing?.capacity_uom    ?? 'tonnes',
-    notes:            existing?.notes           ?? '',
-    is_active:        existing?.is_active       ?? true,
+    vehicle_number:   existing?.vehicle_number   ?? '',
+    vehicle_type:     existing?.vehicle_type     ?? 'Tipper (10-Wheeler)',
+    owner_type:       existing?.owner_type       ?? 'client',
+    client_id:        existing?.client_id        ?? '',
+    equipment_id:     existing?.equipment_id     ?? '',
+    transporter_name: existing?.transporter_name ?? '',
+    billing_basis:    existing?.billing_basis    ?? 'fixed_capacity',
+    capacity_tonnes:  existing?.capacity_tonnes  ?? '',
+    capacity_uom:     existing?.capacity_uom     ?? 'tonnes',
+    notes:            existing?.notes            ?? '',
+    is_active:        existing?.is_active        ?? true,
   })
   const [saving, setSaving] = useState(false)
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
@@ -3283,8 +3291,9 @@ function VehicleFormModal({ companyId, clients, fleet, existing, onClose }) {
         vehicle_number:  form.vehicle_number.trim().toUpperCase(),
         vehicle_type:    form.vehicle_type,
         owner_type:      form.owner_type,
-        client_id:       form.owner_type === 'client' && form.client_id ? form.client_id : null,
-        equipment_id:    form.owner_type === 'own' && form.equipment_id ? form.equipment_id : null,
+        client_id:        form.owner_type !== 'own' && form.owner_type !== 'third_party' && form.client_id ? form.client_id : null,
+        equipment_id:     form.owner_type === 'own' && form.equipment_id ? form.equipment_id : null,
+        transporter_name: form.owner_type === 'third_party' ? (form.transporter_name.trim() || null) : null,
         billing_basis:   form.billing_basis,
         capacity_tonnes: form.capacity_tonnes ? Number(form.capacity_tonnes) : null,
         capacity_uom:    form.capacity_uom || 'tonnes',
@@ -3333,26 +3342,30 @@ function VehicleFormModal({ companyId, clients, fleet, existing, onClose }) {
             {VEHICLE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
           </select>
         </Field>
-        <Field label="Owner">
+        <Field label="Owner Type">
           <select className={inp()} value={form.owner_type}
             onChange={e => set('owner_type', e.target.value)}>
-            <option value="client">Client's Vehicle</option>
+            <option value="client">Client-owned Vehicle</option>
             <option value="own">Own Fleet Vehicle</option>
+            <option value="third_party">Third-party / Hired Transport</option>
           </select>
         </Field>
       </div>
 
+      {/* Client-owned: show usual client hint */}
       {form.owner_type === 'client' && (
-        <Field label="Linked Client">
+        <Field label="Usual Client (auto-fill hint only — not restricted to one client)">
           <select className={inp()} value={form.client_id}
             onChange={e => set('client_id', e.target.value)}>
-            <option value="">— Select client —</option>
+            <option value="">— None / Walk-in —</option>
             {clients.map(c => <option key={c.id} value={c.id}>{c.display_name || c.business_name}</option>)}
           </select>
+          <p className="text-[11px] text-slate-500 mt-1">This vehicle can still be used for any client's load.</p>
         </Field>
       )}
 
-      {form.owner_type === 'own' && fleet.length > 0 && (
+      {/* Own fleet: link to equipment register */}
+      {form.owner_type === 'own' && (
         <Field label="Link to Fleet Equipment (optional)">
           <select className={inp()} value={form.equipment_id}
             onChange={e => set('equipment_id', e.target.value)}>
@@ -3361,6 +3374,15 @@ function VehicleFormModal({ companyId, clients, fleet, existing, onClose }) {
               <option key={eq.id} value={eq.id}>{eq.name} ({eq.equipment_number})</option>
             ))}
           </select>
+        </Field>
+      )}
+
+      {/* Third-party: transport contractor name */}
+      {form.owner_type === 'third_party' && (
+        <Field label="Transporter / Contractor Name">
+          <input className={inp()} value={form.transporter_name}
+            onChange={e => set('transporter_name', e.target.value)}
+            placeholder="e.g. Murugan Transport, SMS Logistics…" />
         </Field>
       )}
 
@@ -3459,7 +3481,10 @@ function VehiclesTab({ companyId }) {
   }
 
   const filtered = filterClient
-    ? vehicles.filter(v => v.client_id === filterClient || (filterClient === '__own' && v.owner_type === 'own'))
+    ? vehicles.filter(v =>
+        (filterClient === '__own'        && v.owner_type === 'own') ||
+        (filterClient === '__third'      && v.owner_type === 'third_party') ||
+        (filterClient === v.client_id))
     : vehicles
 
   return (
@@ -3472,6 +3497,7 @@ function VehiclesTab({ companyId }) {
           value={filterClient} onChange={e => setFilterClient(e.target.value)}>
           <option value="">All Vehicles</option>
           <option value="__own">Own Fleet</option>
+          <option value="__third">Third-party / Hired</option>
           {clients.map(c => <option key={c.id} value={c.id}>{c.display_name || c.business_name}</option>)}
         </select>
         <span className="text-xs text-slate-500 ml-auto">{filtered.length} vehicle{filtered.length !== 1 ? 's' : ''}</span>
@@ -3488,21 +3514,26 @@ function VehiclesTab({ companyId }) {
         <div className="grid gap-2">
           {filtered.map(v => (
             <div key={v.id} className={`bg-dark-700 rounded-xl border p-4 flex items-start gap-4 ${v.is_active ? 'border-dark-600' : 'border-dark-600 opacity-60'}`}>
-              <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${v.owner_type === 'own' ? 'bg-emerald-500/10' : 'bg-primary-500/10'}`}>
-                <Truck className={`w-5 h-5 ${v.owner_type === 'own' ? 'text-emerald-400' : 'text-primary-400'}`} />
+              <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${
+                v.owner_type === 'own' ? 'bg-emerald-500/10' : v.owner_type === 'third_party' ? 'bg-amber-500/10' : 'bg-primary-500/10'
+              }`}>
+                <Truck className={`w-5 h-5 ${
+                  v.owner_type === 'own' ? 'text-emerald-400' : v.owner_type === 'third_party' ? 'text-amber-400' : 'text-primary-400'
+                }`} />
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="font-mono text-sm font-bold text-primary-300">{v.vehicle_number}</span>
                   <Badge label={v.vehicle_type} color="slate" />
-                  {v.owner_type === 'own'
-                    ? <Badge label="Own Fleet" color="green" />
-                    : <Badge label="Client Vehicle" color="blue" />}
+                  {v.owner_type === 'own'         && <Badge label="Own Fleet"   color="green" />}
+                  {v.owner_type === 'client'       && <Badge label="Client Vehicle" color="blue" />}
+                  {v.owner_type === 'third_party'  && <Badge label="Third-party" color="amber" />}
                   {!v.is_active && <Badge label="Inactive" color="red" />}
                 </div>
                 <p className="text-xs text-slate-400 mt-1">
-                  {v.owner_type === 'client' && v.clients && <span className="mr-2">Client: <strong>{v.clients.display_name || v.clients.business_name}</strong></span>}
-                  {v.owner_type === 'own' && v.equipment?.name && <span className="mr-2">Fleet: <strong>{v.equipment.name}</strong></span>}
+                  {v.owner_type === 'client'      && v.clients      && <span className="mr-2">Usual client: <strong>{v.clients.display_name || v.clients.business_name}</strong></span>}
+                  {v.owner_type === 'own'         && v.equipment?.name && <span className="mr-2">Fleet: <strong>{v.equipment.name}</strong></span>}
+                  {v.owner_type === 'third_party' && v.transporter_name && <span className="mr-2">Transporter: <strong>{v.transporter_name}</strong></span>}
                   {v.billing_basis === 'fixed_capacity'
                     ? <span>Fixed capacity: <strong>{v.capacity_tonnes ?? '—'} {(v.capacity_uom || 'tonnes').toUpperCase()}</strong></span>
                     : <span className="text-yellow-400">Weigh-based billing</span>}
