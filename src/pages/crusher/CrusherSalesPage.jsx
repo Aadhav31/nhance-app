@@ -490,6 +490,7 @@ function VehicleFormModal({ companyId, clients, fleet, existing, onClose }) {
     equipment_id:     existing?.equipment_id    ?? '',
     billing_basis:    existing?.billing_basis   ?? 'fixed_capacity',
     capacity_tonnes:  existing?.capacity_tonnes ?? '',
+    capacity_uom:     existing?.capacity_uom    ?? 'tonnes',
     notes:            existing?.notes           ?? '',
     is_active:        existing?.is_active       ?? true,
   })
@@ -509,6 +510,7 @@ function VehicleFormModal({ companyId, clients, fleet, existing, onClose }) {
         equipment_id:    form.owner_type === 'own' && form.equipment_id ? form.equipment_id : null,
         billing_basis:   form.billing_basis,
         capacity_tonnes: form.capacity_tonnes ? Number(form.capacity_tonnes) : null,
+        capacity_uom:    form.capacity_uom || 'tonnes',
         notes:           form.notes || null,
         is_active:       form.is_active,
       }
@@ -585,27 +587,36 @@ function VehicleFormModal({ companyId, clients, fleet, existing, onClose }) {
         </Field>
       )}
 
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Billing Basis" required>
-          <select className={inp()} value={form.billing_basis}
-            onChange={e => set('billing_basis', e.target.value)}>
-            <option value="fixed_capacity">Fixed Capacity (per trip)</option>
-            <option value="weighed">Weigh-Based (varies)</option>
-          </select>
-        </Field>
-        {form.billing_basis === 'fixed_capacity' && (
-          <Field label="Capacity (Tonnes)">
+      <Field label="Billing Basis" required>
+        <select className={inp()} value={form.billing_basis}
+          onChange={e => set('billing_basis', e.target.value)}>
+          <option value="fixed_capacity">Fixed Capacity (per trip)</option>
+          <option value="weighed">Weigh-Based (actual weight per trip)</option>
+        </select>
+      </Field>
+
+      {form.billing_basis === 'fixed_capacity' && (
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Capacity">
             <input type="number" className={inp()} value={form.capacity_tonnes}
               onChange={e => set('capacity_tonnes', e.target.value)}
               placeholder="e.g. 10.5" step={0.5} min={0} />
           </Field>
-        )}
-        {form.billing_basis === 'weighed' && (
-          <div className="flex items-end pb-1">
-            <p className="text-xs text-slate-500">Weight per trip will be entered on each invoice.</p>
-          </div>
-        )}
-      </div>
+          <Field label="Unit of Measure">
+            <select className={inp()} value={form.capacity_uom}
+              onChange={e => set('capacity_uom', e.target.value)}>
+              <option value="tonnes">Tonnes (T)</option>
+              <option value="cum">Cubic Metres (CUM)</option>
+              <option value="units">Units (Nos)</option>
+            </select>
+          </Field>
+        </div>
+      )}
+      {form.billing_basis === 'weighed' && (
+        <p className="text-xs text-slate-500 bg-dark-700 rounded-lg px-3 py-2 border border-dark-600">
+          ⚖️ Actual weight per trip will be entered on each invoice at the time of billing.
+        </p>
+      )}
 
       <Field label="Notes">
         <input className={inp()} value={form.notes}
@@ -716,7 +727,7 @@ function VehiclesTab({ companyId }) {
                   {v.owner_type === 'client' && v.clients && <span className="mr-2">Client: <strong>{v.clients.display_name || v.clients.business_name}</strong></span>}
                   {v.owner_type === 'own' && v.equipment?.name && <span className="mr-2">Fleet: <strong>{v.equipment.name}</strong></span>}
                   {v.billing_basis === 'fixed_capacity'
-                    ? <span>Fixed capacity: <strong>{v.capacity_tonnes ?? '—'} T</strong></span>
+                    ? <span>Fixed capacity: <strong>{v.capacity_tonnes ?? '—'} {(v.capacity_uom || 'tonnes').toUpperCase()}</strong></span>
                     : <span className="text-yellow-400">Weigh-based billing</span>}
                 </p>
                 {v.notes && <p className="text-[11px] text-slate-500 mt-0.5">{v.notes}</p>}
