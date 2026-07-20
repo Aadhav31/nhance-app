@@ -1564,10 +1564,338 @@ function InvoiceViewModal({ invoiceId, onClose, onDownload }) {
 }
 
 // ── Invoices Tab ──────────────────────────────────────────────────────────────
+// ── Invoice Edit Modal ────────────────────────────────────────────────────────
+function InvoiceEditModal({ companyId, invoice, onClose }) {
+  const qc = useQueryClient()
+  const [form, setForm] = useState({
+    invoice_type:    invoice.invoice_type,
+    invoice_date:    invoice.invoice_date,
+    payment_type:    invoice.payment_type,
+    payment_mode:    invoice.payment_mode || 'cash',
+    credit_due_date: invoice.credit_due_date || '',
+    loading_point:   invoice.loading_point  || '',
+    unloading_point: invoice.unloading_point || '',
+    notes:           invoice.notes          || '',
+  })
+  const [items,   setItems]   = useState([])
+  const [loading, setLoading] = useState(true)
+  const [saving,  setSaving]  = useState(false)
+  const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
+
+  const { data: grades = [] } = useQuery({
+    queryKey: ['crusher-grades', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('crusher_grades')
+        .select('id, grade_name, hsn_code, default_gst_rate, default_rate')
+        .eq('company_id', companyId).eq('is_active', true).order('grade_name')
+      return data || []
+    },
+  })
+  const { data: loadingPoints = [] } = useQuery({
+    queryKey: ['loading-pts', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('crusher_loading_points')
+        .select('id, point_name, point_type')
+        .eq('company_id', companyId).eq('is_active', true).order('sort_order')
+      return data || []
+    },
+  })
+
+  // Load existing line items
+  useEffect(() => {
+    supabase.from('crusher_invoice_items').select('*')
+      .eq('invoice_id', invoice.id).order('sort_order')
+      .then(({ data }) => {
+        setItems((data || []).map(it => ({
+          id:            it.id,
+          grade_id:      it.grade_id      || '',
+          material_name: it.material_name || '',
+          hsn_code:      it.hsn_code      || '',
+          unit:          it.unit          || 'tonnes',
+          quantity:      String(it.quantity || ''),
+          rate:          String(it.rate     || ''),
+        })))
+        setLoading(false)
+      })
+  }, [invoice.id])
+
+  const addItem    = () => setItems(p => [...p, { grade_id: '', material_name: '', hsn_code: '', unit: 'tonnes', quantity: '', rate: '' }])
+  const removeItem = (i) => setItems(p => p.filter((_, idx) => idx !== i))
+  const setItem    = (i, k, v) => setItems(p => p.map((it, idx) => idx === i ? { ...it, [k]: v } : it))
+
+  const handleGradeChange = (i, gradeId) => {
+    const g = grades.find(x => x.id === gradeId)
+    setItems(p => p.map((it, idx) => idx === i ? {
+      ...it,
+      grade_id:      gradeId,
+      material_name: g?.grade_name  || '',
+      hsn_code:      g?.hsn_code    || '',
+      rate: g?.default_rate ? String(g.default_rate) : it.rate,
+    } : it))
+  }
+
+  const isTax = form.invoice_type === 'tax'
+  const computedItems = items.map(item => {
+    const qty        = parseFloat(item.quantity) || 0
+    const rate       = parseFloat(item.rate)     || 0
+    const amount     = qty * rate
+    const gstRate    = isTax ? (parseFloat(grades.find(g => g.id === item.grade_id)?.default_gst_rate) || 0) : 0
+    const gstAmount  = amount * gstRate / 100
+    return { ...item, amount, gstRate, gstAmount, totalAmount: amount + gstAmount }
+  })
+  const subtotal    = computedItems.reduce((s, i) => s + i.amount,      0)
+  const totalTax    = computedItems.reduce((s, i) => s + i.gstAmount,   0)
+  const totalAmount = subtotal + totalTax
+  const fmt = n => `₹${n.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
+
+  const handleSave = async () => {
+    const validItems = computedItems.filter(i => i.material_name && i.quantity && i.rate)
+    if (!validItems.length) { toast.error('At least one material line with qty & rate required'); return }
+    setSaving(true)
+    try {
+      // Update invoice header
+      const { error: invErr } = await supabase.from('crusher_invoices').update({
+        invoice_type:    form.invoice_type,
+        invoice_date:    form.invoice_date,
+        payment_type:    form.payment_type,
+        payment_mode:    form.payment_type === 'cash'   ? form.payment_mode    : null,
+        credit_due_date: form.payment_type === 'credit' ? form.credit_due_date : null,
+        loading_point:   form.loading_point   || null,
+        unloading_point: form.unloading_point || null,
+        notes:           form.notes           || null,
+        subtotal,
+        total_tax:    totalTax,
+        total_amount: totalAmount,
+        // Recalculate balance if cash — fully paid; credit — keep existing balance logic
+        paid_amount: form.payment_type === 'cash' ? totalAmount : (invoice.paid_amount || 0),
+        balance:     form.payment_type === 'cash' ? 0 : Math.max(0, totalAmount - (invoice.paid_amount || 0)),
+        status:      form.payment_type === 'cash' ? 'paid' : (invoice.status === 'paid' ? 'issued' : invoice.status),
+      }).eq('id', invoice.id)
+      if (invErr) throw invErr
+
+      // Replace line items: delete old → insert new
+      const { error: delErr } = await supabase.from('crusher_invoice_items').delete().eq('invoice_id', invoice.id)
+      if (delErr) throw delErr
+
+      const itemRows = validItems.map((item, idx) => ({
+        invoice_id:    invoice.id,
+        grade_id:      item.grade_id    || null,
+        material_name: item.material_name,
+        hsn_code:      item.hsn_code    || null,
+        unit:          item.unit,
+        quantity:      parseFloat(item.quantity),
+        rate:          parseFloat(item.rate),
+        amount:        item.amount,
+        gst_rate:      item.gstRate,
+        gst_amount:    item.gstAmount,
+        total_amount:  item.totalAmount,
+        sort_order:    idx,
+      }))
+      const { error: itemErr } = await supabase.from('crusher_invoice_items').insert(itemRows)
+      if (itemErr) throw itemErr
+
+      toast.success('Invoice updated')
+      qc.invalidateQueries({ queryKey: ['crusher-invoices', companyId] })
+      onClose()
+    } catch (e) {
+      toast.error(e.message || 'Failed to update invoice')
+    } finally { setSaving(false) }
+  }
+
+  if (loading) return (
+    <Modal title={`Edit · ${invoice.invoice_number}`} onClose={onClose} wide footer={null}>
+      <div className="py-16 text-center"><Loader2 className="w-6 h-6 animate-spin mx-auto text-primary-400" /></div>
+    </Modal>
+  )
+
+  return (
+    <Modal title={`Edit · ${invoice.invoice_number}`} onClose={onClose} wide
+      footer={
+        <>
+          <button onClick={onClose} className="px-4 py-2 text-sm rounded-lg bg-dark-700 text-slate-300 hover:bg-dark-600">Cancel</button>
+          <button onClick={handleSave} disabled={saving}
+            className="px-4 py-2 text-sm rounded-lg bg-primary-600 hover:bg-primary-700 text-white flex items-center gap-2 disabled:opacity-50">
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            Save Changes
+          </button>
+        </>
+      }>
+
+      {/* Invoice Type Toggle — the main conversion control */}
+      <div>
+        <label className="text-xs font-medium text-slate-400 mb-1.5 block">Invoice Type</label>
+        <div className="grid grid-cols-2 gap-2">
+          {[
+            { val: 'non_tax', label: '📄 Non-Tax Invoice', sub: 'No GST applied' },
+            { val: 'tax',     label: '🧾 Tax Invoice (GST)', sub: 'GST added per grade rate' },
+          ].map(opt => (
+            <button key={opt.val} type="button" onClick={() => set('invoice_type', opt.val)}
+              className={`p-3 rounded-xl border text-left transition-all ${
+                form.invoice_type === opt.val
+                  ? 'border-primary-500 bg-primary-500/10 text-primary-300'
+                  : 'border-dark-600 bg-dark-700 text-slate-400 hover:border-dark-500'
+              }`}>
+              <p className="text-xs font-semibold">{opt.label}</p>
+              <p className="text-[10px] mt-0.5 opacity-70">{opt.sub}</p>
+            </button>
+          ))}
+        </div>
+        {form.invoice_type !== invoice.invoice_type && (
+          <p className="text-[11px] text-amber-400 mt-1.5 flex items-center gap-1">
+            <AlertCircle className="w-3 h-3" />
+            Totals will be recalculated — verify amounts before saving
+          </p>
+        )}
+      </div>
+
+      {/* Date */}
+      <Field label="Invoice Date" required>
+        <input type="date" className={inp()} value={form.invoice_date} onChange={e => set('invoice_date', e.target.value)} />
+      </Field>
+
+      {/* Loading / Unloading */}
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Loading Point">
+          <select className={inp()} value={form.loading_point} onChange={e => set('loading_point', e.target.value)}>
+            <option value="">— None —</option>
+            {loadingPoints.map(p => <option key={p.id} value={p.point_name}>{p.point_name}</option>)}
+          </select>
+        </Field>
+        <Field label="Unloading Point">
+          <select className={inp()} value={form.unloading_point} onChange={e => set('unloading_point', e.target.value)}>
+            <option value="">— None —</option>
+            {loadingPoints.map(p => <option key={p.id} value={p.point_name}>{p.point_name}</option>)}
+          </select>
+        </Field>
+      </div>
+
+      {/* Payment */}
+      <div>
+        <label className="text-xs font-medium text-slate-400 mb-1.5 block">Payment</label>
+        <div className="grid grid-cols-2 gap-2 mb-2">
+          {['cash', 'credit'].map(pt => (
+            <button key={pt} type="button" onClick={() => set('payment_type', pt)}
+              className={`py-2 rounded-lg border text-xs font-semibold capitalize transition-all ${
+                form.payment_type === pt
+                  ? 'border-emerald-500 bg-emerald-500/15 text-emerald-300'
+                  : 'border-dark-600 bg-dark-700 text-slate-400 hover:border-dark-500'
+              }`}>
+              {pt === 'cash' ? '💵 Cash' : '📋 Credit'}
+            </button>
+          ))}
+        </div>
+        {form.payment_type === 'cash' && (
+          <select className={inp()} value={form.payment_mode} onChange={e => set('payment_mode', e.target.value)}>
+            <option value="cash">Cash</option>
+            <option value="upi">UPI</option>
+            <option value="bank_transfer">Bank Transfer</option>
+            <option value="cheque">Cheque</option>
+          </select>
+        )}
+        {form.payment_type === 'credit' && (
+          <Field label="Credit Due Date" required>
+            <input type="date" className={inp()} value={form.credit_due_date} onChange={e => set('credit_due_date', e.target.value)} />
+          </Field>
+        )}
+      </div>
+
+      {/* Line Items */}
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <label className="text-xs font-semibold text-slate-400">Materials</label>
+          <button type="button" onClick={addItem}
+            className="text-xs text-primary-400 hover:text-primary-300 flex items-center gap-1">
+            <Plus className="w-3.5 h-3.5" /> Add Line
+          </button>
+        </div>
+        <div className="space-y-3">
+          {items.map((item, i) => {
+            const computed = computedItems[i]
+            return (
+              <div key={i} className="bg-dark-800 rounded-xl p-3 border border-dark-600 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-medium text-slate-500">Line {i + 1}</span>
+                  {items.length > 1 && (
+                    <button onClick={() => removeItem(i)} className="text-red-400 hover:text-red-300">
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+                <select className={inp()} value={item.grade_id} onChange={e => handleGradeChange(i, e.target.value)}>
+                  <option value="">— Select grade —</option>
+                  {grades.map(g => <option key={g.id} value={g.id}>{g.grade_name}</option>)}
+                </select>
+                {!item.grade_id && (
+                  <input className={inp()} value={item.material_name}
+                    onChange={e => setItem(i, 'material_name', e.target.value)}
+                    placeholder="Material name" />
+                )}
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <label className="text-[10px] text-slate-500 mb-1 block">Qty</label>
+                    <input type="number" className={inp()} value={item.quantity}
+                      onChange={e => setItem(i, 'quantity', e.target.value)} step="0.001" min="0" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-slate-500 mb-1 block">Unit</label>
+                    <select className={inp()} value={item.unit} onChange={e => setItem(i, 'unit', e.target.value)}>
+                      <option value="tonnes">Tonnes</option>
+                      <option value="cum">CUM</option>
+                      <option value="units">Units</option>
+                      <option value="bags">Bags</option>
+                      <option value="trips">Trips</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-slate-500 mb-1 block">Rate (₹)</label>
+                    <input type="number" className={inp()} value={item.rate}
+                      onChange={e => setItem(i, 'rate', e.target.value)} step="0.01" min="0" />
+                  </div>
+                </div>
+                <div className="flex justify-between text-[11px] pt-1">
+                  <span className="text-slate-500">Amount: {fmt(computed?.amount || 0)}</span>
+                  {isTax && computed?.gstRate > 0 && (
+                    <span className="text-slate-500">GST {computed.gstRate}%: {fmt(computed.gstAmount)}</span>
+                  )}
+                  <span className="text-slate-300 font-semibold">Total: {fmt(computed?.totalAmount || 0)}</span>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* Totals summary */}
+      <div className="bg-dark-800 rounded-xl p-3 border border-dark-600 space-y-1.5">
+        <div className="flex justify-between text-xs">
+          <span className="text-slate-400">Subtotal</span>
+          <span className="text-slate-200">{fmt(subtotal)}</span>
+        </div>
+        {isTax && (
+          <div className="flex justify-between text-xs">
+            <span className="text-slate-400">Total GST</span>
+            <span className="text-slate-200">{fmt(totalTax)}</span>
+          </div>
+        )}
+        <div className="flex justify-between text-sm font-bold pt-1 border-t border-dark-600">
+          <span className="text-slate-200">Total</span>
+          <span className="text-emerald-400">{fmt(totalAmount)}</span>
+        </div>
+      </div>
+
+      <Field label="Notes">
+        <input className={inp()} value={form.notes} onChange={e => set('notes', e.target.value)}
+          placeholder="Optional remarks…" />
+      </Field>
+    </Modal>
+  )
+}
+
 function InvoicesTab({ companyId }) {
   const qc = useQueryClient()
   const [createOpen, setCreateOpen] = useState(false)
-  const [viewId, setViewId]         = useState(null)
+  const [viewId,     setViewId]     = useState(null)
+  const [editInv,    setEditInv]    = useState(null)
 
   const { data: company } = useQuery({
     queryKey: ['company-name', companyId],
@@ -1690,6 +2018,12 @@ function InvoicesTab({ companyId }) {
                   className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-md text-slate-300 hover:text-white hover:bg-dark-600 transition-all">
                   <Download className="w-3.5 h-3.5" /> PDF
                 </button>
+                {inv.status !== 'void' && (
+                  <button onClick={() => setEditInv(inv)}
+                    className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-md text-slate-300 hover:text-white hover:bg-dark-600 transition-all">
+                    <Edit2 className="w-3.5 h-3.5" /> Edit
+                  </button>
+                )}
                 <div className="flex-1" />
                 <button onClick={() => handleVoid(inv)}
                   className={`flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-md transition-all ${inv.status === 'void' ? 'text-emerald-400 hover:bg-emerald-500/10' : 'text-yellow-400 hover:bg-yellow-500/10'}`}>
@@ -1706,8 +2040,9 @@ function InvoicesTab({ companyId }) {
         </div>
       )}
 
-      {createOpen && <InvoiceFormModal companyId={companyId} onClose={() => setCreateOpen(false)} />}
-      {viewId    && <InvoiceViewModal  invoiceId={viewId} onClose={() => setViewId(null)} onDownload={handleDownload} />}
+      {createOpen && <InvoiceFormModal  companyId={companyId} onClose={() => setCreateOpen(false)} />}
+      {viewId    && <InvoiceViewModal   invoiceId={viewId}   onClose={() => setViewId(null)} onDownload={handleDownload} />}
+      {editInv   && <InvoiceEditModal   companyId={companyId} invoice={editInv} onClose={() => setEditInv(null)} />}
     </div>
   )
 }
