@@ -1909,7 +1909,7 @@ function InvoicesTab({ companyId }) {
     queryKey: ['crusher-invoices', companyId],
     queryFn: async () => {
       const { data, error } = await supabase.from('crusher_invoices')
-        .select('id, invoice_number, invoice_type, invoice_date, client_name, vehicle_number, payment_type, status, total_amount, subtotal, total_tax, balance, credit_due_date, payment_mode, loading_point, unloading_point, notes')
+        .select('id, invoice_number, invoice_type, invoice_date, client_name, vehicle_number, payment_type, status, total_amount, subtotal, total_tax, balance, paid_amount, credit_due_date, payment_mode, loading_point, unloading_point, notes')
         .eq('company_id', companyId)
         .order('invoice_date', { ascending: false })
         .order('created_at', { ascending: false })
@@ -2094,13 +2094,13 @@ function InvoicesTab({ companyId }) {
                   className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-md text-slate-300 hover:text-white hover:bg-dark-600 transition-all">
                   <Download className="w-3.5 h-3.5" /> PDF
                 </button>
-                {inv.status !== 'void' && (
+                {inv.status !== 'void' && Number(inv.paid_amount || 0) === 0 && (
                   <button onClick={() => setEditInv(inv)}
                     className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-md text-slate-300 hover:text-white hover:bg-dark-600 transition-all">
                     <Edit2 className="w-3.5 h-3.5" /> Edit
                   </button>
                 )}
-                {inv.status !== 'void' && (
+                {inv.status !== 'void' && Number(inv.paid_amount || 0) === 0 && (
                   <button
                     onClick={() => handleConvertType(inv)}
                     disabled={converting === inv.id}
