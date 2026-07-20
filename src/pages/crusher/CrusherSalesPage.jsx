@@ -1389,282 +1389,281 @@ function numToWords(amount) {
 
 // ── Professional Crusher Invoice PDF ─────────────────────────────────────────
 async function downloadCrusherPDF(inv, items, companyInfo = {}, clientInfo = null) {
-  const doc  = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
-  const W = 210, H = 297, M = 12
-  const CW   = W - 2 * M
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+  const W = 210, H = 297, ML = 10, MR = 10
+  const CW = W - ML - MR   // 190mm
   const isTax = inv.invoice_type === 'tax'
-  const PRI  = [15, 75, 155]   // primary blue
-  const LGT  = [240, 244, 252] // light blue-grey
-  const BOR  = [190, 205, 225] // border colour
-  const f    = n => Number(n || 0).toFixed(2)
 
-  const hline = (y, x1 = M, x2 = W - M, col = BOR, lw = 0.25) => {
-    doc.setDrawColor(...col).setLineWidth(lw).line(x1, y, x2, y)
-  }
-  const rect = (x, y, w, h, fill, stroke = BOR) => {
-    if (fill) { doc.setFillColor(...fill); doc.rect(x, y, w, h, 'F') }
-    if (stroke) { doc.setDrawColor(...stroke).setLineWidth(0.25).rect(x, y, w, h, fill ? 'FD' : 'D') }
-  }
+  const f  = n => Number(n || 0).toFixed(2)
+  const fa = n => `Rs. ${Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  const fmtDate = d => d ? new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' }) : ''
+  const fmtTime = d => d ? new Date(d).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }) : ''
+
+  const st = (sz, style, r, g, b) => doc.setFontSize(sz).setFont('helvetica', style).setTextColor(r, g, b)
+  const ln = (x1, y1, x2, y2 = y1, lw = 0.25) => doc.setLineWidth(lw).setDrawColor(0,0,0).line(x1, y1, x2, y2)
+  const bx = (x, y, w, h, lw = 0.3) => { doc.setLineWidth(lw).setDrawColor(0,0,0).rect(x, y, w, h, 'D') }
+  const tx = (text, x, y, opts = {}) => doc.text(String(text ?? ''), x, y, opts)
+
+  // ── ORIGINAL FOR RECIPIENT ────────────────────────────────────────────────────
+  st(7, 'normal', 80, 80, 80)
+  tx('ORIGINAL FOR RECIPIENT', W - MR, 8, { align: 'right' })
+
+  // ── LOGO / COMPANY HEADER ─────────────────────────────────────────────────────
+  st(26, 'bold', 0, 0, 0); tx('GVR', ML, 22)
+  st(8, 'normal', 60, 60, 60); tx(companyInfo.name || 'GVR M Sand', ML, 28)
+
+  // ── TITLE ─────────────────────────────────────────────────────────────────────
+  st(13, 'bold', 0, 0, 0)
+  tx(isTax ? 'Tax Invoice' : 'Non-Tax Invoice', W / 2, 36, { align: 'center' })
 
   // ── HEADER ─────────────────────────────────────────────────────────────────
-  doc.setFillColor(...PRI)
-  doc.rect(0, 0, W, 42, 'F')
+  // ── HEADER TABLE ─────────────────────────────────────────────────────────────
+  // Left col (company + consignee + buyer) | Right col (invoice details)
+  const HY  = 40
+  const LCW = 95, RCW = 95
+  const LX  = ML, RX  = ML + LCW
+  const MX  = RX + RCW / 2   // midpoint of right col
 
-  // Company initial badge (top-right)
-  const initial = (companyInfo.name || 'C').charAt(0).toUpperCase()
-  doc.setFillColor(255, 255, 255, 0.15)
-  doc.setFillColor(30, 100, 190)
-  doc.roundedRect(W - M - 22, 4, 22, 22, 3, 3, 'F')
-  doc.setFontSize(16).setFont('helvetica', 'bold').setTextColor(255, 255, 255)
-  doc.text(initial, W - M - 11, 18, { align: 'center' })
+  // Left col row heights
+  const compH  = 28
+  const cneeH  = 20
+  const buyH   = 22
+  const totH   = compH + cneeH + buyH   // 70mm
 
-  // Company name + details
-  doc.setFontSize(17).setFont('helvetica', 'bold').setTextColor(255, 255, 255)
-  doc.text((companyInfo.name || 'Company').toUpperCase(), M, 13)
-  doc.setFontSize(8).setFont('helvetica', 'normal').setTextColor(185, 215, 255)
-  let cy = 19
-  if (companyInfo.address) { doc.text(companyInfo.address, M, cy); cy += 4.5 }
-  const cContact = [companyInfo.phone && `Ph: ${companyInfo.phone}`, companyInfo.email && `Email: ${companyInfo.email}`].filter(Boolean).join('   |   ')
-  if (cContact) { doc.text(cContact, M, cy); cy += 4.5 }
-  if (companyInfo.gstin) doc.text(`GSTIN: ${companyInfo.gstin}`, M, cy)
+  // Right col row heights (must sum to totH)
+  const rh1 = 13, rh2 = 10, rh3 = 9, rh4 = 10, rh5 = 11
+  const rh6  = totH - rh1 - rh2 - rh3 - rh4 - rh5   // remaining
 
-  // Document title strip
-  doc.setFillColor(255, 215, 50)
-  doc.rect(0, 42, W, 9, 'F')
-  doc.setFontSize(10).setFont('helvetica', 'bold').setTextColor(15, 50, 110)
-  doc.text(isTax ? 'TAX INVOICE' : 'NON-TAX INVOICE', W / 2, 48, { align: 'center' })
+  // Outer box + vertical divider
+  bx(LX, HY, CW, totH)
+  ln(RX, HY, RX, HY + totH, 0.3)
 
-  let y = 56
+  // ── LEFT: Company info ───────────────────────────────────────────────────────
+  st(8.5, 'bold', 0, 0, 0); tx(companyInfo.name || 'GVR M Sand', LX + 2, HY + 5)
+  st(6.8, 'normal', 30, 30, 30)
+  let lcy = HY + 10
+  const addrLines = companyInfo.address ? doc.splitTextToSize(companyInfo.address, LCW - 4) : []
+  addrLines.slice(0, 3).forEach(l => { tx(l, LX + 2, lcy); lcy += 3.8 })
+  if (companyInfo.gstin)   { tx(`GSTIN/UIN : ${companyInfo.gstin}`, LX + 2, lcy); lcy += 3.8 }
+  if (companyInfo.msme)    { tx(`MSME- ${companyInfo.msme}`, LX + 2, lcy); lcy += 3.8 }
+  const phParts = [
+    companyInfo.phone  && `Phone #: ${companyInfo.phone}`,
+    companyInfo.phone2 && companyInfo.phone2,
+    companyInfo.office_phone && `Office:${companyInfo.office_phone}`,
+  ].filter(Boolean)
+  if (phParts.length) tx(phParts.join('/'), LX + 2, lcy)
 
-  // ── BILL TO  +  INVOICE DETAILS ────────────────────────────────────────────
-  const col1W = Math.round(CW * 0.57)
-  const gap   = 3
-  const col2X = M + col1W + gap
-  const col2W = CW - col1W - gap
-  const boxH  = 46
+  ln(LX, HY + compH, RX, HY + compH, 0.25)   // divider below company
 
-  rect(M,     y, col1W, boxH, LGT)
-  rect(col2X, y, col2W, boxH, LGT)
+  // ── LEFT: Consignee (Ship to) ────────────────────────────────────────────────
+  const shipName = clientInfo?.display_name || clientInfo?.business_name || inv.client_name || ''
+  const shipCity = inv.unloading_point || inv.loading_point || ''
+  st(7, 'italic', 80, 80, 80); tx('Consignee (Ship to)', LX + 2, HY + compH + 5)
+  st(8, 'bold',   0,  0,  0);  tx(shipName, LX + 2, HY + compH + 10)
+  st(7, 'normal', 40, 40, 40); tx(shipCity, LX + 2, HY + compH + 15)
 
-  // Bill To header bar
-  rect(M, y, col1W, 7, PRI, null)
-  doc.setFontSize(7.5).setFont('helvetica', 'bold').setTextColor(255, 255, 255)
-  doc.text('BILL TO', M + 3, y + 5)
+  ln(LX, HY + compH + cneeH, RX, HY + compH + cneeH, 0.25)   // divider below consignee
 
-  // Client name
-  const cName = clientInfo?.display_name || clientInfo?.business_name || inv.client_name || 'Walk-in Customer'
-  doc.setFontSize(10).setFont('helvetica', 'bold').setTextColor(15, 20, 50)
-  doc.text(doc.splitTextToSize(cName, col1W - 6)[0], M + 3, y + 13)
-  doc.setFontSize(8).setFont('helvetica', 'normal').setTextColor(65, 70, 95)
-  let ry = y + 19
-  if (clientInfo?.registered_address) {
-    const aLines = doc.splitTextToSize(clientInfo.registered_address, col1W - 6)
-    aLines.slice(0, 2).forEach(l => { doc.text(l, M + 3, ry); ry += 4.5 })
-  }
-  if (clientInfo?.contact_phone) { doc.text(`Ph: ${clientInfo.contact_phone}`, M + 3, ry); ry += 4.5 }
-  if (clientInfo?.gstin)         doc.text(`GSTIN: ${clientInfo.gstin}`, M + 3, ry)
+  // ── LEFT: Buyer (Bill to) ────────────────────────────────────────────────────
+  const billName  = clientInfo?.display_name || clientInfo?.business_name || inv.client_name || inv.walkin_name || ''
+  const billGstin = clientInfo?.gstin || ''
+  st(7, 'italic', 80, 80, 80); tx('Buyer (Bill to)', LX + 2, HY + compH + cneeH + 5)
+  st(8, 'bold',   0,  0,  0);  tx(billName, LX + 2, HY + compH + cneeH + 10)
+  st(7, 'normal', 40, 40, 40)
+  if (clientInfo?.registered_address) tx(doc.splitTextToSize(clientInfo.registered_address, LCW - 4)[0], LX + 2, HY + compH + cneeH + 15)
+  tx(billGstin ? `GSTIN/UIN : ${billGstin}` : 'GSTIN/UIN :', LX + 2, HY + compH + cneeH + 19)
 
-  // Invoice details header bar
-  rect(col2X, y, col2W, 7, PRI, null)
-  doc.setFontSize(7.5).setFont('helvetica', 'bold').setTextColor(255, 255, 255)
-  doc.text('INVOICE DETAILS', col2X + 3, y + 5)
+  // ── RIGHT: Invoice detail rows ───────────────────────────────────────────────
+  let rry = HY
+  const rLbl = (lbl, x, y2) => { st(6.5, 'normal', 100,100,100); tx(lbl, x, y2 + 4) }
+  const rVal = (val, x, y2) => { st(7.5, 'bold', 0,0,0); tx(String(val ?? ''), x, y2 + 9) }
+  const rDiv = (y2, fullW = false) => { ln(RX, y2, RX + RCW, y2, 0.25); if (!fullW) return; }
+  const rMid = (y2, h) => ln(MX, y2, MX, y2 + h, 0.25)
 
-  const detRow = (lbl, val, dy) => {
-    doc.setFontSize(7.5).setFont('helvetica', 'bold').setTextColor(90, 95, 115)
-    doc.text(lbl, col2X + 3, dy)
-    doc.setFont('helvetica', 'normal').setTextColor(15, 20, 50).setFontSize(8.5)
-    doc.text(String(val || '—'), col2X + col2W - 3, dy, { align: 'right' })
-  }
-  detRow('Invoice No.',  inv.invoice_number,   y + 13)
-  detRow('Date',         inv.invoice_date,      y + 19)
-  if (inv.vehicle_number) detRow('Vehicle', inv.vehicle_number, y + 25)
-  const pmtLabel = inv.payment_type === 'cash'
-    ? (inv.payment_mode || 'Cash').charAt(0).toUpperCase() + (inv.payment_mode || 'cash').slice(1)
-    : `Credit  Due: ${inv.credit_due_date || '—'}`
-  detRow('Payment', pmtLabel, y + 31)
-  // Status with colour
-  doc.setFontSize(7.5).setFont('helvetica', 'bold').setTextColor(90, 95, 115)
-  doc.text('Status', col2X + 3, y + 37)
-  const stCol = { paid: [0,140,70], issued: [30,90,200], void: [140,140,140], partial: [180,120,0], overdue: [200,50,50] }
-  doc.setFont('helvetica', 'bold').setFontSize(8.5).setTextColor(...(stCol[inv.status] || [80,80,80]))
-  doc.text(inv.status.toUpperCase(), col2X + col2W - 3, y + 37, { align: 'right' })
+  // Row 1: Invoice No | Invoice Date + Time
+  rLbl('Invoice No.', RX + 2, rry); rVal(inv.invoice_number, RX + 2, rry)
+  rMid(rry, rh1)
+  rLbl('Invoice Date', MX + 2, rry); rVal(fmtDate(inv.invoice_date), MX + 2, rry)
+  const tStr = fmtTime(inv.created_at)
+  if (tStr) { st(6.5, 'normal', 80,80,80); tx(`Time: ${tStr}`, MX + 2, rry + 13) }
+  rry += rh1; rDiv(rry)
 
-  y += boxH + 4
+  // Row 2: Mode/Terms | Payment Due
+  rLbl('Mode/Terms of Payment', RX + 2, rry)
+  rVal(inv.payment_type === 'credit' ? 'Credit' : 'Cash', RX + 2, rry)
+  rMid(rry, rh2)
+  rLbl('Payment Due:', MX + 2, rry)
+  rVal(fmtDate(inv.credit_due_date) || fmtDate(inv.invoice_date), MX + 2, rry)
+  rry += rh2; rDiv(rry)
 
-  // Delivery line
-  if (inv.loading_point || inv.unloading_point) {
-    doc.setFontSize(8).setFont('helvetica', 'italic').setTextColor(80, 85, 110)
-    const dlv = [
-      inv.loading_point   ? `Loading: ${inv.loading_point}`   : null,
-      inv.unloading_point ? `Delivery: ${inv.unloading_point}` : null,
-    ].filter(Boolean).join('     ')
-    doc.text(dlv, M, y)
-    y += 6
-  }
+  // Row 3: DC No. | Other References
+  rLbl('DC.No.', RX + 2, rry); rVal(inv.dc_number || '', RX + 2, rry)
+  rMid(rry, rh3)
+  rLbl('Other Reference(s)', MX + 2, rry)
+  rry += rh3; rDiv(rry)
+
+  // Row 4: PO Details (full width)
+  rLbl('PO.Details', RX + 2, rry)
+  rry += rh4; rDiv(rry)
+
+  // Row 5: Driver | Motor Vehicle No.
+  rLbl('Driver', RX + 2, rry)
+  rMid(rry, rh5)
+  rLbl('Motor Vehicle No.', MX + 2, rry); rVal(inv.vehicle_number || '', MX + 2, rry)
+  rry += rh5; rDiv(rry)
+
+  // Row 6: Terms of Delivery (remaining height — no bottom divider, outer box covers it)
+  rLbl('Terms of Delivery', RX + 2, rry)
+
+  let y = HY + totH + 4
 
   // ── ITEMS TABLE ─────────────────────────────────────────────────────────────
-  const itemCols = isTax
-    ? [
-        { header: '#',            dataKey: 'n' },
-        { header: 'Description',  dataKey: 'm' },
-        { header: 'HSN',          dataKey: 'h' },
-        { header: 'Qty',          dataKey: 'q' },
-        { header: 'Unit',         dataKey: 'u' },
-        { header: 'Rate',         dataKey: 'r' },
-        { header: 'Taxable Amt',  dataKey: 'a' },
-        { header: 'GST %',        dataKey: 'g' },
-        { header: 'GST Amt',      dataKey: 'ga' },
-        { header: 'Total',        dataKey: 't' },
-      ]
-    : [
-        { header: '#',           dataKey: 'n' },
-        { header: 'Description', dataKey: 'm' },
-        { header: 'Qty',         dataKey: 'q' },
-        { header: 'Unit',        dataKey: 'u' },
-        { header: 'Rate (Rs.)',  dataKey: 'r' },
-        { header: 'Amount (Rs.)',dataKey: 'a' },
-      ]
+  const subtotal  = items.reduce((s, i) => s + Number(i.amount || 0), 0)
+  const totalQty  = items.reduce((s, i) => s + Number(i.quantity || 0), 0)
+  const grandTotal = Number(inv.total_amount || 0)
 
-  const itemRows = items.map((it, i) => {
-    const base = { n: i+1, m: it.material_name, q: f(it.quantity), u: (it.unit||'').toUpperCase(), r: f(it.rate), a: f(it.amount) }
-    return isTax ? { ...base, h: it.hsn_code||'—', g: `${it.gst_rate||0}%`, ga: f(it.gst_amount), t: f(it.total_amount) } : base
+  // Build GST rows by rate group
+  const gstGroups = {}
+  if (isTax) {
+    items.forEach(it => {
+      const rate = Number(it.gst_rate || 0)
+      if (!gstGroups[rate]) gstGroups[rate] = 0
+      gstGroups[rate] += Number(it.gst_amount || 0)
+    })
+  }
+
+  const itemBody = items.map((it, i) => [
+    i + 1, it.material_name || '', it.hsn_code || '',
+    f(it.quantity), fa(it.rate), (it.unit || 'UNIT').toUpperCase(), fa(it.amount),
+  ])
+
+  const taxRows = []
+  Object.entries(gstGroups).forEach(([rate, gstAmt]) => {
+    taxRows.push(['', '', '', '', `SGST ${Number(rate)/2}%`, '', fa(gstAmt / 2)])
+    taxRows.push(['', '', '', '', `CGST ${Number(rate)/2}%`, '', fa(gstAmt / 2)])
   })
+
+  const totalRow = ['', 'Total', '', f(totalQty), '', '', fa(grandTotal)]
+  const totalBodyIdx = itemBody.length + taxRows.length
 
   autoTable(doc, {
     startY: y,
-    columns: itemCols,
-    body: itemRows,
-    margin: { left: M, right: M },
-    styles: { fontSize: 8, cellPadding: { top: 2.5, bottom: 2.5, left: 2, right: 2 }, textColor: [20,20,45], lineColor: BOR, lineWidth: 0.2 },
-    headStyles: { fillColor: PRI, textColor: [255,255,255], fontStyle: 'bold', fontSize: 8, halign: 'center' },
-    alternateRowStyles: { fillColor: LGT },
-    columnStyles: isTax
-      ? { n:{cellWidth:6,halign:'center'}, m:{cellWidth:40}, h:{cellWidth:14,halign:'center'}, q:{cellWidth:12,halign:'right'}, u:{cellWidth:10,halign:'center'}, r:{cellWidth:16,halign:'right'}, a:{cellWidth:18,halign:'right'}, g:{cellWidth:10,halign:'center'}, ga:{cellWidth:18,halign:'right'}, t:{cellWidth:22,halign:'right'} }
-      : { n:{cellWidth:8,halign:'center'}, m:{cellWidth:82}, q:{cellWidth:18,halign:'right'}, u:{cellWidth:16,halign:'center'}, r:{cellWidth:28,halign:'right'}, a:{cellWidth:34,halign:'right'} },
+    head: [['S.No', 'Description of\nGoods/Services', 'HSN/SAC', 'Quantity', 'Rate', 'UOM', 'Amount']],
+    body: [...itemBody, ...taxRows, totalRow],
+    margin: { left: ML, right: MR },
+    tableWidth: CW,
+    styles: { fontSize: 7.5, cellPadding: { top: 2, bottom: 2, left: 1.5, right: 1.5 }, textColor: [0,0,0], lineColor: [0,0,0], lineWidth: 0.25, font: 'helvetica' },
+    headStyles: { fillColor: [255,255,255], textColor: [0,0,0], fontStyle: 'bold', fontSize: 7.5, halign: 'center', lineWidth: 0.3 },
+    alternateRowStyles: { fillColor: [255,255,255] },
+    columnStyles: {
+      0: { cellWidth: 10, halign: 'center' },
+      1: { cellWidth: 55 },
+      2: { cellWidth: 22, halign: 'center' },
+      3: { cellWidth: 20, halign: 'center' },
+      4: { cellWidth: 30, halign: 'right' },
+      5: { cellWidth: 18, halign: 'center' },
+      6: { cellWidth: 35, halign: 'right' },
+    },
+    didParseCell: data => {
+      const ri = data.row.index
+      if (ri >= itemBody.length && ri < totalBodyIdx) {
+        // GST rows: rate label right-aligned in rate col
+        if (data.column.index === 4) { data.cell.styles.halign = 'right'; data.cell.styles.fontStyle = 'bold' }
+      }
+      if (ri === totalBodyIdx) {
+        data.cell.styles.fontStyle = 'bold'
+        data.cell.styles.fillColor = [230, 230, 230]
+      }
+    },
   })
-  y = doc.lastAutoTable.finalY + 5
-
-  // ── GST SUMMARY (tax invoices) ───────────────────────────────────────────────
-  if (isTax) {
-    const gMap = {}
-    items.forEach(it => {
-      const rate = it.gst_rate || 0
-      if (!gMap[rate]) gMap[rate] = { taxable: 0, gst: 0 }
-      gMap[rate].taxable += Number(it.amount || 0)
-      gMap[rate].gst     += Number(it.gst_amount || 0)
-    })
-    const gRows = Object.entries(gMap).map(([rate, v]) => ({
-      rate: `${rate}%`, taxable: f(v.taxable),
-      cgst_r: `${Number(rate)/2}%`, cgst_a: f(v.gst/2),
-      sgst_r: `${Number(rate)/2}%`, sgst_a: f(v.gst/2),
-      total: f(v.gst),
-    }))
-    doc.setFontSize(8).setFont('helvetica', 'bold').setTextColor(...PRI)
-    doc.text('GST SUMMARY', M, y); y += 3
-    autoTable(doc, {
-      startY: y,
-      columns: [
-        {header:'GST Rate',dataKey:'rate'},{header:'Taxable Amt',dataKey:'taxable'},
-        {header:'CGST %',dataKey:'cgst_r'},{header:'CGST Amt',dataKey:'cgst_a'},
-        {header:'SGST %',dataKey:'sgst_r'},{header:'SGST Amt',dataKey:'sgst_a'},
-        {header:'Total GST',dataKey:'total'},
-      ],
-      body: gRows,
-      margin: { left: M, right: M },
-      styles: { fontSize: 7.5, cellPadding: 2, lineColor: BOR, lineWidth: 0.2 },
-      headStyles: { fillColor: [50,90,155], textColor: 255, fontStyle: 'bold', halign: 'center' },
-      columnStyles: {
-        rate:{halign:'center',cellWidth:18}, taxable:{halign:'right',cellWidth:30},
-        cgst_r:{halign:'center',cellWidth:16}, cgst_a:{halign:'right',cellWidth:26},
-        sgst_r:{halign:'center',cellWidth:16}, sgst_a:{halign:'right',cellWidth:26},
-        total:{halign:'right',cellWidth:28},
-      },
-    })
-    y = doc.lastAutoTable.finalY + 5
-  }
-
-  // ── TOTALS BLOCK (right-aligned) ────────────────────────────────────────────
-  const tX  = W - M - 75
-  const tX2 = W - M
-  const tRow = (lbl, val, bold, colR, colG, colB) => {
-    doc.setFont('helvetica', bold ? 'bold' : 'normal')
-    doc.setFontSize(bold ? 9.5 : 8.5)
-    if (colR !== undefined) doc.setTextColor(colR, colG, colB)
-    else doc.setTextColor(bold ? 15 : 70, bold ? 20 : 75, bold ? 50 : 100)
-    doc.text(lbl, tX, y)
-    doc.text(`Rs. ${f(val)}`, tX2, y, { align: 'right' })
-    y += bold ? 6 : 5
-  }
-
-  hline(y - 1, tX, tX2, BOR)
-  tRow('Subtotal', inv.subtotal)
-  if (isTax && Number(inv.total_tax) > 0) {
-    tRow(`CGST`, Number(inv.total_tax) / 2)
-    tRow(`SGST`, Number(inv.total_tax) / 2)
-  }
-  hline(y - 1, tX, tX2, PRI, 0.5)
-  y += 1
-  tRow('GRAND TOTAL', inv.total_amount, true)
-  if (Number(inv.paid_amount) > 0) tRow('Amount Paid',  inv.paid_amount, false, 0, 140, 70)
-  if (Number(inv.balance) > 0)     tRow('Balance Due',  inv.balance,     false, 200, 50, 50)
-
-  y += 3
+  y = doc.lastAutoTable.finalY + 4
 
   // ── AMOUNT IN WORDS ─────────────────────────────────────────────────────────
-  rect(M, y, CW, 9, LGT)
-  doc.setFontSize(8).setFont('helvetica', 'bold').setTextColor(...PRI)
-  doc.text('In Words:', M + 3, y + 6)
-  doc.setFont('helvetica', 'italic').setTextColor(20, 20, 45)
-  const words = numToWords(Number(inv.total_amount))
-  const wLine = doc.splitTextToSize(words, CW - 28)
-  doc.text(wLine[0], M + 26, y + 6)
-  y += 13
+  st(7.5, 'bold', 0,0,0); tx('Amount in Words', ML, y + 4)
+  st(7.5, 'italic', 0,0,0)
+  const words = numToWords(grandTotal)
+  tx(doc.splitTextToSize(words, CW)[0], ML, y + 9)
+  y += 15
 
-  // Notes
-  if (inv.notes) {
-    doc.setFontSize(8).setFont('helvetica', 'bold').setTextColor(80, 85, 110)
-    doc.text('Note:', M, y)
-    doc.setFont('helvetica', 'italic').setTextColor(100, 105, 125)
-    doc.text(doc.splitTextToSize(inv.notes, CW - 15)[0], M + 14, y)
-    y += 7
+  // ── HSN/SAC SUMMARY TABLE ────────────────────────────────────────────────────
+  if (isTax) {
+    const hsnMap = {}
+    items.forEach(it => {
+      const key = it.hsn_code || ''
+      const rate = Number(it.gst_rate || 0)
+      if (!hsnMap[key]) hsnMap[key] = { taxable: 0, gst: 0, rate }
+      hsnMap[key].taxable += Number(it.amount || 0)
+      hsnMap[key].gst     += Number(it.gst_amount || 0)
+    })
+    const gRows = Object.entries(hsnMap).map(([hsn, v]) => [
+      hsn, fa(v.taxable),
+      `SGST ${v.rate/2}%`, fa(v.gst / 2),
+      `CGST ${v.rate/2}%`, fa(v.gst / 2),
+      fa(v.taxable + v.gst),
+    ])
+    autoTable(doc, {
+      startY: y,
+      head: [['HSN/SAC', 'Taxable Value', 'SGST %', 'SGST Amt', 'CGST %', 'CGST Amt', 'Total']],
+      body: gRows,
+      margin: { left: ML, right: MR },
+      tableWidth: CW,
+      styles: { fontSize: 7.5, cellPadding: { top: 2, bottom: 2, left: 1.5, right: 1.5 }, textColor: [0,0,0], lineColor: [0,0,0], lineWidth: 0.25 },
+      headStyles: { fillColor: [255,255,255], textColor: [0,0,0], fontStyle: 'bold', halign: 'center', lineWidth: 0.3 },
+      alternateRowStyles: { fillColor: [255,255,255] },
+      columnStyles: {
+        0: { cellWidth: 25, halign: 'center' },
+        1: { cellWidth: 33, halign: 'right' },
+        2: { cellWidth: 22, halign: 'center' },
+        3: { cellWidth: 28, halign: 'right' },
+        4: { cellWidth: 22, halign: 'center' },
+        5: { cellWidth: 28, halign: 'right' },
+        6: { cellWidth: 32, halign: 'right' },
+      },
+    })
+    y = doc.lastAutoTable.finalY + 4
   }
 
-  // ── FOOTER: TERMS  +  SIGNATURE ─────────────────────────────────────────────
-  const footerY = Math.max(y + 6, H - 56)
-  const termsW  = Math.round(CW * 0.54)
-  const sigX    = M + termsW + 4
-  const sigW    = CW - termsW - 4
-  const footH   = 42
+  // ── DECLARATION ─────────────────────────────────────────────────────────────
+  bx(ML, y, CW, 14)
+  st(7, 'bold', 0,0,0); tx('Declaration', ML + 2, y + 4)
+  st(6.5, 'normal', 40,40,40)
+  tx('We declare that this invoice shows the actual price of the goods described and that all particulars are as true and correct.', ML + 2, y + 9, { maxWidth: CW - 4 })
+  tx('*This is computer generated invoice no signature required*', ML + 2, y + 13)
+  y += 18
 
-  rect(M,    footerY, termsW, footH, [248, 249, 252])
-  rect(sigX, footerY, sigW,   footH, [248, 249, 252])
+  // Notes (optional)
+  if (inv.notes) {
+    st(7, 'bold', 0,0,0); tx('Note:', ML, y)
+    st(7, 'italic', 60,60,60); tx(doc.splitTextToSize(inv.notes, CW - 15)[0], ML + 12, y)
+    y += 6
+  }
 
-  // Terms
-  doc.setFontSize(7.5).setFont('helvetica', 'bold').setTextColor(...PRI)
-  doc.text('Terms & Conditions', M + 3, footerY + 6)
-  doc.setFont('helvetica', 'normal').setTextColor(70, 75, 95)
-  const terms = [
-    '1. Goods once sold will not be taken back.',
-    '2. Complaints if any within 24 hours of delivery.',
-    '3. Payment as per agreed terms only.',
-    '4. Subject to local jurisdiction. E. & O.E.',
-  ]
-  terms.forEach((t, i) => doc.text(t, M + 3, footerY + 13 + i * 5.5))
+  // ── FOOTER: BANK DETAILS + SIGNATURE ────────────────────────────────────────
+  const footY = y
+  const bankW = 115, sigFW = CW - bankW
+  const footH = 32
+  bx(ML, footY, CW, footH)
+  ln(ML + bankW, footY, ML + bankW, footY + footH, 0.3)
 
-  // Signature block
-  doc.setFontSize(7.5).setFont('helvetica', 'bold').setTextColor(...PRI)
-  doc.text(`For ${(companyInfo.name || '').toUpperCase()}`, sigX + sigW / 2, footerY + 6, { align: 'center' })
-  // Signature lines (3 horizontal for stamp area)
-  doc.setDrawColor(...BOR).setLineWidth(0.2)
-  doc.line(sigX + 5, footerY + 33, sigX + sigW - 5, footerY + 33)
-  doc.setFontSize(7).setFont('helvetica', 'normal').setTextColor(110, 115, 135)
-  doc.text('Authorized Signatory', sigX + sigW / 2, footerY + 38, { align: 'center' })
+  st(7.5, 'bold', 0,0,0); tx('COMPANY BANK DETAILs', ML + 2, footY + 5)
+  st(7.5, 'normal', 20,20,20)
+  let bly = footY + 10
+  if (companyInfo.bank_name)    { tx(`Bank Name :${companyInfo.bank_name}`, ML + 2, bly); bly += 4 }
+  if (companyInfo.bank_account) { tx(`A/C No. : ${companyInfo.bank_account}`, ML + 2, bly); bly += 4 }
+  if (companyInfo.bank_branch || companyInfo.bank_ifsc)
+    { tx(`Branch & IFSC :${[companyInfo.bank_branch, companyInfo.bank_ifsc].filter(Boolean).join(' ')}`, ML + 2, bly); bly += 4 }
+  if (companyInfo.upi_number) tx(`Google Pay No / Phone Pay No : ${companyInfo.upi_number}`, ML + 2, bly)
 
-  // Bottom bar
-  doc.setFillColor(...PRI)
-  doc.rect(0, H - 8, W, 8, 'F')
-  doc.setFontSize(7).setFont('helvetica', 'normal').setTextColor(175, 200, 240)
-  doc.text('This is a computer generated document — no signature required.', W / 2, H - 3, { align: 'center' })
+  const sigX2 = ML + bankW
+  st(7.5, 'normal', 60,60,60)
+  tx(`For ${companyInfo.name || 'GVR M Sand'}`, sigX2 + sigFW / 2, footY + 8, { align: 'center' })
+  ln(sigX2 + 4, footY + footH - 6, sigX2 + sigFW - 4, footY + footH - 6, 0.25)
+  st(7, 'normal', 60,60,60)
+  tx('Authorised Signatory', sigX2 + sigFW / 2, footY + footH - 2, { align: 'center' })
+
+  // ── COPYRIGHT ────────────────────────────────────────────────────────────────
+  st(7, 'normal', 80,80,80)
+  tx(`${companyInfo.name || 'GVR M Sand'} - Copyright ${new Date().getFullYear()}`, W / 2, footY + footH + 6, { align: 'center' })
 
   doc.save(`${inv.invoice_number}.pdf`)
 }
@@ -2387,9 +2386,10 @@ function InvoicesTab({ companyId }) {
         const { data } = await supabase.from('crusher_invoice_items').select('*').eq('invoice_id', inv.id).order('sort_order')
         lineItems = data || []
       }
-      // Company details
+      // Company details (fetch all fields for PDF — missing cols return null gracefully)
       const { data: co } = await supabase.from('companies')
-        .select('name, address, phone, email, gstin').eq('id', companyId).single()
+        .select('name, address, phone, phone2, office_phone, email, gstin, msme, bank_name, bank_account, bank_branch, bank_ifsc, upi_number')
+        .eq('id', companyId).single()
       const companyInfo = co || { name: company?.name }
       // Client details (if registered, not walk-in)
       let clientInfo = null
