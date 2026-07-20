@@ -393,16 +393,124 @@ function MyDisplayMode() {
 }
 
 // ─── Company Profile ─────────────────────────────────────────────────────────
-function CompanyProfile({ company }) {
-  if (!company) return <p className="text-sm text-slate-500">No company data found.</p>
+function CompanyProfile({ company, isAdmin }) {
+  const EMPTY = {
+    name: '', address: '', phone: '', phone2: '', office_phone: '',
+    email: '', gstin: '', msme: '',
+    bank_name: '', bank_account_number: '', bank_branch: '', bank_ifsc: '', upi_id: '',
+  }
+  const [form,    setForm]    = useState(EMPTY)
+  const [saved,   setSaved]   = useState(EMPTY)
+  const [loading, setLoading] = useState(true)
+  const [saving,  setSaving]  = useState(false)
+  const [editing, setEditing] = useState(false)
+  const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
+
+  useEffect(() => {
+    if (!company?.id) return
+    supabase.from('companies')
+      .select('name, address, phone, phone2, office_phone, email, gstin, msme, bank_name, bank_account_number, bank_branch, bank_ifsc, upi_id')
+      .eq('id', company.id).single()
+      .then(({ data }) => {
+        if (data) {
+          const vals = Object.fromEntries(Object.keys(EMPTY).map(k => [k, data[k] || '']))
+          setForm(vals); setSaved(vals)
+        }
+        setLoading(false)
+      })
+  }, [company?.id])
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      const patch = Object.fromEntries(Object.keys(EMPTY).map(k => [k, form[k].trim() || null]))
+      if (patch.bank_ifsc) patch.bank_ifsc = patch.bank_ifsc.toUpperCase()
+      const { error } = await supabase.from('companies').update(patch).eq('id', company.id)
+      if (error) throw error
+      setSaved({ ...form, bank_ifsc: patch.bank_ifsc || '' })
+      setEditing(false)
+      toast.success('Company profile saved')
+    } catch (e) { toast.error(e.message) } finally { setSaving(false) }
+  }
+
+  if (loading) return <div className="flex justify-center py-6"><Loader2 className="w-5 h-5 animate-spin text-primary-400" /></div>
+
+  const RO = ({ label, value }) => (
+    <div>
+      <span className="block text-xs text-slate-500 mb-1">{label}</span>
+      <span className="text-sm text-slate-200">{value || <span className="text-slate-600 italic">—</span>}</span>
+    </div>
+  )
+
+  if (!editing) return (
+    <div className="space-y-5">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4">
+        <RO label="Company Name"  value={saved.name} />
+        <RO label="GSTIN/UIN"     value={saved.gstin} />
+        <RO label="MSME (UDYAM)"  value={saved.msme} />
+        <RO label="Email"         value={saved.email} />
+        <RO label="Address"       value={saved.address} />
+        <RO label="Phone"         value={[saved.phone, saved.phone2].filter(Boolean).join(' / ')} />
+        <RO label="Office Phone"  value={saved.office_phone} />
+      </div>
+      <div className="border-t border-dark-600 pt-4">
+        <p className="text-xs font-semibold text-slate-500 mb-3 uppercase tracking-wide">Bank Details (for Invoice PDF)</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4">
+          <RO label="Bank Name"    value={saved.bank_name} />
+          <RO label="A/C Number"  value={saved.bank_account_number} />
+          <RO label="Branch"       value={saved.bank_branch} />
+          <RO label="IFSC Code"    value={saved.bank_ifsc} />
+          <RO label="UPI / GPay / PhonePe" value={saved.upi_id} />
+        </div>
+      </div>
+      {isAdmin && (
+        <button onClick={() => setEditing(true)}
+          className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-dark-700 hover:bg-dark-600 text-slate-300 border border-dark-600 transition-all">
+          <Pencil className="w-3.5 h-3.5" /> Edit Profile
+        </button>
+      )}
+    </div>
+  )
+
+  const F = ({ label, k, placeholder = '', wide = false }) => (
+    <div className={wide ? 'sm:col-span-2' : ''}>
+      <label className="block text-xs text-slate-400 mb-1">{label}</label>
+      <input className={inp()} value={form[k]} onChange={e => setF(k, e.target.value)} placeholder={placeholder} />
+    </div>
+  )
+
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4">
-      <Field label="Company Name" value={company.name} />
-      <Field label="Industry"     value={company.industry} />
-      <Field label="Country"      value={company.country} />
-      <Field label="Plan"         value={company.plan} />
-      <Field label="Company ID"   value={company.id} />
-      <Field label="Created"      value={company.created_at ? new Date(company.created_at).toLocaleDateString('en-IN') : null} />
+    <div className="space-y-5">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <F label="Company Name *"  k="name"  placeholder="GVR M Sand" />
+        <F label="GSTIN/UIN"       k="gstin" placeholder="33ACWPG1548F2ZK" />
+        <F label="MSME (UDYAM No.)" k="msme" placeholder="UDYAM-TN-XX-XXXXXXX" />
+        <F label="Email"           k="email" placeholder="info@company.com" />
+        <F label="Address"         k="address" placeholder="No. 250/1, Road Name, Area" wide />
+        <F label="Phone (Primary)" k="phone"        placeholder="9443157573" />
+        <F label="Phone (Secondary)" k="phone2"     placeholder="9842424204" />
+        <F label="Office Phone"    k="office_phone" placeholder="7373724204" />
+      </div>
+      <div className="border-t border-dark-600 pt-4">
+        <p className="text-xs font-semibold text-slate-500 mb-3 uppercase tracking-wide">Bank Details (for Invoice PDF)</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <F label="Bank Name"    k="bank_name"           placeholder="State Bank of India" />
+          <F label="A/C Number"   k="bank_account_number" placeholder="38741106582" />
+          <F label="Branch"       k="bank_branch"         placeholder="Perambalur" />
+          <F label="IFSC Code"    k="bank_ifsc"           placeholder="SBIN0000796" />
+          <F label="UPI / GPay / PhonePe No." k="upi_id" placeholder="9842024204" />
+        </div>
+      </div>
+      <div className="flex gap-3 pt-2">
+        <button onClick={handleSave} disabled={saving}
+          className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-primary-600 hover:bg-primary-700 text-white disabled:opacity-50 transition-all">
+          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save
+        </button>
+        <button onClick={() => { setForm(saved); setEditing(false) }}
+          className="px-4 py-2 text-sm rounded-lg bg-dark-700 hover:bg-dark-600 text-slate-300 border border-dark-600 transition-all">
+          Cancel
+        </button>
+      </div>
     </div>
   )
 }
@@ -824,7 +932,7 @@ export default function SettingsPage() {
       <div className="max-w-3xl mx-auto space-y-6">
 
         <SectionCard icon={Building2} title="Company Profile">
-          <CompanyProfile company={company} />
+          <CompanyProfile company={company} isAdmin={adminAccess} />
         </SectionCard>
 
         <SectionCard icon={Users} title="Team Members">
@@ -837,10 +945,6 @@ export default function SettingsPage() {
 
         <SectionCard icon={Shield} title="Display Mode Defaults by Role">
           <DisplayModeSettings company={company} isAdmin={adminAccess} />
-        </SectionCard>
-
-        <SectionCard icon={CreditCard} title="Payment Info — UPI &amp; Bank Transfer (0% fee)">
-          <PaymentInfoSettings companyId={companyId} isAdmin={adminAccess} />
         </SectionCard>
 
         <SectionCard icon={CreditCard} title="Online Payments — Razorpay UPI">

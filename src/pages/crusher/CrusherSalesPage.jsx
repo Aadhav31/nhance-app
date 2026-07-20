@@ -164,14 +164,18 @@ function InvoiceFormModal({ companyId, onClose, prefill = null, onAfterSave = nu
     },
   })
 
-  // When grades load and an item already has a grade_id (from token prefill) but no rate yet,
-  // back-fill the default rate from the grade master.
+  // When grades load and an item already has a grade_id (from token prefill) but no rate/HSN yet,
+  // back-fill rate and hsn_code from the grade master.
   useEffect(() => {
     if (!grades.length) return
     setItems(prev => prev.map(it => {
-      if (it.grade_id && !it.rate) {
+      if (it.grade_id) {
         const g = grades.find(x => x.id === it.grade_id)
-        if (g?.default_rate) return { ...it, rate: String(g.default_rate) }
+        if (!g) return it
+        const updates = {}
+        if (!it.rate     && g.default_rate) updates.rate     = String(g.default_rate)
+        if (!it.hsn_code && g.hsn_code)     updates.hsn_code = g.hsn_code
+        return Object.keys(updates).length ? { ...it, ...updates } : it
       }
       return it
     }))
@@ -1648,11 +1652,11 @@ async function downloadCrusherPDF(inv, items, companyInfo = {}, clientInfo = nul
   st(7.5, 'bold', 0,0,0); tx('COMPANY BANK DETAILs', ML + 2, footY + 5)
   st(7.5, 'normal', 20,20,20)
   let bly = footY + 10
-  if (companyInfo.bank_name)    { tx(`Bank Name :${companyInfo.bank_name}`, ML + 2, bly); bly += 4 }
-  if (companyInfo.bank_account) { tx(`A/C No. : ${companyInfo.bank_account}`, ML + 2, bly); bly += 4 }
+  if (companyInfo.bank_name)           { tx(`Bank Name :${companyInfo.bank_name}`, ML + 2, bly); bly += 4 }
+  if (companyInfo.bank_account_number) { tx(`A/C No. : ${companyInfo.bank_account_number}`, ML + 2, bly); bly += 4 }
   if (companyInfo.bank_branch || companyInfo.bank_ifsc)
     { tx(`Branch & IFSC :${[companyInfo.bank_branch, companyInfo.bank_ifsc].filter(Boolean).join(' ')}`, ML + 2, bly); bly += 4 }
-  if (companyInfo.upi_number) tx(`Google Pay No / Phone Pay No : ${companyInfo.upi_number}`, ML + 2, bly)
+  if (companyInfo.upi_id) tx(`Google Pay No / Phone Pay No : ${companyInfo.upi_id}`, ML + 2, bly)
 
   const sigX2 = ML + bankW
   st(7.5, 'normal', 60,60,60)
@@ -2388,7 +2392,7 @@ function InvoicesTab({ companyId }) {
       }
       // Company details (fetch all fields for PDF — missing cols return null gracefully)
       const { data: co } = await supabase.from('companies')
-        .select('name, address, phone, phone2, office_phone, email, gstin, msme, bank_name, bank_account, bank_branch, bank_ifsc, upi_number')
+        .select('name, address, phone, phone2, office_phone, email, gstin, msme, bank_name, bank_account_number, bank_branch, bank_ifsc, upi_id')
         .eq('id', companyId).single()
       const companyInfo = co || { name: company?.name }
       // Client details (if registered, not walk-in)
