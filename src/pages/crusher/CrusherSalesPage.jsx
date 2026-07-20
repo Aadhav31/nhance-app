@@ -146,7 +146,7 @@ function InvoiceFormModal({ companyId, onClose }) {
     queryKey: ['crusher-grades', companyId],
     queryFn: async () => {
       const { data, error } = await supabase.from('crusher_grades')
-        .select('id, grade_name, hsn_code, default_gst_rate')
+        .select('id, grade_name, hsn_code, default_gst_rate, default_rate')
         .eq('company_id', companyId).eq('is_active', true).order('grade_name')
       if (error) console.error(error)
       return data || []
@@ -174,7 +174,14 @@ function InvoiceFormModal({ companyId, onClose }) {
   const handleGradeChange = (i, gradeId) => {
     const g = grades.find(x => x.id === gradeId)
     setItems(p => p.map((it, idx) => idx === i
-      ? { ...it, grade_id: gradeId, material_name: g?.grade_name || '', hsn_code: g?.hsn_code || '' }
+      ? {
+          ...it,
+          grade_id:      gradeId,
+          material_name: g?.grade_name  || '',
+          hsn_code:      g?.hsn_code    || '',
+          // auto-fill rate from grade default; keep existing if grade has no rate set
+          rate: g?.default_rate ? String(g.default_rate) : it.rate,
+        }
       : it))
   }
 
@@ -1428,6 +1435,7 @@ function GradeFormModal({ companyId, existing, onClose }) {
   const [form, setForm] = useState({
     grade_name:       existing?.grade_name       || '',
     description:      existing?.description      || '',
+    default_rate:     existing?.default_rate     ?? '',
     hsn_code:         existing?.hsn_code         ?? '2517',
     default_gst_rate: existing?.default_gst_rate ?? 5,
     is_active:        existing?.is_active        ?? true,
@@ -1442,6 +1450,7 @@ function GradeFormModal({ companyId, existing, onClose }) {
       const payload = {
         grade_name:       form.grade_name.trim(),
         description:      form.description.trim() || null,
+        default_rate:     form.default_rate !== '' ? Number(form.default_rate) : 0,
         hsn_code:         form.hsn_code.trim()    || null,
         default_gst_rate: Number(form.default_gst_rate),
         is_active:        form.is_active,
@@ -1487,6 +1496,12 @@ function GradeFormModal({ companyId, existing, onClose }) {
         <input className={inp()} value={form.description}
           onChange={e => set('description', e.target.value)}
           placeholder="Optional — e.g. Fine aggregate for plastering" />
+      </Field>
+
+      <Field label="Default Rate (₹ per unit)" required>
+        <input type="number" className={inp()} value={form.default_rate}
+          onChange={e => set('default_rate', e.target.value)}
+          placeholder="e.g. 850.00" step="0.01" min="0" />
       </Field>
 
       <div className="grid grid-cols-2 gap-3">
@@ -1590,10 +1605,13 @@ function MaterialsTab({ companyId }) {
                 </div>
                 <div className="flex items-center gap-4 mt-1 flex-wrap">
                   <span className="text-xs text-slate-500">
+                    Rate: <strong className="text-emerald-400">₹{Number(g.default_rate || 0).toLocaleString('en-IN')}</strong>
+                  </span>
+                  <span className="text-xs text-slate-500">
                     HSN: <strong className="font-mono text-primary-300">{g.hsn_code || '—'}</strong>
                   </span>
                   <span className="text-xs text-slate-500">
-                    GST: <strong className={Number(g.default_gst_rate) > 0 ? 'text-emerald-400' : 'text-slate-400'}>
+                    GST: <strong className={Number(g.default_gst_rate) > 0 ? 'text-yellow-400' : 'text-slate-400'}>
                       {g.default_gst_rate ?? 0}%
                     </strong>
                   </span>
