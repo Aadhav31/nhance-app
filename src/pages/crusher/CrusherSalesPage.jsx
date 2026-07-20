@@ -1487,11 +1487,15 @@ async function downloadCrusherPDF(inv, items, companyInfo = {}, clientInfo = nul
   ln(LX, HY + compH, RX, HY + compH, 0.25)   // divider below company
 
   // ── LEFT: Consignee (Ship to) ────────────────────────────────────────────────
-  const shipName = clientInfo?.display_name || clientInfo?.business_name || inv.client_name || ''
-  const shipCity = inv.unloading_point || inv.loading_point || ''
+  const shipName    = clientInfo?.display_name || clientInfo?.business_name || inv.client_name || ''
+  const shipPt      = inv.unloading_point   || ''   // master-selected point name
+  const shipAddr    = inv.unloading_address || ''   // manually typed full address
   st(7, 'italic', 80, 80, 80); tx('Consignee (Ship to)', LX + 2, HY + compH + 5)
   st(8, 'bold',   0,  0,  0);  tx(shipName, LX + 2, HY + compH + 10)
-  st(7, 'normal', 40, 40, 40); tx(shipCity, LX + 2, HY + compH + 15)
+  st(7, 'normal', 40, 40, 40)
+  let scy = HY + compH + 14.5
+  if (shipPt)   { tx(shipPt,   LX + 2, scy); scy += 3.8 }
+  if (shipAddr) { doc.splitTextToSize(shipAddr, LCW - 4).slice(0, 2).forEach(l => { tx(l, LX + 2, scy); scy += 3.8 }) }
 
   ln(LX, HY + compH + cneeH, RX, HY + compH + cneeH, 0.25)   // divider below consignee
 
