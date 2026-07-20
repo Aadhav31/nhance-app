@@ -164,6 +164,19 @@ function InvoiceFormModal({ companyId, onClose, prefill = null, onAfterSave = nu
     },
   })
 
+  // When grades load and an item already has a grade_id (from token prefill) but no rate yet,
+  // back-fill the default rate from the grade master.
+  useEffect(() => {
+    if (!grades.length) return
+    setItems(prev => prev.map(it => {
+      if (it.grade_id && !it.rate) {
+        const g = grades.find(x => x.id === it.grade_id)
+        if (g?.default_rate) return { ...it, rate: String(g.default_rate) }
+      }
+      return it
+    }))
+  }, [grades])
+
   const selectedVehicle = vehicles.find(v => v.id === form.vehicle_id)
 
   const handleVehicleChange = (vehicleId) => {
