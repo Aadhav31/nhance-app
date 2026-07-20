@@ -870,11 +870,267 @@ function TokenFormModal({ companyId, onClose, onSaved }) {
   )
 }
 
+// ── Token View Modal ──────────────────────────────────────────────────────────
+function TokenViewModal({ token, companyName, onClose, onEdit }) {
+  const sc = {
+    pending:   'bg-yellow-500/20 text-yellow-300 border-yellow-500/30',
+    loaded:    'bg-blue-500/20 text-blue-300 border-blue-500/30',
+    invoiced:  'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
+    cancelled: 'bg-slate-500/20 text-slate-400 border-slate-500/30',
+  }
+  const row = (label, val) => val
+    ? <div className="flex justify-between items-start py-2 border-b border-dark-600 last:border-0 gap-4">
+        <span className="text-xs text-slate-500 flex-shrink-0">{label}</span>
+        <span className="text-xs text-slate-200 font-medium text-right">{val}</span>
+      </div>
+    : null
+
+  return (
+    <Modal title="Token Details" onClose={onClose}
+      footer={
+        <>
+          <button onClick={onClose} className="px-4 py-2 text-sm rounded-lg bg-dark-700 text-slate-300 hover:bg-dark-600">Close</button>
+          {(token.status === 'pending' || token.status === 'loaded') && onEdit && (
+            <button onClick={onEdit} className="px-4 py-2 text-sm rounded-lg bg-dark-600 text-slate-200 hover:bg-dark-500 flex items-center gap-2">
+              <Edit2 className="w-3.5 h-3.5" /> Edit
+            </button>
+          )}
+          <button onClick={() => printToken(token, companyName)}
+            className="px-4 py-2 text-sm rounded-lg bg-primary-600 hover:bg-primary-700 text-white flex items-center gap-2">
+            <Printer className="w-3.5 h-3.5" /> Print
+          </button>
+        </>
+      }>
+      {/* Token number + status badge */}
+      <div className="text-center py-5 bg-dark-800 rounded-xl border border-dark-600 mb-4">
+        <p className="text-2xl font-black font-mono text-primary-400 tracking-widest mb-2">{token.token_number}</p>
+        <span className={`inline-block text-xs px-3 py-1 rounded-full border font-semibold ${sc[token.status] || ''}`}>
+          {token.status.toUpperCase()}
+        </span>
+      </div>
+      <div className="space-y-0 bg-dark-700 rounded-xl px-4 py-1 border border-dark-600">
+        {row('Date', token.token_date)}
+        {row('Time', token.token_time?.substring(0, 5))}
+        {row('Customer', token.customer_name || 'Walk-in')}
+        {row('Vehicle', token.vehicle_number)}
+        {row('Stock Yard', token.stock_yard)}
+        {row('Material', token.material_name)}
+        {row('Quantity', token.quantity ? `${Number(token.quantity).toFixed(3)} ${(token.unit || '').toUpperCase()}` : null)}
+        {row('Notes', token.notes)}
+        {token.invoice_id && row('Invoice', 'Linked ✓')}
+      </div>
+    </Modal>
+  )
+}
+
+// ── Token Edit Modal ──────────────────────────────────────────────────────────
+function TokenEditModal({ companyId, token, onClose, onSaved }) {
+  const qc = useQueryClient()
+  const [form, setForm] = useState({
+    token_date:     token.token_date,
+    token_time:     token.token_time?.substring(0, 5) || '',
+    client_id:      token.client_id      || '',
+    customer_name:  token.customer_name  || '',
+    vehicle_manual: !token.vehicle_id,
+    vehicle_id:     token.vehicle_id     || '',
+    vehicle_number: token.vehicle_number || '',
+    stock_yard:     token.stock_yard     || '',
+    grade_id:       token.grade_id       || '',
+    material_name:  token.material_name  || '',
+    quantity:       token.quantity ? String(token.quantity) : '',
+    unit:           token.unit           || 'tonnes',
+    notes:          token.notes          || '',
+  })
+  const [saving, setSaving] = useState(false)
+  const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
+
+  const { data: clients = [] } = useQuery({
+    queryKey: ['clients-inv', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('clients')
+        .select('id, display_name, business_name')
+        .eq('company_id', companyId).order('display_name')
+      return data || []
+    },
+  })
+  const { data: vehicles = [] } = useQuery({
+    queryKey: ['vehicles-inv', companyId, form.client_id],
+    queryFn: async () => {
+      let q = supabase.from('crusher_client_vehicles')
+        .select('id, vehicle_number, vehicle_type')
+        .eq('company_id', companyId).eq('is_active', true)
+      if (form.client_id) q = q.eq('client_id', form.client_id)
+      const { data } = await q.order('vehicle_number')
+      return data || []
+    },
+  })
+  const { data: loadingPoints = [] } = useQuery({
+    queryKey: ['loading-pts', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('crusher_loading_points')
+        .select('id, point_name, point_type')
+        .eq('company_id', companyId).eq('is_active', true).order('sort_order')
+      return data || []
+    },
+  })
+  const { data: grades = [] } = useQuery({
+    queryKey: ['crusher-grades', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('crusher_grades')
+        .select('id, grade_name, default_rate')
+        .eq('company_id', companyId).eq('is_active', true).order('grade_name')
+      return data || []
+    },
+  })
+
+  const handleGradeChange = (gradeId) => {
+    const g = grades.find(x => x.id === gradeId)
+    setForm(p => ({ ...p, grade_id: gradeId, material_name: g?.grade_name || '' }))
+  }
+
+  const handleSave = async () => {
+    if (!form.quantity) { toast.error('Quantity is required'); return }
+    const vNum = form.vehicle_manual
+      ? form.vehicle_number.trim()
+      : (vehicles.find(v => v.id === form.vehicle_id)?.vehicle_number || '')
+    const clientSnap = clients.find(c => c.id === form.client_id)
+    const custName = clientSnap
+      ? (clientSnap.display_name || clientSnap.business_name)
+      : form.customer_name.trim() || null
+
+    setSaving(true)
+    try {
+      const { error } = await supabase.from('crusher_tokens').update({
+        token_date:     form.token_date,
+        token_time:     form.token_time + ':00',
+        client_id:      form.client_id      || null,
+        customer_name:  custName,
+        vehicle_id:     form.vehicle_manual ? null : (form.vehicle_id || null),
+        vehicle_number: vNum || null,
+        stock_yard:     form.stock_yard     || null,
+        grade_id:       form.grade_id       || null,
+        material_name:  form.material_name  || null,
+        quantity:       Number(form.quantity),
+        unit:           form.unit,
+        notes:          form.notes          || null,
+      }).eq('id', token.id)
+      if (error) throw error
+      toast.success('Token updated')
+      qc.invalidateQueries({ queryKey: ['crusher-tokens', companyId] })
+      onSaved()
+    } catch (e) {
+      toast.error(e.message)
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <Modal title={`Edit Token · ${token.token_number}`} onClose={onClose}
+      footer={
+        <>
+          <button onClick={onClose} className="px-4 py-2 text-sm rounded-lg bg-dark-700 text-slate-300 hover:bg-dark-600">Cancel</button>
+          <button onClick={handleSave} disabled={saving}
+            className="px-4 py-2 text-sm rounded-lg bg-primary-600 hover:bg-primary-700 text-white flex items-center gap-2 disabled:opacity-50">
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            Save Changes
+          </button>
+        </>
+      }>
+
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Token Date" required>
+          <input type="date" className={inp()} value={form.token_date} onChange={e => set('token_date', e.target.value)} />
+        </Field>
+        <Field label="Time">
+          <input type="time" className={inp()} value={form.token_time} onChange={e => set('token_time', e.target.value)} />
+        </Field>
+      </div>
+
+      <Field label="Customer">
+        <select className={inp()} value={form.client_id}
+          onChange={e => { set('client_id', e.target.value); set('customer_name', '') }}>
+          <option value="">— Walk-in —</option>
+          {clients.map(c => <option key={c.id} value={c.id}>{c.display_name || c.business_name}</option>)}
+        </select>
+      </Field>
+      {!form.client_id && (
+        <Field label="Customer Name (walk-in)">
+          <input className={inp()} value={form.customer_name}
+            onChange={e => set('customer_name', e.target.value)} placeholder="e.g. Murugan…" />
+        </Field>
+      )}
+
+      <div>
+        <div className="flex items-center justify-between mb-1">
+          <label className="text-xs font-medium text-slate-400">Vehicle</label>
+          <button type="button" onClick={() => { set('vehicle_manual', !form.vehicle_manual); set('vehicle_id', ''); set('vehicle_number', '') }}
+            className="text-[11px] text-primary-400 hover:text-primary-300 underline underline-offset-2">
+            {form.vehicle_manual ? 'Pick from registry' : 'Type vehicle number'}
+          </button>
+        </div>
+        {form.vehicle_manual
+          ? <input className={inp()} value={form.vehicle_number}
+              onChange={e => set('vehicle_number', e.target.value.toUpperCase())} placeholder="e.g. TN38AB1234" />
+          : <select className={inp()} value={form.vehicle_id} onChange={e => set('vehicle_id', e.target.value)}>
+              <option value="">— Select vehicle —</option>
+              {vehicles.map(v => <option key={v.id} value={v.id}>{v.vehicle_number} ({v.vehicle_type})</option>)}
+            </select>
+        }
+      </div>
+
+      <Field label="Stock Yard / Loading Point">
+        <select className={inp()} value={form.stock_yard} onChange={e => set('stock_yard', e.target.value)}>
+          <option value="">— Select yard —</option>
+          {loadingPoints.filter(p => p.point_type !== 'unloading').map(p => (
+            <option key={p.id} value={p.point_name}>{p.point_name}</option>
+          ))}
+        </select>
+      </Field>
+
+      <Field label="Material">
+        <select className={inp()} value={form.grade_id} onChange={e => handleGradeChange(e.target.value)}>
+          <option value="">— Select grade —</option>
+          {grades.map(g => <option key={g.id} value={g.id}>{g.grade_name}</option>)}
+        </select>
+      </Field>
+      {!form.grade_id && (
+        <Field label="Material Name (manual)">
+          <input className={inp()} value={form.material_name}
+            onChange={e => set('material_name', e.target.value)} placeholder="e.g. M-Sand…" />
+        </Field>
+      )}
+
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Quantity" required>
+          <input type="number" className={inp()} value={form.quantity}
+            onChange={e => set('quantity', e.target.value)} step="0.001" min="0" />
+        </Field>
+        <Field label="Unit">
+          <select className={inp()} value={form.unit} onChange={e => set('unit', e.target.value)}>
+            <option value="tonnes">Tonnes</option>
+            <option value="cum">CUM</option>
+            <option value="units">Units (Vol)</option>
+            <option value="bags">Bags</option>
+            <option value="trips">Trips</option>
+          </select>
+        </Field>
+      </div>
+
+      <Field label="Notes">
+        <input className={inp()} value={form.notes} onChange={e => set('notes', e.target.value)}
+          placeholder="Optional remarks…" />
+      </Field>
+    </Modal>
+  )
+}
+
 // ── Tokens Tab ────────────────────────────────────────────────────────────────
 function TokensTab({ companyId }) {
   const qc = useQueryClient()
-  const [issueOpen, setIssueOpen]     = useState(false)
-  const [fromToken,  setFromToken]    = useState(null) // pre-fill invoice from token
+  const [issueOpen,  setIssueOpen]  = useState(false)
+  const [viewToken,  setViewToken]  = useState(null)
+  const [editToken,  setEditToken]  = useState(null)
+  const [fromToken,  setFromToken]  = useState(null)
+
   const { data: company } = useQuery({
     queryKey: ['company-name', companyId],
     queryFn: async () => {
@@ -895,30 +1151,30 @@ function TokensTab({ companyId }) {
     },
   })
 
-  const statusColor = {
-    pending:   'yellow',
-    loaded:    'blue',
-    invoiced:  'green',
-    cancelled: 'slate',
-  }
+  const statusColor = { pending: 'yellow', loaded: 'blue', invoiced: 'green', cancelled: 'slate' }
 
-  const handleStatusChange = async (token, newStatus) => {
-    const { error } = await supabase.from('crusher_tokens').update({ status: newStatus }).eq('id', token.id)
+  const handleStatusChange = async (tok, newStatus) => {
+    const { error } = await supabase.from('crusher_tokens').update({ status: newStatus }).eq('id', tok.id)
     if (error) { toast.error(error.message); return }
-    toast.success(`Token marked as ${newStatus}`)
+    toast.success(`Marked as ${newStatus}`)
     qc.invalidateQueries({ queryKey: ['crusher-tokens', companyId] })
   }
 
-  const handleCancel = async (token) => {
-    if (!window.confirm(`Cancel token ${token.token_number}?`)) return
-    await handleStatusChange(token, 'cancelled')
+  const handleVoid = async (tok) => {
+    if (!window.confirm(`Void token ${tok.token_number}? This cannot be undone.`)) return
+    await handleStatusChange(tok, 'cancelled')
   }
 
-  // After saving a token, auto-print it
-  const handleSaved = (token) => {
-    setIssueOpen(false)
-    printToken(token, company?.name)
+  const handleDelete = async (tok) => {
+    if (!window.confirm(`Permanently delete token ${tok.token_number}?`)) return
+    const { error } = await supabase.from('crusher_tokens').delete().eq('id', tok.id)
+    if (error) { toast.error(error.message); return }
+    toast.success('Token deleted')
+    qc.invalidateQueries({ queryKey: ['crusher-tokens', companyId] })
   }
+
+  const handleSaved = (tok) => { setIssueOpen(false); printToken(tok, company?.name) }
+  const handleEdited = () => setEditToken(null)
 
   return (
     <div className="space-y-4">
@@ -933,10 +1189,9 @@ function TokensTab({ companyId }) {
         </button>
       </div>
 
-      {/* Workflow hint */}
       <div className="bg-dark-700 rounded-xl p-3 border border-dark-600 flex items-center gap-3 text-xs text-slate-400">
         <Printer className="w-4 h-4 text-primary-400 flex-shrink-0" />
-        <span>Issue Token → <strong className="text-slate-300">Load Material at Yard</strong> → Mark as Loaded → <strong className="text-slate-300">Create Invoice</strong></span>
+        <span>Issue Token → <strong className="text-slate-300">Load Material</strong> → Mark Loaded → <strong className="text-slate-300">Create Invoice</strong></span>
       </div>
 
       {isLoading && <div className="text-center py-10"><Loader2 className="w-5 h-5 animate-spin mx-auto text-primary-400" /></div>}
@@ -958,7 +1213,7 @@ function TokensTab({ companyId }) {
             <div key={tok.id}
               className={`bg-dark-700 rounded-xl border border-dark-600 overflow-hidden ${tok.status === 'cancelled' ? 'opacity-50' : ''}`}>
 
-              {/* Main info */}
+              {/* Main info row */}
               <div className="p-4">
                 <div className="flex items-start justify-between">
                   <div>
@@ -967,7 +1222,7 @@ function TokensTab({ companyId }) {
                       <Badge label={tok.status.toUpperCase()} color={statusColor[tok.status] || 'slate'} />
                     </div>
                     <p className="text-xs text-slate-400">
-                      {tok.token_date} {tok.token_time?.substring(0,5)}
+                      {tok.token_date} {tok.token_time?.substring(0, 5)}
                       {tok.customer_name ? ` · ${tok.customer_name}` : ''}
                       {tok.vehicle_number ? ` · ${tok.vehicle_number}` : ''}
                     </p>
@@ -978,63 +1233,83 @@ function TokensTab({ companyId }) {
                     </p>
                   </div>
                   <div className="text-right flex-shrink-0">
-                    <p className="text-xl font-black text-slate-200">
-                      {tok.quantity ? Number(tok.quantity).toFixed(2) : '—'}
-                    </p>
+                    <p className="text-xl font-black text-slate-200">{tok.quantity ? Number(tok.quantity).toFixed(2) : '—'}</p>
                     <p className="text-[10px] text-slate-500">{(tok.unit || '').toUpperCase()}</p>
                   </div>
                 </div>
               </div>
 
               {/* Action bar */}
-              <div className="px-4 py-2.5 bg-dark-800 border-t border-dark-600 flex items-center gap-1 flex-wrap">
-                {/* Reprint */}
+              <div className="px-3 py-2 bg-dark-800 border-t border-dark-600 flex items-center gap-0.5 flex-wrap">
+
+                {/* LEFT: View + Print + status toggles */}
+                <button onClick={() => setViewToken(tok)}
+                  className="flex items-center gap-1.5 text-xs px-2 py-1.5 rounded-md text-slate-300 hover:text-white hover:bg-dark-600 transition-all">
+                  <Eye className="w-3.5 h-3.5" /> View
+                </button>
+
                 <button onClick={() => printToken(tok, company?.name)}
-                  className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-md text-slate-300 hover:text-white hover:bg-dark-600 transition-all">
+                  className="flex items-center gap-1.5 text-xs px-2 py-1.5 rounded-md text-slate-300 hover:text-white hover:bg-dark-600 transition-all">
                   <Printer className="w-3.5 h-3.5" /> Print
                 </button>
 
-                {/* Mark loaded (pending → loaded) */}
                 {tok.status === 'pending' && (
                   <button onClick={() => handleStatusChange(tok, 'loaded')}
-                    className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-md text-blue-400 hover:bg-blue-500/10 transition-all">
+                    className="flex items-center gap-1.5 text-xs px-2 py-1.5 rounded-md text-blue-400 hover:bg-blue-500/10 transition-all">
                     <ClipboardCheck className="w-3.5 h-3.5" /> Mark Loaded
                   </button>
                 )}
-
-                {/* Undo loaded → pending */}
                 {tok.status === 'loaded' && (
                   <button onClick={() => handleStatusChange(tok, 'pending')}
-                    className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-md text-slate-400 hover:bg-dark-600 transition-all">
+                    className="flex items-center gap-1.5 text-xs px-2 py-1.5 rounded-md text-slate-400 hover:bg-dark-600 transition-all">
                     <RefreshCw className="w-3.5 h-3.5" /> Undo
                   </button>
                 )}
 
                 <div className="flex-1" />
 
-                {/* Create Invoice (pending or loaded only) */}
+                {/* RIGHT: Edit + Create Invoice + Void + Delete */}
                 {(tok.status === 'pending' || tok.status === 'loaded') && (
-                  <button onClick={() => setFromToken(tok)}
-                    className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white font-medium transition-all">
-                    <FileText className="w-3.5 h-3.5" /> Create Invoice
+                  <button onClick={() => setEditToken(tok)}
+                    className="flex items-center gap-1.5 text-xs px-2 py-1.5 rounded-md text-slate-300 hover:text-white hover:bg-dark-600 transition-all">
+                    <Edit2 className="w-3.5 h-3.5" /> Edit
                   </button>
                 )}
 
-                {/* Cancel */}
-                {tok.status !== 'invoiced' && tok.status !== 'cancelled' && (
-                  <button onClick={() => handleCancel(tok)}
-                    className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-md text-red-400 hover:bg-red-500/10 transition-all">
-                    <Ban className="w-3.5 h-3.5" /> Cancel
+                {(tok.status === 'pending' || tok.status === 'loaded') && (
+                  <button onClick={() => setFromToken(tok)}
+                    className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white font-medium transition-all">
+                    <FileText className="w-3.5 h-3.5" /> Invoice
                   </button>
                 )}
+
+                {(tok.status === 'pending' || tok.status === 'loaded') && (
+                  <button onClick={() => handleVoid(tok)}
+                    className="flex items-center gap-1.5 text-xs px-2 py-1.5 rounded-md text-amber-400 hover:bg-amber-500/10 transition-all">
+                    <Ban className="w-3.5 h-3.5" /> Void
+                  </button>
+                )}
+
+                <button onClick={() => handleDelete(tok)}
+                  className="flex items-center gap-1.5 text-xs px-2 py-1.5 rounded-md text-red-400 hover:bg-red-500/10 transition-all">
+                  <Trash2 className="w-3.5 h-3.5" /> Delete
+                </button>
               </div>
             </div>
           ))}
         </div>
       )}
 
-      {issueOpen  && <TokenFormModal companyId={companyId} onClose={() => setIssueOpen(false)} onSaved={handleSaved} />}
-      {fromToken  && <InvoiceFromTokenModal companyId={companyId} token={fromToken} onClose={() => setFromToken(null)} />}
+      {issueOpen && <TokenFormModal companyId={companyId} onClose={() => setIssueOpen(false)} onSaved={handleSaved} />}
+      {viewToken && (
+        <TokenViewModal
+          token={viewToken} companyName={company?.name}
+          onClose={() => setViewToken(null)}
+          onEdit={() => { setEditToken(viewToken); setViewToken(null) }}
+        />
+      )}
+      {editToken && <TokenEditModal companyId={companyId} token={editToken} onClose={() => setEditToken(null)} onSaved={handleEdited} />}
+      {fromToken && <InvoiceFromTokenModal companyId={companyId} token={fromToken} onClose={() => setFromToken(null)} />}
     </div>
   )
 }
