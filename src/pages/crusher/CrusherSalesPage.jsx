@@ -100,6 +100,8 @@ function InvoiceFormModal({ companyId, onClose, prefill = null, onAfterSave = nu
     walkin_vehicle_num:  prefill?.walkin_vehicle_num || '',
     loading_point:       prefill?.loading_point     || '',
     unloading_point:     '',
+    unloading_address:   '',
+    driver_name:         prefill?.driver_name       || '',
     payment_type:        'cash',
     payment_mode:        'cash',
     credit_due_date:     '',
@@ -161,6 +163,14 @@ function InvoiceFormModal({ companyId, onClose, prefill = null, onAfterSave = nu
         .eq('company_id', companyId).eq('is_active', true).order('grade_name')
       if (error) console.error(error)
       return data || []
+    },
+  })
+
+  const { data: companyAddress = '' } = useQuery({
+    queryKey: ['company-address', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('companies').select('address').eq('id', companyId).single()
+      return data?.address || ''
     },
   })
 
@@ -274,8 +284,10 @@ function InvoiceFormModal({ companyId, onClose, prefill = null, onAfterSave = nu
         vehicle_number:  resolvedVehicleNum,
         vehicle_capacity: form.vehicle_manual ? null : (selectedVehicle?.capacity_tonnes || null),
         billing_basis:   form.vehicle_manual ? null : (selectedVehicle?.billing_basis   || null),
-        loading_point:   form.loading_point   || null,
-        unloading_point: form.unloading_point || null,
+        loading_point:     form.loading_point     || null,
+        unloading_point:   form.unloading_point   || null,
+        unloading_address: form.unloading_address || null,
+        driver_name:       form.driver_name.trim() || null,
         payment_type:    form.payment_type,
         payment_mode:    form.payment_type === 'cash'   ? form.payment_mode    : null,
         credit_due_date: form.payment_type === 'credit' ? form.credit_due_date : null,
@@ -394,6 +406,13 @@ function InvoiceFormModal({ companyId, onClose, prefill = null, onAfterSave = nu
         </div>
       )}
 
+      {/* Driver Name */}
+      <Field label="Driver Name">
+        <input className={inp()} value={form.driver_name}
+          onChange={e => set('driver_name', e.target.value)}
+          placeholder="e.g. Murugan, Rajan…" />
+      </Field>
+
       {/* Loading / Unloading */}
       <div className="grid grid-cols-2 gap-3">
         <Field label="Loading Point">
@@ -401,12 +420,20 @@ function InvoiceFormModal({ companyId, onClose, prefill = null, onAfterSave = nu
             <option value="">— Select —</option>
             {loadingPoints.filter(p => p.point_type !== 'unloading').map(p => <option key={p.id} value={p.point_name}>{p.point_name}</option>)}
           </select>
+          {companyAddress && (
+            <p className="text-[11px] text-slate-500 mt-1.5 bg-dark-700 rounded px-2 py-1 leading-snug">
+              📍 {companyAddress}
+            </p>
+          )}
         </Field>
         <Field label="Unloading Point">
           <select className={inp()} value={form.unloading_point} onChange={e => set('unloading_point', e.target.value)}>
             <option value="">— Select —</option>
             {loadingPoints.filter(p => p.point_type !== 'loading').map(p => <option key={p.id} value={p.point_name}>{p.point_name}</option>)}
           </select>
+          <input className={`${inp()} mt-2`} value={form.unloading_address}
+            onChange={e => set('unloading_address', e.target.value)}
+            placeholder="Delivery address (optional)" />
         </Field>
       </div>
 
@@ -1511,7 +1538,7 @@ async function downloadCrusherPDF(inv, items, companyInfo = {}, clientInfo = nul
   rry += rh4; rDiv(rry)
 
   // Row 5: Driver | Motor Vehicle No.
-  rLbl('Driver', RX + 2, rry)
+  rLbl('Driver', RX + 2, rry); rVal(inv.driver_name || '', RX + 2, rry)
   rMid(rry, rh5)
   rLbl('Motor Vehicle No.', MX + 2, rry); rVal(inv.vehicle_number || '', MX + 2, rry)
   rry += rh5; rDiv(rry)
@@ -1649,7 +1676,7 @@ async function downloadCrusherPDF(inv, items, companyInfo = {}, clientInfo = nul
   bx(ML, footY, CW, footH)
   ln(ML + bankW, footY, ML + bankW, footY + footH, 0.3)
 
-  st(7.5, 'bold', 0,0,0); tx('COMPANY BANK DETAILs', ML + 2, footY + 5)
+  st(7.5, 'bold', 0,0,0); tx('COMPANY BANK DETAILS', ML + 2, footY + 5)
   st(7.5, 'normal', 20,20,20)
   let bly = footY + 10
   if (companyInfo.bank_name)           { tx(`Bank Name :${companyInfo.bank_name}`, ML + 2, bly); bly += 4 }
@@ -1888,8 +1915,10 @@ function InvoiceEditModal({ companyId, invoice, onClose }) {
     payment_type:    invoice.payment_type,
     payment_mode:    invoice.payment_mode || 'cash',
     credit_due_date: invoice.credit_due_date || '',
-    loading_point:   invoice.loading_point  || '',
-    unloading_point: invoice.unloading_point || '',
+    loading_point:     invoice.loading_point     || '',
+    unloading_point:   invoice.unloading_point   || '',
+    unloading_address: invoice.unloading_address || '',
+    driver_name:       invoice.driver_name       || '',
     notes:           invoice.notes          || '',
   })
   const [items,   setItems]   = useState([])
@@ -1975,8 +2004,10 @@ function InvoiceEditModal({ companyId, invoice, onClose }) {
         payment_type:    form.payment_type,
         payment_mode:    form.payment_type === 'cash'   ? form.payment_mode    : null,
         credit_due_date: form.payment_type === 'credit' ? form.credit_due_date : null,
-        loading_point:   form.loading_point   || null,
-        unloading_point: form.unloading_point || null,
+        loading_point:     form.loading_point     || null,
+        unloading_point:   form.unloading_point   || null,
+        unloading_address: form.unloading_address || null,
+        driver_name:       form.driver_name.trim() || null,
         notes:           form.notes           || null,
         subtotal,
         total_tax:    totalTax,
@@ -2068,6 +2099,13 @@ function InvoiceEditModal({ companyId, invoice, onClose }) {
         <input type="date" className={inp()} value={form.invoice_date} onChange={e => set('invoice_date', e.target.value)} />
       </Field>
 
+      {/* Driver Name */}
+      <Field label="Driver Name">
+        <input className={inp()} value={form.driver_name}
+          onChange={e => set('driver_name', e.target.value)}
+          placeholder="e.g. Murugan, Rajan…" />
+      </Field>
+
       {/* Loading / Unloading */}
       <div className="grid grid-cols-2 gap-3">
         <Field label="Loading Point">
@@ -2081,6 +2119,9 @@ function InvoiceEditModal({ companyId, invoice, onClose }) {
             <option value="">— None —</option>
             {loadingPoints.map(p => <option key={p.id} value={p.point_name}>{p.point_name}</option>)}
           </select>
+          <input className={`${inp()} mt-2`} value={form.unloading_address}
+            onChange={e => set('unloading_address', e.target.value)}
+            placeholder="Delivery address (optional)" />
         </Field>
       </div>
 
@@ -2226,7 +2267,7 @@ function InvoicesTab({ companyId }) {
     queryKey: ['crusher-invoices', companyId],
     queryFn: async () => {
       const { data, error } = await supabase.from('crusher_invoices')
-        .select('id, invoice_number, invoice_type, invoice_date, client_id, client_name, vehicle_number, payment_type, status, total_amount, subtotal, total_tax, balance, paid_amount, credit_due_date, payment_mode, loading_point, unloading_point, notes')
+        .select('id, invoice_number, invoice_type, invoice_date, client_id, client_name, vehicle_number, driver_name, payment_type, status, total_amount, subtotal, total_tax, balance, paid_amount, credit_due_date, payment_mode, loading_point, unloading_point, unloading_address, notes')
         .eq('company_id', companyId)
         .order('invoice_date', { ascending: false })
         .order('created_at', { ascending: false })
