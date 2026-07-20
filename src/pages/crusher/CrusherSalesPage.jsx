@@ -5,7 +5,8 @@ import { useAuth } from '../../contexts/AuthContext'
 import {
   Users, Truck, MapPin, Package, FileText, Plus, Edit2, Trash2, X, Save,
   Loader2, CheckCircle, Settings2, ChevronRight, AlertCircle, ToggleLeft,
-  ToggleRight, Phone, Mail, CreditCard, Calendar, Building2, Hash
+  ToggleRight, Phone, Mail, CreditCard, Calendar, Building2, Hash,
+  Eye, Download, Ban
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
@@ -505,15 +506,245 @@ function InvoiceFormModal({ companyId, onClose }) {
   )
 }
 
+// ── Crusher Invoice PDF ───────────────────────────────────────────────────────
+async function downloadCrusherPDF(inv, items, companyName) {
+  const { jsPDF } = await import('jspdf')
+  await import('jspdf-autotable')
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+  const W = 210, M = 14
+  const isTax = inv.invoice_type === 'tax'
+  let y = M
+
+  // Header band
+  doc.setFillColor(20, 80, 160)
+  doc.rect(0, 0, W, 26, 'F')
+  doc.setFontSize(14).setFont('helvetica', 'bold').setTextColor(255)
+  doc.text(companyName || 'Company', M, 10)
+  doc.setFontSize(8).setFont('helvetica', 'normal')
+  doc.text(isTax ? 'TAX INVOICE' : 'NON-TAX INVOICE', M, 17)
+  doc.setFontSize(13).setFont('helvetica', 'bold')
+  doc.text(inv.invoice_number, W - M, 10, { align: 'right' })
+  doc.setFontSize(8).setFont('helvetica', 'normal')
+  doc.text(`Date: ${inv.invoice_date}`, W - M, 17, { align: 'right' })
+  y = 34
+
+  // Client + vehicle row
+  doc.setTextColor(0).setFontSize(8).setFont('helvetica', 'bold')
+  doc.text('BILL TO', M, y)
+  doc.setFont('helvetica', 'normal').setFontSize(10).setTextColor(20)
+  doc.text(inv.client_name || 'Walk-in Customer', M, y + 5)
+  if (inv.vehicle_number) {
+    doc.setFontSize(8).setTextColor(80)
+    doc.text(`Vehicle: ${inv.vehicle_number}`, M, y + 11)
+  }
+  if (inv.loading_point)   { doc.text(`From: ${inv.loading_point}`,   M, y + (inv.vehicle_number ? 16 : 11)); }
+  if (inv.unloading_point) { doc.text(`To:   ${inv.unloading_point}`, M, y + (inv.vehicle_number ? 21 : 16)); }
+
+  // Payment info top-right
+  doc.setFontSize(8).setFont('helvetica', 'bold').setTextColor(0)
+  doc.text('PAYMENT', W - M - 50, y, { align: 'left' })
+  doc.setFont('helvetica', 'normal').setTextColor(60)
+  const pmLabel = inv.payment_type === 'cash'
+    ? (inv.payment_mode || 'cash').toUpperCase()
+    : `CREDIT — Due ${inv.credit_due_date || '—'}`
+  doc.text(pmLabel, W - M - 50, y + 5)
+  doc.setFont('helvetica', 'bold').setTextColor(inv.status === 'paid' ? [0, 140, 80] : [200, 50, 50])
+  doc.text(inv.status.toUpperCase(), W - M - 50, y + 11)
+
+  y += 32
+
+  // Items table
+  const cols = isTax
+    ? [{ header: '#', dataKey: 'n' }, { header: 'Material', dataKey: 'm' }, { header: 'HSN', dataKey: 'h' },
+       { header: 'Qty', dataKey: 'q' }, { header: 'Unit', dataKey: 'u' }, { header: 'Rate ₹', dataKey: 'r' },
+       { header: 'Amount ₹', dataKey: 'a' }, { header: 'GST%', dataKey: 'g' }, { header: 'GST ₹', dataKey: 'ga' }, { header: 'Total ₹', dataKey: 't' }]
+    : [{ header: '#', dataKey: 'n' }, { header: 'Material', dataKey: 'm' },
+       { header: 'Qty', dataKey: 'q' }, { header: 'Unit', dataKey: 'u' }, { header: 'Rate ₹', dataKey: 'r' }, { header: 'Amount ₹', dataKey: 'a' }]
+
+  const rows = items.map((item, i) => {
+    const base = {
+      n: i + 1, m: item.material_name,
+      q: Number(item.quantity), u: item.unit,
+      r: Number(item.rate).toFixed(2), a: Number(item.amount).toFixed(2),
+    }
+    return isTax
+      ? { ...base, h: item.hsn_code || '—', g: `${item.gst_rate}%`, ga: Number(item.gst_amount).toFixed(2), t: Number(item.total_amount).toFixed(2) }
+      : base
+  })
+
+  doc.autoTable({
+    startY: y, columns: cols, body: rows,
+    margin: { left: M, right: M },
+    styles: { fontSize: 8, cellPadding: 2 },
+    headStyles: { fillColor: [20, 80, 160], textColor: 255, fontStyle: 'bold' },
+    alternateRowStyles: { fillColor: [245, 247, 252] },
+    columnStyles: isTax
+      ? { n: { cellWidth: 6 }, m: { cellWidth: 38 }, h: { cellWidth: 14 } }
+      : { n: { cellWidth: 8 }, m: { cellWidth: 70 } },
+  })
+
+  y = doc.lastAutoTable.finalY + 6
+
+  // Totals block
+  const fmtN = n => `₹${Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
+  const tX = W - M - 70
+  const addRow = (lbl, val, bold) => {
+    doc.setFont('helvetica', bold ? 'bold' : 'normal').setFontSize(bold ? 9 : 8)
+    doc.setTextColor(bold ? 0 : 80)
+    doc.text(lbl, tX, y)
+    doc.text(fmtN(val), W - M, y, { align: 'right' })
+    y += 5
+  }
+  addRow('Subtotal', inv.subtotal)
+  if (isTax && Number(inv.total_tax) > 0) addRow('GST', inv.total_tax)
+  doc.setDrawColor(180).line(tX, y - 1, W - M, y - 1)
+  addRow('TOTAL', inv.total_amount, true)
+  if (Number(inv.balance) > 0) {
+    doc.setTextColor(200, 50, 50).setFont('helvetica', 'normal').setFontSize(8)
+    doc.text('Balance Due', tX, y)
+    doc.text(fmtN(inv.balance), W - M, y, { align: 'right' })
+    y += 5
+  }
+
+  if (inv.notes) {
+    y += 4
+    doc.setFontSize(8).setFont('helvetica', 'italic').setTextColor(120)
+    doc.text(`Notes: ${inv.notes}`, M, y)
+  }
+
+  doc.save(`${inv.invoice_number}.pdf`)
+}
+
+// ── Invoice View Modal ────────────────────────────────────────────────────────
+function InvoiceViewModal({ invoiceId, onClose, onDownload }) {
+  const { data: detail, isLoading } = useQuery({
+    queryKey: ['crusher-invoice-detail', invoiceId],
+    queryFn: async () => {
+      const [invRes, itemsRes] = await Promise.all([
+        supabase.from('crusher_invoices').select('*').eq('id', invoiceId).single(),
+        supabase.from('crusher_invoice_items').select('*').eq('invoice_id', invoiceId).order('sort_order'),
+      ])
+      if (invRes.error) throw invRes.error
+      return { inv: invRes.data, items: itemsRes.data || [] }
+    },
+  })
+
+  const inv = detail?.inv
+  const items = detail?.items || []
+  const isTax = inv?.invoice_type === 'tax'
+  const fmtM = n => `₹${Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
+  const statusColor = { issued: 'blue', paid: 'green', partial: 'yellow', overdue: 'red', draft: 'slate', void: 'slate' }
+
+  return (
+    <Modal title={inv ? `Invoice — ${inv.invoice_number}` : 'Invoice Details'} onClose={onClose} wide
+      footer={
+        inv && (
+          <button onClick={() => onDownload(inv, items)}
+            className="px-4 py-2 text-sm rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white flex items-center gap-2">
+            <Download className="w-4 h-4" /> Download PDF
+          </button>
+        )
+      }>
+
+      {isLoading && <div className="flex justify-center py-10"><Loader2 className="w-6 h-6 animate-spin text-primary-400" /></div>}
+
+      {inv && (
+        <div className="space-y-4">
+          {/* Top row */}
+          <div className="flex items-start justify-between">
+            <div>
+              <p className="text-xs text-slate-500 mb-0.5">Invoice Number</p>
+              <p className="text-xl font-bold font-mono text-primary-400">{inv.invoice_number}</p>
+              <p className="text-xs text-slate-500 mt-1">{inv.invoice_date}</p>
+            </div>
+            <div className="text-right space-y-1.5">
+              <div><Badge label={isTax ? 'GST Invoice' : 'Non-Tax Invoice'} color={isTax ? 'blue' : 'slate'} /></div>
+              <div><Badge label={inv.status.toUpperCase()} color={statusColor[inv.status] || 'slate'} /></div>
+            </div>
+          </div>
+
+          {/* Info grid */}
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            {[
+              { label: 'Customer',        value: inv.client_name || 'Walk-in' },
+              { label: 'Vehicle',         value: inv.vehicle_number || '—' },
+              { label: 'Loading Point',   value: inv.loading_point  || '—' },
+              { label: 'Unloading Point', value: inv.unloading_point || '—' },
+              { label: 'Payment',         value: inv.payment_type === 'cash' ? (inv.payment_mode || 'Cash').toUpperCase() : 'Credit' },
+              { label: 'Due Date',        value: inv.credit_due_date || (inv.payment_type === 'cash' ? 'N/A — Cash' : '—') },
+            ].map(({ label, value }) => (
+              <div key={label} className="bg-dark-700 rounded-lg p-3 border border-dark-600">
+                <p className="text-slate-500 mb-0.5">{label}</p>
+                <p className="text-slate-200 font-semibold">{value}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Line items */}
+          <div>
+            <p className="text-xs font-medium text-slate-400 mb-2">Materials</p>
+            <div className="space-y-1.5">
+              {items.map((item, i) => (
+                <div key={i} className="bg-dark-700 rounded-lg p-3 border border-dark-600 flex items-start justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-200">{item.material_name}</p>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      {item.quantity} {item.unit} × {fmtM(item.rate)}
+                      {isTax && item.hsn_code && ` · HSN ${item.hsn_code}`}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm font-semibold text-slate-200">{fmtM(item.amount)}</p>
+                    {isTax && Number(item.gst_amount) > 0 && (
+                      <p className="text-[11px] text-slate-500">+GST {item.gst_rate}% = {fmtM(item.total_amount)}</p>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Totals */}
+          <div className="bg-dark-700 rounded-xl p-4 border border-dark-600 space-y-1.5">
+            <div className="flex justify-between text-sm text-slate-400"><span>Subtotal</span><span>{fmtM(inv.subtotal)}</span></div>
+            {isTax && Number(inv.total_tax) > 0 && (
+              <div className="flex justify-between text-sm text-slate-400"><span>GST</span><span>{fmtM(inv.total_tax)}</span></div>
+            )}
+            <div className="flex justify-between text-base font-bold border-t border-dark-600 pt-2 mt-1">
+              <span className="text-slate-100">Total</span>
+              <span className="text-emerald-400">{fmtM(inv.total_amount)}</span>
+            </div>
+            {Number(inv.balance) > 0 && (
+              <div className="flex justify-between text-sm text-red-400"><span>Balance Due</span><span>{fmtM(inv.balance)}</span></div>
+            )}
+          </div>
+
+          {inv.notes && <p className="text-xs text-slate-500 italic">Notes: {inv.notes}</p>}
+        </div>
+      )}
+    </Modal>
+  )
+}
+
 // ── Invoices Tab ──────────────────────────────────────────────────────────────
 function InvoicesTab({ companyId }) {
+  const qc = useQueryClient()
   const [createOpen, setCreateOpen] = useState(false)
+  const [viewId, setViewId]         = useState(null)
+
+  const { data: company } = useQuery({
+    queryKey: ['company-name', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('companies').select('name').eq('id', companyId).single()
+      return data
+    },
+  })
 
   const { data: invoices = [], isLoading } = useQuery({
     queryKey: ['crusher-invoices', companyId],
     queryFn: async () => {
       const { data, error } = await supabase.from('crusher_invoices')
-        .select('id, invoice_number, invoice_type, invoice_date, client_name, vehicle_number, payment_type, status, total_amount, balance, credit_due_date')
+        .select('id, invoice_number, invoice_type, invoice_date, client_name, vehicle_number, payment_type, status, total_amount, subtotal, total_tax, balance, credit_due_date, payment_mode, loading_point, unloading_point, notes')
         .eq('company_id', companyId)
         .order('invoice_date', { ascending: false })
         .order('created_at', { ascending: false })
@@ -523,6 +754,40 @@ function InvoicesTab({ companyId }) {
   })
 
   const statusColor = { issued: 'blue', paid: 'green', partial: 'yellow', overdue: 'red', draft: 'slate', void: 'slate' }
+
+  const handleVoid = async (inv) => {
+    const isVoided = inv.status === 'void'
+    const msg = isVoided
+      ? `Re-activate invoice ${inv.invoice_number}?`
+      : `Void invoice ${inv.invoice_number}? It will be marked as cancelled.`
+    if (!window.confirm(msg)) return
+    const { error } = await supabase.from('crusher_invoices')
+      .update({ status: isVoided ? 'issued' : 'void' }).eq('id', inv.id)
+    if (error) { toast.error(error.message); return }
+    toast.success(isVoided ? 'Invoice re-activated' : 'Invoice voided')
+    qc.invalidateQueries({ queryKey: ['crusher-invoices', companyId] })
+  }
+
+  const handleDelete = async (inv) => {
+    if (!window.confirm(`Delete invoice ${inv.invoice_number}? This cannot be undone.`)) return
+    const { error } = await supabase.from('crusher_invoices').delete().eq('id', inv.id)
+    if (error) { toast.error(error.message); return }
+    toast.success('Invoice deleted')
+    qc.invalidateQueries({ queryKey: ['crusher-invoices', companyId] })
+  }
+
+  const handleDownload = async (inv, items) => {
+    try {
+      let lineItems = items
+      if (!lineItems) {
+        const { data } = await supabase.from('crusher_invoice_items').select('*').eq('invoice_id', inv.id).order('sort_order')
+        lineItems = data || []
+      }
+      await downloadCrusherPDF(inv, lineItems, company?.name)
+    } catch (e) {
+      toast.error('PDF generation failed: ' + e.message)
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -557,22 +822,47 @@ function InvoicesTab({ companyId }) {
       {!isLoading && invoices.length > 0 && (
         <div className="space-y-2">
           {invoices.map(inv => (
-            <div key={inv.id} className="bg-dark-700 rounded-xl p-4 border border-dark-600 flex items-start gap-3">
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap mb-1">
-                  <span className="text-sm font-semibold text-primary-400 font-mono">{inv.invoice_number}</span>
-                  <Badge label={inv.invoice_type === 'tax' ? 'GST' : 'Non-Tax'} color={inv.invoice_type === 'tax' ? 'blue' : 'slate'} />
-                  <Badge label={inv.status} color={statusColor[inv.status] || 'slate'} />
+            <div key={inv.id} className={`bg-dark-700 rounded-xl border border-dark-600 overflow-hidden ${inv.status === 'void' ? 'opacity-60' : ''}`}>
+              {/* Main row */}
+              <div className="p-4 flex items-start gap-3">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap mb-1">
+                    <span className="text-sm font-semibold text-primary-400 font-mono">{inv.invoice_number}</span>
+                    <Badge label={inv.invoice_type === 'tax' ? 'GST' : 'Non-Tax'} color={inv.invoice_type === 'tax' ? 'blue' : 'slate'} />
+                    <Badge label={inv.status} color={statusColor[inv.status] || 'slate'} />
+                  </div>
+                  <p className="text-xs text-slate-400">
+                    {inv.invoice_date} · {inv.client_name || 'Walk-in'}{inv.vehicle_number ? ` · ${inv.vehicle_number}` : ''}
+                  </p>
                 </div>
-                <p className="text-xs text-slate-400">
-                  {inv.invoice_date} · {inv.client_name || 'Walk-in'}{inv.vehicle_number ? ` · ${inv.vehicle_number}` : ''}
-                </p>
+                <div className="text-right flex-shrink-0">
+                  <p className="text-sm font-bold text-emerald-400">₹{Number(inv.total_amount).toLocaleString('en-IN')}</p>
+                  {Number(inv.balance) > 0 && (
+                    <p className="text-[11px] text-red-400">Due: ₹{Number(inv.balance).toLocaleString('en-IN')}</p>
+                  )}
+                </div>
               </div>
-              <div className="text-right flex-shrink-0">
-                <p className="text-sm font-bold text-emerald-400">₹{Number(inv.total_amount).toLocaleString('en-IN')}</p>
-                {inv.balance > 0 && (
-                  <p className="text-[11px] text-red-400">Due: ₹{Number(inv.balance).toLocaleString('en-IN')}</p>
-                )}
+
+              {/* Action bar */}
+              <div className="px-4 py-2.5 bg-dark-800 border-t border-dark-600 flex items-center gap-1 flex-wrap">
+                <button onClick={() => setViewId(inv.id)}
+                  className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-md text-slate-300 hover:text-white hover:bg-dark-600 transition-all">
+                  <Eye className="w-3.5 h-3.5" /> View
+                </button>
+                <button onClick={() => handleDownload(inv)}
+                  className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-md text-slate-300 hover:text-white hover:bg-dark-600 transition-all">
+                  <Download className="w-3.5 h-3.5" /> PDF
+                </button>
+                <div className="flex-1" />
+                <button onClick={() => handleVoid(inv)}
+                  className={`flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-md transition-all ${inv.status === 'void' ? 'text-emerald-400 hover:bg-emerald-500/10' : 'text-yellow-400 hover:bg-yellow-500/10'}`}>
+                  <Ban className="w-3.5 h-3.5" />
+                  {inv.status === 'void' ? 'Re-activate' : 'Void'}
+                </button>
+                <button onClick={() => handleDelete(inv)}
+                  className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-md text-red-400 hover:text-red-300 hover:bg-red-500/10 transition-all">
+                  <Trash2 className="w-3.5 h-3.5" /> Delete
+                </button>
               </div>
             </div>
           ))}
@@ -580,6 +870,7 @@ function InvoicesTab({ companyId }) {
       )}
 
       {createOpen && <InvoiceFormModal companyId={companyId} onClose={() => setCreateOpen(false)} />}
+      {viewId    && <InvoiceViewModal  invoiceId={viewId} onClose={() => setViewId(null)} onDownload={handleDownload} />}
     </div>
   )
 }
