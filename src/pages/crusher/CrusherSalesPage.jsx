@@ -607,7 +607,7 @@ function VehicleFormModal({ companyId, clients, fleet, existing, onClose }) {
               onChange={e => set('capacity_uom', e.target.value)}>
               <option value="tonnes">Tonnes (T)</option>
               <option value="cum">Cubic Metres (CUM)</option>
-              <option value="units">Units (Nos)</option>
+              <option value="units">Units (Volume)</option>
             </select>
           </Field>
         </div>
