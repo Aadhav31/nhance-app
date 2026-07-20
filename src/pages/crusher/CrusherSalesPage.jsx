@@ -6,7 +6,7 @@ import {
   Users, Truck, MapPin, Package, FileText, Plus, Edit2, Trash2, X, Save,
   Loader2, CheckCircle, Settings2, ChevronRight, AlertCircle, ToggleLeft,
   ToggleRight, Phone, Mail, CreditCard, Calendar, Building2, Hash,
-  Eye, Download, Ban
+  Eye, Download, Ban, Printer, ClipboardCheck, RefreshCw
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import jsPDF from 'jspdf'
@@ -14,11 +14,12 @@ import autoTable from 'jspdf-autotable'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const TABS = [
-  { key: 'invoices',   label: 'Invoices',          icon: FileText },
-  { key: 'clients',    label: 'Clients',            icon: Users    },
-  { key: 'vehicles',   label: 'Vehicles',           icon: Truck    },
-  { key: 'locations',  label: 'Loading Points',     icon: MapPin   },
-  { key: 'materials',  label: 'Materials & HSN',    icon: Package  },
+  { key: 'tokens',     label: 'Tokens',             icon: Printer      },
+  { key: 'invoices',   label: 'Invoices',            icon: FileText     },
+  { key: 'clients',    label: 'Clients',             icon: Users        },
+  { key: 'vehicles',   label: 'Vehicles',            icon: Truck        },
+  { key: 'locations',  label: 'Loading Points',      icon: MapPin       },
+  { key: 'materials',  label: 'Materials & HSN',     icon: Package      },
 ]
 
 const VEHICLE_TYPES = [
@@ -85,19 +86,19 @@ function Badge({ label, color = 'slate' }) {
 }
 
 // ── Invoice Form Modal ────────────────────────────────────────────────────────
-function InvoiceFormModal({ companyId, onClose }) {
+function InvoiceFormModal({ companyId, onClose, prefill = null, onAfterSave = null }) {
   const qc = useQueryClient()
   const today = new Date().toISOString().split('T')[0]
 
   const [form, setForm] = useState({
     invoice_type:        'non_tax',
     invoice_date:        today,
-    client_id:           '',
-    walkin_name:         '',       // typed name when walk-in
-    vehicle_id:          '',
-    vehicle_manual:      false,    // true → type vehicle number, false → pick from registry
-    walkin_vehicle_num:  '',       // typed vehicle number when manual
-    loading_point:       '',
+    client_id:           prefill?.client_id        || '',
+    walkin_name:         prefill?.walkin_name       || '',
+    vehicle_id:          prefill?.vehicle_id        || '',
+    vehicle_manual:      prefill?.vehicle_manual    ?? false,
+    walkin_vehicle_num:  prefill?.walkin_vehicle_num || '',
+    loading_point:       prefill?.loading_point     || '',
     unloading_point:     '',
     payment_type:        'cash',
     payment_mode:        'cash',
@@ -105,7 +106,14 @@ function InvoiceFormModal({ companyId, onClose }) {
     notes:               '',
   })
   const [items, setItems] = useState([
-    { grade_id: '', material_name: '', hsn_code: '', unit: 'tonnes', quantity: '', rate: '' }
+    {
+      grade_id:      prefill?.tokenGradeId  || '',
+      material_name: prefill?.tokenMaterial || '',
+      hsn_code:      '',
+      unit:          prefill?.tokenUnit     || 'tonnes',
+      quantity:      prefill?.tokenQty      || '',
+      rate:          '',
+    }
   ])
   const [saving, setSaving] = useState(false)
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
@@ -273,7 +281,7 @@ function InvoiceFormModal({ companyId, onClose }) {
 
       toast.success(`Invoice ${invNumber} created`)
       qc.invalidateQueries({ queryKey: ['crusher-invoices', companyId] })
-      onClose()
+      if (onAfterSave) { onAfterSave(inv.id) } else { onClose() }
     } catch (e) {
       console.error(e)
       toast.error(e.message || 'Failed to save invoice')
@@ -505,6 +513,547 @@ function InvoiceFormModal({ companyId, onClose }) {
           onChange={e => set('notes', e.target.value)} placeholder="Optional remarks…" />
       </Field>
     </Modal>
+  )
+}
+
+// ── Thermal Receipt Print ─────────────────────────────────────────────────────
+function printToken(token, companyName) {
+  const timeStr = token.token_time
+    ? token.token_time.substring(0, 5)          // HH:MM
+    : new Date().toTimeString().substring(0, 5)
+  const dateStr = token.token_date
+    ? token.token_date.split('-').reverse().join('/')
+    : new Date().toLocaleDateString('en-IN')
+
+  const line  = '─'.repeat(32)
+  const dline = '━'.repeat(32)
+
+  const row = (label, value) => {
+    const pad = 10
+    const l = label.padEnd(pad)
+    return `${l}: ${value || '—'}`
+  }
+
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>${token.token_number}</title>
+<style>
+  @page { size: 80mm auto; margin: 3mm 2mm; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 11px;
+    width: 76mm;
+    color: #000;
+    background: #fff;
+  }
+  .center   { text-align: center; }
+  .bold     { font-weight: bold; }
+  .large    { font-size: 15px; letter-spacing: 1px; }
+  .xlarge   { font-size: 20px; letter-spacing: 2px; }
+  .divider  { border-top: 1px dashed #000; margin: 5px 0; }
+  .thick    { border-top: 2px solid #000; margin: 5px 0; }
+  .row      { display: flex; justify-content: space-between; margin: 2px 0; }
+  .label    { color: #555; }
+  .spacer   { height: 6px; }
+  .footer   { margin-top: 8px; font-size: 10px; }
+  pre       { font-family: inherit; font-size: 11px; white-space: pre-wrap; }
+  @media print {
+    body { width: 76mm; }
+  }
+</style>
+</head>
+<body>
+
+<div class="center bold large">${(companyName || 'COMPANY').toUpperCase()}</div>
+<div class="center" style="font-size:10px; margin-bottom:3px;">LOADING TOKEN</div>
+<div class="thick"></div>
+
+<div class="center xlarge bold">${token.token_number}</div>
+<div class="spacer"></div>
+<div class="row">
+  <span class="label">Date</span>
+  <span class="bold">${dateStr}</span>
+</div>
+<div class="row">
+  <span class="label">Time</span>
+  <span class="bold">${timeStr}</span>
+</div>
+
+<div class="divider"></div>
+
+<div class="row">
+  <span class="label">Customer</span>
+  <span class="bold">${token.customer_name || 'Walk-in'}</span>
+</div>
+<div class="row">
+  <span class="label">Vehicle</span>
+  <span class="bold">${token.vehicle_number || '—'}</span>
+</div>
+
+<div class="divider"></div>
+
+<div class="row">
+  <span class="label">Stock Yard</span>
+  <span class="bold">${token.stock_yard || '—'}</span>
+</div>
+<div class="row">
+  <span class="label">Material</span>
+  <span class="bold">${token.material_name || '—'}</span>
+</div>
+<div class="row">
+  <span class="label">Quantity</span>
+  <span class="bold" style="font-size:13px;">${Number(token.quantity || 0).toFixed(3)} ${(token.unit || 'TONNES').toUpperCase()}</span>
+</div>
+
+${token.notes ? `<div class="divider"></div>
+<div style="font-size:10px; color:#555;">Note: ${token.notes}</div>` : ''}
+
+<div class="thick"></div>
+<div class="center bold" style="font-size:10px; letter-spacing:1px;">✦ VALID FOR ONE TRIP ONLY ✦</div>
+<div class="center footer" style="margin-top:4px; color:#555;">Printed: ${new Date().toLocaleString('en-IN')}</div>
+
+<script>
+  window.onload = function() {
+    window.print();
+    setTimeout(function() { window.close(); }, 2000);
+  };
+</script>
+</body>
+</html>`
+
+  const w = window.open('', '_blank', 'width=320,height=600,toolbar=0,menubar=0,scrollbars=0')
+  if (w) { w.document.write(html); w.document.close() }
+  else   { alert('Please allow pop-ups to print tokens') }
+}
+
+// ── Issue Token Modal ─────────────────────────────────────────────────────────
+function TokenFormModal({ companyId, onClose, onSaved }) {
+  const qc = useQueryClient()
+  const now = new Date()
+  const today = now.toISOString().split('T')[0]
+  const timeNow = now.toTimeString().substring(0, 5)
+
+  const [form, setForm] = useState({
+    token_date:     today,
+    token_time:     timeNow,
+    client_id:      '',
+    customer_name:  '',
+    vehicle_manual: false,
+    vehicle_id:     '',
+    vehicle_number: '',
+    stock_yard:     '',
+    grade_id:       '',
+    material_name:  '',
+    quantity:       '',
+    unit:           'tonnes',
+    notes:          '',
+  })
+  const [saving, setSaving] = useState(false)
+  const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
+
+  const { data: clients = [] } = useQuery({
+    queryKey: ['clients-inv', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('clients')
+        .select('id, display_name, business_name')
+        .eq('company_id', companyId).order('display_name')
+      return data || []
+    },
+  })
+
+  const { data: vehicles = [] } = useQuery({
+    queryKey: ['vehicles-inv', companyId, form.client_id],
+    queryFn: async () => {
+      let q = supabase.from('crusher_client_vehicles')
+        .select('id, vehicle_number, vehicle_type')
+        .eq('company_id', companyId).eq('is_active', true)
+      if (form.client_id) q = q.eq('client_id', form.client_id)
+      const { data } = await q.order('vehicle_number')
+      return data || []
+    },
+  })
+
+  const { data: loadingPoints = [] } = useQuery({
+    queryKey: ['loading-pts', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('crusher_loading_points')
+        .select('id, point_name, point_type')
+        .eq('company_id', companyId).eq('is_active', true).order('sort_order')
+      return data || []
+    },
+  })
+
+  const { data: grades = [] } = useQuery({
+    queryKey: ['crusher-grades', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('crusher_grades')
+        .select('id, grade_name, default_rate')
+        .eq('company_id', companyId).eq('is_active', true).order('grade_name')
+      return data || []
+    },
+  })
+
+  const handleGradeChange = (gradeId) => {
+    const g = grades.find(x => x.id === gradeId)
+    setForm(p => ({ ...p, grade_id: gradeId, material_name: g?.grade_name || '' }))
+  }
+
+  const genTokenNumber = async () => {
+    const dateStr = today.replace(/-/g, '')
+    const { count } = await supabase.from('crusher_tokens')
+      .select('id', { count: 'exact', head: true })
+      .eq('company_id', companyId).gte('token_date', today)
+    const seq = String((count || 0) + 1).padStart(4, '0')
+    return `TKN-${dateStr}-${seq}`
+  }
+
+  const handleSave = async () => {
+    if (!form.quantity)     { toast.error('Quantity is required'); return }
+    if (!form.material_name && !form.grade_id) { toast.error('Select or enter a material'); return }
+    const vNum = form.vehicle_manual ? form.vehicle_number.trim() : (vehicles.find(v => v.id === form.vehicle_id)?.vehicle_number || '')
+    const clientSnap = clients.find(c => c.id === form.client_id)
+    const custName = clientSnap
+      ? (clientSnap.display_name || clientSnap.business_name)
+      : form.customer_name.trim() || null
+
+    setSaving(true)
+    try {
+      const tokenNumber = await genTokenNumber()
+      const { data: token, error } = await supabase.from('crusher_tokens').insert({
+        company_id:     companyId,
+        token_number:   tokenNumber,
+        token_date:     form.token_date,
+        token_time:     form.token_time + ':00',
+        client_id:      form.client_id || null,
+        customer_name:  custName,
+        vehicle_id:     form.vehicle_manual ? null : (form.vehicle_id || null),
+        vehicle_number: vNum || null,
+        stock_yard:     form.stock_yard || null,
+        grade_id:       form.grade_id   || null,
+        material_name:  form.material_name || null,
+        quantity:       Number(form.quantity),
+        unit:           form.unit,
+        notes:          form.notes || null,
+        status:         'pending',
+      }).select().single()
+      if (error) throw error
+      toast.success(`Token ${tokenNumber} issued`)
+      qc.invalidateQueries({ queryKey: ['crusher-tokens', companyId] })
+      onSaved(token)
+    } catch (e) {
+      toast.error(e.message)
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <Modal title="Issue Loading Token" onClose={onClose}
+      footer={
+        <>
+          <button onClick={onClose} className="px-4 py-2 text-sm rounded-lg bg-dark-700 text-slate-300 hover:bg-dark-600">Cancel</button>
+          <button onClick={handleSave} disabled={saving}
+            className="px-4 py-2 text-sm rounded-lg bg-primary-600 hover:bg-primary-700 text-white flex items-center gap-2 disabled:opacity-50">
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Printer className="w-4 h-4" />}
+            Issue & Print
+          </button>
+        </>
+      }>
+
+      {/* Date & Time */}
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Token Date" required>
+          <input type="date" className={inp()} value={form.token_date} onChange={e => set('token_date', e.target.value)} />
+        </Field>
+        <Field label="Time">
+          <input type="time" className={inp()} value={form.token_time} onChange={e => set('token_time', e.target.value)} />
+        </Field>
+      </div>
+
+      {/* Customer */}
+      <Field label="Customer">
+        <select className={inp()} value={form.client_id}
+          onChange={e => { set('client_id', e.target.value); set('vehicle_id', ''); set('customer_name', '') }}>
+          <option value="">— Walk-in / One-time —</option>
+          {clients.map(c => <option key={c.id} value={c.id}>{c.display_name || c.business_name}</option>)}
+        </select>
+      </Field>
+      {!form.client_id && (
+        <Field label="Customer Name (walk-in)">
+          <input className={inp()} value={form.customer_name}
+            onChange={e => set('customer_name', e.target.value)}
+            placeholder="e.g. Murugan, Rajan Traders…" />
+        </Field>
+      )}
+
+      {/* Vehicle */}
+      <div>
+        <div className="flex items-center justify-between mb-1">
+          <label className="text-xs font-medium text-slate-400">Vehicle</label>
+          <button type="button" onClick={() => { set('vehicle_manual', !form.vehicle_manual); set('vehicle_id', ''); set('vehicle_number', '') }}
+            className="text-[11px] text-primary-400 hover:text-primary-300 underline underline-offset-2">
+            {form.vehicle_manual ? 'Pick from registry' : 'Type vehicle number'}
+          </button>
+        </div>
+        {form.vehicle_manual
+          ? <input className={inp()} value={form.vehicle_number}
+              onChange={e => set('vehicle_number', e.target.value.toUpperCase())}
+              placeholder="e.g. TN38AB1234" />
+          : <select className={inp()} value={form.vehicle_id} onChange={e => set('vehicle_id', e.target.value)}>
+              <option value="">— Select vehicle —</option>
+              {vehicles.map(v => <option key={v.id} value={v.id}>{v.vehicle_number} ({v.vehicle_type})</option>)}
+            </select>
+        }
+      </div>
+
+      {/* Stock Yard */}
+      <Field label="Stock Yard / Loading Point">
+        <select className={inp()} value={form.stock_yard} onChange={e => set('stock_yard', e.target.value)}>
+          <option value="">— Select yard —</option>
+          {loadingPoints.filter(p => p.point_type !== 'unloading').map(p => (
+            <option key={p.id} value={p.point_name}>{p.point_name}</option>
+          ))}
+        </select>
+      </Field>
+
+      {/* Material & Quantity */}
+      <Field label="Material">
+        <select className={inp()} value={form.grade_id} onChange={e => handleGradeChange(e.target.value)}>
+          <option value="">— Select grade —</option>
+          {grades.map(g => <option key={g.id} value={g.id}>{g.grade_name}</option>)}
+        </select>
+      </Field>
+      {!form.grade_id && (
+        <Field label="Material Name (manual)">
+          <input className={inp()} value={form.material_name}
+            onChange={e => set('material_name', e.target.value)}
+            placeholder="e.g. M-Sand, 20mm Jelly…" />
+        </Field>
+      )}
+
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Quantity" required>
+          <input type="number" className={inp()} value={form.quantity}
+            onChange={e => set('quantity', e.target.value)}
+            placeholder="e.g. 5.8" step="0.001" min="0" />
+        </Field>
+        <Field label="Unit">
+          <select className={inp()} value={form.unit} onChange={e => set('unit', e.target.value)}>
+            <option value="tonnes">Tonnes</option>
+            <option value="cum">CUM</option>
+            <option value="units">Units (Vol)</option>
+            <option value="bags">Bags</option>
+            <option value="trips">Trips</option>
+          </select>
+        </Field>
+      </div>
+
+      <Field label="Notes">
+        <input className={inp()} value={form.notes} onChange={e => set('notes', e.target.value)}
+          placeholder="Optional remarks…" />
+      </Field>
+    </Modal>
+  )
+}
+
+// ── Tokens Tab ────────────────────────────────────────────────────────────────
+function TokensTab({ companyId }) {
+  const qc = useQueryClient()
+  const [issueOpen, setIssueOpen]     = useState(false)
+  const [fromToken,  setFromToken]    = useState(null) // pre-fill invoice from token
+  const { data: company } = useQuery({
+    queryKey: ['company-name', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('companies').select('name').eq('id', companyId).single()
+      return data
+    },
+  })
+  const { data: tokens = [], isLoading } = useQuery({
+    queryKey: ['crusher-tokens', companyId],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('crusher_tokens')
+        .select('*')
+        .eq('company_id', companyId)
+        .order('token_date', { ascending: false })
+        .order('created_at', { ascending: false })
+      if (error) { console.error(error); return [] }
+      return data || []
+    },
+  })
+
+  const statusColor = {
+    pending:   'yellow',
+    loaded:    'blue',
+    invoiced:  'green',
+    cancelled: 'slate',
+  }
+
+  const handleStatusChange = async (token, newStatus) => {
+    const { error } = await supabase.from('crusher_tokens').update({ status: newStatus }).eq('id', token.id)
+    if (error) { toast.error(error.message); return }
+    toast.success(`Token marked as ${newStatus}`)
+    qc.invalidateQueries({ queryKey: ['crusher-tokens', companyId] })
+  }
+
+  const handleCancel = async (token) => {
+    if (!window.confirm(`Cancel token ${token.token_number}?`)) return
+    await handleStatusChange(token, 'cancelled')
+  }
+
+  // After saving a token, auto-print it
+  const handleSaved = (token) => {
+    setIssueOpen(false)
+    printToken(token, company?.name)
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-sm font-semibold text-slate-200">Loading Tokens</h3>
+          <p className="text-xs text-slate-500">Issue before loading · Convert to invoice after delivery</p>
+        </div>
+        <button onClick={() => setIssueOpen(true)}
+          className="flex items-center gap-2 px-3 py-2 rounded-lg bg-primary-600 hover:bg-primary-700 text-white text-sm font-medium transition-all">
+          <Printer className="w-4 h-4" /> Issue Token
+        </button>
+      </div>
+
+      {/* Workflow hint */}
+      <div className="bg-dark-700 rounded-xl p-3 border border-dark-600 flex items-center gap-3 text-xs text-slate-400">
+        <Printer className="w-4 h-4 text-primary-400 flex-shrink-0" />
+        <span>Issue Token → <strong className="text-slate-300">Load Material at Yard</strong> → Mark as Loaded → <strong className="text-slate-300">Create Invoice</strong></span>
+      </div>
+
+      {isLoading && <div className="text-center py-10"><Loader2 className="w-5 h-5 animate-spin mx-auto text-primary-400" /></div>}
+
+      {!isLoading && tokens.length === 0 && (
+        <div className="text-center py-16 space-y-3">
+          <Printer className="w-10 h-10 text-slate-600 mx-auto" />
+          <p className="text-sm text-slate-500">No tokens issued yet.</p>
+          <button onClick={() => setIssueOpen(true)}
+            className="px-4 py-2 rounded-lg bg-primary-600 hover:bg-primary-700 text-white text-sm font-medium">
+            Issue First Token
+          </button>
+        </div>
+      )}
+
+      {!isLoading && tokens.length > 0 && (
+        <div className="space-y-2">
+          {tokens.map(tok => (
+            <div key={tok.id}
+              className={`bg-dark-700 rounded-xl border border-dark-600 overflow-hidden ${tok.status === 'cancelled' ? 'opacity-50' : ''}`}>
+
+              {/* Main info */}
+              <div className="p-4">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap mb-1">
+                      <span className="text-sm font-bold font-mono text-primary-400">{tok.token_number}</span>
+                      <Badge label={tok.status.toUpperCase()} color={statusColor[tok.status] || 'slate'} />
+                    </div>
+                    <p className="text-xs text-slate-400">
+                      {tok.token_date} {tok.token_time?.substring(0,5)}
+                      {tok.customer_name ? ` · ${tok.customer_name}` : ''}
+                      {tok.vehicle_number ? ` · ${tok.vehicle_number}` : ''}
+                    </p>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      {tok.stock_yard ? `${tok.stock_yard} → ` : ''}
+                      <strong className="text-slate-300">{tok.material_name || '—'}</strong>
+                      {tok.quantity ? ` · ${Number(tok.quantity).toFixed(3)} ${(tok.unit || '').toUpperCase()}` : ''}
+                    </p>
+                  </div>
+                  <div className="text-right flex-shrink-0">
+                    <p className="text-xl font-black text-slate-200">
+                      {tok.quantity ? Number(tok.quantity).toFixed(2) : '—'}
+                    </p>
+                    <p className="text-[10px] text-slate-500">{(tok.unit || '').toUpperCase()}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Action bar */}
+              <div className="px-4 py-2.5 bg-dark-800 border-t border-dark-600 flex items-center gap-1 flex-wrap">
+                {/* Reprint */}
+                <button onClick={() => printToken(tok, company?.name)}
+                  className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-md text-slate-300 hover:text-white hover:bg-dark-600 transition-all">
+                  <Printer className="w-3.5 h-3.5" /> Print
+                </button>
+
+                {/* Mark loaded (pending → loaded) */}
+                {tok.status === 'pending' && (
+                  <button onClick={() => handleStatusChange(tok, 'loaded')}
+                    className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-md text-blue-400 hover:bg-blue-500/10 transition-all">
+                    <ClipboardCheck className="w-3.5 h-3.5" /> Mark Loaded
+                  </button>
+                )}
+
+                {/* Undo loaded → pending */}
+                {tok.status === 'loaded' && (
+                  <button onClick={() => handleStatusChange(tok, 'pending')}
+                    className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-md text-slate-400 hover:bg-dark-600 transition-all">
+                    <RefreshCw className="w-3.5 h-3.5" /> Undo
+                  </button>
+                )}
+
+                <div className="flex-1" />
+
+                {/* Create Invoice (pending or loaded only) */}
+                {(tok.status === 'pending' || tok.status === 'loaded') && (
+                  <button onClick={() => setFromToken(tok)}
+                    className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white font-medium transition-all">
+                    <FileText className="w-3.5 h-3.5" /> Create Invoice
+                  </button>
+                )}
+
+                {/* Cancel */}
+                {tok.status !== 'invoiced' && tok.status !== 'cancelled' && (
+                  <button onClick={() => handleCancel(tok)}
+                    className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-md text-red-400 hover:bg-red-500/10 transition-all">
+                    <Ban className="w-3.5 h-3.5" /> Cancel
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {issueOpen  && <TokenFormModal companyId={companyId} onClose={() => setIssueOpen(false)} onSaved={handleSaved} />}
+      {fromToken  && <InvoiceFromTokenModal companyId={companyId} token={fromToken} onClose={() => setFromToken(null)} />}
+    </div>
+  )
+}
+
+// ── Invoice from Token (pre-filled) ──────────────────────────────────────────
+function InvoiceFromTokenModal({ companyId, token, onClose }) {
+  const qc = useQueryClient()
+  // Reuse InvoiceFormModal but after save, mark token as invoiced
+  const handleSaved = async (invoiceId) => {
+    await supabase.from('crusher_tokens')
+      .update({ status: 'invoiced', invoice_id: invoiceId }).eq('id', token.id)
+    qc.invalidateQueries({ queryKey: ['crusher-tokens', companyId] })
+    onClose()
+  }
+  return (
+    <InvoiceFormModal
+      companyId={companyId}
+      prefill={{
+        walkin_name:        token.customer_name || '',
+        client_id:          token.client_id     || '',
+        vehicle_manual:     !token.vehicle_id,
+        vehicle_id:         token.vehicle_id    || '',
+        walkin_vehicle_num: !token.vehicle_id ? (token.vehicle_number || '') : '',
+        loading_point:      token.stock_yard    || '',
+        tokenGradeId:       token.grade_id      || '',
+        tokenMaterial:      token.material_name || '',
+        tokenQty:           token.quantity      ? String(token.quantity) : '',
+        tokenUnit:          token.unit          || 'tonnes',
+      }}
+      onClose={onClose}
+      onAfterSave={handleSaved}
+    />
   )
 }
 
@@ -1959,6 +2508,7 @@ export default function CrusherSalesPage() {
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-6">
+        {tab === 'tokens'    && <TokensTab     companyId={companyId} />}
         {tab === 'invoices'  && <InvoicesTab   companyId={companyId} />}
         {tab === 'clients'   && <ClientsTab    companyId={companyId} />}
         {tab === 'vehicles'  && <VehiclesTab   companyId={companyId} />}
