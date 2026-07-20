@@ -568,7 +568,7 @@ function VehicleFormModal({ companyId, clients, fleet, existing, onClose }) {
           <select className={inp()} value={form.client_id}
             onChange={e => set('client_id', e.target.value)}>
             <option value="">— Select client —</option>
-            {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            {clients.map(c => <option key={c.id} value={c.id}>{c.display_name || c.business_name}</option>)}
           </select>
         </Field>
       )}
@@ -637,7 +637,7 @@ function VehiclesTab({ companyId }) {
     queryKey: ['crusher_client_vehicles', companyId],
     queryFn: async () => {
       const { data } = await supabase.from('crusher_client_vehicles')
-        .select('*, clients(name), equipment(name, equipment_number)')
+        .select('*, clients(display_name, business_name), equipment(name, equipment_number)')
         .eq('company_id', companyId).order('vehicle_number')
       return data || []
     },
@@ -646,8 +646,9 @@ function VehiclesTab({ companyId }) {
   const { data: clients = [] } = useQuery({
     queryKey: ['clients', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('clients').select('id, name')
-        .eq('company_id', companyId).order('name')
+      const { data } = await supabase.from('clients')
+        .select('id, display_name, business_name')
+        .eq('company_id', companyId).order('display_name')
       return data || []
     },
   })
@@ -683,7 +684,7 @@ function VehiclesTab({ companyId }) {
           value={filterClient} onChange={e => setFilterClient(e.target.value)}>
           <option value="">All Vehicles</option>
           <option value="__own">Own Fleet</option>
-          {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          {clients.map(c => <option key={c.id} value={c.id}>{c.display_name || c.business_name}</option>)}
         </select>
         <span className="text-xs text-slate-500 ml-auto">{filtered.length} vehicle{filtered.length !== 1 ? 's' : ''}</span>
       </div>
@@ -712,7 +713,7 @@ function VehiclesTab({ companyId }) {
                   {!v.is_active && <Badge label="Inactive" color="red" />}
                 </div>
                 <p className="text-xs text-slate-400 mt-1">
-                  {v.owner_type === 'client' && v.clients?.name && <span className="mr-2">Client: <strong>{v.clients.name}</strong></span>}
+                  {v.owner_type === 'client' && v.clients && <span className="mr-2">Client: <strong>{v.clients.display_name || v.clients.business_name}</strong></span>}
                   {v.owner_type === 'own' && v.equipment?.name && <span className="mr-2">Fleet: <strong>{v.equipment.name}</strong></span>}
                   {v.billing_basis === 'fixed_capacity'
                     ? <span>Fixed capacity: <strong>{v.capacity_tonnes ?? '—'} T</strong></span>
