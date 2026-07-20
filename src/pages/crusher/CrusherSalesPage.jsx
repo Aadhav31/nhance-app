@@ -2235,19 +2235,68 @@ function InvoicesTab({ companyId }) {
   const statusColor = { issued: 'blue', paid: 'green', partial: 'yellow', overdue: 'red', draft: 'slate', void: 'slate' }
 
   const handleVoid = async (inv) => {
-    const isVoided = inv.status === 'void'
-    const msg = isVoided
-      ? `Re-activate invoice ${inv.invoice_number}?`
+    const isVoided  = inv.status === 'void'
+    const paidAmt   = Number(inv.paid_amount || 0)
+    const clientLabel = inv.client_name || 'Walk-in customer'
+
+    if (isVoided) {
+      // Re-activating — warn if a credit was previously created
+      if (!window.confirm(`Re-activate invoice ${inv.invoice_number}?\n\nNote: any advance credit created when this was voided will be removed.`)) return
+      // Remove the advance credit that was auto-created on void
+      await supabase.from('crusher_customer_advances')
+        .delete().eq('reference_invoice_id', inv.id)
+      const { error } = await supabase.from('crusher_invoices')
+        .update({ status: 'issued', paid_amount: paidAmt, balance: Number(inv.total_amount) - paidAmt })
+        .eq('id', inv.id)
+      if (error) { toast.error(error.message); return }
+      toast.success('Invoice re-activated')
+      qc.invalidateQueries({ queryKey: ['crusher-invoices', companyId] })
+      return
+    }
+
+    // Voiding — build confirmation message based on whether payment exists
+    const msg = paidAmt > 0
+      ? `⚠️ Cancel invoice ${inv.invoice_number}?\n\nRs. ${paidAmt.toFixed(2)} already received will be credited to "${clientLabel}" as ADVANCE RECEIVED.\n\nYou can apply this advance against their next invoice.`
       : `Void invoice ${inv.invoice_number}? It will be marked as cancelled.`
     if (!window.confirm(msg)) return
+
+    // If payment exists → create advance credit before voiding
+    if (paidAmt > 0) {
+      const { error: advErr } = await supabase.from('crusher_customer_advances').insert({
+        company_id:               companyId,
+        client_id:                inv.client_id || null,
+        client_name:              clientLabel,
+        amount:                   paidAmt,
+        remaining:                paidAmt,
+        source:                   'voided_invoice',
+        reference_invoice_id:     inv.id,
+        reference_invoice_number: inv.invoice_number,
+        notes: `Payment of Rs. ${paidAmt.toFixed(2)} credited from voided invoice ${inv.invoice_number}`,
+      })
+      if (advErr) { toast.error('Could not create advance credit: ' + advErr.message); return }
+    }
+
     const { error } = await supabase.from('crusher_invoices')
-      .update({ status: isVoided ? 'issued' : 'void' }).eq('id', inv.id)
+      .update({ status: 'void' }).eq('id', inv.id)
     if (error) { toast.error(error.message); return }
-    toast.success(isVoided ? 'Invoice re-activated' : 'Invoice voided')
+
+    toast.success(paidAmt > 0
+      ? `Invoice voided — Rs. ${paidAmt.toFixed(2)} credited as advance for ${clientLabel}`
+      : 'Invoice voided')
     qc.invalidateQueries({ queryKey: ['crusher-invoices', companyId] })
+    qc.invalidateQueries({ queryKey: ['crusher-advances', companyId] })
   }
 
   const handleDelete = async (inv) => {
+    // Block deletion if payment recorded and invoice not yet voided
+    if (Number(inv.paid_amount || 0) > 0 && inv.status !== 'void') {
+      toast.error(
+        `Cannot delete — Rs. ${Number(inv.paid_amount).toFixed(2)} payment recorded.\n` +
+        `Void the invoice first. The payment will be credited to the customer as advance.`,
+        { duration: 6000 }
+      )
+      return
+    }
     if (!window.confirm(`Delete invoice ${inv.invoice_number}? This cannot be undone.`)) return
     const { error } = await supabase.from('crusher_invoices').delete().eq('id', inv.id)
     if (error) { toast.error(error.message); return }
@@ -2743,6 +2792,21 @@ function ClientsTab({ companyId }) {
     },
   })
 
+  // Advance balances per client
+  const { data: advances = [] } = useQuery({
+    queryKey: ['crusher-advances', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('crusher_customer_advances')
+        .select('client_id, remaining')
+        .eq('company_id', companyId).gt('remaining', 0)
+      return data || []
+    },
+  })
+  const advanceMap = advances.reduce((acc, a) => {
+    if (a.client_id) acc[a.client_id] = (acc[a.client_id] || 0) + Number(a.remaining)
+    return acc
+  }, {})
+
   const settingsMap = Object.fromEntries(settings.map(s => [s.client_id, s]))
   const vehicleCount = vehicles.reduce((acc, v) => {
     acc[v.client_id] = (acc[v.client_id] || 0) + 1
@@ -2773,6 +2837,7 @@ function ClientsTab({ companyId }) {
       {clients.map(client => {
         const s = settingsMap[client.id]
         const vCount = vehicleCount[client.id] || 0
+        const advance = advanceMap[client.id] || 0
         return (
           <div key={client.id} className="bg-dark-700 rounded-xl border border-dark-600 p-4 flex items-start gap-4">
             <div className="w-10 h-10 rounded-full bg-primary-600/20 flex items-center justify-center text-sm font-bold text-primary-400 flex-shrink-0">
@@ -2787,6 +2852,11 @@ function ClientsTab({ companyId }) {
                   <Badge label="No credit settings" color="slate" />
                 )}
                 {vCount > 0 && <Badge label={`${vCount} vehicle${vCount > 1 ? 's' : ''}`} color="green" />}
+                {advance > 0 && (
+                  <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30">
+                    ⬆ Advance: Rs. {advance.toFixed(2)}
+                  </span>
+                )}
               </div>
               {client.contact_phone && <p className="text-xs text-slate-500 mt-0.5 flex items-center gap-1"><Phone className="w-3 h-3" />{client.contact_phone}</p>}
               {s && (
