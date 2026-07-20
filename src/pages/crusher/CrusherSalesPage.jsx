@@ -1384,56 +1384,84 @@ function LocationsTab({ companyId }) {
 }
 
 // ── HSN Edit Modal ────────────────────────────────────────────────────────────
-function HsnEditModal({ grade, onClose }) {
+// ── Grade Form Modal (Add / Edit material grade) ──────────────────────────────
+function GradeFormModal({ companyId, existing, onClose }) {
   const qc = useQueryClient()
+  const isEdit = !!existing?.id
   const [form, setForm] = useState({
-    hsn_code:         grade.hsn_code         ?? '2517',
-    default_gst_rate: grade.default_gst_rate ?? 5,
+    grade_name:       existing?.grade_name       || '',
+    description:      existing?.description      || '',
+    hsn_code:         existing?.hsn_code         ?? '2517',
+    default_gst_rate: existing?.default_gst_rate ?? 5,
+    is_active:        existing?.is_active        ?? true,
   })
   const [saving, setSaving] = useState(false)
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
 
   const handleSave = async () => {
+    if (!form.grade_name.trim()) { toast.error('Material name is required'); return }
     setSaving(true)
     try {
-      const { error } = await supabase.from('crusher_grades')
-        .update({ hsn_code: form.hsn_code || null, default_gst_rate: Number(form.default_gst_rate) })
-        .eq('id', grade.id)
-      if (error) throw error
+      const payload = {
+        grade_name:       form.grade_name.trim(),
+        description:      form.description.trim() || null,
+        hsn_code:         form.hsn_code.trim()    || null,
+        default_gst_rate: Number(form.default_gst_rate),
+        is_active:        form.is_active,
+      }
+      if (isEdit) {
+        const { error } = await supabase.from('crusher_grades').update(payload).eq('id', existing.id)
+        if (error) throw error
+      } else {
+        const { error } = await supabase.from('crusher_grades').insert({ ...payload, company_id: companyId })
+        if (error) throw error
+      }
       await qc.invalidateQueries({ queryKey: ['crusher_grades_hsn'] })
-      toast.success('HSN/GST updated')
+      await qc.invalidateQueries({ queryKey: ['crusher-grades', companyId] })
+      toast.success(isEdit ? 'Material updated' : 'Material added')
       onClose()
     } catch (e) {
       toast.error(e.message)
-    } finally {
-      setSaving(false)
-    }
+    } finally { setSaving(false) }
   }
 
   return (
     <Modal
-      title={`HSN / GST — ${grade.grade_name}`}
+      title={isEdit ? `Edit — ${existing.grade_name}` : 'Add Material / Grade'}
       onClose={onClose}
       footer={
         <>
-          <button onClick={onClose} className="btn-ghost">Cancel</button>
-          <button onClick={handleSave} disabled={saving} className="btn-primary">
+          <button onClick={onClose} className="px-4 py-2 text-sm rounded-lg bg-dark-700 text-slate-300 hover:bg-dark-600">Cancel</button>
+          <button onClick={handleSave} disabled={saving}
+            className="px-4 py-2 text-sm rounded-lg bg-primary-600 hover:bg-primary-700 text-white flex items-center gap-2 disabled:opacity-50">
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-            Save
+            {isEdit ? 'Update' : 'Add Material'}
           </button>
         </>
       }
     >
+      <Field label="Material Name" required>
+        <input className={inp()} value={form.grade_name}
+          onChange={e => set('grade_name', e.target.value)}
+          placeholder="e.g. M Sand, 20mm Jelly, GSB…" />
+      </Field>
+
+      <Field label="Description">
+        <input className={inp()} value={form.description}
+          onChange={e => set('description', e.target.value)}
+          placeholder="Optional — e.g. Fine aggregate for plastering" />
+      </Field>
+
       <div className="grid grid-cols-2 gap-3">
         <Field label="HSN Code">
           <input className={inp()} value={form.hsn_code}
             onChange={e => set('hsn_code', e.target.value)}
             placeholder="e.g. 2517" />
         </Field>
-        <Field label="Default GST Rate (%)">
+        <Field label="Default GST Rate">
           <select className={inp()} value={form.default_gst_rate}
             onChange={e => set('default_gst_rate', e.target.value)}>
-            <option value={0}>0% (Exempt)</option>
+            <option value={0}>0% (Exempt / Non-Tax)</option>
             <option value={5}>5%</option>
             <option value={12}>12%</option>
             <option value={18}>18%</option>
@@ -1441,18 +1469,30 @@ function HsnEditModal({ grade, onClose }) {
           </select>
         </Field>
       </div>
+
       <div className="bg-dark-700 rounded-lg p-3 border border-dark-600 text-xs text-slate-400 space-y-1">
-        <p>• HSN <strong className="text-slate-300">2517</strong> — Pebbles, gravel, broken or crushed stone (Aggregate, Dust, GSB, Rejects) → typically <strong className="text-slate-300">5% GST</strong></p>
-        <p>• HSN <strong className="text-slate-300">2505</strong> — Natural sands (M Sand, P Sand) → typically <strong className="text-slate-300">5% GST</strong></p>
-        <p>These are saved per material and auto-applied on tax invoices. Non-tax invoices will show ₹0 GST regardless.</p>
+        <p>• HSN <strong className="text-slate-300">2517</strong> — Crushed stone, aggregate, dust, GSB, rejects → <strong className="text-slate-300">5% GST</strong></p>
+        <p>• HSN <strong className="text-slate-300">2505</strong> — Natural / manufactured sands (M Sand, P Sand) → <strong className="text-slate-300">5% GST</strong></p>
+        <p className="text-slate-500 pt-0.5">GST rate auto-applied on tax invoices. Non-tax invoices always show ₹0 GST.</p>
       </div>
+
+      {isEdit && (
+        <div className="flex items-center justify-between bg-dark-700 rounded-lg px-3 py-2.5 border border-dark-600">
+          <span className="text-sm text-slate-300">Active (shows in invoice picker)</span>
+          <button onClick={() => set('is_active', !form.is_active)}
+            className={`w-10 h-5 rounded-full transition-all ${form.is_active ? 'bg-emerald-500' : 'bg-dark-500'}`}>
+            <span className={`block w-4 h-4 bg-white rounded-full shadow transition-all mx-0.5 ${form.is_active ? 'translate-x-5' : 'translate-x-0'}`} />
+          </button>
+        </div>
+      )}
     </Modal>
   )
 }
 
 // ── Materials & HSN Tab ───────────────────────────────────────────────────────
 function MaterialsTab({ companyId }) {
-  const [editGrade, setEditGrade] = useState(null)
+  const [editGrade, setEditGrade]   = useState(null)  // existing grade object → edit
+  const [addOpen,   setAddOpen]     = useState(false)  // new grade form
 
   const { data: grades = [], isLoading } = useQuery({
     queryKey: ['crusher_grades_hsn'],
@@ -1463,58 +1503,77 @@ function MaterialsTab({ companyId }) {
     },
   })
 
-  if (isLoading) return <div className="flex items-center justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-primary-400" /></div>
-
-  if (!grades.length) return (
-    <div className="text-center py-12 text-slate-500">
-      <Package className="w-10 h-10 mx-auto mb-3 opacity-40" />
-      <p className="text-sm">No grades found. Go to <strong>Production → Grades</strong> to add grades first.</p>
+  if (isLoading) return (
+    <div className="flex items-center justify-center py-12">
+      <Loader2 className="w-6 h-6 animate-spin text-primary-400" />
     </div>
   )
 
   return (
     <div className="space-y-4">
-      <p className="text-xs text-slate-500">
-        Set HSN code and default GST rate for each material grade. These are auto-applied when creating tax invoices.
-        To add or remove grades, use <strong className="text-slate-400">Production → Grades tab</strong>.
-      </p>
-      <div className="grid gap-2">
-        {grades.map(g => (
-          <div key={g.id} className={`bg-dark-700 rounded-xl border border-dark-600 p-4 flex items-center gap-4 ${!g.is_active ? 'opacity-50' : ''}`}>
-            <div className="w-9 h-9 rounded-lg bg-primary-500/10 flex items-center justify-center flex-shrink-0">
-              <Package className="w-4 h-4 text-primary-400" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-sm font-semibold text-slate-200">{g.grade_name}</span>
-                {!g.is_active && <Badge label="Inactive" color="red" />}
-              </div>
-              <div className="flex items-center gap-4 mt-1">
-                <span className="text-xs text-slate-500">
-                  HSN: <strong className="font-mono text-primary-300">{g.hsn_code || '—'}</strong>
-                </span>
-                <span className="text-xs text-slate-500">
-                  GST: <strong className={`${Number(g.default_gst_rate) > 0 ? 'text-emerald-400' : 'text-slate-400'}`}>
-                    {g.default_gst_rate ?? 0}%
-                  </strong>
-                </span>
-                {g.description && <span className="text-xs text-slate-600 truncate">{g.description}</span>}
-              </div>
-            </div>
-            <button
-              onClick={() => setEditGrade(g)}
-              className="flex-shrink-0 flex items-center gap-1.5 text-xs text-primary-400 hover:text-primary-300 bg-primary-500/10 hover:bg-primary-500/20 px-3 py-1.5 rounded-lg transition-all"
-            >
-              <Hash className="w-3.5 h-3.5" />
-              Edit HSN
-            </button>
-          </div>
-        ))}
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-sm font-semibold text-slate-200">Materials & Grades</h3>
+          <p className="text-xs text-slate-500">
+            {grades.length} material{grades.length !== 1 ? 's' : ''} · HSN & GST auto-applied on tax invoices
+          </p>
+        </div>
+        <button onClick={() => setAddOpen(true)}
+          className="flex items-center gap-2 px-3 py-2 rounded-lg bg-primary-600 hover:bg-primary-700 text-white text-sm font-medium transition-all">
+          <Plus className="w-4 h-4" /> Add Material
+        </button>
       </div>
 
-      {editGrade && (
-        <HsnEditModal grade={editGrade} onClose={() => setEditGrade(null)} />
+      {/* Empty state */}
+      {!grades.length && (
+        <div className="text-center py-14 space-y-3">
+          <Package className="w-10 h-10 mx-auto text-slate-600" />
+          <p className="text-sm text-slate-500">No materials yet.</p>
+          <button onClick={() => setAddOpen(true)}
+            className="px-4 py-2 rounded-lg bg-primary-600 hover:bg-primary-700 text-white text-sm font-medium">
+            Add First Material
+          </button>
+        </div>
       )}
+
+      {/* Grade list */}
+      {grades.length > 0 && (
+        <div className="grid gap-2">
+          {grades.map(g => (
+            <div key={g.id}
+              className={`bg-dark-700 rounded-xl border border-dark-600 p-4 flex items-center gap-4 ${!g.is_active ? 'opacity-50' : ''}`}>
+              <div className="w-9 h-9 rounded-lg bg-primary-500/10 flex items-center justify-center flex-shrink-0">
+                <Package className="w-4 h-4 text-primary-400" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-sm font-semibold text-slate-200">{g.grade_name}</span>
+                  {!g.is_active && <Badge label="Inactive" color="red" />}
+                </div>
+                <div className="flex items-center gap-4 mt-1 flex-wrap">
+                  <span className="text-xs text-slate-500">
+                    HSN: <strong className="font-mono text-primary-300">{g.hsn_code || '—'}</strong>
+                  </span>
+                  <span className="text-xs text-slate-500">
+                    GST: <strong className={Number(g.default_gst_rate) > 0 ? 'text-emerald-400' : 'text-slate-400'}>
+                      {g.default_gst_rate ?? 0}%
+                    </strong>
+                  </span>
+                  {g.description && <span className="text-xs text-slate-600 truncate">{g.description}</span>}
+                </div>
+              </div>
+              <button onClick={() => setEditGrade(g)}
+                className="flex-shrink-0 flex items-center gap-1.5 text-xs text-primary-400 hover:text-primary-300 bg-primary-500/10 hover:bg-primary-500/20 px-3 py-1.5 rounded-lg transition-all">
+                <Edit2 className="w-3.5 h-3.5" /> Edit
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {addOpen  && <GradeFormModal companyId={companyId} onClose={() => setAddOpen(false)} />}
+      {editGrade && <GradeFormModal companyId={companyId} existing={editGrade} onClose={() => setEditGrade(null)} />}
     </div>
   )
 }
