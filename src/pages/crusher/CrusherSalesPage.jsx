@@ -225,11 +225,21 @@ function InvoiceFormModal({ companyId, onClose, prefill = null, onAfterSave = nu
 
   const genInvNumber = async () => {
     const dateStr = today.replace(/-/g, '')
-    const { count } = await supabase.from('crusher_invoices')
-      .select('id', { count: 'exact', head: true })
-      .eq('company_id', companyId).gte('invoice_date', today)
-    const seq = String((count || 0) + 1).padStart(4, '0')
-    return `INV-${dateStr}-${seq}`
+    const prefix = `INV-${dateStr}-`
+    // Use MAX of existing numbers for today, not count — avoids collision when invoices are voided/deleted
+    const { data } = await supabase.from('crusher_invoices')
+      .select('invoice_number')
+      .eq('company_id', companyId)
+      .gte('invoice_date', today).lte('invoice_date', today)
+      .like('invoice_number', `${prefix}%`)
+      .order('invoice_number', { ascending: false })
+      .limit(1)
+    let seq = 1
+    if (data?.length) {
+      const parsed = parseInt(data[0].invoice_number.replace(prefix, ''), 10)
+      if (!isNaN(parsed)) seq = parsed + 1
+    }
+    return `${prefix}${String(seq).padStart(4, '0')}`
   }
 
   const handleSave = async () => {
@@ -268,9 +278,9 @@ function InvoiceFormModal({ companyId, onClose, prefill = null, onAfterSave = nu
         subtotal,
         total_tax:    totalTax,
         total_amount: totalAmount,
-        paid_amount:  form.payment_type === 'cash' ? totalAmount : 0,
-        balance:      form.payment_type === 'cash' ? 0 : totalAmount,
-        status:       form.payment_type === 'cash' ? 'paid' : 'issued',
+        paid_amount:  0,
+        balance:      totalAmount,
+        status:       'issued',
         notes:        form.notes || null,
       }).select('id').single()
       if (invErr) throw invErr
@@ -716,11 +726,20 @@ function TokenFormModal({ companyId, onClose, onSaved }) {
 
   const genTokenNumber = async () => {
     const dateStr = today.replace(/-/g, '')
-    const { count } = await supabase.from('crusher_tokens')
-      .select('id', { count: 'exact', head: true })
-      .eq('company_id', companyId).gte('token_date', today)
-    const seq = String((count || 0) + 1).padStart(4, '0')
-    return `TKN-${dateStr}-${seq}`
+    const prefix = `TKN-${dateStr}-`
+    const { data } = await supabase.from('crusher_tokens')
+      .select('token_number')
+      .eq('company_id', companyId)
+      .gte('token_date', today).lte('token_date', today)
+      .like('token_number', `${prefix}%`)
+      .order('token_number', { ascending: false })
+      .limit(1)
+    let seq = 1
+    if (data?.length) {
+      const parsed = parseInt(data[0].token_number.replace(prefix, ''), 10)
+      if (!isNaN(parsed)) seq = parsed + 1
+    }
+    return `${prefix}${String(seq).padStart(4, '0')}`
   }
 
   const handleSave = async () => {
@@ -1761,7 +1780,102 @@ function InvoiceViewModal({ invoiceId, onClose, onDownload }) {
   )
 }
 
-// ── Invoices Tab ──────────────────────────────────────────────────────────────
+// ── Record Payment Modal ──────────────────────────────────────────────────────
+function RecordPaymentModal({ companyId, invoice, onClose }) {
+  const qc = useQueryClient()
+  const today = new Date().toISOString().split('T')[0]
+  const outstanding = Math.max(0, Number(invoice.total_amount) - Number(invoice.paid_amount || 0))
+
+  const [amount, setAmount] = useState(outstanding.toFixed(2))
+  const [mode,   setMode]   = useState(invoice.payment_mode || 'cash')
+  const [date,   setDate]   = useState(today)
+  const [saving, setSaving] = useState(false)
+
+  const handleSave = async () => {
+    const paidNow = parseFloat(amount)
+    if (!paidNow || paidNow <= 0)     { toast.error('Enter a valid amount');          return }
+    if (paidNow > outstanding + 0.01) { toast.error(`Amount exceeds balance of Rs. ${outstanding.toFixed(2)}`); return }
+
+    const prevPaid   = Number(invoice.paid_amount || 0)
+    const newPaid    = prevPaid + paidNow
+    const newBalance = Math.max(0, Number(invoice.total_amount) - newPaid)
+    const newStatus  = newBalance <= 0.01 ? 'paid' : 'partial'
+
+    setSaving(true)
+    try {
+      const { error } = await supabase.from('crusher_invoices').update({
+        paid_amount:  newPaid,
+        balance:      newBalance,
+        status:       newStatus,
+        payment_mode: mode,
+      }).eq('id', invoice.id)
+      if (error) throw error
+      toast.success(`Rs. ${paidNow.toFixed(2)} recorded — invoice ${newStatus}`)
+      qc.invalidateQueries({ queryKey: ['crusher-invoices', companyId] })
+      onClose()
+    } catch (e) {
+      toast.error(e.message)
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <Modal title={`Record Payment · ${invoice.invoice_number}`} onClose={onClose}
+      footer={
+        <>
+          <button onClick={onClose} className="px-4 py-2 text-sm rounded-lg bg-dark-700 text-slate-300 hover:bg-dark-600">Cancel</button>
+          <button onClick={handleSave} disabled={saving}
+            className="px-4 py-2 text-sm rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white flex items-center gap-2 disabled:opacity-50">
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
+            Confirm Payment
+          </button>
+        </>
+      }>
+
+      {/* Outstanding summary */}
+      <div className="bg-dark-800 rounded-xl p-4 border border-dark-600 flex items-center justify-between mb-2">
+        <div>
+          <p className="text-xs text-slate-500">Invoice Total</p>
+          <p className="text-sm font-bold text-slate-200">Rs. {Number(invoice.total_amount).toFixed(2)}</p>
+        </div>
+        <div className="text-center">
+          <p className="text-xs text-slate-500">Already Paid</p>
+          <p className="text-sm font-semibold text-emerald-400">Rs. {Number(invoice.paid_amount || 0).toFixed(2)}</p>
+        </div>
+        <div className="text-right">
+          <p className="text-xs text-slate-500">Outstanding</p>
+          <p className="text-lg font-black text-red-400">Rs. {outstanding.toFixed(2)}</p>
+        </div>
+      </div>
+
+      <Field label="Amount Received (Rs.)" required>
+        <input type="number" className={inp()} value={amount}
+          onChange={e => setAmount(e.target.value)}
+          step="0.01" min="0.01" max={outstanding}
+          placeholder={outstanding.toFixed(2)} />
+      </Field>
+
+      <Field label="Payment Mode">
+        <select className={inp()} value={mode} onChange={e => setMode(e.target.value)}>
+          <option value="cash">Cash</option>
+          <option value="upi">UPI</option>
+          <option value="bank_transfer">Bank Transfer</option>
+          <option value="cheque">Cheque</option>
+        </select>
+      </Field>
+
+      <Field label="Payment Date">
+        <input type="date" className={inp()} value={date} onChange={e => setDate(e.target.value)} />
+      </Field>
+
+      {parseFloat(amount) < outstanding - 0.01 && parseFloat(amount) > 0 && (
+        <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3 text-xs text-yellow-400">
+          Partial payment — Rs. {(outstanding - parseFloat(amount || 0)).toFixed(2)} will remain outstanding.
+        </div>
+      )}
+    </Modal>
+  )
+}
+
 // ── Invoice Edit Modal ────────────────────────────────────────────────────────
 function InvoiceEditModal({ companyId, invoice, onClose }) {
   const qc = useQueryClient()
@@ -2089,11 +2203,13 @@ function InvoiceEditModal({ companyId, invoice, onClose }) {
   )
 }
 
+// ── Invoices Tab ──────────────────────────────────────────────────────────────
 function InvoicesTab({ companyId }) {
   const qc = useQueryClient()
   const [createOpen, setCreateOpen] = useState(false)
   const [viewId,     setViewId]     = useState(null)
   const [editInv,    setEditInv]    = useState(null)
+  const [payInv,     setPayInv]     = useState(null)
 
   const { data: company } = useQuery({
     queryKey: ['company-name', companyId],
@@ -2304,6 +2420,12 @@ function InvoicesTab({ companyId }) {
                   className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-md text-slate-300 hover:text-white hover:bg-dark-600 transition-all">
                   <Download className="w-3.5 h-3.5" /> PDF
                 </button>
+                {inv.status !== 'void' && Number(inv.balance || 0) > 0 && (
+                  <button onClick={() => setPayInv(inv)}
+                    className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-md font-semibold text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10 transition-all">
+                    <CheckCircle className="w-3.5 h-3.5" /> Record Payment
+                  </button>
+                )}
                 {inv.status !== 'void' && Number(inv.paid_amount || 0) === 0 && (
                   <button onClick={() => setEditInv(inv)}
                     className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-md text-slate-300 hover:text-white hover:bg-dark-600 transition-all">
@@ -2342,9 +2464,10 @@ function InvoicesTab({ companyId }) {
         </div>
       )}
 
-      {createOpen && <InvoiceFormModal  companyId={companyId} onClose={() => setCreateOpen(false)} />}
-      {viewId    && <InvoiceViewModal   invoiceId={viewId}   onClose={() => setViewId(null)} onDownload={handleDownload} />}
-      {editInv   && <InvoiceEditModal   companyId={companyId} invoice={editInv} onClose={() => setEditInv(null)} />}
+      {createOpen && <InvoiceFormModal     companyId={companyId} onClose={() => setCreateOpen(false)} />}
+      {viewId    && <InvoiceViewModal     invoiceId={viewId}   onClose={() => setViewId(null)} onDownload={handleDownload} />}
+      {editInv   && <InvoiceEditModal     companyId={companyId} invoice={editInv} onClose={() => setEditInv(null)} />}
+      {payInv    && <RecordPaymentModal   companyId={companyId} invoice={payInv} onClose={() => setPayInv(null)} />}
     </div>
   )
 }
