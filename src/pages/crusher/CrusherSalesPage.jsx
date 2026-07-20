@@ -187,6 +187,20 @@ function InvoiceFormModal({ companyId, onClose, prefill = null, onAfterSave = nu
     enabled: !!form.client_id,
   })
 
+  // Delivery sites for selected client — drives unloading point picker
+  const { data: clientSites = [] } = useQuery({
+    queryKey: ['crusher-client-sites', companyId, form.client_id],
+    queryFn: async () => {
+      if (!form.client_id) return []
+      const { data } = await supabase.from('crusher_client_sites')
+        .select('id, site_name, address')
+        .eq('company_id', companyId).eq('client_id', form.client_id)
+        .eq('is_active', true).order('sort_order')
+      return data || []
+    },
+    enabled: !!form.client_id,
+  })
+
   // Auto-fill loading point, unloading point, and first line grade from client defaults
   useEffect(() => {
     if (!clientDefaults) return
@@ -457,13 +471,42 @@ function InvoiceFormModal({ companyId, onClose, prefill = null, onAfterSave = nu
           )}
         </Field>
         <Field label="Unloading Point">
+          {/* If client has saved sites, show them as quick-pick buttons */}
+          {clientSites.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {clientSites.map(site => (
+                <button
+                  key={site.id}
+                  type="button"
+                  onClick={() => {
+                    set('unloading_point', site.site_name)
+                    set('unloading_address', site.address || '')
+                  }}
+                  className={`px-2.5 py-1 rounded text-xs border transition-colors ${
+                    form.unloading_point === site.site_name
+                      ? 'bg-primary-600 border-primary-500 text-white'
+                      : 'bg-dark-700 border-dark-600 text-dark-300 hover:border-primary-500'
+                  }`}
+                >
+                  {site.site_name}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => { set('unloading_point', ''); set('unloading_address', '') }}
+                className="px-2.5 py-1 rounded text-xs border border-dark-600 bg-dark-700 text-dark-400 hover:border-dark-500"
+              >
+                Clear
+              </button>
+            </div>
+          )}
           <select className={inp()} value={form.unloading_point} onChange={e => set('unloading_point', e.target.value)}>
-            <option value="">— Select —</option>
+            <option value="">— Select or type below —</option>
             {loadingPoints.filter(p => p.point_type !== 'loading').map(p => <option key={p.id} value={p.point_name}>{p.point_name}</option>)}
           </select>
           <input className={`${inp()} mt-2`} value={form.unloading_address}
             onChange={e => set('unloading_address', e.target.value)}
-            placeholder="Delivery address (optional)" />
+            placeholder="Delivery address (auto-fills from site or type manually)" />
         </Field>
       </div>
 
@@ -1979,6 +2022,20 @@ function InvoiceEditModal({ companyId, invoice, onClose }) {
     },
   })
 
+  // Delivery sites for this invoice's client
+  const { data: editClientSites = [] } = useQuery({
+    queryKey: ['crusher-client-sites', companyId, invoice.client_id],
+    queryFn: async () => {
+      if (!invoice.client_id) return []
+      const { data } = await supabase.from('crusher_client_sites')
+        .select('id, site_name, address')
+        .eq('company_id', companyId).eq('client_id', invoice.client_id)
+        .eq('is_active', true).order('sort_order')
+      return data || []
+    },
+    enabled: !!invoice.client_id,
+  })
+
   // Load existing line items
   useEffect(() => {
     supabase.from('crusher_invoice_items').select('*')
@@ -2149,13 +2206,41 @@ function InvoiceEditModal({ companyId, invoice, onClose }) {
           </select>
         </Field>
         <Field label="Unloading Point">
+          {editClientSites.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {editClientSites.map(site => (
+                <button
+                  key={site.id}
+                  type="button"
+                  onClick={() => {
+                    set('unloading_point', site.site_name)
+                    set('unloading_address', site.address || '')
+                  }}
+                  className={`px-2.5 py-1 rounded text-xs border transition-colors ${
+                    form.unloading_point === site.site_name
+                      ? 'bg-primary-600 border-primary-500 text-white'
+                      : 'bg-dark-700 border-dark-600 text-dark-300 hover:border-primary-500'
+                  }`}
+                >
+                  {site.site_name}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => { set('unloading_point', ''); set('unloading_address', '') }}
+                className="px-2.5 py-1 rounded text-xs border border-dark-600 bg-dark-700 text-dark-400 hover:border-dark-500"
+              >
+                Clear
+              </button>
+            </div>
+          )}
           <select className={inp()} value={form.unloading_point} onChange={e => set('unloading_point', e.target.value)}>
             <option value="">— None —</option>
             {loadingPoints.map(p => <option key={p.id} value={p.point_name}>{p.point_name}</option>)}
           </select>
           <input className={`${inp()} mt-2`} value={form.unloading_address}
             onChange={e => set('unloading_address', e.target.value)}
-            placeholder="Delivery address (optional)" />
+            placeholder="Delivery address (auto-fills from site or type manually)" />
         </Field>
       </div>
 
@@ -2621,16 +2706,15 @@ function ClientModal({ companyId, existing, onClose }) {
     pan:                existing?.pan              || '',
     // Address
     registered_address: existing?.registered_address || '',
-    site_address:       '',          // loaded from settings
     // Credit & Defaults
-    credit_period_days:   '',
-    credit_limit:         '',
-    statement_day:        '',
-    payment_due_days:     '7',
-    default_grade_id:     '',
-    default_loading_pt:   '',
-    default_unloading_pt: '',
-    notes:                '',
+    credit_period_days:        '',
+    credit_limit:              '',
+    statement_type:            'monthly',  // none | monthly | interval
+    statement_day:             '',
+    statement_interval_days:   '',
+    payment_due_days:          '7',
+    default_grade_id:          '',
+    notes:                     '',
     // Bank & Finance
     opening_balance:      existing?.opening_balance ?? '',
     bank_name:            existing?.bank_name            || '',
@@ -2638,12 +2722,19 @@ function ClientModal({ companyId, existing, onClose }) {
     bank_ifsc:            existing?.bank_ifsc            || '',
   })
   const [settingsId, setSettingsId] = useState(null)  // existing crusher_client_settings id
-  const [saving,    setSaving]     = useState(false)
+  const [sites, setSites]           = useState([])     // delivery sites array
+  const [saving, setSaving]         = useState(false)
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
 
-  // Load existing crusher_client_settings when editing
+  // Site helpers
+  const addSite = () => setSites(p => [...p, { _tempId: Date.now(), site_name: '', address: '', _new: true }])
+  const removeSite = (idx) => setSites(p => p.map((s, i) => i === idx ? { ...s, _deleted: true } : s))
+  const updateSite = (idx, field, val) => setSites(p => p.map((s, i) => i === idx ? { ...s, [field]: val } : s))
+
+  // Load existing crusher_client_settings + delivery sites when editing
   useEffect(() => {
     if (!existing?.id) return
+    // Load settings
     supabase.from('crusher_client_settings')
       .select('*').eq('company_id', companyId).eq('client_id', existing.id).single()
       .then(({ data }) => {
@@ -2651,33 +2742,30 @@ function ClientModal({ companyId, existing, onClose }) {
         setSettingsId(data.id)
         setForm(p => ({
           ...p,
-          site_address:       data.default_unloading_pt || '',
-          credit_period_days: data.credit_period_days   != null ? String(data.credit_period_days) : '',
-          credit_limit:       data.credit_limit         != null ? String(data.credit_limit)        : '',
-          statement_day:      data.statement_day        != null ? String(data.statement_day)       : '',
-          payment_due_days:   data.payment_due_days     != null ? String(data.payment_due_days)    : '7',
-          default_grade_id:   data.default_grade_id    || '',
-          default_loading_pt: data.default_loading_pt  || '',
-          default_unloading_pt: data.default_unloading_pt || '',
-          notes:              data.notes               || '',
+          credit_period_days:      data.credit_period_days      != null ? String(data.credit_period_days)      : '',
+          credit_limit:            data.credit_limit            != null ? String(data.credit_limit)            : '',
+          statement_type:          data.statement_type          || 'monthly',
+          statement_day:           data.statement_day           != null ? String(data.statement_day)           : '',
+          statement_interval_days: data.statement_interval_days != null ? String(data.statement_interval_days) : '',
+          payment_due_days:        data.payment_due_days        != null ? String(data.payment_due_days)        : '7',
+          default_grade_id:        data.default_grade_id        || '',
+          notes:                   data.notes                   || '',
         }))
       })
+    // Load delivery sites
+    supabase.from('crusher_client_sites')
+      .select('id, site_name, address, sort_order')
+      .eq('company_id', companyId).eq('client_id', existing.id)
+      .eq('is_active', true).order('sort_order')
+      .then(({ data }) => { if (data) setSites(data) })
   }, [existing?.id, companyId])
 
-  // Grades and loading points for defaults section
+  // Grades for default grade selector
   const { data: grades = [] } = useQuery({
     queryKey: ['crusher-grades', companyId],
     queryFn:  async () => {
       const { data } = await supabase.from('crusher_grades')
         .select('id, grade_name').eq('company_id', companyId).eq('is_active', true).order('grade_name')
-      return data || []
-    },
-  })
-  const { data: loadingPoints = [] } = useQuery({
-    queryKey: ['loading-pts', companyId],
-    queryFn:  async () => {
-      const { data } = await supabase.from('crusher_loading_points')
-        .select('id, point_name, point_type').eq('company_id', companyId).eq('is_active', true).order('sort_order')
       return data || []
     },
   })
@@ -2720,24 +2808,45 @@ function ClientModal({ companyId, existing, onClose }) {
 
       // 2 — Save crusher_client_settings (always upsert)
       const settingsPayload = {
-        company_id:           companyId,
-        client_id:            clientId,
-        credit_period_days:   form.credit_period_days ? Number(form.credit_period_days) : 30,
-        credit_limit:         form.credit_limit !== '' ? Number(form.credit_limit) : null,
-        statement_day:        form.statement_day ? Number(form.statement_day) : null,
-        payment_due_days:     Number(form.payment_due_days) || 7,
-        default_grade_id:     form.default_grade_id  || null,
-        default_loading_pt:   form.default_loading_pt  || null,
-        default_unloading_pt: form.default_unloading_pt || null,
-        notes:                form.notes || null,
-        updated_at:           new Date().toISOString(),
+        company_id:              companyId,
+        client_id:               clientId,
+        credit_period_days:      form.credit_period_days ? Number(form.credit_period_days) : 30,
+        credit_limit:            form.credit_limit !== '' ? Number(form.credit_limit) : null,
+        statement_type:          form.statement_type || 'monthly',
+        statement_day:           form.statement_type === 'monthly' && form.statement_day ? Number(form.statement_day) : null,
+        statement_interval_days: form.statement_type === 'interval' && form.statement_interval_days ? Number(form.statement_interval_days) : null,
+        payment_due_days:        Number(form.payment_due_days) || 7,
+        default_grade_id:        form.default_grade_id || null,
+        notes:                   form.notes || null,
+        updated_at:              new Date().toISOString(),
       }
       const { error: sErr } = await supabase.from('crusher_client_settings')
         .upsert(settingsPayload, { onConflict: 'company_id,client_id' })
       if (sErr) throw sErr
 
+      // 3 — Save delivery sites: delete removed, insert new
+      const toDelete = sites.filter(s => s._deleted && s.id)
+      const toInsert = sites.filter(s => s._new && !s._deleted && s.site_name.trim())
+      if (toDelete.length) {
+        const { error: dErr } = await supabase.from('crusher_client_sites')
+          .delete().in('id', toDelete.map(s => s.id))
+        if (dErr) throw dErr
+      }
+      if (toInsert.length) {
+        const { error: iErr } = await supabase.from('crusher_client_sites')
+          .insert(toInsert.map((s, i) => ({
+            company_id: companyId,
+            client_id:  clientId,
+            site_name:  s.site_name.trim(),
+            address:    s.address.trim() || null,
+            sort_order: (sites.filter(x => !x._deleted && !x._new).length) + i,
+          })))
+        if (iErr) throw iErr
+      }
+
       await qc.invalidateQueries({ queryKey: ['clients', companyId] })
       await qc.invalidateQueries({ queryKey: ['crusher_client_settings', companyId] })
+      await qc.invalidateQueries({ queryKey: ['crusher-client-sites', companyId] })
       toast.success(isEdit ? 'Client updated' : 'Client added')
       onClose()
     } catch (e) {
@@ -2817,11 +2926,51 @@ function ClientModal({ companyId, existing, onClose }) {
           onChange={e => set('registered_address', e.target.value)}
           placeholder="Full billing address — appears on invoice Buyer (Bill to) block" />
       </Field>
-      <Field label="Default Delivery Site (auto-fills Unloading Point on invoice)">
-        <input className={inp()} value={form.default_unloading_pt}
-          onChange={e => set('default_unloading_pt', e.target.value)}
-          placeholder="e.g. Kumbakonam Site, Site A" />
-      </Field>
+      {/* Multi-site delivery address manager */}
+      <div className="mb-3">
+        <div className="text-[11px] font-semibold text-dark-400 uppercase tracking-wide mb-2">
+          Delivery Sites
+          <span className="ml-1 font-normal text-dark-500 normal-case">(invoice Unloading Point picker will list these)</span>
+        </div>
+        <div className="space-y-2">
+          {sites.filter(s => !s._deleted).map((site, idx) => {
+            const realIdx = sites.indexOf(site)
+            return (
+              <div key={site.id || site._tempId} className="flex gap-2 items-start bg-dark-700 rounded p-2">
+                <div className="flex-1 grid grid-cols-2 gap-2">
+                  <input
+                    className={inp('text-sm')}
+                    value={site.site_name}
+                    onChange={e => updateSite(realIdx, 'site_name', e.target.value)}
+                    placeholder="Site name (e.g. Kumbakonam Site)"
+                  />
+                  <input
+                    className={inp('text-sm')}
+                    value={site.address || ''}
+                    onChange={e => updateSite(realIdx, 'address', e.target.value)}
+                    placeholder="Full delivery address (optional)"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => removeSite(realIdx)}
+                  className="p-1 text-red-400 hover:text-red-300 hover:bg-dark-600 rounded mt-0.5"
+                  title="Remove site"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )
+          })}
+        </div>
+        <button
+          type="button"
+          onClick={addSite}
+          className="mt-2 flex items-center gap-1 text-xs text-primary-400 hover:text-primary-300"
+        >
+          <Plus className="w-3.5 h-3.5" /> Add delivery site
+        </button>
+      </div>
 
       {/* ── 3. Credit & Defaults ── */}
       <SectionHead label="Credit & Billing Defaults" />
@@ -2835,27 +2984,65 @@ function ClientModal({ companyId, existing, onClose }) {
             onChange={e => set('credit_limit', e.target.value)} placeholder="e.g. 200000" min={0} />
         </Field>
       </div>
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Statement Day of Month (1–31)">
-          <input type="number" className={inp()} value={form.statement_day}
-            onChange={e => set('statement_day', e.target.value)} placeholder="1" min={1} max={31} />
-        </Field>
-        <Field label="Payment Due (days after statement)">
-          <input type="number" className={inp()} value={form.payment_due_days}
+
+      {/* Statement schedule */}
+      <Field label="Statement Schedule">
+        <div className="flex gap-2 flex-wrap">
+          {[
+            { val: 'none',     label: 'No Statement' },
+            { val: 'monthly',  label: 'Monthly (Fixed Day)' },
+            { val: 'interval', label: 'Every N Days' },
+          ].map(opt => (
+            <button
+              key={opt.val}
+              type="button"
+              onClick={() => set('statement_type', opt.val)}
+              className={`px-3 py-1.5 rounded text-sm border transition-colors ${
+                form.statement_type === opt.val
+                  ? 'bg-primary-600 border-primary-500 text-white'
+                  : 'bg-dark-700 border-dark-600 text-dark-300 hover:border-primary-500'
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </Field>
+      {form.statement_type === 'monthly' && (
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Day of Month (1–28)">
+            <input type="number" className={inp()} value={form.statement_day}
+              onChange={e => set('statement_day', e.target.value)} placeholder="e.g. 1, 5, 15" min={1} max={28} />
+          </Field>
+          <Field label="Payment Due (days after statement)">
+            <input type="number" className={inp()} value={form.payment_due_days}
+              onChange={e => set('payment_due_days', e.target.value)} placeholder="7" min={0} />
+          </Field>
+        </div>
+      )}
+      {form.statement_type === 'interval' && (
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Interval (days) — e.g. 10, 15, 30">
+            <input type="number" className={inp()} value={form.statement_interval_days}
+              onChange={e => set('statement_interval_days', e.target.value)} placeholder="e.g. 15" min={1} max={90} />
+          </Field>
+          <Field label="Payment Due (days after statement)">
+            <input type="number" className={inp()} value={form.payment_due_days}
+              onChange={e => set('payment_due_days', e.target.value)} placeholder="7" min={0} />
+          </Field>
+        </div>
+      )}
+      {form.statement_type === 'none' && (
+        <Field label="Payment Due (days from invoice date)">
+          <input type="number" className={inp('w-36')} value={form.payment_due_days}
             onChange={e => set('payment_due_days', e.target.value)} placeholder="7" min={0} />
         </Field>
-      </div>
+      )}
+
       <Field label="Default Material Grade (auto-fills on invoice)">
         <select className={inp()} value={form.default_grade_id} onChange={e => set('default_grade_id', e.target.value)}>
           <option value="">— None —</option>
           {grades.map(g => <option key={g.id} value={g.id}>{g.grade_name}</option>)}
-        </select>
-      </Field>
-      <Field label="Default Loading Point">
-        <select className={inp()} value={form.default_loading_pt} onChange={e => set('default_loading_pt', e.target.value)}>
-          <option value="">— None —</option>
-          {loadingPoints.filter(p => p.point_type !== 'unloading').map(p =>
-            <option key={p.id} value={p.point_name}>{p.point_name}</option>)}
         </select>
       </Field>
       <Field label="Notes">
