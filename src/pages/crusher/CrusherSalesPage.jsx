@@ -81,35 +81,461 @@ function Badge({ label, color = 'slate' }) {
   )
 }
 
-// ── Invoices Tab (Placeholder) ────────────────────────────────────────────────
-function InvoicesTab({ companyId }) {
+// ── Invoice Form Modal ────────────────────────────────────────────────────────
+function InvoiceFormModal({ companyId, onClose }) {
+  const qc = useQueryClient()
+  const today = new Date().toISOString().split('T')[0]
+
+  const [form, setForm] = useState({
+    invoice_type:    'non_tax',
+    invoice_date:    today,
+    client_id:       '',
+    vehicle_id:      '',
+    loading_point:   '',
+    unloading_point: '',
+    payment_type:    'cash',
+    payment_mode:    'cash',
+    credit_due_date: '',
+    notes:           '',
+  })
+  const [items, setItems] = useState([
+    { grade_id: '', material_name: '', hsn_code: '', unit: 'tonnes', quantity: '', rate: '' }
+  ])
+  const [saving, setSaving] = useState(false)
+  const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
+
+  const { data: clients = [] } = useQuery({
+    queryKey: ['clients-inv', companyId],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('clients')
+        .select('id, display_name, business_name')
+        .eq('company_id', companyId).order('display_name')
+      if (error) console.error(error)
+      return data || []
+    },
+  })
+
+  const { data: vehicles = [] } = useQuery({
+    queryKey: ['vehicles-inv', companyId, form.client_id],
+    queryFn: async () => {
+      let q = supabase.from('crusher_client_vehicles')
+        .select('id, vehicle_number, vehicle_type, billing_basis, capacity_tonnes, capacity_uom, owner_type')
+        .eq('company_id', companyId).eq('is_active', true)
+      if (form.client_id) q = q.eq('client_id', form.client_id)
+      const { data, error } = await q.order('vehicle_number')
+      if (error) console.error(error)
+      return data || []
+    },
+  })
+
+  const { data: loadingPoints = [] } = useQuery({
+    queryKey: ['loading-pts', companyId],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('crusher_loading_points')
+        .select('id, point_name, point_type')
+        .eq('company_id', companyId).eq('is_active', true).order('sort_order')
+      if (error) console.error(error)
+      return data || []
+    },
+  })
+
+  const { data: grades = [] } = useQuery({
+    queryKey: ['crusher-grades', companyId],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('crusher_grades')
+        .select('id, grade_name, hsn_code, default_gst_rate')
+        .eq('company_id', companyId).eq('is_active', true).order('grade_name')
+      if (error) console.error(error)
+      return data || []
+    },
+  })
+
+  const selectedVehicle = vehicles.find(v => v.id === form.vehicle_id)
+
+  const handleVehicleChange = (vehicleId) => {
+    set('vehicle_id', vehicleId)
+    const v = vehicles.find(x => x.id === vehicleId)
+    if (v?.billing_basis === 'fixed_capacity' && v?.capacity_tonnes) {
+      setItems(prev => prev.map((item, i) =>
+        i === 0 && !item.quantity
+          ? { ...item, quantity: String(v.capacity_tonnes), unit: v.capacity_uom || 'tonnes' }
+          : item
+      ))
+    }
+  }
+
+  const addItem    = () => setItems(p => [...p, { grade_id: '', material_name: '', hsn_code: '', unit: 'tonnes', quantity: '', rate: '' }])
+  const removeItem = (i) => setItems(p => p.filter((_, idx) => idx !== i))
+  const setItem    = (i, k, v) => setItems(p => p.map((it, idx) => idx === i ? { ...it, [k]: v } : it))
+
+  const handleGradeChange = (i, gradeId) => {
+    const g = grades.find(x => x.id === gradeId)
+    setItems(p => p.map((it, idx) => idx === i
+      ? { ...it, grade_id: gradeId, material_name: g?.grade_name || '', hsn_code: g?.hsn_code || '' }
+      : it))
+  }
+
+  const isTax = form.invoice_type === 'tax'
+  const computedItems = items.map(item => {
+    const qty    = parseFloat(item.quantity) || 0
+    const rate   = parseFloat(item.rate)     || 0
+    const amount = qty * rate
+    const gstRate   = isTax ? (parseFloat(grades.find(g => g.id === item.grade_id)?.default_gst_rate) || 0) : 0
+    const gstAmount = amount * gstRate / 100
+    return { ...item, amount, gstRate, gstAmount, totalAmount: amount + gstAmount }
+  })
+  const subtotal    = computedItems.reduce((s, i) => s + i.amount, 0)
+  const totalTax    = computedItems.reduce((s, i) => s + i.gstAmount, 0)
+  const totalAmount = subtotal + totalTax
+  const fmt = n => `₹${n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+
+  const genInvNumber = async () => {
+    const dateStr = today.replace(/-/g, '')
+    const { count } = await supabase.from('crusher_invoices')
+      .select('id', { count: 'exact', head: true })
+      .eq('company_id', companyId).gte('invoice_date', today)
+    const seq = String((count || 0) + 1).padStart(4, '0')
+    return `INV-${dateStr}-${seq}`
+  }
+
+  const handleSave = async () => {
+    const validItems = computedItems.filter(i => i.material_name && i.quantity && i.rate)
+    if (validItems.length === 0) { toast.error('Add at least one material line with qty & rate'); return }
+    if (form.payment_type === 'credit' && !form.credit_due_date) { toast.error('Credit due date is required'); return }
+    setSaving(true)
+    try {
+      const invNumber   = await genInvNumber()
+      const clientSnap  = clients.find(c => c.id === form.client_id)
+      const { data: inv, error: invErr } = await supabase.from('crusher_invoices').insert({
+        company_id:      companyId,
+        invoice_number:  invNumber,
+        invoice_type:    form.invoice_type,
+        invoice_date:    form.invoice_date,
+        client_id:       form.client_id   || null,
+        client_name:     clientSnap?.display_name || clientSnap?.business_name || null,
+        vehicle_id:      form.vehicle_id   || null,
+        vehicle_number:  selectedVehicle?.vehicle_number  || null,
+        vehicle_capacity: selectedVehicle?.capacity_tonnes || null,
+        billing_basis:   selectedVehicle?.billing_basis   || null,
+        loading_point:   form.loading_point   || null,
+        unloading_point: form.unloading_point || null,
+        payment_type:    form.payment_type,
+        payment_mode:    form.payment_type === 'cash'   ? form.payment_mode    : null,
+        credit_due_date: form.payment_type === 'credit' ? form.credit_due_date : null,
+        subtotal,
+        total_tax:    totalTax,
+        total_amount: totalAmount,
+        paid_amount:  form.payment_type === 'cash' ? totalAmount : 0,
+        balance:      form.payment_type === 'cash' ? 0 : totalAmount,
+        status:       form.payment_type === 'cash' ? 'paid' : 'issued',
+        notes:        form.notes || null,
+      }).select('id').single()
+      if (invErr) throw invErr
+
+      const itemRows = validItems.map((item, idx) => ({
+        invoice_id:    inv.id,
+        grade_id:      item.grade_id    || null,
+        material_name: item.material_name,
+        hsn_code:      item.hsn_code    || null,
+        unit:          item.unit,
+        quantity:      parseFloat(item.quantity),
+        rate:          parseFloat(item.rate),
+        amount:        item.amount,
+        gst_rate:      item.gstRate,
+        gst_amount:    item.gstAmount,
+        total_amount:  item.totalAmount,
+        sort_order:    idx,
+      }))
+      const { error: itemErr } = await supabase.from('crusher_invoice_items').insert(itemRows)
+      if (itemErr) throw itemErr
+
+      toast.success(`Invoice ${invNumber} created`)
+      qc.invalidateQueries({ queryKey: ['crusher-invoices', companyId] })
+      onClose()
+    } catch (e) {
+      console.error(e)
+      toast.error(e.message || 'Failed to save invoice')
+    } finally { setSaving(false) }
+  }
+
   return (
-    <div className="flex flex-col items-center justify-center py-20 gap-4 text-center">
-      <div className="w-16 h-16 rounded-2xl bg-primary-500/10 flex items-center justify-center">
-        <FileText className="w-8 h-8 text-primary-400" />
-      </div>
-      <div>
-        <h3 className="text-lg font-semibold text-slate-200 mb-1">Crusher Invoices</h3>
-        <p className="text-sm text-slate-400 max-w-sm">
-          Tax &amp; non-tax invoicing with vehicle-linked tonnage billing, GST computation,
-          and tax ↔ non-tax conversion will be available here.
-        </p>
-      </div>
-      <div className="grid grid-cols-2 gap-3 mt-4 max-w-md w-full text-left">
-        {[
-          { icon: '📄', label: 'Tax / Non-Tax', desc: 'Select invoice type first' },
-          { icon: '🚛', label: 'Vehicle Linked', desc: 'Auto-fill capacity from registry' },
-          { icon: '⚖️', label: 'Tonnage Based', desc: 'Tonnes / Units / CUM billing' },
-          { icon: '🔄', label: 'Tax Conversion', desc: 'Convert between tax & non-tax' },
-        ].map(f => (
-          <div key={f.label} className="bg-dark-700 rounded-lg p-3 border border-dark-600">
-            <div className="text-xl mb-1">{f.icon}</div>
-            <div className="text-xs font-semibold text-slate-300">{f.label}</div>
-            <div className="text-[11px] text-slate-500">{f.desc}</div>
-          </div>
+    <Modal title="Create Crusher Invoice" onClose={onClose} wide
+      footer={
+        <>
+          <button onClick={onClose} className="px-4 py-2 text-sm rounded-lg bg-dark-700 text-slate-300 hover:bg-dark-600">Cancel</button>
+          <button onClick={handleSave} disabled={saving}
+            className="px-4 py-2 text-sm rounded-lg bg-primary-600 hover:bg-primary-700 text-white flex items-center gap-2 disabled:opacity-50">
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            Save Invoice
+          </button>
+        </>
+      }>
+
+      {/* Invoice Type toggle */}
+      <div className="bg-dark-700 rounded-xl p-1 flex gap-1">
+        {[{ v: 'non_tax', label: '📄 Non-Tax Invoice' }, { v: 'tax', label: '🧾 Tax Invoice (GST)' }].map(opt => (
+          <button key={opt.v} onClick={() => set('invoice_type', opt.v)}
+            className={`flex-1 py-2.5 rounded-lg text-sm font-semibold transition-all ${form.invoice_type === opt.v ? 'bg-primary-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}>
+            {opt.label}
+          </button>
         ))}
       </div>
-      <p className="text-xs text-slate-500 mt-2">Complete client setup &amp; vehicles first, then invoice creation will open here.</p>
+
+      {/* Date */}
+      <Field label="Invoice Date" required>
+        <input type="date" className={inp()} value={form.invoice_date} onChange={e => set('invoice_date', e.target.value)} />
+      </Field>
+
+      {/* Client & Vehicle */}
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Client">
+          <select className={inp()} value={form.client_id}
+            onChange={e => { set('client_id', e.target.value); set('vehicle_id', '') }}>
+            <option value="">— Walk-in / No client —</option>
+            {clients.map(c => <option key={c.id} value={c.id}>{c.display_name || c.business_name}</option>)}
+          </select>
+        </Field>
+        <Field label="Vehicle">
+          <select className={inp()} value={form.vehicle_id} onChange={e => handleVehicleChange(e.target.value)}>
+            <option value="">— Select vehicle —</option>
+            {vehicles.map(v => <option key={v.id} value={v.id}>{v.vehicle_number} ({v.vehicle_type})</option>)}
+          </select>
+        </Field>
+      </div>
+
+      {selectedVehicle && (
+        <div className="bg-dark-700 rounded-lg px-3 py-2 text-xs text-slate-400 flex gap-4 border border-dark-600">
+          <span>Billing: <strong className="text-slate-200">{selectedVehicle.billing_basis === 'fixed_capacity' ? 'Fixed Capacity' : 'Weigh-Based'}</strong></span>
+          {selectedVehicle.billing_basis === 'fixed_capacity' && (
+            <span>Capacity: <strong className="text-slate-200">{selectedVehicle.capacity_tonnes} {(selectedVehicle.capacity_uom || 'tonnes').toUpperCase()}</strong></span>
+          )}
+        </div>
+      )}
+
+      {/* Loading / Unloading */}
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Loading Point">
+          <select className={inp()} value={form.loading_point} onChange={e => set('loading_point', e.target.value)}>
+            <option value="">— Select —</option>
+            {loadingPoints.filter(p => p.point_type !== 'unloading').map(p => <option key={p.id} value={p.point_name}>{p.point_name}</option>)}
+          </select>
+        </Field>
+        <Field label="Unloading Point">
+          <select className={inp()} value={form.unloading_point} onChange={e => set('unloading_point', e.target.value)}>
+            <option value="">— Select —</option>
+            {loadingPoints.filter(p => p.point_type !== 'loading').map(p => <option key={p.id} value={p.point_name}>{p.point_name}</option>)}
+          </select>
+        </Field>
+      </div>
+
+      {/* Payment */}
+      <div>
+        <label className="block text-xs font-medium text-slate-400 mb-2">Payment</label>
+        <div className="bg-dark-700 rounded-xl p-1 flex gap-1 mb-3">
+          {[{ v: 'cash', label: '💵 Cash' }, { v: 'credit', label: '📋 Credit' }].map(opt => (
+            <button key={opt.v} onClick={() => set('payment_type', opt.v)}
+              className={`flex-1 py-2 rounded-lg text-sm font-semibold transition-all ${form.payment_type === opt.v ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}>
+              {opt.label}
+            </button>
+          ))}
+        </div>
+        {form.payment_type === 'cash' && (
+          <Field label="Payment Mode">
+            <select className={inp()} value={form.payment_mode} onChange={e => set('payment_mode', e.target.value)}>
+              {PAYMENT_MODES.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+            </select>
+          </Field>
+        )}
+        {form.payment_type === 'credit' && (
+          <Field label="Payment Due Date" required>
+            <input type="date" className={inp()} value={form.credit_due_date} onChange={e => set('credit_due_date', e.target.value)} />
+          </Field>
+        )}
+      </div>
+
+      {/* Line Items */}
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <label className="text-xs font-medium text-slate-400">Materials</label>
+          <button onClick={addItem} className="text-xs text-primary-400 hover:text-primary-300 flex items-center gap-1">
+            <Plus className="w-3 h-3" /> Add Line
+          </button>
+        </div>
+        <div className="space-y-2">
+          {items.map((item, i) => (
+            <div key={i} className="bg-dark-700 rounded-lg p-3 space-y-2 border border-dark-600">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-slate-500 font-medium">Line {i + 1}</span>
+                {items.length > 1 && (
+                  <button onClick={() => removeItem(i)} className="text-red-400 hover:text-red-300">
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+
+              <Field label="Material (from grade list)">
+                <select className={inp()} value={item.grade_id} onChange={e => handleGradeChange(i, e.target.value)}>
+                  <option value="">— Select grade —</option>
+                  {grades.map(g => <option key={g.id} value={g.id}>{g.grade_name}</option>)}
+                </select>
+              </Field>
+
+              {!item.grade_id && (
+                <Field label="Material Name (manual)">
+                  <input className={inp()} value={item.material_name}
+                    onChange={e => setItem(i, 'material_name', e.target.value)}
+                    placeholder="e.g. M-Sand, 20mm Jelly…" />
+                </Field>
+              )}
+
+              {isTax && item.grade_id && (
+                <p className="text-[11px] text-slate-500 bg-dark-800 rounded px-2 py-1">
+                  HSN: <span className="text-slate-300">{item.hsn_code || '—'}</span>
+                  &nbsp;·&nbsp; GST: <span className="text-slate-300">{computedItems[i].gstRate}%</span>
+                </p>
+              )}
+
+              <div className="grid grid-cols-3 gap-2">
+                <Field label="Quantity">
+                  <input type="number" className={inp()} value={item.quantity}
+                    onChange={e => setItem(i, 'quantity', e.target.value)}
+                    placeholder="0" step="0.001" min="0" />
+                </Field>
+                <Field label="Unit">
+                  <select className={inp()} value={item.unit} onChange={e => setItem(i, 'unit', e.target.value)}>
+                    <option value="tonnes">Tonnes</option>
+                    <option value="cum">CUM</option>
+                    <option value="units">Units (Vol)</option>
+                    <option value="bags">Bags</option>
+                    <option value="trips">Trips</option>
+                  </select>
+                </Field>
+                <Field label="Rate (₹)">
+                  <input type="number" className={inp()} value={item.rate}
+                    onChange={e => setItem(i, 'rate', e.target.value)}
+                    placeholder="0.00" step="0.01" min="0" />
+                </Field>
+              </div>
+
+              {item.quantity && item.rate && (
+                <div className="text-right text-xs pt-0.5">
+                  <span className="text-slate-500">Amount: </span>
+                  <span className="text-slate-200 font-semibold">{fmt(computedItems[i].amount)}</span>
+                  {isTax && computedItems[i].gstAmount > 0 && (
+                    <span className="text-slate-400"> + GST {fmt(computedItems[i].gstAmount)} = <strong className="text-emerald-400">{fmt(computedItems[i].totalAmount)}</strong></span>
+                  )}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Totals summary */}
+      {computedItems.some(i => i.amount > 0) && (
+        <div className="bg-dark-700 rounded-xl p-4 space-y-1.5 border border-dark-600">
+          <div className="flex justify-between text-sm text-slate-400">
+            <span>Subtotal</span><span>{fmt(subtotal)}</span>
+          </div>
+          {isTax && totalTax > 0 && (
+            <div className="flex justify-between text-sm text-slate-400">
+              <span>GST</span><span>{fmt(totalTax)}</span>
+            </div>
+          )}
+          <div className="flex justify-between text-base font-bold text-slate-100 border-t border-dark-600 pt-2 mt-1">
+            <span>Total</span>
+            <span className="text-emerald-400">{fmt(totalAmount)}</span>
+          </div>
+          {form.payment_type === 'credit' && (
+            <p className="text-[11px] text-yellow-400 text-right">Credit — full amount due on {form.credit_due_date || '—'}</p>
+          )}
+        </div>
+      )}
+
+      {/* Notes */}
+      <Field label="Notes">
+        <textarea className={inp('resize-none')} rows={2} value={form.notes}
+          onChange={e => set('notes', e.target.value)} placeholder="Optional remarks…" />
+      </Field>
+    </Modal>
+  )
+}
+
+// ── Invoices Tab ──────────────────────────────────────────────────────────────
+function InvoicesTab({ companyId }) {
+  const [createOpen, setCreateOpen] = useState(false)
+
+  const { data: invoices = [], isLoading } = useQuery({
+    queryKey: ['crusher-invoices', companyId],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('crusher_invoices')
+        .select('id, invoice_number, invoice_type, invoice_date, client_name, vehicle_number, payment_type, status, total_amount, balance, credit_due_date')
+        .eq('company_id', companyId)
+        .order('invoice_date', { ascending: false })
+        .order('created_at', { ascending: false })
+      if (error) { console.error(error); return [] }
+      return data || []
+    },
+  })
+
+  const statusColor = { issued: 'blue', paid: 'green', partial: 'yellow', overdue: 'red', draft: 'slate', void: 'slate' }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-sm font-semibold text-slate-200">Crusher Invoices</h3>
+          <p className="text-xs text-slate-500">{invoices.length} invoice{invoices.length !== 1 ? 's' : ''}</p>
+        </div>
+        <button onClick={() => setCreateOpen(true)}
+          className="flex items-center gap-2 px-3 py-2 rounded-lg bg-primary-600 hover:bg-primary-700 text-white text-sm font-medium transition-all">
+          <Plus className="w-4 h-4" /> Create Invoice
+        </button>
+      </div>
+
+      {isLoading && (
+        <div className="text-center py-12 text-slate-500 text-sm">
+          <Loader2 className="w-5 h-5 animate-spin mx-auto mb-2" />Loading invoices…
+        </div>
+      )}
+
+      {!isLoading && invoices.length === 0 && (
+        <div className="text-center py-16 space-y-3">
+          <FileText className="w-10 h-10 text-slate-600 mx-auto" />
+          <p className="text-sm text-slate-500">No invoices yet.</p>
+          <button onClick={() => setCreateOpen(true)}
+            className="px-4 py-2 rounded-lg bg-primary-600 hover:bg-primary-700 text-white text-sm font-medium">
+            Create First Invoice
+          </button>
+        </div>
+      )}
+
+      {!isLoading && invoices.length > 0 && (
+        <div className="space-y-2">
+          {invoices.map(inv => (
+            <div key={inv.id} className="bg-dark-700 rounded-xl p-4 border border-dark-600 flex items-start gap-3">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap mb-1">
+                  <span className="text-sm font-semibold text-primary-400 font-mono">{inv.invoice_number}</span>
+                  <Badge label={inv.invoice_type === 'tax' ? 'GST' : 'Non-Tax'} color={inv.invoice_type === 'tax' ? 'blue' : 'slate'} />
+                  <Badge label={inv.status} color={statusColor[inv.status] || 'slate'} />
+                </div>
+                <p className="text-xs text-slate-400">
+                  {inv.invoice_date} · {inv.client_name || 'Walk-in'}{inv.vehicle_number ? ` · ${inv.vehicle_number}` : ''}
+                </p>
+              </div>
+              <div className="text-right flex-shrink-0">
+                <p className="text-sm font-bold text-emerald-400">₹{Number(inv.total_amount).toLocaleString('en-IN')}</p>
+                {inv.balance > 0 && (
+                  <p className="text-[11px] text-red-400">Due: ₹{Number(inv.balance).toLocaleString('en-IN')}</p>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {createOpen && <InvoiceFormModal companyId={companyId} onClose={() => setCreateOpen(false)} />}
     </div>
   )
 }
