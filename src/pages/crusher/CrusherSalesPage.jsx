@@ -9,6 +9,8 @@ import {
   Eye, Download, Ban
 } from 'lucide-react'
 import toast from 'react-hot-toast'
+import jsPDF from 'jspdf'
+import autoTable from 'jspdf-autotable'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const TABS = [
@@ -508,8 +510,6 @@ function InvoiceFormModal({ companyId, onClose }) {
 
 // ── Crusher Invoice PDF ───────────────────────────────────────────────────────
 async function downloadCrusherPDF(inv, items, companyName) {
-  const { jsPDF } = await import('jspdf')
-  await import('jspdf-autotable')
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
   const W = 210, M = 14
   const isTax = inv.invoice_type === 'tax'
@@ -572,7 +572,7 @@ async function downloadCrusherPDF(inv, items, companyName) {
       : base
   })
 
-  doc.autoTable({
+  autoTable(doc, {
     startY: y, columns: cols, body: rows,
     margin: { left: M, right: M },
     styles: { fontSize: 8, cellPadding: 2 },
