@@ -1346,109 +1346,306 @@ function InvoiceFromTokenModal({ companyId, token, onClose }) {
 }
 
 // ── Crusher Invoice PDF ───────────────────────────────────────────────────────
-async function downloadCrusherPDF(inv, items, companyName) {
-  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
-  const W = 210, M = 14
-  const isTax = inv.invoice_type === 'tax'
-  let y = M
-
-  // Header band
-  doc.setFillColor(20, 80, 160)
-  doc.rect(0, 0, W, 26, 'F')
-  doc.setFontSize(14).setFont('helvetica', 'bold').setTextColor(255)
-  doc.text(companyName || 'Company', M, 10)
-  doc.setFontSize(8).setFont('helvetica', 'normal')
-  doc.text(isTax ? 'TAX INVOICE' : 'NON-TAX INVOICE', M, 17)
-  doc.setFontSize(13).setFont('helvetica', 'bold')
-  doc.text(inv.invoice_number, W - M, 10, { align: 'right' })
-  doc.setFontSize(8).setFont('helvetica', 'normal')
-  doc.text(`Date: ${inv.invoice_date}`, W - M, 17, { align: 'right' })
-  y = 34
-
-  // Client + vehicle row
-  doc.setTextColor(0).setFontSize(8).setFont('helvetica', 'bold')
-  doc.text('BILL TO', M, y)
-  doc.setFont('helvetica', 'normal').setFontSize(10).setTextColor(20)
-  doc.text(inv.client_name || 'Walk-in Customer', M, y + 5)
-  if (inv.vehicle_number) {
-    doc.setFontSize(8).setTextColor(80)
-    doc.text(`Vehicle: ${inv.vehicle_number}`, M, y + 11)
+// ── Amount in Words (Indian system) ──────────────────────────────────────────
+function numToWords(amount) {
+  const ones = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine',
+    'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen']
+  const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety']
+  function conv(n) {
+    if (n === 0) return ''
+    if (n < 20)      return ones[n] + ' '
+    if (n < 100)     return tens[Math.floor(n / 10)] + (n % 10 ? ' ' + ones[n % 10] : '') + ' '
+    if (n < 1000)    return ones[Math.floor(n / 100)] + ' Hundred ' + conv(n % 100)
+    if (n < 100000)  return conv(Math.floor(n / 1000)) + 'Thousand ' + conv(n % 1000)
+    if (n < 10000000) return conv(Math.floor(n / 100000)) + 'Lakh ' + conv(n % 100000)
+    return conv(Math.floor(n / 10000000)) + 'Crore ' + conv(n % 10000000)
   }
-  if (inv.loading_point)   { doc.text(`From: ${inv.loading_point}`,   M, y + (inv.vehicle_number ? 16 : 11)); }
-  if (inv.unloading_point) { doc.text(`To:   ${inv.unloading_point}`, M, y + (inv.vehicle_number ? 21 : 16)); }
+  const r = Math.floor(Math.abs(amount))
+  const p = Math.round((Math.abs(amount) - r) * 100)
+  let w = conv(r).trim() || 'Zero'
+  w += ' Rupees'
+  if (p > 0) w += ' and ' + conv(p).trim() + ' Paise'
+  return w + ' Only'
+}
 
-  // Payment info top-right
-  doc.setFontSize(8).setFont('helvetica', 'bold').setTextColor(0)
-  doc.text('PAYMENT', W - M - 50, y, { align: 'left' })
-  doc.setFont('helvetica', 'normal').setTextColor(60)
-  const pmLabel = inv.payment_type === 'cash'
-    ? (inv.payment_mode || 'cash').toUpperCase()
-    : `CREDIT — Due ${inv.credit_due_date || '—'}`
-  doc.text(pmLabel, W - M - 50, y + 5)
-  if (inv.status === 'paid') doc.setFont('helvetica', 'bold').setTextColor(0, 140, 80)
-  else doc.setFont('helvetica', 'bold').setTextColor(200, 50, 50)
-  doc.text(inv.status.toUpperCase(), W - M - 50, y + 11)
+// ── Professional Crusher Invoice PDF ─────────────────────────────────────────
+async function downloadCrusherPDF(inv, items, companyInfo = {}, clientInfo = null) {
+  const doc  = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+  const W = 210, H = 297, M = 12
+  const CW   = W - 2 * M
+  const isTax = inv.invoice_type === 'tax'
+  const PRI  = [15, 75, 155]   // primary blue
+  const LGT  = [240, 244, 252] // light blue-grey
+  const BOR  = [190, 205, 225] // border colour
+  const f    = n => Number(n || 0).toFixed(2)
 
-  y += 32
+  const hline = (y, x1 = M, x2 = W - M, col = BOR, lw = 0.25) => {
+    doc.setDrawColor(...col).setLineWidth(lw).line(x1, y, x2, y)
+  }
+  const rect = (x, y, w, h, fill, stroke = BOR) => {
+    if (fill) { doc.setFillColor(...fill); doc.rect(x, y, w, h, 'F') }
+    if (stroke) { doc.setDrawColor(...stroke).setLineWidth(0.25).rect(x, y, w, h, fill ? 'FD' : 'D') }
+  }
 
-  // Items table
-  const cols = isTax
-    ? [{ header: '#', dataKey: 'n' }, { header: 'Material', dataKey: 'm' }, { header: 'HSN', dataKey: 'h' },
-       { header: 'Qty', dataKey: 'q' }, { header: 'Unit', dataKey: 'u' }, { header: 'Rate ₹', dataKey: 'r' },
-       { header: 'Amount ₹', dataKey: 'a' }, { header: 'GST%', dataKey: 'g' }, { header: 'GST ₹', dataKey: 'ga' }, { header: 'Total ₹', dataKey: 't' }]
-    : [{ header: '#', dataKey: 'n' }, { header: 'Material', dataKey: 'm' },
-       { header: 'Qty', dataKey: 'q' }, { header: 'Unit', dataKey: 'u' }, { header: 'Rate ₹', dataKey: 'r' }, { header: 'Amount ₹', dataKey: 'a' }]
+  // ── HEADER ─────────────────────────────────────────────────────────────────
+  doc.setFillColor(...PRI)
+  doc.rect(0, 0, W, 42, 'F')
 
-  const rows = items.map((item, i) => {
-    const base = {
-      n: i + 1, m: item.material_name,
-      q: Number(item.quantity), u: item.unit,
-      r: Number(item.rate).toFixed(2), a: Number(item.amount).toFixed(2),
-    }
-    return isTax
-      ? { ...base, h: item.hsn_code || '—', g: `${item.gst_rate}%`, ga: Number(item.gst_amount).toFixed(2), t: Number(item.total_amount).toFixed(2) }
-      : base
+  // Company initial badge (top-right)
+  const initial = (companyInfo.name || 'C').charAt(0).toUpperCase()
+  doc.setFillColor(255, 255, 255, 0.15)
+  doc.setFillColor(30, 100, 190)
+  doc.roundedRect(W - M - 22, 4, 22, 22, 3, 3, 'F')
+  doc.setFontSize(16).setFont('helvetica', 'bold').setTextColor(255, 255, 255)
+  doc.text(initial, W - M - 11, 18, { align: 'center' })
+
+  // Company name + details
+  doc.setFontSize(17).setFont('helvetica', 'bold').setTextColor(255, 255, 255)
+  doc.text((companyInfo.name || 'Company').toUpperCase(), M, 13)
+  doc.setFontSize(8).setFont('helvetica', 'normal').setTextColor(185, 215, 255)
+  let cy = 19
+  if (companyInfo.address) { doc.text(companyInfo.address, M, cy); cy += 4.5 }
+  const cContact = [companyInfo.phone && `Ph: ${companyInfo.phone}`, companyInfo.email && `Email: ${companyInfo.email}`].filter(Boolean).join('   |   ')
+  if (cContact) { doc.text(cContact, M, cy); cy += 4.5 }
+  if (companyInfo.gstin) doc.text(`GSTIN: ${companyInfo.gstin}`, M, cy)
+
+  // Document title strip
+  doc.setFillColor(255, 215, 50)
+  doc.rect(0, 42, W, 9, 'F')
+  doc.setFontSize(10).setFont('helvetica', 'bold').setTextColor(15, 50, 110)
+  doc.text(isTax ? 'TAX INVOICE' : 'NON-TAX INVOICE', W / 2, 48, { align: 'center' })
+
+  let y = 56
+
+  // ── BILL TO  +  INVOICE DETAILS ────────────────────────────────────────────
+  const col1W = Math.round(CW * 0.57)
+  const gap   = 3
+  const col2X = M + col1W + gap
+  const col2W = CW - col1W - gap
+  const boxH  = 46
+
+  rect(M,     y, col1W, boxH, LGT)
+  rect(col2X, y, col2W, boxH, LGT)
+
+  // Bill To header bar
+  rect(M, y, col1W, 7, PRI, null)
+  doc.setFontSize(7.5).setFont('helvetica', 'bold').setTextColor(255, 255, 255)
+  doc.text('BILL TO', M + 3, y + 5)
+
+  // Client name
+  const cName = clientInfo?.display_name || clientInfo?.business_name || inv.client_name || 'Walk-in Customer'
+  doc.setFontSize(10).setFont('helvetica', 'bold').setTextColor(15, 20, 50)
+  doc.text(doc.splitTextToSize(cName, col1W - 6)[0], M + 3, y + 13)
+  doc.setFontSize(8).setFont('helvetica', 'normal').setTextColor(65, 70, 95)
+  let ry = y + 19
+  if (clientInfo?.registered_address) {
+    const aLines = doc.splitTextToSize(clientInfo.registered_address, col1W - 6)
+    aLines.slice(0, 2).forEach(l => { doc.text(l, M + 3, ry); ry += 4.5 })
+  }
+  if (clientInfo?.contact_phone) { doc.text(`Ph: ${clientInfo.contact_phone}`, M + 3, ry); ry += 4.5 }
+  if (clientInfo?.gstin)         doc.text(`GSTIN: ${clientInfo.gstin}`, M + 3, ry)
+
+  // Invoice details header bar
+  rect(col2X, y, col2W, 7, PRI, null)
+  doc.setFontSize(7.5).setFont('helvetica', 'bold').setTextColor(255, 255, 255)
+  doc.text('INVOICE DETAILS', col2X + 3, y + 5)
+
+  const detRow = (lbl, val, dy) => {
+    doc.setFontSize(7.5).setFont('helvetica', 'bold').setTextColor(90, 95, 115)
+    doc.text(lbl, col2X + 3, dy)
+    doc.setFont('helvetica', 'normal').setTextColor(15, 20, 50).setFontSize(8.5)
+    doc.text(String(val || '—'), col2X + col2W - 3, dy, { align: 'right' })
+  }
+  detRow('Invoice No.',  inv.invoice_number,   y + 13)
+  detRow('Date',         inv.invoice_date,      y + 19)
+  if (inv.vehicle_number) detRow('Vehicle', inv.vehicle_number, y + 25)
+  const pmtLabel = inv.payment_type === 'cash'
+    ? (inv.payment_mode || 'Cash').charAt(0).toUpperCase() + (inv.payment_mode || 'cash').slice(1)
+    : `Credit  Due: ${inv.credit_due_date || '—'}`
+  detRow('Payment', pmtLabel, y + 31)
+  // Status with colour
+  doc.setFontSize(7.5).setFont('helvetica', 'bold').setTextColor(90, 95, 115)
+  doc.text('Status', col2X + 3, y + 37)
+  const stCol = { paid: [0,140,70], issued: [30,90,200], void: [140,140,140], partial: [180,120,0], overdue: [200,50,50] }
+  doc.setFont('helvetica', 'bold').setFontSize(8.5).setTextColor(...(stCol[inv.status] || [80,80,80]))
+  doc.text(inv.status.toUpperCase(), col2X + col2W - 3, y + 37, { align: 'right' })
+
+  y += boxH + 4
+
+  // Delivery line
+  if (inv.loading_point || inv.unloading_point) {
+    doc.setFontSize(8).setFont('helvetica', 'italic').setTextColor(80, 85, 110)
+    const dlv = [
+      inv.loading_point   ? `Loading: ${inv.loading_point}`   : null,
+      inv.unloading_point ? `Delivery: ${inv.unloading_point}` : null,
+    ].filter(Boolean).join('     ')
+    doc.text(dlv, M, y)
+    y += 6
+  }
+
+  // ── ITEMS TABLE ─────────────────────────────────────────────────────────────
+  const itemCols = isTax
+    ? [
+        { header: '#',            dataKey: 'n' },
+        { header: 'Description',  dataKey: 'm' },
+        { header: 'HSN',          dataKey: 'h' },
+        { header: 'Qty',          dataKey: 'q' },
+        { header: 'Unit',         dataKey: 'u' },
+        { header: 'Rate',         dataKey: 'r' },
+        { header: 'Taxable Amt',  dataKey: 'a' },
+        { header: 'GST %',        dataKey: 'g' },
+        { header: 'GST Amt',      dataKey: 'ga' },
+        { header: 'Total',        dataKey: 't' },
+      ]
+    : [
+        { header: '#',           dataKey: 'n' },
+        { header: 'Description', dataKey: 'm' },
+        { header: 'Qty',         dataKey: 'q' },
+        { header: 'Unit',        dataKey: 'u' },
+        { header: 'Rate (Rs.)',  dataKey: 'r' },
+        { header: 'Amount (Rs.)',dataKey: 'a' },
+      ]
+
+  const itemRows = items.map((it, i) => {
+    const base = { n: i+1, m: it.material_name, q: f(it.quantity), u: (it.unit||'').toUpperCase(), r: f(it.rate), a: f(it.amount) }
+    return isTax ? { ...base, h: it.hsn_code||'—', g: `${it.gst_rate||0}%`, ga: f(it.gst_amount), t: f(it.total_amount) } : base
   })
 
   autoTable(doc, {
-    startY: y, columns: cols, body: rows,
+    startY: y,
+    columns: itemCols,
+    body: itemRows,
     margin: { left: M, right: M },
-    styles: { fontSize: 8, cellPadding: 2 },
-    headStyles: { fillColor: [20, 80, 160], textColor: 255, fontStyle: 'bold' },
-    alternateRowStyles: { fillColor: [245, 247, 252] },
+    styles: { fontSize: 8, cellPadding: { top: 2.5, bottom: 2.5, left: 2, right: 2 }, textColor: [20,20,45], lineColor: BOR, lineWidth: 0.2 },
+    headStyles: { fillColor: PRI, textColor: [255,255,255], fontStyle: 'bold', fontSize: 8, halign: 'center' },
+    alternateRowStyles: { fillColor: LGT },
     columnStyles: isTax
-      ? { n: { cellWidth: 6 }, m: { cellWidth: 38 }, h: { cellWidth: 14 } }
-      : { n: { cellWidth: 8 }, m: { cellWidth: 70 } },
+      ? { n:{cellWidth:6,halign:'center'}, m:{cellWidth:40}, h:{cellWidth:14,halign:'center'}, q:{cellWidth:12,halign:'right'}, u:{cellWidth:10,halign:'center'}, r:{cellWidth:16,halign:'right'}, a:{cellWidth:18,halign:'right'}, g:{cellWidth:10,halign:'center'}, ga:{cellWidth:18,halign:'right'}, t:{cellWidth:22,halign:'right'} }
+      : { n:{cellWidth:8,halign:'center'}, m:{cellWidth:82}, q:{cellWidth:18,halign:'right'}, u:{cellWidth:16,halign:'center'}, r:{cellWidth:28,halign:'right'}, a:{cellWidth:34,halign:'right'} },
   })
+  y = doc.lastAutoTable.finalY + 5
 
-  y = doc.lastAutoTable.finalY + 6
+  // ── GST SUMMARY (tax invoices) ───────────────────────────────────────────────
+  if (isTax) {
+    const gMap = {}
+    items.forEach(it => {
+      const rate = it.gst_rate || 0
+      if (!gMap[rate]) gMap[rate] = { taxable: 0, gst: 0 }
+      gMap[rate].taxable += Number(it.amount || 0)
+      gMap[rate].gst     += Number(it.gst_amount || 0)
+    })
+    const gRows = Object.entries(gMap).map(([rate, v]) => ({
+      rate: `${rate}%`, taxable: f(v.taxable),
+      cgst_r: `${Number(rate)/2}%`, cgst_a: f(v.gst/2),
+      sgst_r: `${Number(rate)/2}%`, sgst_a: f(v.gst/2),
+      total: f(v.gst),
+    }))
+    doc.setFontSize(8).setFont('helvetica', 'bold').setTextColor(...PRI)
+    doc.text('GST SUMMARY', M, y); y += 3
+    autoTable(doc, {
+      startY: y,
+      columns: [
+        {header:'GST Rate',dataKey:'rate'},{header:'Taxable Amt',dataKey:'taxable'},
+        {header:'CGST %',dataKey:'cgst_r'},{header:'CGST Amt',dataKey:'cgst_a'},
+        {header:'SGST %',dataKey:'sgst_r'},{header:'SGST Amt',dataKey:'sgst_a'},
+        {header:'Total GST',dataKey:'total'},
+      ],
+      body: gRows,
+      margin: { left: M, right: M },
+      styles: { fontSize: 7.5, cellPadding: 2, lineColor: BOR, lineWidth: 0.2 },
+      headStyles: { fillColor: [50,90,155], textColor: 255, fontStyle: 'bold', halign: 'center' },
+      columnStyles: {
+        rate:{halign:'center',cellWidth:18}, taxable:{halign:'right',cellWidth:30},
+        cgst_r:{halign:'center',cellWidth:16}, cgst_a:{halign:'right',cellWidth:26},
+        sgst_r:{halign:'center',cellWidth:16}, sgst_a:{halign:'right',cellWidth:26},
+        total:{halign:'right',cellWidth:28},
+      },
+    })
+    y = doc.lastAutoTable.finalY + 5
+  }
 
-  // Totals block
-  const fmtN = n => `₹${Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
-  const tX = W - M - 70
-  const addRow = (lbl, val, bold) => {
-    doc.setFont('helvetica', bold ? 'bold' : 'normal').setFontSize(bold ? 9 : 8)
-    doc.setTextColor(bold ? 0 : 80)
+  // ── TOTALS BLOCK (right-aligned) ────────────────────────────────────────────
+  const tX  = W - M - 75
+  const tX2 = W - M
+  const tRow = (lbl, val, bold, colR, colG, colB) => {
+    doc.setFont('helvetica', bold ? 'bold' : 'normal')
+    doc.setFontSize(bold ? 9.5 : 8.5)
+    if (colR !== undefined) doc.setTextColor(colR, colG, colB)
+    else doc.setTextColor(bold ? 15 : 70, bold ? 20 : 75, bold ? 50 : 100)
     doc.text(lbl, tX, y)
-    doc.text(fmtN(val), W - M, y, { align: 'right' })
-    y += 5
-  }
-  addRow('Subtotal', inv.subtotal)
-  if (isTax && Number(inv.total_tax) > 0) addRow('GST', inv.total_tax)
-  doc.setDrawColor(180).line(tX, y - 1, W - M, y - 1)
-  addRow('TOTAL', inv.total_amount, true)
-  if (Number(inv.balance) > 0) {
-    doc.setTextColor(200, 50, 50).setFont('helvetica', 'normal').setFontSize(8)
-    doc.text('Balance Due', tX, y)
-    doc.text(fmtN(inv.balance), W - M, y, { align: 'right' })
-    y += 5
+    doc.text(`Rs. ${f(val)}`, tX2, y, { align: 'right' })
+    y += bold ? 6 : 5
   }
 
-  if (inv.notes) {
-    y += 4
-    doc.setFontSize(8).setFont('helvetica', 'italic').setTextColor(120)
-    doc.text(`Notes: ${inv.notes}`, M, y)
+  hline(y - 1, tX, tX2, BOR)
+  tRow('Subtotal', inv.subtotal)
+  if (isTax && Number(inv.total_tax) > 0) {
+    tRow(`CGST`, Number(inv.total_tax) / 2)
+    tRow(`SGST`, Number(inv.total_tax) / 2)
   }
+  hline(y - 1, tX, tX2, PRI, 0.5)
+  y += 1
+  tRow('GRAND TOTAL', inv.total_amount, true)
+  if (Number(inv.paid_amount) > 0) tRow('Amount Paid',  inv.paid_amount, false, 0, 140, 70)
+  if (Number(inv.balance) > 0)     tRow('Balance Due',  inv.balance,     false, 200, 50, 50)
+
+  y += 3
+
+  // ── AMOUNT IN WORDS ─────────────────────────────────────────────────────────
+  rect(M, y, CW, 9, LGT)
+  doc.setFontSize(8).setFont('helvetica', 'bold').setTextColor(...PRI)
+  doc.text('In Words:', M + 3, y + 6)
+  doc.setFont('helvetica', 'italic').setTextColor(20, 20, 45)
+  const words = numToWords(Number(inv.total_amount))
+  const wLine = doc.splitTextToSize(words, CW - 28)
+  doc.text(wLine[0], M + 26, y + 6)
+  y += 13
+
+  // Notes
+  if (inv.notes) {
+    doc.setFontSize(8).setFont('helvetica', 'bold').setTextColor(80, 85, 110)
+    doc.text('Note:', M, y)
+    doc.setFont('helvetica', 'italic').setTextColor(100, 105, 125)
+    doc.text(doc.splitTextToSize(inv.notes, CW - 15)[0], M + 14, y)
+    y += 7
+  }
+
+  // ── FOOTER: TERMS  +  SIGNATURE ─────────────────────────────────────────────
+  const footerY = Math.max(y + 6, H - 56)
+  const termsW  = Math.round(CW * 0.54)
+  const sigX    = M + termsW + 4
+  const sigW    = CW - termsW - 4
+  const footH   = 42
+
+  rect(M,    footerY, termsW, footH, [248, 249, 252])
+  rect(sigX, footerY, sigW,   footH, [248, 249, 252])
+
+  // Terms
+  doc.setFontSize(7.5).setFont('helvetica', 'bold').setTextColor(...PRI)
+  doc.text('Terms & Conditions', M + 3, footerY + 6)
+  doc.setFont('helvetica', 'normal').setTextColor(70, 75, 95)
+  const terms = [
+    '1. Goods once sold will not be taken back.',
+    '2. Complaints if any within 24 hours of delivery.',
+    '3. Payment as per agreed terms only.',
+    '4. Subject to local jurisdiction. E. & O.E.',
+  ]
+  terms.forEach((t, i) => doc.text(t, M + 3, footerY + 13 + i * 5.5))
+
+  // Signature block
+  doc.setFontSize(7.5).setFont('helvetica', 'bold').setTextColor(...PRI)
+  doc.text(`For ${(companyInfo.name || '').toUpperCase()}`, sigX + sigW / 2, footerY + 6, { align: 'center' })
+  // Signature lines (3 horizontal for stamp area)
+  doc.setDrawColor(...BOR).setLineWidth(0.2)
+  doc.line(sigX + 5, footerY + 33, sigX + sigW - 5, footerY + 33)
+  doc.setFontSize(7).setFont('helvetica', 'normal').setTextColor(110, 115, 135)
+  doc.text('Authorized Signatory', sigX + sigW / 2, footerY + 38, { align: 'center' })
+
+  // Bottom bar
+  doc.setFillColor(...PRI)
+  doc.rect(0, H - 8, W, 8, 'F')
+  doc.setFontSize(7).setFont('helvetica', 'normal').setTextColor(175, 200, 240)
+  doc.text('This is a computer generated document — no signature required.', W / 2, H - 3, { align: 'center' })
 
   doc.save(`${inv.invoice_number}.pdf`)
 }
@@ -1910,7 +2107,7 @@ function InvoicesTab({ companyId }) {
     queryKey: ['crusher-invoices', companyId],
     queryFn: async () => {
       const { data, error } = await supabase.from('crusher_invoices')
-        .select('id, invoice_number, invoice_type, invoice_date, client_name, vehicle_number, payment_type, status, total_amount, subtotal, total_tax, balance, paid_amount, credit_due_date, payment_mode, loading_point, unloading_point, notes')
+        .select('id, invoice_number, invoice_type, invoice_date, client_id, client_name, vehicle_number, payment_type, status, total_amount, subtotal, total_tax, balance, paid_amount, credit_due_date, payment_mode, loading_point, unloading_point, notes')
         .eq('company_id', companyId)
         .order('invoice_date', { ascending: false })
         .order('created_at', { ascending: false })
@@ -2025,7 +2222,19 @@ function InvoicesTab({ companyId }) {
         const { data } = await supabase.from('crusher_invoice_items').select('*').eq('invoice_id', inv.id).order('sort_order')
         lineItems = data || []
       }
-      await downloadCrusherPDF(inv, lineItems, company?.name)
+      // Company details
+      const { data: co } = await supabase.from('companies')
+        .select('name, address, phone, email, gstin').eq('id', companyId).single()
+      const companyInfo = co || { name: company?.name }
+      // Client details (if registered, not walk-in)
+      let clientInfo = null
+      if (inv.client_id) {
+        const { data: cl } = await supabase.from('clients')
+          .select('display_name, business_name, registered_address, contact_phone, contact_email, gstin')
+          .eq('id', inv.client_id).single()
+        clientInfo = cl
+      }
+      await downloadCrusherPDF(inv, lineItems, companyInfo, clientInfo)
     } catch (e) {
       toast.error('PDF generation failed: ' + e.message)
     }
