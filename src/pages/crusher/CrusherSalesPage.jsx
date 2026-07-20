@@ -87,16 +87,19 @@ function InvoiceFormModal({ companyId, onClose }) {
   const today = new Date().toISOString().split('T')[0]
 
   const [form, setForm] = useState({
-    invoice_type:    'non_tax',
-    invoice_date:    today,
-    client_id:       '',
-    vehicle_id:      '',
-    loading_point:   '',
-    unloading_point: '',
-    payment_type:    'cash',
-    payment_mode:    'cash',
-    credit_due_date: '',
-    notes:           '',
+    invoice_type:        'non_tax',
+    invoice_date:        today,
+    client_id:           '',
+    walkin_name:         '',       // typed name when walk-in
+    vehicle_id:          '',
+    vehicle_manual:      false,    // true → type vehicle number, false → pick from registry
+    walkin_vehicle_num:  '',       // typed vehicle number when manual
+    loading_point:       '',
+    unloading_point:     '',
+    payment_type:        'cash',
+    payment_mode:        'cash',
+    credit_due_date:     '',
+    notes:               '',
   })
   const [items, setItems] = useState([
     { grade_id: '', material_name: '', hsn_code: '', unit: 'tonnes', quantity: '', rate: '' }
@@ -206,17 +209,26 @@ function InvoiceFormModal({ companyId, onClose }) {
     try {
       const invNumber   = await genInvNumber()
       const clientSnap  = clients.find(c => c.id === form.client_id)
+      // client_name: registered client name OR typed walk-in name
+      const resolvedClientName = clientSnap
+        ? (clientSnap.display_name || clientSnap.business_name)
+        : (form.walkin_name.trim() || null)
+      // vehicle: registered vehicle OR manually typed number
+      const resolvedVehicleNum = form.vehicle_manual
+        ? (form.walkin_vehicle_num.trim() || null)
+        : (selectedVehicle?.vehicle_number || null)
+
       const { data: inv, error: invErr } = await supabase.from('crusher_invoices').insert({
         company_id:      companyId,
         invoice_number:  invNumber,
         invoice_type:    form.invoice_type,
         invoice_date:    form.invoice_date,
         client_id:       form.client_id   || null,
-        client_name:     clientSnap?.display_name || clientSnap?.business_name || null,
-        vehicle_id:      form.vehicle_id   || null,
-        vehicle_number:  selectedVehicle?.vehicle_number  || null,
-        vehicle_capacity: selectedVehicle?.capacity_tonnes || null,
-        billing_basis:   selectedVehicle?.billing_basis   || null,
+        client_name:     resolvedClientName,
+        vehicle_id:      form.vehicle_manual ? null : (form.vehicle_id || null),
+        vehicle_number:  resolvedVehicleNum,
+        vehicle_capacity: form.vehicle_manual ? null : (selectedVehicle?.capacity_tonnes || null),
+        billing_basis:   form.vehicle_manual ? null : (selectedVehicle?.billing_basis   || null),
         loading_point:   form.loading_point   || null,
         unloading_point: form.unloading_point || null,
         payment_type:    form.payment_type,
@@ -286,24 +298,49 @@ function InvoiceFormModal({ companyId, onClose }) {
         <input type="date" className={inp()} value={form.invoice_date} onChange={e => set('invoice_date', e.target.value)} />
       </Field>
 
-      {/* Client & Vehicle */}
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Client">
-          <select className={inp()} value={form.client_id}
-            onChange={e => { set('client_id', e.target.value); set('vehicle_id', '') }}>
-            <option value="">— Walk-in / No client —</option>
-            {clients.map(c => <option key={c.id} value={c.id}>{c.display_name || c.business_name}</option>)}
-          </select>
+      {/* Client */}
+      <Field label="Client">
+        <select className={inp()} value={form.client_id}
+          onChange={e => { set('client_id', e.target.value); set('vehicle_id', ''); set('walkin_name', '') }}>
+          <option value="">— Walk-in / One-time customer —</option>
+          {clients.map(c => <option key={c.id} value={c.id}>{c.display_name || c.business_name}</option>)}
+        </select>
+      </Field>
+
+      {/* Walk-in name (only when no registered client selected) */}
+      {!form.client_id && (
+        <Field label="Customer Name (optional — for walk-in)">
+          <input className={inp()} value={form.walkin_name}
+            onChange={e => set('walkin_name', e.target.value)}
+            placeholder="e.g. Rajan, Murugan Traders…" />
         </Field>
-        <Field label="Vehicle">
+      )}
+
+      {/* Vehicle — toggle between registry and manual */}
+      <div>
+        <div className="flex items-center justify-between mb-1">
+          <label className="text-xs font-medium text-slate-400">Vehicle</label>
+          <button type="button"
+            onClick={() => { set('vehicle_manual', !form.vehicle_manual); set('vehicle_id', ''); set('walkin_vehicle_num', '') }}
+            className="text-[11px] text-primary-400 hover:text-primary-300 underline underline-offset-2">
+            {form.vehicle_manual ? 'Pick from registry instead' : 'Type vehicle number instead'}
+          </button>
+        </div>
+
+        {form.vehicle_manual ? (
+          <input className={inp()} value={form.walkin_vehicle_num}
+            onChange={e => set('walkin_vehicle_num', e.target.value.toUpperCase())}
+            placeholder="e.g. TN38AB1234" />
+        ) : (
           <select className={inp()} value={form.vehicle_id} onChange={e => handleVehicleChange(e.target.value)}>
-            <option value="">— Select vehicle —</option>
+            <option value="">— Select registered vehicle —</option>
             {vehicles.map(v => <option key={v.id} value={v.id}>{v.vehicle_number} ({v.vehicle_type})</option>)}
           </select>
-        </Field>
+        )}
       </div>
 
-      {selectedVehicle && (
+      {/* Vehicle info chip (only for registry vehicles) */}
+      {!form.vehicle_manual && selectedVehicle && (
         <div className="bg-dark-700 rounded-lg px-3 py-2 text-xs text-slate-400 flex gap-4 border border-dark-600">
           <span>Billing: <strong className="text-slate-200">{selectedVehicle.billing_basis === 'fixed_capacity' ? 'Fixed Capacity' : 'Weigh-Based'}</strong></span>
           {selectedVehicle.billing_basis === 'fixed_capacity' && (
