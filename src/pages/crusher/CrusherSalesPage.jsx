@@ -174,6 +174,36 @@ function InvoiceFormModal({ companyId, onClose, prefill = null, onAfterSave = nu
     },
   })
 
+  // Client default settings — re-fetch when client changes
+  const { data: clientDefaults } = useQuery({
+    queryKey: ['crusher-client-defaults', companyId, form.client_id],
+    queryFn: async () => {
+      if (!form.client_id) return null
+      const { data } = await supabase.from('crusher_client_settings')
+        .select('default_grade_id, default_loading_pt, default_unloading_pt')
+        .eq('company_id', companyId).eq('client_id', form.client_id).single()
+      return data || null
+    },
+    enabled: !!form.client_id,
+  })
+
+  // Auto-fill loading point, unloading point, and first line grade from client defaults
+  useEffect(() => {
+    if (!clientDefaults) return
+    setForm(p => ({
+      ...p,
+      loading_point:   clientDefaults.default_loading_pt   || p.loading_point,
+      unloading_point: clientDefaults.default_unloading_pt || p.unloading_point,
+    }))
+    if (clientDefaults.default_grade_id) {
+      setItems(prev => prev.map((it, i) =>
+        i === 0 && !it.grade_id
+          ? { ...it, grade_id: clientDefaults.default_grade_id }
+          : it
+      ))
+    }
+  }, [clientDefaults])
+
   // When grades load and an item already has a grade_id (from token prefill) but no rate/HSN yet,
   // back-fill rate and hsn_code from the grade master.
   useEffect(() => {
@@ -2571,35 +2601,108 @@ function InvoicesTab({ companyId }) {
 }
 
 // ── Quick Add / Edit Client Modal ────────────────────────────────────────────
-function QuickClientModal({ companyId, existing, onClose }) {
-  const qc = useQueryClient()
+// ── Client Modal (unified — profile + credit + defaults + bank) ───────────────
+const CLIENT_CATEGORIES = ['Contractor', 'Builder', 'Government', 'Retail', 'Wholesale', 'Other']
+
+function ClientModal({ companyId, existing, onClose }) {
+  const qc     = useQueryClient()
   const isEdit = !!existing?.id
+
+  // ── form state ──
   const [form, setForm] = useState({
-    display_name:  existing?.display_name || existing?.business_name || '',
-    gstin:         existing?.gstin         || '',
-    contact_phone: existing?.contact_phone || existing?.phone || '',
-    contact_email: existing?.contact_email || existing?.email || '',
-    registered_address: existing?.registered_address || existing?.address || '',
-    // Also set credit settings inline
+    // Identity
+    display_name:       existing?.display_name || existing?.business_name || '',
+    client_category:    existing?.client_category  || 'Contractor',
+    contact_person:     existing?.contact_person   || '',
+    contact_phone:      existing?.contact_phone    || '',
+    contact_phone2:     existing?.contact_phone2   || '',
+    contact_email:      existing?.contact_email    || '',
+    gstin:              existing?.gstin            || '',
+    pan:                existing?.pan              || '',
+    // Address
+    registered_address: existing?.registered_address || '',
+    site_address:       '',          // loaded from settings
+    // Credit & Defaults
     credit_period_days:   '',
+    credit_limit:         '',
     statement_day:        '',
     payment_due_days:     '7',
+    default_grade_id:     '',
+    default_loading_pt:   '',
+    default_unloading_pt: '',
+    notes:                '',
+    // Bank & Finance
+    opening_balance:      existing?.opening_balance ?? '',
+    bank_name:            existing?.bank_name            || '',
+    bank_account_number:  existing?.bank_account_number  || '',
+    bank_ifsc:            existing?.bank_ifsc            || '',
   })
-  const [saving, setSaving] = useState(false)
+  const [settingsId, setSettingsId] = useState(null)  // existing crusher_client_settings id
+  const [saving,    setSaving]     = useState(false)
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
+
+  // Load existing crusher_client_settings when editing
+  useEffect(() => {
+    if (!existing?.id) return
+    supabase.from('crusher_client_settings')
+      .select('*').eq('company_id', companyId).eq('client_id', existing.id).single()
+      .then(({ data }) => {
+        if (!data) return
+        setSettingsId(data.id)
+        setForm(p => ({
+          ...p,
+          site_address:       data.default_unloading_pt || '',
+          credit_period_days: data.credit_period_days   != null ? String(data.credit_period_days) : '',
+          credit_limit:       data.credit_limit         != null ? String(data.credit_limit)        : '',
+          statement_day:      data.statement_day        != null ? String(data.statement_day)       : '',
+          payment_due_days:   data.payment_due_days     != null ? String(data.payment_due_days)    : '7',
+          default_grade_id:   data.default_grade_id    || '',
+          default_loading_pt: data.default_loading_pt  || '',
+          default_unloading_pt: data.default_unloading_pt || '',
+          notes:              data.notes               || '',
+        }))
+      })
+  }, [existing?.id, companyId])
+
+  // Grades and loading points for defaults section
+  const { data: grades = [] } = useQuery({
+    queryKey: ['crusher-grades', companyId],
+    queryFn:  async () => {
+      const { data } = await supabase.from('crusher_grades')
+        .select('id, grade_name').eq('company_id', companyId).eq('is_active', true).order('grade_name')
+      return data || []
+    },
+  })
+  const { data: loadingPoints = [] } = useQuery({
+    queryKey: ['loading-pts', companyId],
+    queryFn:  async () => {
+      const { data } = await supabase.from('crusher_loading_points')
+        .select('id, point_name, point_type').eq('company_id', companyId).eq('is_active', true).order('sort_order')
+      return data || []
+    },
+  })
 
   const handleSave = async () => {
     if (!form.display_name.trim()) { toast.error('Client name is required'); return }
     setSaving(true)
     try {
+      // 1 — Save / update client record
       const clientPayload = {
         company_id:          companyId,
         display_name:        form.display_name.trim(),
         business_name:       form.display_name.trim(),
-        gstin:               form.gstin.trim() || null,
-        contact_phone:       form.contact_phone.trim() || null,
-        contact_email:       form.contact_email.trim() || null,
+        client_category:     form.client_category || null,
+        contact_person:      form.contact_person.trim()  || null,
+        contact_phone:       form.contact_phone.trim()   || null,
+        contact_phone2:      form.contact_phone2.trim()  || null,
+        contact_email:       form.contact_email.trim()   || null,
+        gstin:               form.gstin.trim().toUpperCase() || null,
+        pan:                 form.pan.trim().toUpperCase()   || null,
         registered_address:  form.registered_address.trim() || null,
+        opening_balance:     form.opening_balance !== '' ? Number(form.opening_balance) : 0,
+        bank_name:           form.bank_name.trim()           || null,
+        bank_account_number: form.bank_account_number.trim() || null,
+        bank_ifsc:           form.bank_ifsc.trim().toUpperCase() || null,
         client_type:         'business',
         currency:            'INR',
         tax_preference:      'tax_payer',
@@ -2615,19 +2718,23 @@ function QuickClientModal({ companyId, existing, onClose }) {
         clientId = data.id
       }
 
-      // Save credit settings if any credit fields filled
-      if (form.credit_period_days) {
-        const creditPayload = {
-          company_id:        companyId,
-          client_id:         clientId,
-          credit_period_days: Number(form.credit_period_days),
-          statement_day:     form.statement_day ? Number(form.statement_day) : null,
-          payment_due_days:  Number(form.payment_due_days) || 7,
-          updated_at:        new Date().toISOString(),
-        }
-        await supabase.from('crusher_client_settings')
-          .upsert(creditPayload, { onConflict: 'company_id,client_id' })
+      // 2 — Save crusher_client_settings (always upsert)
+      const settingsPayload = {
+        company_id:           companyId,
+        client_id:            clientId,
+        credit_period_days:   form.credit_period_days ? Number(form.credit_period_days) : 30,
+        credit_limit:         form.credit_limit !== '' ? Number(form.credit_limit) : null,
+        statement_day:        form.statement_day ? Number(form.statement_day) : null,
+        payment_due_days:     Number(form.payment_due_days) || 7,
+        default_grade_id:     form.default_grade_id  || null,
+        default_loading_pt:   form.default_loading_pt  || null,
+        default_unloading_pt: form.default_unloading_pt || null,
+        notes:                form.notes || null,
+        updated_at:           new Date().toISOString(),
       }
+      const { error: sErr } = await supabase.from('crusher_client_settings')
+        .upsert(settingsPayload, { onConflict: 'company_id,client_id' })
+      if (sErr) throw sErr
 
       await qc.invalidateQueries({ queryKey: ['clients', companyId] })
       await qc.invalidateQueries({ queryKey: ['crusher_client_settings', companyId] })
@@ -2635,14 +2742,18 @@ function QuickClientModal({ companyId, existing, onClose }) {
       onClose()
     } catch (e) {
       toast.error(e.message)
-    } finally {
-      setSaving(false)
-    }
+    } finally { setSaving(false) }
   }
+
+  const SectionHead = ({ label }) => (
+    <div className="text-[11px] font-bold uppercase tracking-widest text-primary-400 border-b border-dark-600 pb-1 mb-3 mt-1">
+      {label}
+    </div>
+  )
 
   return (
     <Modal
-      title={isEdit ? `Edit — ${existing.display_name || existing.business_name}` : 'Add New Client'}
+      title={isEdit ? `Edit Client — ${existing.display_name || existing.business_name}` : 'Add New Client'}
       onClose={onClose}
       wide
       footer={
@@ -2655,163 +2766,136 @@ function QuickClientModal({ companyId, existing, onClose }) {
         </>
       }
     >
-      {/* Client details */}
-      <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Client Details</div>
+      {/* ── 1. Identity ── */}
+      <SectionHead label="Identity" />
       <Field label="Company / Client Name" required>
         <input className={inp()} value={form.display_name}
-          onChange={e => set('display_name', e.target.value)}
-          placeholder="e.g. ABC Constructions" />
+          onChange={e => set('display_name', e.target.value)} placeholder="e.g. SRA Mining and Constructions" />
       </Field>
       <div className="grid grid-cols-2 gap-3">
+        <Field label="Category">
+          <select className={inp()} value={form.client_category} onChange={e => set('client_category', e.target.value)}>
+            {CLIENT_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </Field>
+        <Field label="Contact Person">
+          <input className={inp()} value={form.contact_person}
+            onChange={e => set('contact_person', e.target.value)} placeholder="e.g. Ramesh Kumar (Site Mgr)" />
+        </Field>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Phone (Primary)">
+          <input className={inp()} value={form.contact_phone}
+            onChange={e => set('contact_phone', e.target.value)} placeholder="9443157573" />
+        </Field>
+        <Field label="Phone (Alternate / Accounts)">
+          <input className={inp()} value={form.contact_phone2}
+            onChange={e => set('contact_phone2', e.target.value)} placeholder="9842424204" />
+        </Field>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Email">
+          <input type="email" className={inp()} value={form.contact_email}
+            onChange={e => set('contact_email', e.target.value)} placeholder="billing@example.com" />
+        </Field>
         <Field label="GSTIN">
           <input className={inp('font-mono')} value={form.gstin}
             onChange={e => set('gstin', e.target.value.toUpperCase())}
-            placeholder="22AAAAA0000A1Z5" maxLength={15} />
-        </Field>
-        <Field label="Phone">
-          <input className={inp()} value={form.contact_phone}
-            onChange={e => set('contact_phone', e.target.value)}
-            placeholder="+91 98765 43210" />
+            placeholder="33AAAAA0000A1Z5" maxLength={15} />
         </Field>
       </div>
-      <Field label="Email">
-        <input type="email" className={inp()} value={form.contact_email}
-          onChange={e => set('contact_email', e.target.value)}
-          placeholder="billing@example.com" />
+      <Field label="PAN">
+        <input className={inp('font-mono w-48')} value={form.pan}
+          onChange={e => set('pan', e.target.value.toUpperCase())}
+          placeholder="AAAPL1234C" maxLength={10} />
       </Field>
-      <Field label="Address">
+
+      {/* ── 2. Address ── */}
+      <SectionHead label="Address" />
+      <Field label="Billing / Registered Address">
         <textarea className={inp()} rows={2} value={form.registered_address}
           onChange={e => set('registered_address', e.target.value)}
-          placeholder="Full billing address…" />
+          placeholder="Full billing address — appears on invoice Buyer (Bill to) block" />
       </Field>
-
-      {/* Credit settings (optional) */}
-      <div className="border-t border-dark-600 pt-3 mt-1">
-        <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Credit Settings <span className="font-normal normal-case text-slate-500">(optional — can set later)</span></div>
-        <div className="grid grid-cols-3 gap-3">
-          <Field label="Credit Period (days)">
-            <input type="number" className={inp()} value={form.credit_period_days}
-              onChange={e => set('credit_period_days', e.target.value)}
-              placeholder="e.g. 30" min={1} />
-          </Field>
-          <Field label="Statement Day (1–31)">
-            <input type="number" className={inp()} value={form.statement_day}
-              onChange={e => set('statement_day', e.target.value)}
-              placeholder="e.g. 1" min={1} max={31} />
-          </Field>
-          <Field label="Payment Due (days)">
-            <input type="number" className={inp()} value={form.payment_due_days}
-              onChange={e => set('payment_due_days', e.target.value)}
-              placeholder="7" min={0} />
-          </Field>
-        </div>
-      </div>
-    </Modal>
-  )
-}
-
-// ── Credit Settings Modal ─────────────────────────────────────────────────────
-function CreditSettingsModal({ client, companyId, existing, onClose }) {
-  const qc = useQueryClient()
-  const [form, setForm] = useState({
-    credit_period_days:   existing?.credit_period_days   ?? 30,
-    statement_day:        existing?.statement_day         ?? 1,
-    payment_due_days:     existing?.payment_due_days      ?? 7,
-    default_loading_pt:   existing?.default_loading_pt    ?? '',
-    default_unloading_pt: existing?.default_unloading_pt  ?? '',
-    notes:                existing?.notes                 ?? '',
-  })
-  const [saving, setSaving] = useState(false)
-  const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
-
-  const handleSave = async () => {
-    setSaving(true)
-    try {
-      const payload = {
-        company_id:           companyId,
-        client_id:            client.id,
-        credit_period_days:   Number(form.credit_period_days),
-        statement_day:        form.statement_day ? Number(form.statement_day) : null,
-        payment_due_days:     Number(form.payment_due_days),
-        default_loading_pt:   form.default_loading_pt  || null,
-        default_unloading_pt: form.default_unloading_pt || null,
-        notes:                form.notes || null,
-        updated_at:           new Date().toISOString(),
-      }
-      const { error } = existing
-        ? await supabase.from('crusher_client_settings').update(payload).eq('id', existing.id)
-        : await supabase.from('crusher_client_settings').insert({ ...payload })
-      if (error) throw error
-      await qc.invalidateQueries({ queryKey: ['crusher_client_settings', companyId] })
-      toast.success('Credit settings saved')
-      onClose()
-    } catch (e) {
-      toast.error(e.message)
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <Modal
-      title={`Credit Settings — ${client.display_name || client.business_name}`}
-      onClose={onClose}
-      footer={
-        <>
-          <button onClick={onClose} className="btn-ghost">Cancel</button>
-          <button onClick={handleSave} disabled={saving} className="btn-primary">
-            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-            Save Settings
-          </button>
-        </>
-      }
-    >
-      <div className="grid grid-cols-3 gap-3">
-        <Field label="Credit Period (days)" required>
-          <input type="number" className={inp()} value={form.credit_period_days}
-            onChange={e => set('credit_period_days', e.target.value)} min={1} max={365} />
-        </Field>
-        <Field label="Statement Day (1–31)">
-          <input type="number" className={inp()} value={form.statement_day}
-            onChange={e => set('statement_day', e.target.value)} min={1} max={31}
-            placeholder="e.g. 1" />
-        </Field>
-        <Field label="Payment Due (days after stmt)">
-          <input type="number" className={inp()} value={form.payment_due_days}
-            onChange={e => set('payment_due_days', e.target.value)} min={0} max={90} />
-        </Field>
-      </div>
-      <Field label="Default Loading Point">
-        <input className={inp()} value={form.default_loading_pt}
-          onChange={e => set('default_loading_pt', e.target.value)}
-          placeholder="e.g. Plant Gate, Quarry 1" />
-      </Field>
-      <Field label="Default Unloading Point">
+      <Field label="Default Delivery Site (auto-fills Unloading Point on invoice)">
         <input className={inp()} value={form.default_unloading_pt}
           onChange={e => set('default_unloading_pt', e.target.value)}
-          placeholder="e.g. Site A, Customer Yard" />
+          placeholder="e.g. Kumbakonam Site, Site A" />
+      </Field>
+
+      {/* ── 3. Credit & Defaults ── */}
+      <SectionHead label="Credit & Billing Defaults" />
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Credit Period (days)">
+          <input type="number" className={inp()} value={form.credit_period_days}
+            onChange={e => set('credit_period_days', e.target.value)} placeholder="30" min={1} />
+        </Field>
+        <Field label="Credit Limit (Rs.) — max outstanding">
+          <input type="number" className={inp()} value={form.credit_limit}
+            onChange={e => set('credit_limit', e.target.value)} placeholder="e.g. 200000" min={0} />
+        </Field>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Statement Day of Month (1–31)">
+          <input type="number" className={inp()} value={form.statement_day}
+            onChange={e => set('statement_day', e.target.value)} placeholder="1" min={1} max={31} />
+        </Field>
+        <Field label="Payment Due (days after statement)">
+          <input type="number" className={inp()} value={form.payment_due_days}
+            onChange={e => set('payment_due_days', e.target.value)} placeholder="7" min={0} />
+        </Field>
+      </div>
+      <Field label="Default Material Grade (auto-fills on invoice)">
+        <select className={inp()} value={form.default_grade_id} onChange={e => set('default_grade_id', e.target.value)}>
+          <option value="">— None —</option>
+          {grades.map(g => <option key={g.id} value={g.id}>{g.grade_name}</option>)}
+        </select>
+      </Field>
+      <Field label="Default Loading Point">
+        <select className={inp()} value={form.default_loading_pt} onChange={e => set('default_loading_pt', e.target.value)}>
+          <option value="">— None —</option>
+          {loadingPoints.filter(p => p.point_type !== 'unloading').map(p =>
+            <option key={p.id} value={p.point_name}>{p.point_name}</option>)}
+        </select>
       </Field>
       <Field label="Notes">
         <textarea className={inp()} rows={2} value={form.notes}
-          onChange={e => set('notes', e.target.value)}
-          placeholder="Any billing notes for this client…" />
+          onChange={e => set('notes', e.target.value)} placeholder="Billing notes, special terms…" />
       </Field>
-      <div className="bg-dark-700 rounded-lg p-3 border border-dark-600 text-xs text-slate-400 space-y-1">
-        <div className="flex items-center gap-1.5 text-slate-300 font-medium mb-1.5">
-          <AlertCircle className="w-3.5 h-3.5 text-primary-400" /> How credit periods work
-        </div>
-        <p>• Invoices created with <strong className="text-slate-300">Credit</strong> payment type will auto-set due date = invoice date + credit period days.</p>
-        <p>• Statement will be generated on day <strong className="text-slate-300">{form.statement_day || '?'}</strong> of each month.</p>
-        <p>• Expected payment = statement date + <strong className="text-slate-300">{form.payment_due_days}</strong> days.</p>
+
+      {/* ── 4. Bank & Opening Balance ── */}
+      <SectionHead label="Bank Details & Opening Balance" />
+      <Field label="Opening Balance (Rs.) — amount owed at migration">
+        <input type="number" className={inp('w-48')} value={form.opening_balance}
+          onChange={e => set('opening_balance', e.target.value)} placeholder="0" min={0} step="0.01" />
+      </Field>
+      <div className="grid grid-cols-3 gap-3">
+        <Field label="Bank Name">
+          <input className={inp()} value={form.bank_name}
+            onChange={e => set('bank_name', e.target.value)} placeholder="SBI, ICICI…" />
+        </Field>
+        <Field label="Account Number">
+          <input className={inp('font-mono')} value={form.bank_account_number}
+            onChange={e => set('bank_account_number', e.target.value)} placeholder="Account no." />
+        </Field>
+        <Field label="IFSC Code">
+          <input className={inp('font-mono')} value={form.bank_ifsc}
+            onChange={e => set('bank_ifsc', e.target.value.toUpperCase())}
+            placeholder="SBIN0000796" maxLength={11} />
+        </Field>
       </div>
     </Modal>
   )
 }
 
 // ── Clients Tab ───────────────────────────────────────────────────────────────
+const CAT_COLOR = {
+  Contractor: 'blue', Builder: 'green', Government: 'amber',
+  Retail: 'slate', Wholesale: 'purple', Other: 'slate',
+}
+
 function ClientsTab({ companyId }) {
-  const [creditModal, setCreditModal] = useState(null)   // { client, existing }
-  const [clientModal, setClientModal] = useState(null)   // null | { existing? }
+  const [clientModal, setClientModal] = useState(null)   // null | existing client obj
 
   const { data: clients = [], isLoading } = useQuery({
     queryKey: ['clients', companyId],
@@ -2826,7 +2910,8 @@ function ClientsTab({ companyId }) {
   const { data: settings = [] } = useQuery({
     queryKey: ['crusher_client_settings', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('crusher_client_settings').select('*')
+      const { data } = await supabase.from('crusher_client_settings')
+        .select('*, crusher_grades(grade_name)')
         .eq('company_id', companyId)
       return data || []
     },
@@ -2836,119 +2921,147 @@ function ClientsTab({ companyId }) {
     queryKey: ['crusher_client_vehicles', companyId],
     queryFn: async () => {
       const { data } = await supabase.from('crusher_client_vehicles').select('client_id')
-        .eq('company_id', companyId).eq('owner_type', 'client')
+        .eq('company_id', companyId)
       return data || []
     },
   })
 
-  // Advance balances per client
   const { data: advances = [] } = useQuery({
     queryKey: ['crusher-advances', companyId],
     queryFn: async () => {
       const { data } = await supabase.from('crusher_customer_advances')
-        .select('client_id, remaining')
-        .eq('company_id', companyId).gt('remaining', 0)
+        .select('client_id, remaining').eq('company_id', companyId).gt('remaining', 0)
       return data || []
     },
   })
-  const advanceMap = advances.reduce((acc, a) => {
-    if (a.client_id) acc[a.client_id] = (acc[a.client_id] || 0) + Number(a.remaining)
-    return acc
-  }, {})
 
-  const settingsMap = Object.fromEntries(settings.map(s => [s.client_id, s]))
-  const vehicleCount = vehicles.reduce((acc, v) => {
-    acc[v.client_id] = (acc[v.client_id] || 0) + 1
-    return acc
-  }, {})
+  // Outstanding per client (sum of unpaid invoice balances)
+  const { data: outstanding = [] } = useQuery({
+    queryKey: ['crusher-outstanding', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('crusher_invoices')
+        .select('client_id, balance')
+        .eq('company_id', companyId).gt('balance', 0)
+        .not('status', 'eq', 'void')
+      return data || []
+    },
+  })
+
+  const advanceMap     = advances.reduce((a, x) => { if (x.client_id) a[x.client_id] = (a[x.client_id] || 0) + Number(x.remaining); return a }, {})
+  const outstandingMap = outstanding.reduce((a, x) => { if (x.client_id) a[x.client_id] = (a[x.client_id] || 0) + Number(x.balance); return a }, {})
+  const settingsMap    = Object.fromEntries(settings.map(s => [s.client_id, s]))
+  const vehicleCount   = vehicles.reduce((a, v) => { if (v.client_id) a[v.client_id] = (a[v.client_id] || 0) + 1; return a }, {})
 
   if (isLoading) return <div className="flex items-center justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-primary-400" /></div>
 
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-3">
-        <button onClick={() => setClientModal({ existing: null })} className="btn-primary text-sm">
+        <button onClick={() => setClientModal('new')} className="btn-primary text-sm">
           <Plus className="w-4 h-4" /> Add Client
         </button>
         <span className="text-xs text-slate-500 ml-auto">{clients.length} client{clients.length !== 1 ? 's' : ''}</span>
       </div>
 
-      {!clients.length ? (
+      {!clients.length && (
         <div className="text-center py-16 text-slate-500">
           <Users className="w-10 h-10 mx-auto mb-3 opacity-40" />
           <p className="text-sm mb-3">No clients yet.</p>
-          <button onClick={() => setClientModal({ existing: null })} className="btn-primary text-sm">
+          <button onClick={() => setClientModal('new')} className="btn-primary text-sm">
             <Plus className="w-4 h-4" /> Add First Client
           </button>
         </div>
-      ) : null}
+      )}
 
       {clients.map(client => {
-        const s = settingsMap[client.id]
-        const vCount = vehicleCount[client.id] || 0
-        const advance = advanceMap[client.id] || 0
+        const s           = settingsMap[client.id]
+        const vCount      = vehicleCount[client.id] || 0
+        const advance     = advanceMap[client.id] || 0
+        const owed        = outstandingMap[client.id] || 0
+        const creditLimit = s?.credit_limit
+        const overLimit   = creditLimit && owed > creditLimit
+        const catColor    = CAT_COLOR[client.client_category] || 'slate'
+
         return (
-          <div key={client.id} className="bg-dark-700 rounded-xl border border-dark-600 p-4 flex items-start gap-4">
-            <div className="w-10 h-10 rounded-full bg-primary-600/20 flex items-center justify-center text-sm font-bold text-primary-400 flex-shrink-0">
-              {(client.display_name || client.business_name)?.[0]?.toUpperCase() || 'C'}
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-sm font-semibold text-slate-200">{client.display_name || client.business_name}</span>
-                {s ? (
-                  <Badge label={`Credit: ${s.credit_period_days}d`} color="blue" />
-                ) : (
-                  <Badge label="No credit settings" color="slate" />
+          <div key={client.id} className="bg-dark-700 rounded-xl border border-dark-600 p-4">
+            {/* Top row */}
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-full bg-primary-600/20 flex items-center justify-center text-sm font-bold text-primary-400 flex-shrink-0 mt-0.5">
+                {(client.display_name || client.business_name)?.[0]?.toUpperCase() || 'C'}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-sm font-semibold text-slate-200">{client.display_name || client.business_name}</span>
+                  {client.client_category && <Badge label={client.client_category} color={catColor} />}
+                  {s?.credit_period_days && <Badge label={`${s.credit_period_days}d credit`} color="blue" />}
+                  {vCount > 0 && <Badge label={`${vCount} vehicle${vCount > 1 ? 's' : ''}`} color="green" />}
+                </div>
+
+                {/* Contact row */}
+                <div className="flex items-center gap-3 mt-1 flex-wrap">
+                  {client.contact_person && (
+                    <span className="text-[11px] text-slate-400 flex items-center gap-1">
+                      👤 {client.contact_person}
+                    </span>
+                  )}
+                  {client.contact_phone && (
+                    <span className="text-[11px] text-slate-500 flex items-center gap-1">
+                      <Phone className="w-3 h-3" /> {client.contact_phone}
+                      {client.contact_phone2 && ` / ${client.contact_phone2}`}
+                    </span>
+                  )}
+                  {client.gstin && (
+                    <span className="text-[11px] font-mono text-slate-600">{client.gstin}</span>
+                  )}
+                </div>
+
+                {/* Defaults row */}
+                {s && (
+                  <div className="flex items-center gap-3 mt-1 flex-wrap text-[11px] text-slate-500">
+                    {s.crusher_grades?.grade_name && <span>📦 Default: {s.crusher_grades.grade_name}</span>}
+                    {s.default_loading_pt && <span>📍 Load: {s.default_loading_pt}</span>}
+                    {s.default_unloading_pt && <span>🏁 Deliver: {s.default_unloading_pt}</span>}
+                  </div>
                 )}
-                {vCount > 0 && <Badge label={`${vCount} vehicle${vCount > 1 ? 's' : ''}`} color="green" />}
+              </div>
+
+              {/* Edit button */}
+              <button
+                onClick={() => setClientModal(client)}
+                className="flex-shrink-0 flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-200 bg-dark-600 hover:bg-dark-500 px-3 py-1.5 rounded-lg transition-all">
+                <Edit2 className="w-3.5 h-3.5" /> Edit
+              </button>
+            </div>
+
+            {/* Financial summary row */}
+            {(owed > 0 || advance > 0) && (
+              <div className="flex items-center gap-3 mt-3 pt-3 border-t border-dark-600 flex-wrap">
+                {owed > 0 && (
+                  <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full border ${
+                    overLimit
+                      ? 'bg-red-500/15 text-red-400 border-red-500/30'
+                      : 'bg-orange-500/15 text-orange-400 border-orange-500/30'
+                  }`}>
+                    {overLimit ? '⚠ Over Limit · ' : ''}Outstanding: Rs. {owed.toFixed(2)}
+                    {creditLimit ? ` / Limit: Rs. ${Number(creditLimit).toLocaleString('en-IN')}` : ''}
+                  </span>
+                )}
                 {advance > 0 && (
                   <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30">
                     ⬆ Advance: Rs. {advance.toFixed(2)}
                   </span>
                 )}
               </div>
-              {client.contact_phone && <p className="text-xs text-slate-500 mt-0.5 flex items-center gap-1"><Phone className="w-3 h-3" />{client.contact_phone}</p>}
-              {s && (
-                <p className="text-[11px] text-slate-500 mt-1">
-                  Statement: day {s.statement_day || '—'} of month · Due: {s.payment_due_days}d after statement
-                  {s.default_loading_pt && ` · Load: ${s.default_loading_pt}`}
-                </p>
-              )}
-            </div>
-            <div className="flex-shrink-0 flex gap-1.5">
-              <button
-                onClick={() => setClientModal({ existing: client })}
-                className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-200 bg-dark-600 hover:bg-dark-500 px-3 py-1.5 rounded-lg transition-all"
-              >
-                <Edit2 className="w-3.5 h-3.5" />
-                Edit
-              </button>
-              <button
-                onClick={() => setCreditModal({ client, existing: s })}
-                className="flex items-center gap-1.5 text-xs text-primary-400 hover:text-primary-300 bg-primary-500/10 hover:bg-primary-500/20 px-3 py-1.5 rounded-lg transition-all"
-              >
-                <Settings2 className="w-3.5 h-3.5" />
-                {s ? 'Credit' : 'Set Credit'}
-              </button>
-            </div>
+            )}
           </div>
         )
       })}
 
       {clientModal && (
-        <QuickClientModal
+        <ClientModal
           companyId={companyId}
-          existing={clientModal.existing}
+          existing={clientModal === 'new' ? null : clientModal}
           onClose={() => setClientModal(null)}
-        />
-      )}
-
-      {creditModal && (
-        <CreditSettingsModal
-          client={creditModal.client}
-          companyId={companyId}
-          existing={creditModal.existing}
-          onClose={() => setCreditModal(null)}
         />
       )}
     </div>
