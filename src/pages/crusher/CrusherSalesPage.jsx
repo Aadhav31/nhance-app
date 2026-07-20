@@ -6,7 +6,7 @@ import {
   Users, Truck, MapPin, Package, FileText, Plus, Edit2, Trash2, X, Save,
   Loader2, CheckCircle, Settings2, ChevronRight, AlertCircle, ToggleLeft,
   ToggleRight, Phone, Mail, CreditCard, Calendar, Building2, Hash,
-  Eye, Download, Ban, Printer, ClipboardCheck, RefreshCw
+  Eye, Download, Ban, Printer, ClipboardCheck, RefreshCw, ArrowLeftRight
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import jsPDF from 'jspdf'
@@ -1941,6 +1941,82 @@ function InvoicesTab({ companyId }) {
     qc.invalidateQueries({ queryKey: ['crusher-invoices', companyId] })
   }
 
+  const [converting, setConverting] = useState(null) // invoice id being converted
+
+  const handleConvertType = async (inv) => {
+    const toTax  = inv.invoice_type === 'non_tax'
+    const label  = toTax ? 'Tax Invoice (GST)' : 'Non-Tax Invoice'
+    const detail = toTax
+      ? 'GST will be added to each line based on the grade\'s configured rate.\nThe total amount will increase accordingly.'
+      : 'GST will be removed from all lines.\nThe total amount will decrease accordingly.'
+
+    const ok = window.confirm(
+      `⚠️ Convert ${inv.invoice_number} to ${label}?\n\n${detail}\n\nThis recalculates and saves all amounts immediately.`
+    )
+    if (!ok) return
+
+    setConverting(inv.id)
+    try {
+      // 1. Fetch existing line items
+      const { data: items, error: ie } = await supabase
+        .from('crusher_invoice_items').select('*')
+        .eq('invoice_id', inv.id).order('sort_order')
+      if (ie) throw ie
+
+      // 2. If converting TO tax, fetch GST rates for the grade IDs in one query
+      let gradeMap = {}
+      if (toTax) {
+        const gradeIds = [...new Set(items.map(i => i.grade_id).filter(Boolean))]
+        if (gradeIds.length) {
+          const { data: gd } = await supabase.from('crusher_grades')
+            .select('id, default_gst_rate').in('id', gradeIds)
+          gd?.forEach(g => { gradeMap[g.id] = parseFloat(g.default_gst_rate) || 0 })
+        }
+      }
+
+      // 3. Recalculate each line
+      let newSubtotal = 0, newTotalTax = 0
+      const updatedLines = items.map(it => {
+        const qty       = parseFloat(it.quantity) || 0
+        const rate      = parseFloat(it.rate)     || 0
+        const amount    = qty * rate
+        const gstRate   = toTax ? (gradeMap[it.grade_id] || 0) : 0
+        const gstAmount = amount * gstRate / 100
+        const totalAmt  = amount + gstAmount
+        newSubtotal  += amount
+        newTotalTax  += gstAmount
+        return { id: it.id, gst_rate: gstRate, gst_amount: gstAmount, total_amount: totalAmt }
+      })
+      const newTotal = newSubtotal + newTotalTax
+
+      // 4. Update all line items (parallel)
+      const lineUpdates = updatedLines.map(l =>
+        supabase.from('crusher_invoice_items')
+          .update({ gst_rate: l.gst_rate, gst_amount: l.gst_amount, total_amount: l.total_amount })
+          .eq('id', l.id)
+      )
+      const results = await Promise.all(lineUpdates)
+      const lineErr = results.find(r => r.error)?.error
+      if (lineErr) throw lineErr
+
+      // 5. Update invoice header
+      const paidAmt = parseFloat(inv.paid_amount) || 0
+      const { error: invErr } = await supabase.from('crusher_invoices').update({
+        invoice_type: toTax ? 'tax' : 'non_tax',
+        subtotal:     newSubtotal,
+        total_tax:    newTotalTax,
+        total_amount: newTotal,
+        balance:      Math.max(0, newTotal - paidAmt),
+      }).eq('id', inv.id)
+      if (invErr) throw invErr
+
+      toast.success(`Converted to ${label}`)
+      qc.invalidateQueries({ queryKey: ['crusher-invoices', companyId] })
+    } catch (e) {
+      toast.error('Conversion failed: ' + e.message)
+    } finally { setConverting(null) }
+  }
+
   const handleDownload = async (inv, items) => {
     try {
       let lineItems = items
@@ -2022,6 +2098,22 @@ function InvoicesTab({ companyId }) {
                   <button onClick={() => setEditInv(inv)}
                     className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-md text-slate-300 hover:text-white hover:bg-dark-600 transition-all">
                     <Edit2 className="w-3.5 h-3.5" /> Edit
+                  </button>
+                )}
+                {inv.status !== 'void' && (
+                  <button
+                    onClick={() => handleConvertType(inv)}
+                    disabled={converting === inv.id}
+                    className={`flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-md font-medium transition-all disabled:opacity-50 ${
+                      inv.invoice_type === 'non_tax'
+                        ? 'text-blue-400 hover:bg-blue-500/10'
+                        : 'text-slate-400 hover:bg-dark-600'
+                    }`}
+                    title={inv.invoice_type === 'non_tax' ? 'Convert to Tax Invoice (add GST)' : 'Convert to Non-Tax Invoice (remove GST)'}>
+                    {converting === inv.id
+                      ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      : <ArrowLeftRight className="w-3.5 h-3.5" />}
+                    {inv.invoice_type === 'non_tax' ? '→ GST' : '→ Non-Tax'}
                   </button>
                 )}
                 <div className="flex-1" />
