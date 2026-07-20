@@ -1385,7 +1385,8 @@ async function downloadCrusherPDF(inv, items, companyName) {
     ? (inv.payment_mode || 'cash').toUpperCase()
     : `CREDIT — Due ${inv.credit_due_date || '—'}`
   doc.text(pmLabel, W - M - 50, y + 5)
-  doc.setFont('helvetica', 'bold').setTextColor(inv.status === 'paid' ? [0, 140, 80] : [200, 50, 50])
+  if (inv.status === 'paid') doc.setFont('helvetica', 'bold').setTextColor(0, 140, 80)
+  else doc.setFont('helvetica', 'bold').setTextColor(200, 50, 50)
   doc.text(inv.status.toUpperCase(), W - M - 50, y + 11)
 
   y += 32
