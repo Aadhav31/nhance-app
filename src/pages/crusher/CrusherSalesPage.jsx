@@ -3625,9 +3625,209 @@ function ClientStatementModal({ companyId, client, onClose }) {
   )
 }
 
+// ── Client Detail Panel ───────────────────────────────────────────────────────
+function ClientDetailPanel({ companyId, client, settings, outstanding, advance, onEdit, onStatement, onClose }) {
+  const catColor = CAT_COLOR[client.client_category] || 'slate'
+  const creditLimit = Number(settings?.credit_limit || 0)
+  const overLimit   = creditLimit > 0 && outstanding > creditLimit
+  const fmtC = n => `₹${Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
+  const fmtD = s => s ? new Date(s).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' }) : '—'
+
+  const { data: sites = [] } = useQuery({
+    queryKey: ['crusher-client-sites-detail', companyId, client.id],
+    queryFn: async () => {
+      const { data } = await supabase.from('crusher_client_sites')
+        .select('site_name, address').eq('company_id', companyId)
+        .eq('client_id', client.id).eq('is_active', true).order('sort_order')
+      return data || []
+    },
+  })
+
+  const { data: recentInvoices = [] } = useQuery({
+    queryKey: ['crusher-client-invoices-detail', companyId, client.id],
+    queryFn: async () => {
+      const { data } = await supabase.from('crusher_invoices')
+        .select('id, invoice_number, invoice_date, invoice_type, total_amount, balance, status, payment_type')
+        .eq('company_id', companyId).eq('client_id', client.id)
+        .neq('status', 'void')
+        .order('invoice_date', { ascending: false }).limit(10)
+      return data || []
+    },
+  })
+
+  const { data: rateOverrides = [] } = useQuery({
+    queryKey: ['crusher-client-rates-detail', companyId, client.id],
+    queryFn: async () => {
+      const { data } = await supabase.from('crusher_client_rates')
+        .select('custom_rate, notes, crusher_grades(grade_name)')
+        .eq('company_id', companyId).eq('client_id', client.id).eq('is_active', true)
+      return data || []
+    },
+  })
+
+  const statusColor = { issued: 'text-blue-400', paid: 'text-emerald-400', partial: 'text-yellow-400', overdue: 'text-red-400' }
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end">
+      {/* Backdrop */}
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+
+      {/* Panel */}
+      <div className="relative w-[480px] max-w-full bg-dark-800 border-l border-dark-600 flex flex-col h-full shadow-2xl">
+        {/* Header */}
+        <div className="flex items-start gap-3 p-4 border-b border-dark-600 flex-shrink-0">
+          <div className="w-10 h-10 rounded-full bg-primary-600/20 flex items-center justify-center text-base font-bold text-primary-400 flex-shrink-0">
+            {(client.display_name || client.business_name)?.[0]?.toUpperCase() || 'C'}
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-bold text-slate-100 leading-tight">{client.display_name || client.business_name}</p>
+            <div className="flex items-center gap-1.5 flex-wrap mt-1">
+              {client.client_category && <Badge label={client.client_category} color={catColor} />}
+              {settings?.credit_period_days && <Badge label={`${settings.credit_period_days}d credit`} color="blue" />}
+            </div>
+          </div>
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            <button onClick={onStatement}
+              className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg bg-primary-500/10 text-primary-400 hover:bg-primary-500/20 transition-all">
+              <FileText className="w-3.5 h-3.5" /> Statement
+            </button>
+            <button onClick={onEdit}
+              className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg bg-dark-600 text-slate-300 hover:bg-dark-500 transition-all">
+              <Edit2 className="w-3.5 h-3.5" /> Edit
+            </button>
+            <button onClick={onClose}
+              className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-400 hover:text-slate-200 hover:bg-dark-600 transition-all">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+        {/* Scrollable content */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-5">
+
+          {/* 1. Profile & Contact */}
+          <section>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-primary-400 mb-2">Profile & Contact</p>
+            <div className="bg-dark-700 rounded-xl border border-dark-600 divide-y divide-dark-600">
+              {[
+                client.contact_person  && ['Contact',  client.contact_person],
+                client.contact_phone   && ['Phone',    [client.contact_phone, client.contact_phone2].filter(Boolean).join(' / ')],
+                client.contact_email   && ['Email',    client.contact_email],
+                client.gstin           && ['GSTIN',    client.gstin],
+                client.pan             && ['PAN',      client.pan],
+                client.registered_address && ['Address', client.registered_address],
+              ].filter(Boolean).map(([label, value]) => (
+                <div key={label} className="flex gap-3 px-3 py-2">
+                  <span className="text-[11px] text-slate-500 w-16 flex-shrink-0">{label}</span>
+                  <span className="text-[11px] text-slate-200 break-all">{value}</span>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          {/* 2. Financial Summary */}
+          <section>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-primary-400 mb-2">Financial Summary</p>
+            <div className="bg-dark-700 rounded-xl border border-dark-600 p-3 space-y-2">
+              {creditLimit > 0 && (
+                <div>
+                  <div className="flex justify-between text-[11px] mb-1">
+                    <span className="text-slate-400">Outstanding vs Limit</span>
+                    <span className={`font-semibold ${overLimit ? 'text-red-400' : 'text-slate-300'}`}>
+                      {fmtC(outstanding)} / {fmtC(creditLimit)}
+                    </span>
+                  </div>
+                  <div className="h-1.5 rounded-full bg-dark-600 overflow-hidden">
+                    <div className={`h-full rounded-full transition-all ${overLimit ? 'bg-red-500' : 'bg-emerald-500'}`}
+                      style={{ width: `${Math.min(100, (outstanding / creditLimit) * 100)}%` }} />
+                  </div>
+                  {overLimit && <p className="text-[10px] text-red-400 mt-1">⚠ Over credit limit by {fmtC(outstanding - creditLimit)}</p>}
+                </div>
+              )}
+              {outstanding > 0 && !creditLimit && (
+                <div className="flex justify-between text-[11px]">
+                  <span className="text-slate-400">Outstanding</span>
+                  <span className="font-semibold text-orange-400">{fmtC(outstanding)}</span>
+                </div>
+              )}
+              {advance > 0 && (
+                <div className="flex justify-between text-[11px]">
+                  <span className="text-slate-400">Advance Available</span>
+                  <span className="font-semibold text-amber-400">{fmtC(advance)}</span>
+                </div>
+              )}
+              {outstanding === 0 && advance === 0 && (
+                <p className="text-[11px] text-slate-500 text-center py-1">No outstanding balance</p>
+              )}
+              {rateOverrides.length > 0 && (
+                <div className="pt-2 border-t border-dark-600">
+                  <p className="text-[10px] text-slate-500 mb-1.5">Custom Rates</p>
+                  <div className="space-y-1">
+                    {rateOverrides.map((r, i) => (
+                      <div key={i} className="flex justify-between text-[11px]">
+                        <span className="text-slate-400">{r.crusher_grades?.grade_name || '—'}</span>
+                        <span className="font-mono text-primary-400">₹{Number(r.custom_rate).toLocaleString('en-IN')}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </section>
+
+          {/* 3. Delivery Sites */}
+          {sites.length > 0 && (
+            <section>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-primary-400 mb-2">Delivery Sites</p>
+              <div className="space-y-1.5">
+                {sites.map((s, i) => (
+                  <div key={i} className="bg-dark-700 rounded-lg border border-dark-600 px-3 py-2">
+                    <p className="text-[11px] font-semibold text-slate-200">{s.site_name}</p>
+                    {s.address && <p className="text-[10px] text-slate-500 mt-0.5">{s.address}</p>}
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* 4. Recent Invoices */}
+          <section>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-primary-400 mb-2">Recent Invoices</p>
+            {recentInvoices.length === 0 ? (
+              <p className="text-[11px] text-slate-500 italic">No invoices yet.</p>
+            ) : (
+              <div className="space-y-1.5">
+                {recentInvoices.map(inv => (
+                  <div key={inv.id} className="bg-dark-700 rounded-lg border border-dark-600 px-3 py-2 flex items-center gap-2">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] font-mono text-primary-400">{inv.invoice_number}</span>
+                        <span className={`text-[10px] font-semibold capitalize ${statusColor[inv.status] || 'text-slate-400'}`}>{inv.status}</span>
+                      </div>
+                      <p className="text-[10px] text-slate-500 mt-0.5">{fmtD(inv.invoice_date)} · {inv.invoice_type === 'tax' ? 'GST' : 'Non-Tax'}</p>
+                    </div>
+                    <div className="text-right flex-shrink-0">
+                      <p className="text-[11px] font-bold text-slate-200">{fmtC(Number(inv.total_amount))}</p>
+                      {Number(inv.balance) > 0 && (
+                        <p className="text-[10px] text-red-400">Due: {fmtC(Number(inv.balance))}</p>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function ClientsTab({ companyId }) {
   const [clientModal,    setClientModal]    = useState(null)   // null | existing client obj
   const [stmtClient,     setStmtClient]     = useState(null)   // client obj for statement
+  const [detailClient,   setDetailClient]   = useState(null)   // client obj for detail panel
 
   const { data: clients = [], isLoading } = useQuery({
     queryKey: ['clients', companyId],
@@ -3715,47 +3915,53 @@ function ClientsTab({ companyId }) {
         const catColor    = CAT_COLOR[client.client_category] || 'slate'
 
         return (
-          <div key={client.id} className="bg-dark-700 rounded-xl border border-dark-600 p-4">
+          <div key={client.id} className="bg-dark-700 rounded-xl border border-dark-600 p-4 hover:border-primary-500/40 transition-colors">
             {/* Top row */}
             <div className="flex items-start gap-3">
-              <div className="w-9 h-9 rounded-full bg-primary-600/20 flex items-center justify-center text-sm font-bold text-primary-400 flex-shrink-0 mt-0.5">
-                {(client.display_name || client.business_name)?.[0]?.toUpperCase() || 'C'}
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-sm font-semibold text-slate-200">{client.display_name || client.business_name}</span>
-                  {client.client_category && <Badge label={client.client_category} color={catColor} />}
-                  {s?.credit_period_days && <Badge label={`${s.credit_period_days}d credit`} color="blue" />}
-                  {vCount > 0 && <Badge label={`${vCount} vehicle${vCount > 1 ? 's' : ''}`} color="green" />}
+              {/* Clickable area: avatar + info */}
+              <button
+                onClick={() => setDetailClient(client)}
+                className="flex items-start gap-3 flex-1 min-w-0 text-left group"
+              >
+                <div className="w-9 h-9 rounded-full bg-primary-600/20 flex items-center justify-center text-sm font-bold text-primary-400 flex-shrink-0 mt-0.5 group-hover:bg-primary-600/30 transition-colors">
+                  {(client.display_name || client.business_name)?.[0]?.toUpperCase() || 'C'}
                 </div>
-
-                {/* Contact row */}
-                <div className="flex items-center gap-3 mt-1 flex-wrap">
-                  {client.contact_person && (
-                    <span className="text-[11px] text-slate-400 flex items-center gap-1">
-                      👤 {client.contact_person}
-                    </span>
-                  )}
-                  {client.contact_phone && (
-                    <span className="text-[11px] text-slate-500 flex items-center gap-1">
-                      <Phone className="w-3 h-3" /> {client.contact_phone}
-                      {client.contact_phone2 && ` / ${client.contact_phone2}`}
-                    </span>
-                  )}
-                  {client.gstin && (
-                    <span className="text-[11px] font-mono text-slate-600">{client.gstin}</span>
-                  )}
-                </div>
-
-                {/* Defaults row */}
-                {s && (
-                  <div className="flex items-center gap-3 mt-1 flex-wrap text-[11px] text-slate-500">
-                    {s.crusher_grades?.grade_name && <span>📦 Default: {s.crusher_grades.grade_name}</span>}
-                    {s.default_loading_pt && <span>📍 Load: {s.default_loading_pt}</span>}
-                    {s.default_unloading_pt && <span>🏁 Deliver: {s.default_unloading_pt}</span>}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm font-semibold text-slate-200 group-hover:text-primary-300 transition-colors">{client.display_name || client.business_name}</span>
+                    {client.client_category && <Badge label={client.client_category} color={catColor} />}
+                    {s?.credit_period_days && <Badge label={`${s.credit_period_days}d credit`} color="blue" />}
+                    {vCount > 0 && <Badge label={`${vCount} vehicle${vCount > 1 ? 's' : ''}`} color="green" />}
                   </div>
-                )}
-              </div>
+
+                  {/* Contact row */}
+                  <div className="flex items-center gap-3 mt-1 flex-wrap">
+                    {client.contact_person && (
+                      <span className="text-[11px] text-slate-400 flex items-center gap-1">
+                        👤 {client.contact_person}
+                      </span>
+                    )}
+                    {client.contact_phone && (
+                      <span className="text-[11px] text-slate-500 flex items-center gap-1">
+                        <Phone className="w-3 h-3" /> {client.contact_phone}
+                        {client.contact_phone2 && ` / ${client.contact_phone2}`}
+                      </span>
+                    )}
+                    {client.gstin && (
+                      <span className="text-[11px] font-mono text-slate-600">{client.gstin}</span>
+                    )}
+                  </div>
+
+                  {/* Defaults row */}
+                  {s && (
+                    <div className="flex items-center gap-3 mt-1 flex-wrap text-[11px] text-slate-500">
+                      {s.crusher_grades?.grade_name && <span>📦 Default: {s.crusher_grades.grade_name}</span>}
+                      {s.default_loading_pt && <span>📍 Load: {s.default_loading_pt}</span>}
+                      {s.default_unloading_pt && <span>🏁 Deliver: {s.default_unloading_pt}</span>}
+                    </div>
+                  )}
+                </div>
+              </button>
 
               {/* Action buttons */}
               <div className="flex-shrink-0 flex gap-1.5">
@@ -3808,6 +4014,18 @@ function ClientsTab({ companyId }) {
           companyId={companyId}
           client={stmtClient}
           onClose={() => setStmtClient(null)}
+        />
+      )}
+      {detailClient && (
+        <ClientDetailPanel
+          companyId={companyId}
+          client={detailClient}
+          settings={settingsMap[detailClient.id]}
+          outstanding={outstandingMap[detailClient.id] || 0}
+          advance={advanceMap[detailClient.id] || 0}
+          onEdit={() => { setClientModal(detailClient); setDetailClient(null) }}
+          onStatement={() => { setStmtClient(detailClient); setDetailClient(null) }}
+          onClose={() => setDetailClient(null)}
         />
       )}
     </div>
