@@ -204,14 +204,40 @@ function ItemsTab({ companyId, session }) {
   const [search, setSearch]         = useState('')
   const [filterCat, setFilterCat]   = useState('all')
   const [saving, setSaving]         = useState(false)
-  const blank = { item_code:'', item_name:'', category:'raw_material', sub_category:'', brand:'', unit:'nos', description:'', hsn_code:'', min_stock_level:'', reorder_qty:'', avg_unit_cost:'' }
+  const blank = { item_code:'', item_name:'', category:'raw_material', sub_category:'', brand:'', unit:'nos', description:'', hsn_code:'', min_stock_level:'', reorder_qty:'', avg_unit_cost:'', grade_id: null }
   const [form, setForm] = useState(blank)
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
 
-  const openCreate = () => {
+  // Fetch crusher grades for auto-fill
+  const { data: grades = [] } = useQuery({
+    queryKey: ['crusher-grades-inv', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('crusher_grades')
+        .select('id, grade_name, hsn_code, default_uom, default_rate, category')
+        .eq('company_id', companyId).eq('is_active', true).order('grade_name')
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+
+  const openCreate = async () => {
     setEditing(null)
-    setForm(blank)
+    // Pre-generate item code so user sees it immediately
+    const nextCode = await nextDocNumber(companyId, 'inventory_item').catch(() => '')
+    setForm({ ...blank, item_code: nextCode })
     setShowCreate(true)
+  }
+
+  // Auto-fill from a crusher grade
+  const fillFromGrade = (gradeId) => {
+    const g = grades.find(x => x.id === gradeId)
+    if (!g) return
+    setF('item_name',     g.grade_name   || '')
+    setF('hsn_code',      g.hsn_code     || '')
+    setF('unit',          g.default_uom  || 'tonnes')
+    setF('avg_unit_cost', g.default_rate ? String(g.default_rate) : '')
+    setF('category',      'finished_good')
+    setF('grade_id',      g.id)
   }
 
   const { data: items = [], isLoading } = useQuery({
@@ -250,6 +276,7 @@ function ItemsTab({ companyId, session }) {
     if (!form.item_name.trim()) return toast.error('Item name required')
     setSaving(true)
     try {
+      // item_code is pre-generated in openCreate; fall back to nextDocNumber if somehow empty
       const item_code = form.item_code?.trim() || (!editing ? await nextDocNumber(companyId, 'inventory_item').catch(() => null) : null)
       const payload = {
         company_id: companyId, item_code,
@@ -260,6 +287,7 @@ function ItemsTab({ companyId, session }) {
         min_stock_level: parseFloat(form.min_stock_level) || 0,
         reorder_qty: parseFloat(form.reorder_qty) || 0,
         avg_unit_cost: parseFloat(form.avg_unit_cost) || 0,
+        grade_id: form.grade_id || null,
         updated_at: new Date().toISOString(),
       }
       if (editing) {
@@ -352,8 +380,30 @@ function ItemsTab({ companyId, session }) {
       {showCreate && (
         <Modal title={editing ? 'Edit Item' : 'Add Item to Catalog'} onClose={() => { setShowCreate(false); setEditing(null) }} wide
           footer={<><button onClick={() => { setShowCreate(false); setEditing(null) }} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : editing ? 'Save Changes' : 'Add Item'}</button></>}>
+
+          {/* Material Master quick-fill — only on create */}
+          {!editing && grades.length > 0 && (
+            <div className="bg-primary-500/10 border border-primary-500/30 rounded-xl p-3 mb-1">
+              <p className="text-[11px] font-semibold text-primary-400 mb-1.5">⚡ Pull from Material Master</p>
+              <select className={inp()} defaultValue="" onChange={e => { if (e.target.value) fillFromGrade(e.target.value) }}>
+                <option value="">-- Select a crusher grade to auto-fill --</option>
+                {grades.map(g => (
+                  <option key={g.id} value={g.id}>
+                    {g.grade_name}{g.hsn_code ? ` · HSN ${g.hsn_code}` : ''}{g.default_rate ? ` · ₹${g.default_rate}/${g.default_uom || 'T'}` : ''}
+                  </option>
+                ))}
+              </select>
+              {form.grade_id && (
+                <p className="text-[10px] text-primary-400/70 mt-1">Fields auto-filled from material master — edit below if needed</p>
+              )}
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Item Code"><input className={inp()} value={form.item_code} onChange={e => setF('item_code', e.target.value)} placeholder="ITM-001" /></Field>
+            <Field label="Item Code (auto-generated)">
+              <input className={inp()} value={form.item_code} onChange={e => setF('item_code', e.target.value)}
+                placeholder="Auto" />
+            </Field>
             <Field label="Category *">
               <select className={inp()} value={form.category} onChange={e => setF('category', e.target.value)}>
                 {CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
@@ -367,10 +417,10 @@ function ItemsTab({ companyId, session }) {
                 {UNITS.map(u => <option key={u}>{u}</option>)}
               </select>
             </Field>
-            <Field label="HSN Code"><input className={inp()} value={form.hsn_code} onChange={e => setF('hsn_code', e.target.value)} /></Field>
+            <Field label="HSN Code"><input className={inp()} value={form.hsn_code} onChange={e => setF('hsn_code', e.target.value)} placeholder="Auto-filled from material master" /></Field>
             <Field label="Min Stock Level"><input type="number" className={inp()} value={form.min_stock_level} onChange={e => setF('min_stock_level', e.target.value)} placeholder="0" step="0.001" /></Field>
             <Field label="Reorder Qty"><input type="number" className={inp()} value={form.reorder_qty} onChange={e => setF('reorder_qty', e.target.value)} placeholder="0" step="0.001" /></Field>
-            <Field label="Avg Unit Cost (₹)"><input type="number" className={inp()} value={form.avg_unit_cost} onChange={e => setF('avg_unit_cost', e.target.value)} placeholder="0" step="0.01" /></Field>
+            <Field label="Avg Unit Cost (₹)"><input type="number" className={inp()} value={form.avg_unit_cost} onChange={e => setF('avg_unit_cost', e.target.value)} placeholder="Auto-filled from material master" step="0.01" /></Field>
             <div className="col-span-2"><Field label="Description"><textarea className={inp()} rows={2} value={form.description} onChange={e => setF('description', e.target.value)} /></Field></div>
           </div>
         </Modal>
