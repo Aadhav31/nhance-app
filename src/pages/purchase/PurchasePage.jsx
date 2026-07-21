@@ -1493,17 +1493,17 @@ function BillsTab({ companyId, session }) {
       <div className="flex-1 overflow-y-auto px-4 pb-4 pt-3">
         {/* Pending stock receipts — each gets its own Create Bill button */}
         {pendingStockBills.length > 0 && (
-          <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 mb-3">
+          <div className="bg-amber-50 border border-amber-300 rounded-xl p-3 mb-3">
             <div className="flex items-center gap-2 mb-2">
               <span className="text-base leading-none">🚛</span>
-              <p className="text-xs font-bold text-amber-400">{pendingStockBills.length} Stock Receipt{pendingStockBills.length > 1 ? 's' : ''} Awaiting Bill</p>
+              <p className="text-xs font-bold text-amber-800">{pendingStockBills.length} Stock Receipt{pendingStockBills.length > 1 ? 's' : ''} Awaiting Bill</p>
             </div>
             <div className="space-y-1.5">
               {pendingStockBills.map(r => (
-                <div key={r.id} className="flex items-center justify-between bg-amber-500/5 border border-amber-700/30 rounded-lg px-3 py-2 gap-3">
+                <div key={r.id} className="flex items-center justify-between bg-white border border-amber-200 rounded-lg px-3 py-2 gap-3">
                   <div className="flex-1 min-w-0">
-                    <p className="text-xs font-semibold text-amber-300">{r.txn_number} · {r.inventory_items?.item_name}</p>
-                    <p className="text-[11px] text-amber-300/60 mt-0.5">
+                    <p className="text-xs font-semibold text-slate-800">{r.txn_number} · {r.inventory_items?.item_name}</p>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
                       {r.quantity} {r.inventory_items?.unit}
                       {r.vehicle_number ? ` · 🚛 ${r.vehicle_number}` : ''}
                       {r.supplier_name ? ` · 👤 ${r.supplier_name}` : ''}
@@ -1513,7 +1513,7 @@ function BillsTab({ companyId, session }) {
                   </div>
                   <button
                     onClick={() => openCreateForReceipt(r)}
-                    className="shrink-0 text-[11px] font-bold px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-600/40 rounded-lg transition-colors whitespace-nowrap">
+                    className="shrink-0 text-[11px] font-bold px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white border border-amber-600 rounded-lg transition-colors whitespace-nowrap">
                     Create Bill →
                   </button>
                 </div>
