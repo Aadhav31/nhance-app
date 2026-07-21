@@ -6,7 +6,7 @@ import {
   Users, Truck, MapPin, Package, FileText, Plus, Edit2, Trash2, X, Save,
   Loader2, CheckCircle, Settings2, ChevronRight, AlertCircle, ToggleLeft,
   ToggleRight, Phone, Mail, CreditCard, Calendar, Building2, Hash,
-  Eye, Download, Ban, Printer, ClipboardCheck, RefreshCw, ArrowLeftRight
+  Eye, Download, Ban, Printer, ClipboardCheck, RefreshCw, ArrowLeftRight, BarChart2
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import jsPDF from 'jspdf'
@@ -16,6 +16,7 @@ import autoTable from 'jspdf-autotable'
 const TABS = [
   { key: 'tokens',     label: 'Tokens',             icon: Printer      },
   { key: 'invoices',   label: 'Invoices',            icon: FileText     },
+  { key: 'aging',      label: 'Outstanding',         icon: BarChart2    },
   { key: 'clients',    label: 'Clients',             icon: Users        },
   { key: 'vehicles',   label: 'Vehicles',            icon: Truck        },
   { key: 'locations',  label: 'Loading Points',      icon: MapPin       },
@@ -4140,6 +4141,211 @@ function MaterialsTab({ companyId }) {
   )
 }
 
+// ── Outstanding & Aging Tab ───────────────────────────────────────────────────
+const AGING_BUCKETS = [
+  { key: '0-15',  label: '0–15d',  color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
+  { key: '16-30', label: '16–30d', color: 'text-yellow-400',  bg: 'bg-yellow-500/10'  },
+  { key: '31-60', label: '31–60d', color: 'text-orange-400',  bg: 'bg-orange-500/10'  },
+  { key: '60+',   label: '60+d',   color: 'text-red-400',     bg: 'bg-red-500/10'     },
+]
+
+function ageBucket(invDateStr) {
+  const days = Math.floor((Date.now() - new Date(invDateStr)) / 86400000)
+  if (days <= 15) return '0-15'
+  if (days <= 30) return '16-30'
+  if (days <= 60) return '31-60'
+  return '60+'
+}
+
+function AgingTab({ companyId }) {
+  const [expanded, setExpanded] = useState({})
+  const toggle = (key) => setExpanded(p => ({ ...p, [key]: !p[key] }))
+
+  const { data: openInvoices = [], isLoading } = useQuery({
+    queryKey: ['crusher-aging', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('crusher_invoices')
+        .select('id, invoice_number, invoice_date, invoice_type, client_id, client_name, total_amount, balance, credit_due_date, status')
+        .eq('company_id', companyId)
+        .eq('payment_type', 'credit')
+        .neq('status', 'void')
+        .gt('balance', 0)
+        .order('invoice_date', { ascending: true })
+      return data || []
+    },
+  })
+
+  const { data: creditLimits = {} } = useQuery({
+    queryKey: ['crusher-credit-limits-aging', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('crusher_client_settings')
+        .select('client_id, credit_limit')
+        .eq('company_id', companyId)
+        .gt('credit_limit', 0)
+      const map = {}
+      ;(data || []).forEach(r => { map[r.client_id] = Number(r.credit_limit) })
+      return map
+    },
+  })
+
+  // Group invoices by client
+  const byClient = {}
+  openInvoices.forEach(inv => {
+    const key = inv.client_id || `walkin_${inv.client_name}`
+    if (!byClient[key]) {
+      byClient[key] = {
+        client_id:   inv.client_id,
+        client_name: inv.client_name || 'Walk-in',
+        invoices:    [],
+        total:       0,
+        buckets:     { '0-15': 0, '16-30': 0, '31-60': 0, '60+': 0 },
+      }
+    }
+    const bal = Number(inv.balance)
+    byClient[key].invoices.push(inv)
+    byClient[key].total += bal
+    byClient[key].buckets[ageBucket(inv.invoice_date)] += bal
+  })
+
+  const clients = Object.values(byClient).sort((a, b) => b.total - a.total)
+  const grandTotal = clients.reduce((s, c) => s + c.total, 0)
+  const grandBuckets = { '0-15': 0, '16-30': 0, '31-60': 0, '60+': 0 }
+  clients.forEach(c => AGING_BUCKETS.forEach(b => { grandBuckets[b.key] += c.buckets[b.key] }))
+
+  const fmtC = n => n > 0 ? `₹${Number(n).toLocaleString('en-IN', { minimumFractionDigits: 0 })}` : '—'
+  const fmtD = s => s ? new Date(s).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' }) : '—'
+
+  if (isLoading) return (
+    <div className="text-center py-16 text-slate-500 text-sm">
+      <Loader2 className="w-5 h-5 animate-spin mx-auto mb-2" />Loading outstanding…
+    </div>
+  )
+
+  if (clients.length === 0) return (
+    <div className="text-center py-16 space-y-3">
+      <CheckCircle className="w-10 h-10 text-emerald-500 mx-auto" />
+      <p className="text-sm text-slate-400">No outstanding credit invoices — all clear!</p>
+    </div>
+  )
+
+  return (
+    <div className="space-y-4">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-sm font-semibold text-slate-200">Outstanding & Aging</h3>
+          <p className="text-xs text-slate-500">
+            {clients.length} client{clients.length !== 1 ? 's' : ''} · {openInvoices.length} open invoice{openInvoices.length !== 1 ? 's' : ''}
+          </p>
+        </div>
+        <div className="text-right">
+          <p className="text-[10px] text-slate-500 uppercase tracking-wide">Total Outstanding</p>
+          <p className="text-lg font-bold text-red-400">₹{grandTotal.toLocaleString('en-IN')}</p>
+        </div>
+      </div>
+
+      {/* Bucket summary cards */}
+      <div className="grid grid-cols-4 gap-2">
+        {AGING_BUCKETS.map(b => (
+          <div key={b.key} className={`rounded-xl p-3 border border-dark-600 text-center ${b.bg}`}>
+            <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">{b.label}</p>
+            <p className={`text-sm font-bold ${b.color}`}>{fmtC(grandBuckets[b.key])}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Client rows */}
+      <div className="space-y-2">
+        {clients.map(c => {
+          const key = c.client_id || c.client_name
+          const isOpen = !!expanded[key]
+          const limit = c.client_id ? (creditLimits[c.client_id] || 0) : 0
+          const overLimit = limit > 0 && c.total > limit
+
+          return (
+            <div key={key} className="bg-dark-700 rounded-xl border border-dark-600 overflow-hidden">
+              {/* Client header — click to expand */}
+              <button
+                onClick={() => toggle(key)}
+                className="w-full text-left p-4 flex items-center gap-3 hover:bg-dark-600/40 transition-all"
+              >
+                <ChevronRight className={`w-4 h-4 text-slate-500 flex-shrink-0 transition-transform duration-200 ${isOpen ? 'rotate-90' : ''}`} />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap mb-1.5">
+                    <span className="text-sm font-semibold text-slate-100">{c.client_name}</span>
+                    {overLimit && (
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-red-500/15 text-red-400 border border-red-500/30">
+                        <AlertCircle className="w-2.5 h-2.5" /> Over Limit
+                      </span>
+                    )}
+                    <span className="text-[11px] text-slate-500">{c.invoices.length} invoice{c.invoices.length !== 1 ? 's' : ''}</span>
+                  </div>
+                  {/* Per-bucket breakdown inline */}
+                  <div className="flex gap-3 flex-wrap">
+                    {AGING_BUCKETS.map(b => c.buckets[b.key] > 0 && (
+                      <span key={b.key} className={`text-[11px] font-mono ${b.color}`}>
+                        {b.label}: {fmtC(c.buckets[b.key])}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+                <div className="text-right flex-shrink-0 ml-4">
+                  <p className="text-sm font-bold text-red-400">{fmtC(c.total)}</p>
+                  {limit > 0 && (
+                    <p className="text-[10px] text-slate-500 mt-0.5">Limit: {fmtC(limit)}</p>
+                  )}
+                </div>
+              </button>
+
+              {/* Expanded — per-invoice breakdown */}
+              {isOpen && (
+                <div className="border-t border-dark-600">
+                  {/* Column headers */}
+                  <div className="px-4 py-1.5 grid grid-cols-[1fr_72px_72px_48px_80px] gap-2 text-[10px] font-semibold text-slate-500 uppercase tracking-wide">
+                    <span>Invoice</span>
+                    <span className="text-right">Inv. Date</span>
+                    <span className="text-right">Due Date</span>
+                    <span className="text-right">Age</span>
+                    <span className="text-right">Balance</span>
+                  </div>
+                  {c.invoices.map(inv => {
+                    const days      = Math.floor((Date.now() - new Date(inv.invoice_date)) / 86400000)
+                    const bucket    = ageBucket(inv.invoice_date)
+                    const bColor    = AGING_BUCKETS.find(b => b.key === bucket)?.color || 'text-slate-400'
+                    const isPastDue = inv.credit_due_date && new Date(inv.credit_due_date) < new Date()
+                    return (
+                      <div key={inv.id}
+                        className="px-4 py-2.5 grid grid-cols-[1fr_72px_72px_48px_80px] gap-2 items-center border-t border-dark-600/50 hover:bg-dark-600/20 transition-all">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-xs font-mono text-primary-400 truncate">{inv.invoice_number}</span>
+                          <span className={`text-[10px] px-1 py-0.5 rounded border ${inv.invoice_type === 'tax' ? 'bg-blue-500/10 border-blue-500/30 text-blue-400' : 'bg-dark-600 border-dark-500 text-slate-500'}`}>
+                            {inv.invoice_type === 'tax' ? 'GST' : 'Non-Tax'}
+                          </span>
+                        </div>
+                        <span className="text-right text-[11px] text-slate-400">{fmtD(inv.invoice_date)}</span>
+                        <span className={`text-right text-[11px] ${isPastDue ? 'text-red-400 font-semibold' : 'text-slate-400'}`}>
+                          {fmtD(inv.credit_due_date)}
+                        </span>
+                        <span className={`text-right text-[11px] font-mono font-semibold ${bColor}`}>{days}d</span>
+                        <span className="text-right text-[11px] font-mono font-bold text-slate-100">{fmtC(Number(inv.balance))}</span>
+                      </div>
+                    )
+                  })}
+                  {/* Client subtotal */}
+                  <div className="px-4 py-2 border-t border-dark-600 flex justify-between items-center">
+                    <span className="text-[11px] text-slate-500">Client total</span>
+                    <span className="text-sm font-bold text-red-400">{fmtC(c.total)}</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
 export default function CrusherSalesPage() {
   const { companyId } = useAuth()
@@ -4177,6 +4383,7 @@ export default function CrusherSalesPage() {
       <div className="flex-1 overflow-y-auto p-6">
         {tab === 'tokens'    && <TokensTab     companyId={companyId} />}
         {tab === 'invoices'  && <InvoicesTab   companyId={companyId} />}
+        {tab === 'aging'     && <AgingTab      companyId={companyId} />}
         {tab === 'clients'   && <ClientsTab    companyId={companyId} />}
         {tab === 'vehicles'  && <VehiclesTab   companyId={companyId} />}
         {tab === 'locations' && <LocationsTab  companyId={companyId} />}
