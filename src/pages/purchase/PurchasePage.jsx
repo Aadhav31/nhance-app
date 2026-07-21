@@ -1269,34 +1269,43 @@ function BillsTab({ companyId, session }) {
     },
     enabled: !!companyId,
   })
-  // Pending stock receipts (received but bill not yet created)
+  // Pending stock receipts waiting for a bill
+  // Deliberately minimal query — only columns that are guaranteed in the DB schema
+  // (requires_bill + bill_id were added by stock_bill_link.sql which ran before
+  // any GRN records were created). Extended columns (action_taken, supplier_name etc.)
+  // are NOT in the WHERE to avoid PostgREST schema-cache failures.
   const { data: pendingStockBills = [] } = useQuery({
     queryKey: ['pending-stock-bills', companyId],
     queryFn: async () => {
-      // Step 1: fetch with all extended columns
-      const { data, error } = await supabase.from('stock_transactions')
-        .select('id, txn_number, txn_date, quantity, unit, unit_cost, total_cost, vehicle_number, vendor_id, supplier_name, delivery_mode, inventory_items(item_name, unit), stores(store_name)')
+      const { data, error } = await supabase
+        .from('stock_transactions')
+        .select('id, txn_number, txn_date, quantity, unit_cost, total_cost, vendor_id, vehicle_number, supplier_name, delivery_mode, inventory_items(item_name, unit), stores(store_name)')
         .eq('company_id', companyId)
+        .eq('txn_type', 'in')
         .eq('requires_bill', true)
         .is('bill_id', null)
-        .not('action_taken', 'eq', true)
         .order('txn_date', { ascending: false })
+        .limit(100)
+
       if (!error) return data || []
 
-      // Step 2: if column-missing error, retry with minimal select
-      if (error.code === '42703' || error.message?.toLowerCase().includes('column')) {
-        const { data: d2 } = await supabase.from('stock_transactions')
-          .select('id, txn_number, txn_date, quantity, unit_cost, total_cost, vendor_id, inventory_items(item_name, unit), stores(store_name)')
-          .eq('company_id', companyId)
-          .eq('requires_bill', true)
-          .is('bill_id', null)
-          .order('txn_date', { ascending: false })
-        return d2 || []
-      }
-      console.error('pendingStockBills query error:', error)
-      return []
+      // Extended columns not yet in PostgREST cache — retry without them
+      console.error('[pendingStockBills] retrying minimal:', error.message)
+      const { data: d2, error: e2 } = await supabase
+        .from('stock_transactions')
+        .select('id, txn_number, txn_date, quantity, unit_cost, total_cost, vendor_id, inventory_items(item_name, unit), stores(store_name)')
+        .eq('company_id', companyId)
+        .eq('txn_type', 'in')
+        .eq('requires_bill', true)
+        .is('bill_id', null)
+        .order('txn_date', { ascending: false })
+        .limit(100)
+
+      if (e2) console.error('[pendingStockBills] fallback also failed:', e2.message)
+      return d2 || []
     },
     enabled: !!companyId,
+    retry: 1,
   })
 
   // Unlinked payments for "Link Payment" modal — fetched on demand
