@@ -481,22 +481,56 @@ function StoresTab({ companyId, session }) {
 
 // ── SHARED: Transaction form helper hooks ─────────────────────────────────────
 function useInventoryData(companyId) {
-  const { data: items = [] } = useQuery({
+  const { data: invItems = [] } = useQuery({
     queryKey: ['inv_items_active', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('inventory_items').select('id, item_name, item_code, unit, avg_unit_cost').eq('company_id', companyId).eq('is_active', true).order('item_name')
+      const { data } = await supabase.from('inventory_items').select('id, item_name, item_code, unit, avg_unit_cost, grade_id').eq('company_id', companyId).eq('is_active', true).order('item_name')
       return data || []
     },
     enabled: !!companyId,
   })
-  const { data: stores = [] } = useQuery({
+  // Crusher grades from material master — shown in item picker for crusher industry
+  const { data: grades = [] } = useQuery({
+    queryKey: ['crusher-grades-inv', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('crusher_grades').select('id, grade_name, default_uom, hsn_code, default_rate').eq('company_id', companyId).eq('is_active', true).order('grade_name')
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+
+  // Merge: existing inventory items + grades not yet in inventory
+  const gradeItemIds = new Set(invItems.filter(i => i.grade_id).map(i => i.grade_id))
+  const gradeItems = grades
+    .filter(g => !gradeItemIds.has(g.id))
+    .map(g => ({ id: `grade:${g.id}`, item_name: g.grade_name, item_code: null, unit: g.default_uom || 'tonnes', avg_unit_cost: g.default_rate || 0, _isGrade: true, _grade: g }))
+  const items = [...invItems, ...gradeItems]
+
+  const { data: invStores = [] } = useQuery({
     queryKey: ['stores', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('stores').select('id, store_name').eq('company_id', companyId).eq('is_active', true).order('store_name')
+      const { data } = await supabase.from('stores').select('id, store_name, loading_point_id').eq('company_id', companyId).eq('is_active', true).order('store_name')
       return data || []
     },
     enabled: !!companyId,
   })
+  // Loading points act as stores in crusher operations
+  const { data: loadingPoints = [] } = useQuery({
+    queryKey: ['loading-pts-inv', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('crusher_loading_points').select('id, point_name, point_type').eq('company_id', companyId).eq('is_active', true).order('sort_order')
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+
+  // Merge: existing stores + loading points not yet mapped to a store
+  const mappedLpIds = new Set(invStores.filter(s => s.loading_point_id).map(s => s.loading_point_id))
+  const lpStores = loadingPoints
+    .filter(lp => !mappedLpIds.has(lp.id))
+    .map(lp => ({ id: `lp:${lp.id}`, store_name: lp.point_name, _isLP: true, _lp: lp }))
+  const stores = [...invStores, ...lpStores]
+
   const { data: projects = [] } = useQuery({
     queryKey: ['projects_list', companyId],
     queryFn: async () => {
@@ -521,7 +555,51 @@ function useInventoryData(companyId) {
     },
     enabled: !!companyId,
   })
-  return { items, stores, projects, equipment, vendors }
+  return { items, stores, projects, equipment, vendors, grades, loadingPoints: loadingPoints }
+}
+
+// Resolve virtual item_id (grade:xxx) → real inventory_items.id, creating if needed
+async function resolveItemId(companyId, itemId, items, userId) {
+  if (!itemId.startsWith('grade:')) return itemId
+  const gradeId = itemId.replace('grade:', '')
+  const item = items.find(i => i.id === itemId)
+  if (!item) throw new Error('Grade not found')
+  const g = item._grade
+  // Auto item_code: look at existing codes like GRD-001
+  const { data: existing } = await supabase.from('inventory_items')
+    .select('item_code').eq('company_id', companyId).like('item_code', 'GRD-%').order('item_code', { ascending: false }).limit(1)
+  let seq = 1
+  if (existing?.length) {
+    const parsed = parseInt(existing[0].item_code.replace('GRD-', ''), 10)
+    if (!isNaN(parsed)) seq = parsed + 1
+  }
+  const item_code = `GRD-${String(seq).padStart(3, '0')}`
+  const { data: created, error } = await supabase.from('inventory_items').insert({
+    company_id: companyId, item_code, item_name: g.grade_name,
+    category: 'finished_good', unit: g.default_uom || 'tonnes',
+    hsn_code: g.hsn_code || null, avg_unit_cost: g.default_rate || 0,
+    grade_id: gradeId, is_active: true, created_by: userId,
+  }).select('id').single()
+  if (error) throw error
+  return created.id
+}
+
+// Resolve virtual store_id (lp:xxx) → real stores.id, creating if needed
+async function resolveStoreId(companyId, storeId, stores) {
+  if (!storeId.startsWith('lp:')) return storeId
+  const lpId = storeId.replace('lp:', '')
+  const s = stores.find(x => x.id === storeId)
+  if (!s) throw new Error('Loading point not found')
+  // Check if a store already exists for this loading point (race condition guard)
+  const { data: existing } = await supabase.from('stores').select('id').eq('company_id', companyId).eq('loading_point_id', lpId).maybeSingle()
+  if (existing) return existing.id
+  const { data: created, error } = await supabase.from('stores').insert({
+    company_id: companyId, store_name: s.store_name,
+    store_code: null, location: s.store_name,
+    loading_point_id: lpId, is_active: true,
+  }).select('id').single()
+  if (error) throw error
+  return created.id
 }
 
 // ── STOCK IN TAB ──────────────────────────────────────────────────────────────
@@ -546,14 +624,17 @@ function StockInTab({ companyId, session }) {
 
   const save = async () => {
     if (!form.item_id)  return toast.error('Select an item')
-    if (!form.store_id) return toast.error('Select a store')
+    if (!form.store_id) return toast.error('Select a store / loading point')
     if (!form.quantity || parseFloat(form.quantity) <= 0) return toast.error('Enter valid quantity')
     setSaving(true)
     try {
+      // Resolve virtual IDs (grade:xxx → real inventory_item, lp:xxx → real store)
+      const realItemId  = await resolveItemId(companyId, form.item_id, items, session.user.id)
+      const realStoreId = await resolveStoreId(companyId, form.store_id, stores)
       const txnNum = await nextDocNumber(companyId, 'stock_in').catch(() => `GRN-${Date.now()}`)
       const { error } = await supabase.from('stock_transactions').insert({
         company_id: companyId, txn_number: txnNum, txn_type: 'in',
-        txn_date: form.txn_date, item_id: form.item_id, store_id: form.store_id,
+        txn_date: form.txn_date, item_id: realItemId, store_id: realStoreId,
         quantity: parseFloat(form.quantity), unit_cost: parseFloat(form.unit_cost) || 0,
         total_cost: total, vendor_id: form.vendor_id || null, po_id: form.po_id || null,
         notes: form.notes || null, created_by: session.user.id,
@@ -564,6 +645,8 @@ function StockInTab({ companyId, session }) {
       setForm({ item_id:'', store_id:'', quantity:'', unit_cost:'', txn_date: todayStr(), vendor_id:'', po_id:'', notes:'' })
       qc.invalidateQueries(['stxn_in', companyId])
       qc.invalidateQueries(['inv_stock', companyId])
+      qc.invalidateQueries(['inv_items_active', companyId])
+      qc.invalidateQueries(['stores', companyId])
     } catch (e) { toast.error(e.message) } finally { setSaving(false) }
   }
 
@@ -571,7 +654,7 @@ function StockInTab({ companyId, session }) {
   const onItemChange = (id) => {
     setF('item_id', id)
     const item = items.find(i => i.id === id)
-    if (item?.avg_unit_cost) setF('unit_cost', item.avg_unit_cost)
+    if (item?.avg_unit_cost) setF('unit_cost', String(item.avg_unit_cost))
   }
 
   return (
@@ -604,7 +687,13 @@ function StockInTab({ companyId, session }) {
         </div>}
       </div>
 
-      {showCreate && (
+      {showCreate && (() => {
+        const invItemsList   = items.filter(i => !i._isGrade)
+        const gradeItemsList = items.filter(i =>  i._isGrade)
+        const storesList     = stores.filter(s => !s._isLP)
+        const lpList         = stores.filter(s =>  s._isLP)
+        const selectedItem   = items.find(i => i.id === form.item_id)
+        return (
         <Modal title="Receive Stock" onClose={() => setShowCreate(false)} wide
           footer={<><button onClick={() => setShowCreate(false)} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Confirm Receipt'}</button></>}>
           <div className="grid grid-cols-2 gap-3">
@@ -612,14 +701,37 @@ function StockInTab({ companyId, session }) {
               <Field label="Item *">
                 <select className={inp()} value={form.item_id} onChange={e => onItemChange(e.target.value)}>
                   <option value="">-- Select item --</option>
-                  {items.map(i => <option key={i.id} value={i.id}>{i.item_name}{i.item_code ? ` (${i.item_code})` : ''}</option>)}
+                  {gradeItemsList.length > 0 && (
+                    <optgroup label="── Material Master (Crusher Grades) ──">
+                      {gradeItemsList.map(i => <option key={i.id} value={i.id}>{i.item_name} · {i.unit} · auto item code</option>)}
+                    </optgroup>
+                  )}
+                  {invItemsList.length > 0 && (
+                    <optgroup label="── Inventory Items ──">
+                      {invItemsList.map(i => <option key={i.id} value={i.id}>{i.item_name}{i.item_code ? ` (${i.item_code})` : ''}</option>)}
+                    </optgroup>
+                  )}
                 </select>
               </Field>
+              {selectedItem?._isGrade && (
+                <p className="text-[11px] text-amber-400/80 mt-1 bg-amber-500/10 rounded px-2 py-1">
+                  ⚡ New item code will be auto-generated (GRD-xxx) and added to inventory on save
+                </p>
+              )}
             </div>
-            <Field label="Store / Location *">
+            <Field label="Store / Loading Point *">
               <select className={inp()} value={form.store_id} onChange={e => setF('store_id', e.target.value)}>
-                <option value="">-- Select store --</option>
-                {stores.map(s => <option key={s.id} value={s.id}>{s.store_name}</option>)}
+                <option value="">-- Select location --</option>
+                {lpList.length > 0 && (
+                  <optgroup label="── Loading Points (Crusher) ──">
+                    {lpList.map(s => <option key={s.id} value={s.id}>📍 {s.store_name}</option>)}
+                  </optgroup>
+                )}
+                {storesList.length > 0 && (
+                  <optgroup label="── Stores / Warehouses ──">
+                    {storesList.map(s => <option key={s.id} value={s.id}>{s.store_name}</option>)}
+                  </optgroup>
+                )}
               </select>
             </Field>
             <Field label="Date"><input type="date" className={inp()} value={form.txn_date} onChange={e => setF('txn_date', e.target.value)} /></Field>
@@ -635,7 +747,8 @@ function StockInTab({ companyId, session }) {
           </div>
           {total > 0 && <div className="bg-dark-700 rounded-xl p-3 flex justify-between items-center"><span className="text-sm text-slate-400">Total Cost</span><span className="text-base font-bold text-primary-400">{fmtINR(total)}</span></div>}
         </Modal>
-      )}
+        )
+      })()}
     </div>
   )
 }
@@ -721,7 +834,12 @@ function StockOutTab({ companyId, session }) {
         </div>}
       </div>
 
-      {showCreate && (
+      {showCreate && (() => {
+        const invItemsList   = items.filter(i => !i._isGrade)
+        const gradeItemsList = items.filter(i =>  i._isGrade)
+        const storesList     = stores.filter(s => !s._isLP)
+        const lpList         = stores.filter(s =>  s._isLP)
+        return (
         <Modal title="Issue Stock" onClose={() => setShowCreate(false)} wide
           footer={<><button onClick={() => setShowCreate(false)} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Issue Stock'}</button></>}>
           <div className="grid grid-cols-2 gap-3">
@@ -729,14 +847,16 @@ function StockOutTab({ companyId, session }) {
               <Field label="Item *">
                 <select className={inp()} value={form.item_id} onChange={e => setF('item_id', e.target.value)}>
                   <option value="">-- Select item --</option>
-                  {items.map(i => <option key={i.id} value={i.id}>{i.item_name}{i.item_code ? ` (${i.item_code})` : ''}</option>)}
+                  {gradeItemsList.length > 0 && <optgroup label="── Material Master (Crusher Grades) ──">{gradeItemsList.map(i => <option key={i.id} value={i.id}>{i.item_name} · {i.unit}</option>)}</optgroup>}
+                  {invItemsList.length > 0 && <optgroup label="── Inventory Items ──">{invItemsList.map(i => <option key={i.id} value={i.id}>{i.item_name}{i.item_code ? ` (${i.item_code})` : ''}</option>)}</optgroup>}
                 </select>
               </Field>
             </div>
-            <Field label="From Store *">
+            <Field label="From Store / Loading Point *">
               <select className={inp()} value={form.store_id} onChange={e => setF('store_id', e.target.value)}>
-                <option value="">-- Select store --</option>
-                {stores.map(s => <option key={s.id} value={s.id}>{s.store_name}</option>)}
+                <option value="">-- Select location --</option>
+                {lpList.length > 0 && <optgroup label="── Loading Points (Crusher) ──">{lpList.map(s => <option key={s.id} value={s.id}>📍 {s.store_name}</option>)}</optgroup>}
+                {storesList.length > 0 && <optgroup label="── Stores / Warehouses ──">{storesList.map(s => <option key={s.id} value={s.id}>{s.store_name}</option>)}</optgroup>}
               </select>
             </Field>
             <Field label="Date"><input type="date" className={inp()} value={form.txn_date} onChange={e => setF('txn_date', e.target.value)} /></Field>
@@ -761,7 +881,8 @@ function StockOutTab({ companyId, session }) {
             <div className="col-span-2"><Field label="Notes"><input className={inp()} value={form.notes} onChange={e => setF('notes', e.target.value)} /></Field></div>
           </div>
         </Modal>
-      )}
+        )
+      })()}
     </div>
   )
 }
@@ -870,28 +991,40 @@ function TransfersTab({ companyId, session }) {
         </div>}
       </div>
 
-      {showCreate && (
+      {showCreate && (() => {
+        const invItemsList   = items.filter(i => !i._isGrade)
+        const gradeItemsList = items.filter(i =>  i._isGrade)
+        const storesList     = stores.filter(s => !s._isLP)
+        const lpList         = stores.filter(s =>  s._isLP)
+        const allStoreOpts = (exclude) => (
+          <>
+            {lpList.filter(s => s.id !== exclude).length > 0 && <optgroup label="── Loading Points (Crusher) ──">{lpList.filter(s => s.id !== exclude).map(s => <option key={s.id} value={s.id}>📍 {s.store_name}</option>)}</optgroup>}
+            {storesList.filter(s => s.id !== exclude).length > 0 && <optgroup label="── Stores / Warehouses ──">{storesList.filter(s => s.id !== exclude).map(s => <option key={s.id} value={s.id}>{s.store_name}</option>)}</optgroup>}
+          </>
+        )
+        return (
         <Modal title="Transfer Stock" onClose={() => setShowCreate(false)} wide
           footer={<><button onClick={() => setShowCreate(false)} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Transfer'}</button></>}>
           <div className="col-span-2">
             <Field label="Item *">
               <select className={inp()} value={form.item_id} onChange={e => setF('item_id', e.target.value)}>
                 <option value="">-- Select item --</option>
-                {items.map(i => <option key={i.id} value={i.id}>{i.item_name}</option>)}
+                {gradeItemsList.length > 0 && <optgroup label="── Material Master (Crusher Grades) ──">{gradeItemsList.map(i => <option key={i.id} value={i.id}>{i.item_name} · {i.unit}</option>)}</optgroup>}
+                {invItemsList.length > 0 && <optgroup label="── Inventory Items ──">{invItemsList.map(i => <option key={i.id} value={i.id}>{i.item_name}{i.item_code ? ` (${i.item_code})` : ''}</option>)}</optgroup>}
               </select>
             </Field>
           </div>
           <div className="grid grid-cols-2 gap-3 mt-3">
-            <Field label="From Store *">
+            <Field label="From Store / Loading Point *">
               <select className={inp()} value={form.store_id} onChange={e => setF('store_id', e.target.value)}>
                 <option value="">-- Source --</option>
-                {stores.map(s => <option key={s.id} value={s.id}>{s.store_name}</option>)}
+                {allStoreOpts(form.to_store_id)}
               </select>
             </Field>
-            <Field label="To Store *">
+            <Field label="To Store / Loading Point *">
               <select className={inp()} value={form.to_store_id} onChange={e => setF('to_store_id', e.target.value)}>
                 <option value="">-- Destination --</option>
-                {stores.filter(s => s.id !== form.store_id).map(s => <option key={s.id} value={s.id}>{s.store_name}</option>)}
+                {allStoreOpts(form.store_id)}
               </select>
             </Field>
             <Field label="Quantity *"><input type="number" className={inp()} value={form.quantity} onChange={e => setF('quantity', e.target.value)} step="0.001" placeholder="0" /></Field>
@@ -899,7 +1032,8 @@ function TransfersTab({ companyId, session }) {
             <div className="col-span-2"><Field label="Notes"><input className={inp()} value={form.notes} onChange={e => setF('notes', e.target.value)} /></Field></div>
           </div>
         </Modal>
-      )}
+        )
+      })()}
     </div>
   )
 }
@@ -973,7 +1107,12 @@ function AdjustmentsTab({ companyId, session }) {
         </div>}
       </div>
 
-      {showCreate && (
+      {showCreate && (() => {
+        const invItemsList   = items.filter(i => !i._isGrade)
+        const gradeItemsList = items.filter(i =>  i._isGrade)
+        const storesList     = stores.filter(s => !s._isLP)
+        const lpList         = stores.filter(s =>  s._isLP)
+        return (
         <Modal title="Stock Adjustment" onClose={() => setShowCreate(false)} wide
           footer={<><button onClick={() => setShowCreate(false)} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save Adjustment'}</button></>}>
           <div className="grid grid-cols-2 gap-3">
@@ -981,14 +1120,16 @@ function AdjustmentsTab({ companyId, session }) {
               <Field label="Item *">
                 <select className={inp()} value={form.item_id} onChange={e => setF('item_id', e.target.value)}>
                   <option value="">-- Select item --</option>
-                  {items.map(i => <option key={i.id} value={i.id}>{i.item_name}</option>)}
+                  {gradeItemsList.length > 0 && <optgroup label="── Material Master (Crusher Grades) ──">{gradeItemsList.map(i => <option key={i.id} value={i.id}>{i.item_name} · {i.unit}</option>)}</optgroup>}
+                  {invItemsList.length > 0 && <optgroup label="── Inventory Items ──">{invItemsList.map(i => <option key={i.id} value={i.id}>{i.item_name}{i.item_code ? ` (${i.item_code})` : ''}</option>)}</optgroup>}
                 </select>
               </Field>
             </div>
-            <Field label="Store *">
+            <Field label="Store / Loading Point *">
               <select className={inp()} value={form.store_id} onChange={e => setF('store_id', e.target.value)}>
-                <option value="">-- Select store --</option>
-                {stores.map(s => <option key={s.id} value={s.id}>{s.store_name}</option>)}
+                <option value="">-- Select location --</option>
+                {lpList.length > 0 && <optgroup label="── Loading Points (Crusher) ──">{lpList.map(s => <option key={s.id} value={s.id}>📍 {s.store_name}</option>)}</optgroup>}
+                {storesList.length > 0 && <optgroup label="── Stores / Warehouses ──">{storesList.map(s => <option key={s.id} value={s.id}>{s.store_name}</option>)}</optgroup>}
               </select>
             </Field>
             <Field label="Date"><input type="date" className={inp()} value={form.txn_date} onChange={e => setF('txn_date', e.target.value)} /></Field>
@@ -1014,7 +1155,8 @@ function AdjustmentsTab({ companyId, session }) {
             <div className="col-span-2"><Field label="Notes"><input className={inp()} value={form.notes} onChange={e => setF('notes', e.target.value)} /></Field></div>
           </div>
         </Modal>
-      )}
+        )
+      })()}
     </div>
   )
 }
