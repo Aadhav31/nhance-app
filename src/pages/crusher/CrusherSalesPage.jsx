@@ -1970,6 +1970,7 @@ function RecordPaymentModal({ companyId, invoice, onClose }) {
 
     setSaving(true)
     try {
+      // 1. Update invoice totals
       const { error } = await supabase.from('crusher_invoices').update({
         paid_amount:  newPaid,
         balance:      newBalance,
@@ -1977,8 +1978,21 @@ function RecordPaymentModal({ companyId, invoice, onClose }) {
         payment_mode: mode,
       }).eq('id', invoice.id)
       if (error) throw error
+
+      // 2. Insert payment record (for statement generation)
+      await supabase.from('crusher_invoice_payments').insert({
+        company_id:   companyId,
+        invoice_id:   invoice.id,
+        client_id:    invoice.client_id   || null,
+        client_name:  invoice.client_name || null,
+        amount:       paidNow,
+        payment_mode: mode,
+        payment_date: date,
+      })
+
       toast.success(`Rs. ${paidNow.toFixed(2)} recorded — invoice ${newStatus}`)
       qc.invalidateQueries({ queryKey: ['crusher-invoices', companyId] })
+      qc.invalidateQueries({ queryKey: ['crusher-aging', companyId] })
       onClose()
     } catch (e) {
       toast.error(e.message)
@@ -3170,8 +3184,292 @@ const CAT_COLOR = {
   Retail: 'slate', Wholesale: 'purple', Other: 'slate',
 }
 
+// ── Client Statement Modal ────────────────────────────────────────────────────
+function ClientStatementModal({ companyId, client, onClose }) {
+  const today  = new Date().toISOString().split('T')[0]
+  const firstOfMonth = today.slice(0, 8) + '01'
+
+  const [fromDate, setFromDate] = useState(firstOfMonth)
+  const [toDate,   setToDate]   = useState(today)
+  const [generated, setGenerated] = useState(false)
+  const [loading,   setLoading]   = useState(false)
+
+  // Statement data state
+  const [stmtData, setStmtData] = useState(null)
+
+  const generate = async () => {
+    setLoading(true)
+    try {
+      // 1. Opening balance: invoices created BEFORE fromDate (all time outstanding as of period start)
+      const { data: preInvoices } = await supabase.from('crusher_invoices')
+        .select('total_amount, paid_amount')
+        .eq('company_id', companyId).eq('client_id', client.id)
+        .neq('status', 'void').lt('invoice_date', fromDate)
+      const totalPreInvoiced = (preInvoices || []).reduce((s, i) => s + Number(i.total_amount || 0), 0)
+
+      const { data: prePayments } = await supabase.from('crusher_invoice_payments')
+        .select('amount').eq('company_id', companyId).eq('client_id', client.id)
+        .lt('payment_date', fromDate)
+      const totalPrePaid = (prePayments || []).reduce((s, p) => s + Number(p.amount || 0), 0)
+      const openingBalance = Math.max(0, totalPreInvoiced - totalPrePaid)
+
+      // 2. Invoices in period
+      const { data: periodInvoices } = await supabase.from('crusher_invoices')
+        .select('id, invoice_number, invoice_type, invoice_date, total_amount, balance, status, loading_point, unloading_point')
+        .eq('company_id', companyId).eq('client_id', client.id)
+        .neq('status', 'void')
+        .gte('invoice_date', fromDate).lte('invoice_date', toDate)
+        .order('invoice_date')
+
+      // 3. Payments in period
+      const { data: periodPayments } = await supabase.from('crusher_invoice_payments')
+        .select('id, invoice_id, amount, payment_mode, payment_date')
+        .eq('company_id', companyId).eq('client_id', client.id)
+        .gte('payment_date', fromDate).lte('payment_date', toDate)
+        .order('payment_date')
+
+      // 4. Advances available
+      const { data: advances } = await supabase.from('crusher_customer_advances')
+        .select('amount, remaining, source, created_at')
+        .eq('company_id', companyId).eq('client_id', client.id)
+        .gt('remaining', 0)
+
+      // Build chronological ledger lines
+      const lines = []
+      ;(periodInvoices || []).forEach(inv => {
+        lines.push({ date: inv.invoice_date, type: 'invoice', ref: inv.invoice_number, desc: `Invoice ${inv.invoice_number}${inv.unloading_point ? ` · ${inv.unloading_point}` : ''}`, debit: Number(inv.total_amount), credit: 0, raw: inv })
+      })
+      ;(periodPayments || []).forEach(pay => {
+        const inv = (periodInvoices || []).find(i => i.id === pay.invoice_id)
+        lines.push({ date: pay.payment_date, type: 'payment', ref: inv?.invoice_number || '', desc: `Payment received${inv ? ` · ${inv.invoice_number}` : ''} (${pay.payment_mode})`, debit: 0, credit: Number(pay.amount), raw: pay })
+      })
+      lines.sort((a, b) => a.date.localeCompare(b.date))
+
+      // Compute running balance
+      let running = openingBalance
+      lines.forEach(l => {
+        running += l.debit - l.credit
+        l.balance = Math.max(0, running)
+      })
+      const closingBalance = running
+
+      setStmtData({
+        openingBalance,
+        closingBalance,
+        lines,
+        advances: advances || [],
+        totalInvoiced: (periodInvoices || []).reduce((s, i) => s + Number(i.total_amount || 0), 0),
+        totalPaid:     (periodPayments  || []).reduce((s, p) => s + Number(p.amount    || 0), 0),
+      })
+      setGenerated(true)
+    } catch (e) {
+      toast.error('Error generating statement: ' + e.message)
+    } finally { setLoading(false) }
+  }
+
+  const handleDownloadPDF = async () => {
+    if (!stmtData) return
+    const { default: jsPDFModule } = await import('jspdf')
+    const { default: autoTableModule } = await import('jspdf-autotable')
+    const doc = new jsPDFModule({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+    const W = 210, M = 14
+
+    // Header
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(14)
+    doc.text('ACCOUNT STATEMENT', W / 2, 18, { align: 'center' })
+    doc.setFontSize(9)
+    doc.setFont('helvetica', 'normal')
+    doc.text(`Client: ${client.display_name || client.business_name}`, M, 27)
+    doc.text(`Period: ${fromDate} to ${toDate}`, M, 32)
+    doc.text(`Generated: ${today}`, W - M, 27, { align: 'right' })
+    if (client.gstin) doc.text(`GSTIN: ${client.gstin}`, W - M, 32, { align: 'right' })
+
+    doc.setDrawColor(200, 200, 200)
+    doc.line(M, 35, W - M, 35)
+
+    // Opening balance
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(9)
+    doc.text('Opening Balance (carried forward)', M, 41)
+    doc.text(`Rs. ${stmtData.openingBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, W - M, 41, { align: 'right' })
+
+    // Ledger table
+    const rows = stmtData.lines.map(l => [
+      l.date,
+      l.desc,
+      l.debit  > 0 ? `Rs. ${l.debit.toLocaleString('en-IN',  { minimumFractionDigits: 2 })}` : '',
+      l.credit > 0 ? `Rs. ${l.credit.toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : '',
+      `Rs. ${l.balance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`,
+    ])
+
+    autoTableModule(doc, {
+      startY: 45,
+      head: [['Date', 'Description', 'Invoiced (Dr)', 'Received (Cr)', 'Balance']],
+      body: rows,
+      styles:     { fontSize: 8, cellPadding: 2.5 },
+      headStyles: { fillColor: [30, 64, 175], textColor: 255, fontStyle: 'bold' },
+      columnStyles: {
+        0: { cellWidth: 24 },
+        1: { cellWidth: 72 },
+        2: { cellWidth: 28, halign: 'right' },
+        3: { cellWidth: 28, halign: 'right' },
+        4: { cellWidth: 28, halign: 'right' },
+      },
+      alternateRowStyles: { fillColor: [245, 247, 250] },
+    })
+
+    const finalY = doc.lastAutoTable.finalY + 4
+    doc.line(M, finalY, W - M, finalY)
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(10)
+    doc.text('Closing Balance', M, finalY + 6)
+    doc.text(`Rs. ${stmtData.closingBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, W - M, finalY + 6, { align: 'right' })
+
+    if (stmtData.advances.length > 0) {
+      const advTotal = stmtData.advances.reduce((s, a) => s + Number(a.remaining || 0), 0)
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(8)
+      doc.text(`Advance Available: Rs. ${advTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, M, finalY + 12)
+    }
+
+    const clientLabel = (client.display_name || client.business_name || 'client').replace(/\s+/g, '_')
+    doc.save(`Statement_${clientLabel}_${fromDate}_${toDate}.pdf`)
+  }
+
+  const fmtC  = n => `₹${Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
+  const fmtD  = s => s ? new Date(s).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' }) : ''
+
+  return (
+    <Modal
+      title={`Statement · ${client.display_name || client.business_name}`}
+      onClose={onClose}
+      footer={
+        <div className="flex gap-2 w-full">
+          <button onClick={onClose} className="px-4 py-2 text-sm rounded-lg bg-dark-700 text-slate-300 hover:bg-dark-600">Close</button>
+          <div className="flex-1" />
+          {generated && (
+            <button onClick={handleDownloadPDF}
+              className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-primary-600 hover:bg-primary-700 text-white font-medium">
+              <Download className="w-4 h-4" /> Download PDF
+            </button>
+          )}
+          <button onClick={generate} disabled={loading}
+            className="flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-medium disabled:opacity-50">
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+            Generate
+          </button>
+        </div>
+      }
+    >
+      {/* Date range */}
+      <div className="grid grid-cols-2 gap-3 mb-4">
+        <Field label="From Date" required>
+          <input type="date" className={inp()} value={fromDate} onChange={e => { setFromDate(e.target.value); setGenerated(false) }} />
+        </Field>
+        <Field label="To Date" required>
+          <input type="date" className={inp()} value={toDate} onChange={e => { setToDate(e.target.value); setGenerated(false) }} />
+        </Field>
+      </div>
+
+      {!generated && !loading && (
+        <div className="text-center py-10 text-slate-500 text-sm">
+          <BarChart2 className="w-8 h-8 mx-auto mb-2 opacity-30" />
+          Set the date range and click Generate
+        </div>
+      )}
+
+      {loading && (
+        <div className="text-center py-10 text-slate-400 text-sm">
+          <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />
+          Building statement…
+        </div>
+      )}
+
+      {generated && stmtData && (
+        <div className="space-y-3">
+          {/* Summary tiles */}
+          <div className="grid grid-cols-3 gap-2">
+            <div className="bg-dark-700 rounded-lg p-3 border border-dark-600 text-center">
+              <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-1">Opening Balance</p>
+              <p className="text-sm font-bold text-slate-200">{fmtC(stmtData.openingBalance)}</p>
+            </div>
+            <div className="bg-dark-700 rounded-lg p-3 border border-dark-600 text-center">
+              <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-1">Invoiced</p>
+              <p className="text-sm font-bold text-red-400">{fmtC(stmtData.totalInvoiced)}</p>
+            </div>
+            <div className="bg-dark-700 rounded-lg p-3 border border-dark-600 text-center">
+              <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-1">Received</p>
+              <p className="text-sm font-bold text-emerald-400">{fmtC(stmtData.totalPaid)}</p>
+            </div>
+          </div>
+
+          {/* Closing balance */}
+          <div className={`rounded-lg p-3 border flex items-center justify-between ${stmtData.closingBalance > 0 ? 'bg-orange-500/10 border-orange-500/30' : 'bg-emerald-500/10 border-emerald-500/30'}`}>
+            <span className="text-sm font-semibold text-slate-300">Closing Balance</span>
+            <span className={`text-lg font-black ${stmtData.closingBalance > 0 ? 'text-orange-400' : 'text-emerald-400'}`}>
+              {fmtC(stmtData.closingBalance)}
+            </span>
+          </div>
+
+          {/* Advances */}
+          {stmtData.advances.length > 0 && (
+            <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 text-xs text-amber-400 flex items-center justify-between">
+              <span>Advance credit available</span>
+              <span className="font-semibold">{fmtC(stmtData.advances.reduce((s, a) => s + Number(a.remaining || 0), 0))}</span>
+            </div>
+          )}
+
+          {/* Ledger */}
+          {stmtData.lines.length === 0 ? (
+            <p className="text-center text-sm text-slate-500 py-4">No transactions in this period.</p>
+          ) : (
+            <div className="rounded-xl border border-dark-600 overflow-hidden">
+              {/* Header */}
+              <div className="grid grid-cols-[80px_1fr_80px_80px_80px] gap-2 px-3 py-2 bg-dark-800 text-[10px] font-semibold text-slate-500 uppercase tracking-wide">
+                <span>Date</span>
+                <span>Description</span>
+                <span className="text-right">Invoiced</span>
+                <span className="text-right">Received</span>
+                <span className="text-right">Balance</span>
+              </div>
+              {/* Opening row */}
+              <div className="grid grid-cols-[80px_1fr_80px_80px_80px] gap-2 px-3 py-2 border-t border-dark-600 bg-dark-700/50">
+                <span className="text-[11px] text-slate-500">{fmtD(fromDate)}</span>
+                <span className="text-[11px] text-slate-400 italic">Opening Balance</span>
+                <span />
+                <span />
+                <span className="text-right text-[11px] font-semibold text-slate-200">{fmtC(stmtData.openingBalance)}</span>
+              </div>
+              {/* Transaction rows */}
+              {stmtData.lines.map((l, idx) => (
+                <div key={idx} className={`grid grid-cols-[80px_1fr_80px_80px_80px] gap-2 px-3 py-2 border-t border-dark-600/50 ${l.type === 'payment' ? 'bg-emerald-500/5' : ''}`}>
+                  <span className="text-[11px] text-slate-500">{fmtD(l.date)}</span>
+                  <span className="text-[11px] text-slate-300 truncate">{l.desc}</span>
+                  <span className="text-right text-[11px] font-mono text-red-400">{l.debit > 0 ? fmtC(l.debit) : ''}</span>
+                  <span className="text-right text-[11px] font-mono text-emerald-400">{l.credit > 0 ? fmtC(l.credit) : ''}</span>
+                  <span className="text-right text-[11px] font-mono font-semibold text-slate-100">{fmtC(l.balance)}</span>
+                </div>
+              ))}
+              {/* Closing row */}
+              <div className="grid grid-cols-[80px_1fr_80px_80px_80px] gap-2 px-3 py-2 border-t border-dark-600 bg-dark-800">
+                <span />
+                <span className="text-[11px] font-semibold text-slate-300">Closing Balance</span>
+                <span />
+                <span />
+                <span className={`text-right text-sm font-black ${stmtData.closingBalance > 0 ? 'text-orange-400' : 'text-emerald-400'}`}>{fmtC(stmtData.closingBalance)}</span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </Modal>
+  )
+}
+
 function ClientsTab({ companyId }) {
-  const [clientModal, setClientModal] = useState(null)   // null | existing client obj
+  const [clientModal,    setClientModal]    = useState(null)   // null | existing client obj
+  const [stmtClient,     setStmtClient]     = useState(null)   // client obj for statement
 
   const { data: clients = [], isLoading } = useQuery({
     queryKey: ['clients', companyId],
@@ -3301,12 +3599,19 @@ function ClientsTab({ companyId }) {
                 )}
               </div>
 
-              {/* Edit button */}
-              <button
-                onClick={() => setClientModal(client)}
-                className="flex-shrink-0 flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-200 bg-dark-600 hover:bg-dark-500 px-3 py-1.5 rounded-lg transition-all">
-                <Edit2 className="w-3.5 h-3.5" /> Edit
-              </button>
+              {/* Action buttons */}
+              <div className="flex-shrink-0 flex gap-1.5">
+                <button
+                  onClick={() => setStmtClient(client)}
+                  className="flex items-center gap-1.5 text-xs text-primary-400 hover:text-primary-300 bg-primary-500/10 hover:bg-primary-500/20 px-3 py-1.5 rounded-lg transition-all">
+                  <FileText className="w-3.5 h-3.5" /> Statement
+                </button>
+                <button
+                  onClick={() => setClientModal(client)}
+                  className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-200 bg-dark-600 hover:bg-dark-500 px-3 py-1.5 rounded-lg transition-all">
+                  <Edit2 className="w-3.5 h-3.5" /> Edit
+                </button>
+              </div>
             </div>
 
             {/* Financial summary row */}
@@ -3338,6 +3643,13 @@ function ClientsTab({ companyId }) {
           companyId={companyId}
           existing={clientModal === 'new' ? null : clientModal}
           onClose={() => setClientModal(null)}
+        />
+      )}
+      {stmtClient && (
+        <ClientStatementModal
+          companyId={companyId}
+          client={stmtClient}
+          onClose={() => setStmtClient(null)}
         />
       )}
     </div>
