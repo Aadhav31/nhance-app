@@ -2073,49 +2073,113 @@ function InvoiceViewModal({ invoiceId, onClose, onDownload }) {
 // ── Record Payment Modal ──────────────────────────────────────────────────────
 function RecordPaymentModal({ companyId, invoice, onClose }) {
   const qc = useQueryClient()
-  const today = new Date().toISOString().split('T')[0]
-  const outstanding = Math.max(0, Number(invoice.total_amount) - Number(invoice.paid_amount || 0))
+  const today   = new Date().toISOString().split('T')[0]
+  const balance = Math.max(0, Number(invoice.balance ?? invoice.total_amount) )
 
-  const [amount, setAmount] = useState(outstanding.toFixed(2))
-  const [mode,   setMode]   = useState(invoice.payment_mode || 'cash')
-  const [date,   setDate]   = useState(today)
-  const [saving, setSaving] = useState(false)
+  const [cashAmount,     setCashAmount]     = useState(balance.toFixed(2))
+  const [mode,           setMode]           = useState(invoice.payment_mode || 'cash')
+  const [date,           setDate]           = useState(today)
+  const [useAdvance,     setUseAdvance]     = useState(false)
+  const [advanceApplied, setAdvanceApplied] = useState('0')
+  const [saving,         setSaving]         = useState(false)
+
+  // Fetch client's advance balance
+  const { data: advanceBalance = 0 } = useQuery({
+    queryKey: ['crusher-client-advance', companyId, invoice.client_id],
+    queryFn: async () => {
+      if (!invoice.client_id) return 0
+      const { data } = await supabase.from('crusher_customer_advances')
+        .select('remaining').eq('company_id', companyId)
+        .eq('client_id', invoice.client_id).gt('remaining', 0)
+      return (data || []).reduce((s, r) => s + Number(r.remaining), 0)
+    },
+    enabled: !!invoice.client_id,
+  })
+
+  const handleToggleAdvance = (on) => {
+    setUseAdvance(on)
+    if (on) {
+      const maxAdv = Math.min(advanceBalance, balance)
+      setAdvanceApplied(maxAdv.toFixed(2))
+      setCashAmount(Math.max(0, balance - maxAdv).toFixed(2))
+    } else {
+      setAdvanceApplied('0')
+      setCashAmount(balance.toFixed(2))
+    }
+  }
+
+  const cash  = Math.max(0, parseFloat(cashAmount) || 0)
+  const adv   = useAdvance ? Math.max(0, parseFloat(advanceApplied) || 0) : 0
+  const total = cash + adv
 
   const handleSave = async () => {
-    const paidNow = parseFloat(amount)
-    if (!paidNow || paidNow <= 0)     { toast.error('Enter a valid amount');          return }
-    if (paidNow > outstanding + 0.01) { toast.error(`Amount exceeds balance of Rs. ${outstanding.toFixed(2)}`); return }
+    if (total <= 0)                   { toast.error('Enter a valid amount'); return }
+    if (total > balance + 0.01)       { toast.error(`Total exceeds balance of ₹${balance.toFixed(2)}`); return }
+    if (adv > advanceBalance + 0.01)  { toast.error(`Advance exceeds available ₹${advanceBalance.toFixed(2)}`); return }
 
     const prevPaid   = Number(invoice.paid_amount || 0)
-    const newPaid    = prevPaid + paidNow
+    const newPaid    = prevPaid + total
     const newBalance = Math.max(0, Number(invoice.total_amount) - newPaid)
     const newStatus  = newBalance <= 0.01 ? 'paid' : 'partial'
 
     setSaving(true)
     try {
-      // 1. Update invoice totals
+      // 1. Update invoice
       const { error } = await supabase.from('crusher_invoices').update({
         paid_amount:  newPaid,
         balance:      newBalance,
         status:       newStatus,
-        payment_mode: mode,
+        payment_mode: cash > 0 ? mode : 'advance',
       }).eq('id', invoice.id)
       if (error) throw error
 
-      // 2. Insert payment record (for statement generation)
-      await supabase.from('crusher_invoice_payments').insert({
-        company_id:   companyId,
-        invoice_id:   invoice.id,
-        client_id:    invoice.client_id   || null,
-        client_name:  invoice.client_name || null,
-        amount:       paidNow,
-        payment_mode: mode,
-        payment_date: date,
-      })
+      // 2. Cash/bank payment record
+      if (cash > 0) {
+        await supabase.from('crusher_invoice_payments').insert({
+          company_id:   companyId,
+          invoice_id:   invoice.id,
+          client_id:    invoice.client_id  || null,
+          client_name:  invoice.client_name || null,
+          amount:       cash,
+          payment_mode: mode,
+          payment_date: date,
+        })
+      }
 
-      toast.success(`Rs. ${paidNow.toFixed(2)} recorded — invoice ${newStatus}`)
-      qc.invalidateQueries({ queryKey: ['crusher-invoices', companyId] })
-      qc.invalidateQueries({ queryKey: ['crusher-aging', companyId] })
+      // 3. Advance payment record + deduct from balance
+      if (adv > 0) {
+        await supabase.from('crusher_invoice_payments').insert({
+          company_id:   companyId,
+          invoice_id:   invoice.id,
+          client_id:    invoice.client_id  || null,
+          client_name:  invoice.client_name || null,
+          amount:       adv,
+          payment_mode: 'advance',
+          payment_date: date,
+          notes:        'Applied from advance balance',
+        })
+        // Deduct from advance records FIFO
+        const { data: advRecs } = await supabase.from('crusher_customer_advances')
+          .select('id, remaining').eq('company_id', companyId)
+          .eq('client_id', invoice.client_id).gt('remaining', 0).order('created_at')
+        let toDeduct = adv
+        for (const rec of (advRecs || [])) {
+          if (toDeduct <= 0) break
+          const cut = Math.min(toDeduct, Number(rec.remaining))
+          await supabase.from('crusher_customer_advances')
+            .update({ remaining: Number(rec.remaining) - cut }).eq('id', rec.id)
+          toDeduct -= cut
+        }
+      }
+
+      const parts = []
+      if (cash > 0) parts.push(`₹${cash.toFixed(2)} cash`)
+      if (adv  > 0) parts.push(`₹${adv.toFixed(2)} advance`)
+      toast.success(`${parts.join(' + ')} applied — invoice ${newStatus}`)
+      qc.invalidateQueries({ queryKey: ['crusher-invoices',       companyId] })
+      qc.invalidateQueries({ queryKey: ['crusher-aging',          companyId] })
+      qc.invalidateQueries({ queryKey: ['crusher-advances',       companyId] })
+      qc.invalidateQueries({ queryKey: ['crusher-client-advance', companyId, invoice.client_id] })
       onClose()
     } catch (e) {
       toast.error(e.message)
@@ -2135,45 +2199,89 @@ function RecordPaymentModal({ companyId, invoice, onClose }) {
         </>
       }>
 
-      {/* Outstanding summary */}
-      <div className="bg-dark-800 rounded-xl p-4 border border-dark-600 flex items-center justify-between mb-2">
+      {/* Invoice summary */}
+      <div className="bg-dark-800 rounded-xl p-4 border border-dark-600 flex items-center justify-between">
         <div>
           <p className="text-xs text-slate-500">Invoice Total</p>
-          <p className="text-sm font-bold text-slate-200">Rs. {Number(invoice.total_amount).toFixed(2)}</p>
+          <p className="text-sm font-bold text-slate-200">₹{Number(invoice.total_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
         </div>
         <div className="text-center">
           <p className="text-xs text-slate-500">Already Paid</p>
-          <p className="text-sm font-semibold text-emerald-400">Rs. {Number(invoice.paid_amount || 0).toFixed(2)}</p>
+          <p className="text-sm font-semibold text-emerald-400">₹{Number(invoice.paid_amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
         </div>
         <div className="text-right">
           <p className="text-xs text-slate-500">Outstanding</p>
-          <p className="text-lg font-black text-red-400">Rs. {outstanding.toFixed(2)}</p>
+          <p className="text-lg font-black text-red-400">₹{balance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
         </div>
       </div>
 
-      <Field label="Amount Received (Rs.)" required>
-        <input type="number" className={inp()} value={amount}
-          onChange={e => setAmount(e.target.value)}
-          step="0.01" min="0.01" max={outstanding}
-          placeholder={outstanding.toFixed(2)} />
+      {/* Advance section — only when client has balance */}
+      {advanceBalance > 0 && (
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-[11px] font-semibold text-amber-400">Advance Available</p>
+              <p className="text-sm font-bold text-amber-300">₹{advanceBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
+            </div>
+            <button type="button" onClick={() => handleToggleAdvance(!useAdvance)}
+              className={`text-xs px-3 py-1.5 rounded-lg font-semibold transition-all ${
+                useAdvance ? 'bg-amber-500 text-white' : 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30'
+              }`}>
+              {useAdvance ? '✓ Applied' : 'Apply Advance'}
+            </button>
+          </div>
+          {useAdvance && (
+            <div>
+              <label className="text-[11px] text-amber-400/80 mb-1 block">Amount from advance (₹)</label>
+              <input type="number" step="0.01" min="0" max={Math.min(advanceBalance, balance)}
+                className={inp()}
+                value={advanceApplied}
+                onChange={e => {
+                  setAdvanceApplied(e.target.value)
+                  setCashAmount(Math.max(0, balance - (parseFloat(e.target.value) || 0)).toFixed(2))
+                }} />
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Cash / bank entry */}
+      <Field label={useAdvance && adv > 0 ? 'Additional Cash / Bank Payment (₹)' : 'Amount Received (₹)'} required={!useAdvance}>
+        <input type="number" className={inp()} value={cashAmount}
+          onChange={e => setCashAmount(e.target.value)}
+          step="0.01" min="0" placeholder="0.00" />
       </Field>
 
-      <Field label="Payment Mode">
-        <select className={inp()} value={mode} onChange={e => setMode(e.target.value)}>
-          <option value="cash">Cash</option>
-          <option value="upi">UPI</option>
-          <option value="bank_transfer">Bank Transfer</option>
-          <option value="cheque">Cheque</option>
-        </select>
-      </Field>
+      {cash > 0 && (
+        <Field label="Payment Mode">
+          <select className={inp()} value={mode} onChange={e => setMode(e.target.value)}>
+            {PAYMENT_MODES.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+          </select>
+        </Field>
+      )}
 
       <Field label="Payment Date">
         <input type="date" className={inp()} value={date} onChange={e => setDate(e.target.value)} />
       </Field>
 
-      {parseFloat(amount) < outstanding - 0.01 && parseFloat(amount) > 0 && (
+      {/* Breakdown when advance is used */}
+      {useAdvance && total > 0 && (
+        <div className="bg-dark-700 rounded-lg border border-dark-600 p-3 space-y-1.5">
+          {adv  > 0 && <div className="flex justify-between text-xs"><span className="text-amber-400">From advance</span><span className="font-semibold text-amber-300">₹{adv.toFixed(2)}</span></div>}
+          {cash > 0 && <div className="flex justify-between text-xs"><span className="text-slate-400">Cash / Bank</span><span className="font-semibold text-slate-200">₹{cash.toFixed(2)}</span></div>}
+          <div className="flex justify-between text-sm border-t border-dark-600 pt-1.5">
+            <span className="font-bold text-slate-200">Total Applied</span>
+            <span className="font-black text-emerald-400">₹{total.toFixed(2)}</span>
+          </div>
+          {total < balance - 0.01 && (
+            <p className="text-[10px] text-yellow-400">₹{(balance - total).toFixed(2)} will remain outstanding</p>
+          )}
+        </div>
+      )}
+
+      {!useAdvance && cash < balance - 0.01 && cash > 0 && (
         <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3 text-xs text-yellow-400">
-          Partial payment — Rs. {(outstanding - parseFloat(amount || 0)).toFixed(2)} will remain outstanding.
+          Partial payment — ₹{(balance - cash).toFixed(2)} will remain outstanding.
         </div>
       )}
     </Modal>
