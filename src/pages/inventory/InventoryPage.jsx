@@ -717,6 +717,14 @@ function StockInTab({ companyId, session }) {
     } catch (e) { toast.error(e.message) } finally { setSaving(false) }
   }
 
+  // Mark a pending stock receipt as resolved (transfer/manual)
+  const markResolved = async (txnId) => {
+    await supabase.from('stock_transactions').update({ action_taken: true }).eq('id', txnId)
+    qc.invalidateQueries(['stxn_in', companyId])
+    qc.invalidateQueries(['pending-stock-bills', companyId])
+    toast.success('Receipt marked as resolved')
+  }
+
   // Auto-fill unit cost from item's avg cost; clear vehicle when non-grade selected
   const onItemChange = (id) => {
     setF('item_id', id)
@@ -743,13 +751,23 @@ function StockInTab({ companyId, session }) {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
                   <p className="text-xs font-mono text-primary-500">{t.txn_number}</p>
-                  {t.requires_bill && !t.bill_id && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30">Bill Pending</span>}
-                  {t.requires_bill && t.bill_id  && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">Bill Linked</span>}
+                  {t.requires_bill && !t.bill_id && !t.action_taken && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30">⚠ Action Required</span>}
+                  {t.requires_bill && t.bill_id  && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">✓ Bill Linked</span>}
+                  {t.requires_bill && !t.bill_id && t.action_taken && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-500/15 text-slate-400 border border-slate-500/30">✓ Resolved</span>}
                 </div>
                 <p className="font-semibold text-slate-100 text-sm">{t.inventory_items?.item_name}</p>
                 <p className="text-xs text-slate-500">{t.stores?.store_name} · {fmtDate(t.txn_date)}</p>
                 {t.vehicle_number && <p className="text-xs text-slate-400 mt-0.5">🚛 {t.vehicle_number}</p>}
                 {t.notes && <p className="text-xs text-slate-600 mt-0.5">{t.notes}</p>}
+                {/* Action buttons for pending receipts */}
+                {t.requires_bill && !t.bill_id && !t.action_taken && (
+                  <div className="flex items-center gap-2 mt-2">
+                    <span className="text-[10px] text-amber-400/70">Create bill / link bill / record transfer:</span>
+                    <button onClick={() => markResolved(t.id)} className="text-[10px] px-2 py-0.5 rounded border border-slate-600 text-slate-400 hover:text-emerald-400 hover:border-emerald-700/50">
+                      Mark Transferred ✓
+                    </button>
+                  </div>
+                )}
               </div>
               <div className="text-right shrink-0">
                 <p className="text-lg font-black text-emerald-400">+{fmtQty(t.quantity, t.inventory_items?.unit)}</p>
@@ -829,7 +847,12 @@ function StockInTab({ companyId, session }) {
               </select>
             </Field>
             <Field label="Date"><input type="date" className={inp()} value={form.txn_date} onChange={e => setF('txn_date', e.target.value)} /></Field>
-            <Field label="Quantity *"><input type="number" className={inp()} value={form.quantity} onChange={e => setF('quantity', e.target.value)} step="0.001" placeholder="0" /></Field>
+            <Field label={`Quantity *${selectedItem?.unit ? ` (${selectedItem.unit})` : ''}`}>
+              <div className="flex items-center gap-2">
+                <input type="number" className={inp() + ' flex-1'} value={form.quantity} onChange={e => setF('quantity', e.target.value)} step="0.001" placeholder="0" />
+                {selectedItem?.unit && <span className="text-xs font-bold text-primary-400 bg-primary-500/10 border border-primary-500/30 rounded-lg px-2.5 py-2 shrink-0 uppercase">{selectedItem.unit}</span>}
+              </div>
+            </Field>
             <Field label="Unit Cost (₹)"><input type="number" className={inp()} value={form.unit_cost} onChange={e => setF('unit_cost', e.target.value)} step="0.01" placeholder="0" /></Field>
             {vendors.length > 0 && <Field label="Vendor">
               <select className={inp()} value={form.vendor_id} onChange={e => setF('vendor_id', e.target.value)}>
