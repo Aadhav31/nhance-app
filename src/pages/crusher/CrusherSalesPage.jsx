@@ -158,7 +158,7 @@ function InvoiceFormModal({ companyId, onClose, prefill = null, onAfterSave = nu
     queryKey: ['crusher-grades', companyId],
     queryFn: async () => {
       const { data, error } = await supabase.from('crusher_grades')
-        .select('id, grade_name, hsn_code, default_gst_rate, default_rate')
+        .select('id, grade_name, hsn_code, default_gst_rate, default_rate, default_uom')
         .eq('company_id', companyId).eq('is_active', true).order('grade_name')
       if (error) console.error(error)
       return data || []
@@ -258,8 +258,9 @@ function InvoiceFormModal({ companyId, onClose, prefill = null, onAfterSave = nu
       ? {
           ...it,
           grade_id:      gradeId,
-          material_name: g?.grade_name  || '',
-          hsn_code:      g?.hsn_code    || '',
+          material_name: g?.grade_name   || '',
+          hsn_code:      g?.hsn_code     || '',
+          unit:          g?.default_uom  || it.unit || 'tonnes',
           // auto-fill rate from grade default; keep existing if grade has no rate set
           rate: g?.default_rate ? String(g.default_rate) : it.rate,
         }
@@ -2014,7 +2015,7 @@ function InvoiceEditModal({ companyId, invoice, onClose }) {
     queryKey: ['crusher-grades', companyId],
     queryFn: async () => {
       const { data } = await supabase.from('crusher_grades')
-        .select('id, grade_name, hsn_code, default_gst_rate, default_rate')
+        .select('id, grade_name, hsn_code, default_gst_rate, default_rate, default_uom')
         .eq('company_id', companyId).eq('is_active', true).order('grade_name')
       return data || []
     },
@@ -2072,6 +2073,7 @@ function InvoiceEditModal({ companyId, invoice, onClose }) {
       grade_id:      gradeId,
       material_name: g?.grade_name  || '',
       hsn_code:      g?.hsn_code    || '',
+      unit:          g?.default_uom || it.unit || 'tonnes',
       rate: g?.default_rate ? String(g.default_rate) : it.rate,
     } : it))
   }
@@ -3765,17 +3767,28 @@ function LocationsTab({ companyId }) {
   )
 }
 
-// ── HSN Edit Modal ────────────────────────────────────────────────────────────
 // ── Grade Form Modal (Add / Edit material grade) ──────────────────────────────
+const GRADE_CATEGORIES = ['Sand', 'Jelly & Aggregate', 'GSB', 'WMM', 'Boulders', 'Dust & Rejects', 'Others']
+const GRADE_UOM_OPTIONS = [
+  { value: 'tonnes', label: 'Tonnes (T)' },
+  { value: 'cum',    label: 'Cubic Metres (CUM)' },
+  { value: 'units',  label: 'Units' },
+  { value: 'bags',   label: 'Bags' },
+  { value: 'trips',  label: 'Trips' },
+]
+
 function GradeFormModal({ companyId, existing, onClose }) {
   const qc = useQueryClient()
   const isEdit = !!existing?.id
   const [form, setForm] = useState({
     grade_name:       existing?.grade_name       || '',
     description:      existing?.description      || '',
+    category:         existing?.category         || '',
     default_rate:     existing?.default_rate     ?? '',
+    default_uom:      existing?.default_uom      || 'tonnes',
     hsn_code:         existing?.hsn_code         ?? '2517',
     default_gst_rate: existing?.default_gst_rate ?? 5,
+    sort_order:       existing?.sort_order       ?? 0,
     is_active:        existing?.is_active        ?? true,
   })
   const [saving, setSaving] = useState(false)
@@ -3788,9 +3801,12 @@ function GradeFormModal({ companyId, existing, onClose }) {
       const payload = {
         grade_name:       form.grade_name.trim(),
         description:      form.description.trim() || null,
+        category:         form.category           || null,
         default_rate:     form.default_rate !== '' ? Number(form.default_rate) : 0,
+        default_uom:      form.default_uom        || 'tonnes',
         hsn_code:         form.hsn_code.trim()    || null,
         default_gst_rate: Number(form.default_gst_rate),
+        sort_order:       Number(form.sort_order) || 0,
         is_active:        form.is_active,
       }
       if (isEdit) {
@@ -3830,17 +3846,38 @@ function GradeFormModal({ companyId, existing, onClose }) {
           placeholder="e.g. M Sand, 20mm Jelly, GSB…" />
       </Field>
 
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Category">
+          <select className={inp()} value={form.category} onChange={e => set('category', e.target.value)}>
+            <option value="">— None —</option>
+            {GRADE_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </Field>
+        <Field label="Display Order">
+          <input type="number" className={inp()} value={form.sort_order}
+            onChange={e => set('sort_order', e.target.value)}
+            placeholder="0" min={0} />
+        </Field>
+      </div>
+
       <Field label="Description">
         <input className={inp()} value={form.description}
           onChange={e => set('description', e.target.value)}
           placeholder="Optional — e.g. Fine aggregate for plastering" />
       </Field>
 
-      <Field label="Default Rate (₹ per unit)" required>
-        <input type="number" className={inp()} value={form.default_rate}
-          onChange={e => set('default_rate', e.target.value)}
-          placeholder="e.g. 850.00" step="0.01" min="0" />
-      </Field>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Default Rate (Rs. per unit)" required>
+          <input type="number" className={inp()} value={form.default_rate}
+            onChange={e => set('default_rate', e.target.value)}
+            placeholder="e.g. 850.00" step="0.01" min="0" />
+        </Field>
+        <Field label="Billing Unit (UOM)">
+          <select className={inp()} value={form.default_uom} onChange={e => set('default_uom', e.target.value)}>
+            {GRADE_UOM_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        </Field>
+      </div>
 
       <div className="grid grid-cols-2 gap-3">
         <Field label="HSN Code">
@@ -3863,7 +3900,7 @@ function GradeFormModal({ companyId, existing, onClose }) {
       <div className="bg-dark-700 rounded-lg p-3 border border-dark-600 text-xs text-slate-400 space-y-1">
         <p>• HSN <strong className="text-slate-300">2517</strong> — Crushed stone, aggregate, dust, GSB, rejects → <strong className="text-slate-300">5% GST</strong></p>
         <p>• HSN <strong className="text-slate-300">2505</strong> — Natural / manufactured sands (M Sand, P Sand) → <strong className="text-slate-300">5% GST</strong></p>
-        <p className="text-slate-500 pt-0.5">GST rate auto-applied on tax invoices. Non-tax invoices always show ₹0 GST.</p>
+        <p className="text-slate-500 pt-0.5">GST rate auto-applied on tax invoices. Non-tax invoices always show Rs.0 GST.</p>
       </div>
 
       {isEdit && (
@@ -3880,9 +3917,22 @@ function GradeFormModal({ companyId, existing, onClose }) {
 }
 
 // ── Materials & HSN Tab ───────────────────────────────────────────────────────
+const UOM_LABEL = { tonnes: 'T', cum: 'CUM', units: 'Units', bags: 'Bags', trips: 'Trips' }
+
+function rateAge(ts) {
+  if (!ts) return null
+  const days = Math.floor((Date.now() - new Date(ts)) / 86400000)
+  if (days === 0) return 'Today'
+  if (days === 1) return '1 day ago'
+  if (days < 30)  return `${days} days ago`
+  const months = Math.floor(days / 30)
+  return months === 1 ? '1 month ago' : `${months} months ago`
+}
+
 function MaterialsTab({ companyId }) {
-  const [editGrade, setEditGrade]   = useState(null)  // existing grade object → edit
-  const [addOpen,   setAddOpen]     = useState(false)  // new grade form
+  const [editGrade, setEditGrade] = useState(null)
+  const [addOpen,   setAddOpen]   = useState(false)
+  const [filterCat, setFilterCat] = useState('')
 
   const { data: grades = [], isLoading } = useQuery({
     queryKey: ['crusher_grades_hsn'],
@@ -3899,16 +3949,34 @@ function MaterialsTab({ companyId }) {
     </div>
   )
 
+  // Group by category
+  const filtered = filterCat ? grades.filter(g => (g.category || 'Others') === filterCat) : grades
+  const categories = [...new Set(grades.map(g => g.category || 'Others'))]
+  const grouped = categories.reduce((acc, cat) => {
+    acc[cat] = filtered.filter(g => (g.category || 'Others') === cat)
+    return acc
+  }, {})
+  // Also include ungrouped if no category filter
+  const visibleCats = filterCat ? [filterCat] : categories
+
   return (
     <div className="space-y-4">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex-1">
           <h3 className="text-sm font-semibold text-slate-200">Materials & Grades</h3>
           <p className="text-xs text-slate-500">
             {grades.length} material{grades.length !== 1 ? 's' : ''} · HSN & GST auto-applied on tax invoices
           </p>
         </div>
+        {categories.length > 1 && (
+          <select
+            className="rounded-lg border border-dark-600 bg-dark-700 px-3 py-1.5 text-sm text-slate-300 focus:outline-none focus:border-primary-500"
+            value={filterCat} onChange={e => setFilterCat(e.target.value)}>
+            <option value="">All Categories</option>
+            {categories.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        )}
         <button onClick={() => setAddOpen(true)}
           className="flex items-center gap-2 px-3 py-2 rounded-lg bg-primary-600 hover:bg-primary-700 text-white text-sm font-medium transition-all">
           <Plus className="w-4 h-4" /> Add Material
@@ -3927,45 +3995,67 @@ function MaterialsTab({ companyId }) {
         </div>
       )}
 
-      {/* Grade list */}
+      {/* Grouped grade list */}
       {grades.length > 0 && (
-        <div className="grid gap-2">
-          {grades.map(g => (
-            <div key={g.id}
-              className={`bg-dark-700 rounded-xl border border-dark-600 p-4 flex items-center gap-4 ${!g.is_active ? 'opacity-50' : ''}`}>
-              <div className="w-9 h-9 rounded-lg bg-primary-500/10 flex items-center justify-center flex-shrink-0">
-                <Package className="w-4 h-4 text-primary-400" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-sm font-semibold text-slate-200">{g.grade_name}</span>
-                  {!g.is_active && <Badge label="Inactive" color="red" />}
+        <div className="space-y-5">
+          {visibleCats.map(cat => {
+            const catGrades = grouped[cat] || []
+            if (!catGrades.length) return null
+            return (
+              <div key={cat}>
+                {/* Category header */}
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-[11px] font-bold uppercase tracking-widest text-primary-400">{cat}</span>
+                  <span className="text-[10px] text-dark-500">({catGrades.length})</span>
+                  <div className="flex-1 h-px bg-dark-700" />
                 </div>
-                <div className="flex items-center gap-4 mt-1 flex-wrap">
-                  <span className="text-xs text-slate-500">
-                    Rate: <strong className="text-emerald-400">₹{Number(g.default_rate || 0).toLocaleString('en-IN')}</strong>
-                  </span>
-                  <span className="text-xs text-slate-500">
-                    HSN: <strong className="font-mono text-primary-300">{g.hsn_code || '—'}</strong>
-                  </span>
-                  <span className="text-xs text-slate-500">
-                    GST: <strong className={Number(g.default_gst_rate) > 0 ? 'text-yellow-400' : 'text-slate-400'}>
-                      {g.default_gst_rate ?? 0}%
-                    </strong>
-                  </span>
-                  {g.description && <span className="text-xs text-slate-600 truncate">{g.description}</span>}
+                <div className="grid gap-2">
+                  {catGrades.map(g => (
+                    <div key={g.id}
+                      className={`bg-dark-700 rounded-xl border border-dark-600 p-4 flex items-center gap-4 ${!g.is_active ? 'opacity-50' : ''}`}>
+                      <div className="w-9 h-9 rounded-lg bg-primary-500/10 flex items-center justify-center flex-shrink-0">
+                        <Package className="w-4 h-4 text-primary-400" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-sm font-semibold text-slate-200">{g.grade_name}</span>
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-dark-600 text-slate-400">
+                            {UOM_LABEL[g.default_uom] || g.default_uom || 'T'}
+                          </span>
+                          {!g.is_active && <Badge label="Inactive" color="red" />}
+                        </div>
+                        <div className="flex items-center gap-4 mt-1 flex-wrap">
+                          <span className="text-xs text-slate-500">
+                            Rate: <strong className="text-emerald-400">Rs.{Number(g.default_rate || 0).toLocaleString('en-IN')}</strong>
+                            {g.rate_revised_at && (
+                              <span className="ml-1 text-slate-600">· {rateAge(g.rate_revised_at)}</span>
+                            )}
+                          </span>
+                          <span className="text-xs text-slate-500">
+                            HSN: <strong className="font-mono text-primary-300">{g.hsn_code || '—'}</strong>
+                          </span>
+                          <span className="text-xs text-slate-500">
+                            GST: <strong className={Number(g.default_gst_rate) > 0 ? 'text-yellow-400' : 'text-slate-400'}>
+                              {g.default_gst_rate ?? 0}%
+                            </strong>
+                          </span>
+                          {g.description && <span className="text-xs text-slate-600 truncate max-w-[200px]">{g.description}</span>}
+                        </div>
+                      </div>
+                      <button onClick={() => setEditGrade(g)}
+                        className="flex-shrink-0 flex items-center gap-1.5 text-xs text-primary-400 hover:text-primary-300 bg-primary-500/10 hover:bg-primary-500/20 px-3 py-1.5 rounded-lg transition-all">
+                        <Edit2 className="w-3.5 h-3.5" /> Edit
+                      </button>
+                    </div>
+                  ))}
                 </div>
               </div>
-              <button onClick={() => setEditGrade(g)}
-                className="flex-shrink-0 flex items-center gap-1.5 text-xs text-primary-400 hover:text-primary-300 bg-primary-500/10 hover:bg-primary-500/20 px-3 py-1.5 rounded-lg transition-all">
-                <Edit2 className="w-3.5 h-3.5" /> Edit
-              </button>
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
 
-      {addOpen  && <GradeFormModal companyId={companyId} onClose={() => setAddOpen(false)} />}
+      {addOpen   && <GradeFormModal companyId={companyId} onClose={() => setAddOpen(false)} />}
       {editGrade && <GradeFormModal companyId={companyId} existing={editGrade} onClose={() => setEditGrade(null)} />}
     </div>
   )
