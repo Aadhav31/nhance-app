@@ -1039,7 +1039,7 @@ function BillsTab({ companyId, session }) {
   const { company, userProfile } = useAuth()
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving] = useState(false)
-  const blankForm = () => ({ vendor_id: '', vendor_gstin: '', bill_date: todayStr(), due_date: '', bill_ref: '', use_igst: false, discount_amount: 0, notes: '', is_tax_invoice: true, payment_type: 'standard', credit_days: '30', project_id: '', equipment_id: '' })
+  const blankForm = () => ({ vendor_id: '', vendor_gstin: '', bill_date: todayStr(), due_date: '', bill_ref: '', use_igst: false, discount_amount: 0, notes: '', is_tax_invoice: true, payment_type: 'standard', credit_days: '30', project_id: '', equipment_id: '', stock_receipt_id: '' })
 
   // Auto-compute due date from bill_date + credit_days
   const computeDueDate = (billDate, days) => {
@@ -1247,6 +1247,19 @@ function BillsTab({ companyId, session }) {
     },
     enabled: !!companyId,
   })
+  // Pending stock receipts (crusher grades received but bill not yet created)
+  const { data: pendingStockBills = [] } = useQuery({
+    queryKey: ['pending-stock-bills', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('stock_transactions')
+        .select('id, txn_number, txn_date, quantity, unit_cost, total_cost, vehicle_number, inventory_items(item_name, unit), stores(store_name)')
+        .eq('company_id', companyId).eq('requires_bill', true).is('bill_id', null)
+        .order('txn_date', { ascending: false })
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+
   // Unlinked payments for "Link Payment" modal — fetched on demand
   const { data: unlinkedPays = [], refetch: refetchUnlinked } = useQuery({
     queryKey: ['unlinked_pays', companyId, linkPayBill?.vendor_id],
@@ -1415,6 +1428,13 @@ function BillsTab({ companyId, session }) {
         toast.success(`Bill ${blNum} created`)
       }
 
+      // Link stock receipt if selected
+      if (form.stock_receipt_id) {
+        await supabase.from('stock_transactions').update({ bill_id: id }).eq('id', form.stock_receipt_id).catch(() => {})
+        qc.invalidateQueries(['pending-stock-bills', companyId])
+        qc.invalidateQueries(['stxn_in', companyId])
+      }
+
       closeModal()
       qc.invalidateQueries(['bills', companyId])
       qc.invalidateQueries(['inv_stock', companyId])
@@ -1437,6 +1457,28 @@ function BillsTab({ companyId, session }) {
         <button onClick={openCreate} className="btn-primary"><Plus className="w-4 h-4" /> New Bill</button>
       </div>
       <div className="flex-1 overflow-y-auto px-4 pb-4 pt-3">
+        {/* Pending stock bill alert */}
+        {pendingStockBills.length > 0 && (
+          <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 mb-3 flex items-start gap-3">
+            <span className="text-xl leading-none mt-0.5">🚛</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-bold text-amber-400">{pendingStockBills.length} Stock Receipt{pendingStockBills.length > 1 ? 's' : ''} Awaiting Bill</p>
+              <div className="mt-1 space-y-0.5">
+                {pendingStockBills.slice(0, 3).map(r => (
+                  <p key={r.id} className="text-[11px] text-amber-300/70">
+                    {r.txn_number} · {r.inventory_items?.item_name} · {r.quantity} {r.inventory_items?.unit}
+                    {r.vehicle_number ? ` · 🚛 ${r.vehicle_number}` : ''}
+                  </p>
+                ))}
+                {pendingStockBills.length > 3 && <p className="text-[11px] text-amber-400/50">+{pendingStockBills.length - 3} more</p>}
+              </div>
+              <button onClick={openCreate} className="mt-2 text-[11px] font-semibold text-amber-400 hover:text-amber-300 underline underline-offset-2">
+                Create Bill & Link Receipt →
+              </button>
+            </div>
+          </div>
+        )}
+
         {isLoading ? <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-primary-400" /></div>
         : bills.length === 0 ? <div className="flex flex-col items-center py-16 gap-2 text-slate-500"><FileText className="w-10 h-10 text-slate-700" /><p>No bills yet</p></div>
         : <div className="space-y-2">
@@ -1709,6 +1751,25 @@ function BillsTab({ companyId, session }) {
               </div>
             )}
           </div>
+          )}
+
+          {/* ── Link to Stock Receipt (crusher grades) — create only ── */}
+          {!editing && pendingStockBills.length > 0 && (
+            <div className="rounded-xl border border-amber-700/40 bg-amber-500/5 p-3">
+              <p className="text-xs font-semibold text-amber-400 mb-2">🚛 Link to Stock Receipt (optional)</p>
+              <select className={inp()} value={form.stock_receipt_id} onChange={e => setF('stock_receipt_id', e.target.value)}>
+                <option value="">-- Select a pending stock receipt --</option>
+                {pendingStockBills.map(r => (
+                  <option key={r.id} value={r.id}>
+                    {r.txn_number} · {r.inventory_items?.item_name} · {r.quantity} {r.inventory_items?.unit}
+                    {r.vehicle_number ? ` · ${r.vehicle_number}` : ''} · {r.txn_date}
+                  </option>
+                ))}
+              </select>
+              {form.stock_receipt_id && (
+                <p className="text-[11px] text-amber-400/70 mt-1">This bill will be linked to the selected stock receipt — notification clears automatically.</p>
+              )}
+            </div>
           )}
 
           <TaxSummary lines={lines} form={form} setF={setF} />

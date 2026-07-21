@@ -657,9 +657,20 @@ function StockInTab({ companyId, session }) {
   const qc = useQueryClient()
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving]         = useState(false)
-  const [form, setForm] = useState({ item_id:'', store_id:'', quantity:'', unit_cost:'', txn_date: todayStr(), vendor_id:'', po_id:'', notes:'' })
+  const [form, setForm] = useState({ item_id:'', store_id:'', quantity:'', unit_cost:'', txn_date: todayStr(), vendor_id:'', po_id:'', notes:'', vehicle_number:'' })
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
   const { items, stores, vendors } = useInventoryData(companyId)
+
+  // Vehicles for crusher grade stock-in
+  const { data: vehicles = [] } = useQuery({
+    queryKey: ['crusher-vehicles-inv', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('crusher_client_vehicles')
+        .select('id, vehicle_number, vehicle_type').eq('company_id', companyId).order('vehicle_number')
+      return data || []
+    },
+    enabled: !!companyId,
+  })
 
   const { data: txns = [], isLoading } = useQuery({
     queryKey: ['stxn_in', companyId],
@@ -682,17 +693,23 @@ function StockInTab({ companyId, session }) {
       const realItemId  = await resolveItemId(companyId, form.item_id, items, session.user.id)
       const realStoreId = await resolveStoreId(companyId, form.store_id, stores)
       const txnNum = await nextDocNumber(companyId, 'stock_in').catch(() => `GRN-${Date.now()}`)
+      const selectedItem = items.find(i => i.id === form.item_id)
+      const isCrusherGrade = !!(selectedItem?._isGrade || selectedItem?.grade_id)
       const { error } = await supabase.from('stock_transactions').insert({
         company_id: companyId, txn_number: txnNum, txn_type: 'in',
         txn_date: form.txn_date, item_id: realItemId, store_id: realStoreId,
         quantity: parseFloat(form.quantity), unit_cost: parseFloat(form.unit_cost) || 0,
         total_cost: total, vendor_id: form.vendor_id || null, po_id: form.po_id || null,
         notes: form.notes || null, created_by: session.user.id,
+        vehicle_number: isCrusherGrade ? (form.vehicle_number?.trim() || null) : null,
+        requires_bill: isCrusherGrade,
       })
       if (error) throw error
-      toast.success(`Stock received — ${txnNum}`)
+      if (isCrusherGrade) toast.success(`Stock received — ${txnNum} · Bill pending in Purchase`)
+      else toast.success(`Stock received — ${txnNum}`)
       setShowCreate(false)
-      setForm({ item_id:'', store_id:'', quantity:'', unit_cost:'', txn_date: todayStr(), vendor_id:'', po_id:'', notes:'' })
+      setForm({ item_id:'', store_id:'', quantity:'', unit_cost:'', txn_date: todayStr(), vendor_id:'', po_id:'', notes:'', vehicle_number:'' })
+      qc.invalidateQueries(['pending-stock-bills', companyId])
       qc.invalidateQueries(['stxn_in', companyId])
       qc.invalidateQueries(['inv_stock', companyId])
       qc.invalidateQueries(['inv_items_active', companyId])
@@ -700,11 +717,12 @@ function StockInTab({ companyId, session }) {
     } catch (e) { toast.error(e.message) } finally { setSaving(false) }
   }
 
-  // Auto-fill unit cost from item's avg cost
+  // Auto-fill unit cost from item's avg cost; clear vehicle when non-grade selected
   const onItemChange = (id) => {
     setF('item_id', id)
     const item = items.find(i => i.id === id)
     if (item?.avg_unit_cost) setF('unit_cost', String(item.avg_unit_cost))
+    if (!item?._isGrade) setF('vehicle_number', '')
   }
 
   return (
@@ -722,10 +740,15 @@ function StockInTab({ companyId, session }) {
         : <div className="space-y-2">
           {txns.map(t => (
             <div key={t.id} className="bg-dark-800 border border-dark-700 rounded-xl p-4 flex items-center justify-between">
-              <div>
-                <p className="text-xs font-mono text-primary-500">{t.txn_number}</p>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <p className="text-xs font-mono text-primary-500">{t.txn_number}</p>
+                  {t.requires_bill && !t.bill_id && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30">Bill Pending</span>}
+                  {t.requires_bill && t.bill_id  && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">Bill Linked</span>}
+                </div>
                 <p className="font-semibold text-slate-100 text-sm">{t.inventory_items?.item_name}</p>
                 <p className="text-xs text-slate-500">{t.stores?.store_name} · {fmtDate(t.txn_date)}</p>
+                {t.vehicle_number && <p className="text-xs text-slate-400 mt-0.5">🚛 {t.vehicle_number}</p>}
                 {t.notes && <p className="text-xs text-slate-600 mt-0.5">{t.notes}</p>}
               </div>
               <div className="text-right shrink-0">
@@ -743,6 +766,7 @@ function StockInTab({ companyId, session }) {
         const storesList     = stores.filter(s => !s._isLP)
         const lpList         = stores.filter(s =>  s._isLP)
         const selectedItem   = items.find(i => i.id === form.item_id)
+        const isCrusherGrade = !!(selectedItem?._isGrade || selectedItem?.grade_id)
         return (
         <Modal title="Receive Stock" onClose={() => setShowCreate(false)} wide
           footer={<><button onClick={() => setShowCreate(false)} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Confirm Receipt'}</button></>}>
@@ -763,12 +787,32 @@ function StockInTab({ companyId, session }) {
                   )}
                 </select>
               </Field>
-              {selectedItem?._isGrade && (
+              {isCrusherGrade && (
                 <p className="text-[11px] text-amber-400/80 mt-1 bg-amber-500/10 rounded px-2 py-1">
-                  ⚡ New item code will be auto-generated (GRD-xxx) and added to inventory on save
+                  ⚡ Auto item code (GRD-xxx) will be generated · A bill will be required in Purchase after saving
                 </p>
               )}
             </div>
+
+            {/* Vehicle number — shown only for crusher grade items */}
+            {isCrusherGrade && (
+              <div className="col-span-2">
+                <Field label="Vehicle Number *">
+                  <div className="flex gap-2">
+                    <input
+                      list="vehicle-list"
+                      className={inp() + ' flex-1'}
+                      value={form.vehicle_number}
+                      onChange={e => setF('vehicle_number', e.target.value.toUpperCase())}
+                      placeholder="e.g. TN 39 AB 1234"
+                    />
+                    <datalist id="vehicle-list">
+                      {vehicles.map(v => <option key={v.id} value={v.vehicle_number}>{v.vehicle_type ? `${v.vehicle_number} · ${v.vehicle_type}` : v.vehicle_number}</option>)}
+                    </datalist>
+                  </div>
+                </Field>
+              </div>
+            )}
             <Field label="Store / Loading Point *">
               <select className={inp()} value={form.store_id} onChange={e => setF('store_id', e.target.value)}>
                 <option value="">-- Select location --</option>
