@@ -949,21 +949,40 @@ function StockInTab({ companyId, session }) {
         }
       }
 
-      const { error } = await supabase.from('stock_transactions').insert({
+      // Build payload dynamically — only include extended columns when they carry
+      // an actual value. This prevents 400 errors when DB migrations haven't been
+      // run yet (Supabase rejects inserts that reference non-existent columns,
+      // even with null values).
+      const txnPayload = {
         company_id: companyId, txn_number: txnNum, txn_type: 'in',
         txn_date: form.txn_date, item_id: realItemId, store_id: realStoreId,
-        quantity: parseFloat(form.quantity), unit: form.unit || null,
+        quantity: parseFloat(form.quantity),
         unit_cost: parseFloat(form.unit_cost) || 0,
         total_cost: total,
         vendor_id: vendorIdForTxn,
-        notes: form.notes || null, created_by: session.user.id,
-        vehicle_number: isCrusherGrade ? (form.vehicle_number?.trim() || null) : null,
-        requires_bill: requiresBill,
-        bill_id: billIdToLink || null,
-        delivery_mode: receiptMode === 'direct' && form.vendor_id ? form.delivery_mode : null,
-        supplier_name: receiptMode === 'direct' && form.vendor_id ? (vendors.find(v => v.id === form.vendor_id)?.name || null) : null,
-      })
-      if (error) throw error
+        notes: form.notes || null,
+        created_by: session.user.id,
+      }
+      // Extended columns (added by stock_all_migrations.sql)
+      if (form.unit)                                   txnPayload.unit          = form.unit
+      if (requiresBill)                                txnPayload.requires_bill = true
+      if (billIdToLink)                                txnPayload.bill_id       = billIdToLink
+      if (isCrusherGrade && form.vehicle_number?.trim()) txnPayload.vehicle_number = form.vehicle_number.trim()
+      if (receiptMode === 'direct' && form.vendor_id) {
+        const vObj = vendors.find(v => v.id === form.vendor_id)
+        txnPayload.supplier_id   = form.vendor_id
+        if (vObj?.name)        txnPayload.supplier_name = vObj.name
+        if (form.delivery_mode) txnPayload.delivery_mode = form.delivery_mode
+      }
+
+      const { error } = await supabase.from('stock_transactions').insert(txnPayload)
+      if (error) {
+        // Column-missing error means migrations haven't been run yet
+        if (error.code === '42703' || error.message?.toLowerCase().includes('column')) {
+          throw new Error('DB schema out of date — run stock_all_migrations.sql in Supabase SQL Editor, then retry.')
+        }
+        throw error
+      }
 
       // ── Update inventory_stock (upsert: add qty, recalculate weighted avg cost) ──
       const qty  = parseFloat(form.quantity)

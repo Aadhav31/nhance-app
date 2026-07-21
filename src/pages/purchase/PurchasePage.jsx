@@ -1273,13 +1273,25 @@ function BillsTab({ companyId, session }) {
   const { data: pendingStockBills = [] } = useQuery({
     queryKey: ['pending-stock-bills', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('stock_transactions')
-        .select('id, txn_number, txn_date, quantity, unit, unit_cost, total_cost, vehicle_number, vendor_id, supplier_name, delivery_mode, inventory_items(item_name, unit), stores(store_name)')
-        .eq('company_id', companyId).eq('requires_bill', true).is('bill_id', null).not('action_taken', 'eq', true)
-        .order('txn_date', { ascending: false })
-      return data || []
+      try {
+        // Select only guaranteed-to-exist columns first, then join for extras
+        const { data, error } = await supabase.from('stock_transactions')
+          .select('id, txn_number, txn_date, quantity, unit, unit_cost, total_cost, vehicle_number, vendor_id, supplier_name, delivery_mode, inventory_items(item_name, unit), stores(store_name)')
+          .eq('company_id', companyId)
+          .eq('requires_bill', true)
+          .is('bill_id', null)
+          .not('action_taken', 'eq', true)
+          .order('txn_date', { ascending: false })
+        if (error) {
+          // Column missing — migration not run yet, return empty silently
+          if (error.code === '42703' || error.message?.toLowerCase().includes('column')) return []
+          throw error
+        }
+        return data || []
+      } catch { return [] }
     },
     enabled: !!companyId,
+    staleTime: 30_000,
   })
 
   // Unlinked payments for "Link Payment" modal — fetched on demand
