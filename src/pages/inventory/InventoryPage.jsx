@@ -214,7 +214,7 @@ function ItemsTab({ companyId, session }) {
     queryFn: async () => {
       const { data } = await supabase.from('crusher_grades')
         .select('id, grade_name, hsn_code, default_uom, default_rate, category')
-        .eq('company_id', companyId).eq('is_active', true).order('grade_name')
+        .eq('company_id', companyId).order('grade_name')
       return data || []
     },
     enabled: !!companyId,
@@ -543,7 +543,7 @@ function useInventoryData(companyId) {
   const { data: grades = [] } = useQuery({
     queryKey: ['crusher-grades-inv', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('crusher_grades').select('id, grade_name, default_uom, hsn_code, default_rate').eq('company_id', companyId).eq('is_active', true).order('grade_name')
+      const { data } = await supabase.from('crusher_grades').select('id, grade_name, default_uom, hsn_code, default_rate').eq('company_id', companyId).order('grade_name')
       return data || []
     },
     enabled: !!companyId,
@@ -568,7 +568,7 @@ function useInventoryData(companyId) {
   const { data: loadingPoints = [] } = useQuery({
     queryKey: ['loading-pts-inv', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('crusher_loading_points').select('id, point_name, point_type').eq('company_id', companyId).eq('is_active', true).order('sort_order')
+      const { data } = await supabase.from('crusher_loading_points').select('id, point_name, point_type').eq('company_id', companyId).order('sort_order')
       return data || []
     },
     enabled: !!companyId,
