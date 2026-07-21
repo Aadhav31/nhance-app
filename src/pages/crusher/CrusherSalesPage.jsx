@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
@@ -83,6 +83,82 @@ function Badge({ label, color = 'slate' }) {
     <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${colors[color]}`}>
       {label}
     </span>
+  )
+}
+
+// ── Autocomplete Input ────────────────────────────────────────────────────────
+// freeText: allow typing a value not in the list (for loading/unloading points)
+function Autocomplete({ options = [], value = '', onChange, placeholder = 'Search…', freeText = false, className = '' }) {
+  const [query,  setQuery]  = useState('')
+  const [open,   setOpen]   = useState(false)
+  const [hiIdx,  setHiIdx]  = useState(-1)
+  const wrapRef  = useRef(null)
+
+  // Display the label when not in search mode
+  const selectedLabel = options.find(o => o.value === value)?.label ?? value ?? ''
+
+  // Close on outside click
+  useEffect(() => {
+    const fn = e => { if (wrapRef.current && !wrapRef.current.contains(e.target)) { setOpen(false); setQuery('') } }
+    document.addEventListener('mousedown', fn)
+    return () => document.removeEventListener('mousedown', fn)
+  }, [])
+
+  const filtered = query
+    ? options.filter(o => o.label.toLowerCase().includes(query.toLowerCase()))
+    : options
+
+  const pick = (opt) => {
+    onChange(opt.value)
+    setQuery(''); setOpen(false); setHiIdx(-1)
+  }
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); setHiIdx(h => Math.min(h + 1, filtered.length - 1)) }
+    else if (e.key === 'ArrowUp')   { e.preventDefault(); setHiIdx(h => Math.max(h - 1, 0)) }
+    else if (e.key === 'Enter') {
+      e.preventDefault()
+      if (hiIdx >= 0 && filtered[hiIdx]) pick(filtered[hiIdx])
+      else if (freeText && query) { onChange(query); setQuery(''); setOpen(false) }
+    }
+    else if (e.key === 'Escape') { setOpen(false); setQuery('') }
+  }
+
+  return (
+    <div ref={wrapRef} className={`relative ${className}`}>
+      <input
+        type="text"
+        className={inp()}
+        placeholder={placeholder}
+        value={open ? query : selectedLabel}
+        onFocus={() => { setOpen(true); setQuery(''); setHiIdx(-1) }}
+        onChange={e => {
+          setQuery(e.target.value)
+          setHiIdx(-1)
+          if (freeText) onChange(e.target.value)
+        }}
+        onKeyDown={handleKeyDown}
+      />
+      {open && (filtered.length > 0 || (freeText && query && !options.find(o => o.value === query))) && (
+        <div className="absolute z-[60] top-full left-0 right-0 mt-1 bg-dark-700 border border-dark-500 rounded-xl shadow-2xl max-h-52 overflow-y-auto">
+          {filtered.length === 0 && freeText && query && (
+            <div className="px-3 py-2 text-xs text-slate-500 italic">Press Enter to use "{query}"</div>
+          )}
+          {filtered.map((opt, i) => (
+            <button
+              key={opt.value}
+              type="button"
+              onMouseDown={() => pick(opt)}
+              className={`w-full text-left px-3 py-2.5 text-sm border-b border-dark-600 last:border-0 transition-colors
+                ${i === hiIdx
+                  ? 'bg-primary-500/20 text-primary-300'
+                  : 'text-slate-300 hover:bg-dark-600 hover:text-slate-100'}`}>
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -434,11 +510,12 @@ function InvoiceFormModal({ companyId, onClose, prefill = null, onAfterSave = nu
 
       {/* Client */}
       <Field label="Client">
-        <select className={inp()} value={form.client_id}
-          onChange={e => { set('client_id', e.target.value); set('vehicle_id', ''); set('walkin_name', '') }}>
-          <option value="">— Walk-in / One-time customer —</option>
-          {clients.map(c => <option key={c.id} value={c.id}>{c.display_name || c.business_name}</option>)}
-        </select>
+        <Autocomplete
+          options={clients.map(c => ({ value: c.id, label: c.display_name || c.business_name }))}
+          value={form.client_id}
+          onChange={val => { set('client_id', val); set('vehicle_id', ''); set('walkin_name', '') }}
+          placeholder="Search client… (blank = walk-in)"
+        />
       </Field>
 
       {/* Walk-in name (only when no registered client selected) */}
@@ -466,13 +543,15 @@ function InvoiceFormModal({ companyId, onClose, prefill = null, onAfterSave = nu
             onChange={e => set('walkin_vehicle_num', e.target.value.toUpperCase())}
             placeholder="e.g. TN38AB1234" />
         ) : (
-          <select className={inp()} value={form.vehicle_id} onChange={e => handleVehicleChange(e.target.value)}>
-            <option value="">— Select registered vehicle —</option>
-            {vehicles.map(v => {
-              const ownerTag = v.owner_type === 'own' ? ' [Own Fleet]' : v.owner_type === 'third_party' ? ` [${v.transporter_name || 'Third-party'}]` : ''
-              return <option key={v.id} value={v.id}>{v.vehicle_number} ({v.vehicle_type}){ownerTag}</option>
+          <Autocomplete
+            options={vehicles.map(v => {
+              const ownerTag = v.owner_type === 'own' ? ' [Own]' : v.owner_type === 'third_party' ? ` [${v.transporter_name || 'Third-party'}]` : ''
+              return { value: v.id, label: `${v.vehicle_number} (${v.vehicle_type})${ownerTag}` }
             })}
-          </select>
+            value={form.vehicle_id}
+            onChange={val => handleVehicleChange(val)}
+            placeholder="Search vehicle number…"
+          />
         )}
       </div>
 
@@ -497,10 +576,13 @@ function InvoiceFormModal({ companyId, onClose, prefill = null, onAfterSave = nu
       {/* Loading / Unloading */}
       <div className="grid grid-cols-2 gap-3">
         <Field label="Loading Point">
-          <select className={inp()} value={form.loading_point} onChange={e => set('loading_point', e.target.value)}>
-            <option value="">— Select —</option>
-            {loadingPoints.filter(p => p.point_type !== 'unloading').map(p => <option key={p.id} value={p.point_name}>{p.point_name}</option>)}
-          </select>
+          <Autocomplete
+            freeText
+            options={loadingPoints.filter(p => p.point_type !== 'unloading').map(p => ({ value: p.point_name, label: p.point_name }))}
+            value={form.loading_point}
+            onChange={val => set('loading_point', val)}
+            placeholder="Search or type loading point…"
+          />
           {companyAddress && (
             <p className="text-[11px] text-slate-500 mt-1.5 bg-dark-700 rounded px-2 py-1 leading-snug">
               📍 {companyAddress}
@@ -537,10 +619,13 @@ function InvoiceFormModal({ companyId, onClose, prefill = null, onAfterSave = nu
               </button>
             </div>
           )}
-          <select className={inp()} value={form.unloading_point} onChange={e => set('unloading_point', e.target.value)}>
-            <option value="">— Select or type below —</option>
-            {loadingPoints.filter(p => p.point_type !== 'loading').map(p => <option key={p.id} value={p.point_name}>{p.point_name}</option>)}
-          </select>
+          <Autocomplete
+            freeText
+            options={loadingPoints.filter(p => p.point_type !== 'loading').map(p => ({ value: p.point_name, label: p.point_name }))}
+            value={form.unloading_point}
+            onChange={val => set('unloading_point', val)}
+            placeholder="Search or type unloading point…"
+          />
           <input className={`${inp()} mt-2`} value={form.unloading_address}
             onChange={e => set('unloading_address', e.target.value)}
             placeholder="Delivery address (auto-fills from site or type manually)" />
@@ -628,10 +713,12 @@ function InvoiceFormModal({ companyId, onClose, prefill = null, onAfterSave = nu
               </div>
 
               <Field label="Material (from grade list)">
-                <select className={inp()} value={item.grade_id} onChange={e => handleGradeChange(i, e.target.value)}>
-                  <option value="">— Select grade —</option>
-                  {grades.map(g => <option key={g.id} value={g.id}>{g.grade_name}</option>)}
-                </select>
+                <Autocomplete
+                  options={grades.map(g => ({ value: g.id, label: g.grade_name }))}
+                  value={item.grade_id}
+                  onChange={val => handleGradeChange(i, val)}
+                  placeholder="Search grade…"
+                />
               </Field>
 
               {!item.grade_id && (
@@ -988,11 +1075,12 @@ function TokenFormModal({ companyId, onClose, onSaved }) {
 
       {/* Customer */}
       <Field label="Customer">
-        <select className={inp()} value={form.client_id}
-          onChange={e => { set('client_id', e.target.value); set('vehicle_id', ''); set('customer_name', '') }}>
-          <option value="">— Walk-in / One-time —</option>
-          {clients.map(c => <option key={c.id} value={c.id}>{c.display_name || c.business_name}</option>)}
-        </select>
+        <Autocomplete
+          options={clients.map(c => ({ value: c.id, label: c.display_name || c.business_name }))}
+          value={form.client_id}
+          onChange={val => { set('client_id', val); set('vehicle_id', ''); set('customer_name', '') }}
+          placeholder="Search client… (blank = walk-in)"
+        />
       </Field>
       {!form.client_id && (
         <Field label="Customer Name (walk-in)">
@@ -1015,32 +1103,37 @@ function TokenFormModal({ companyId, onClose, onSaved }) {
           ? <input className={inp()} value={form.vehicle_number}
               onChange={e => set('vehicle_number', e.target.value.toUpperCase())}
               placeholder="e.g. TN38AB1234" />
-          : <select className={inp()} value={form.vehicle_id} onChange={e => set('vehicle_id', e.target.value)}>
-              <option value="">— Select vehicle —</option>
-              {vehicles.map(v => {
-                const ownerTag = v.owner_type === 'own' ? ' [Own Fleet]' : v.owner_type === 'third_party' ? ` [${v.transporter_name || 'Third-party'}]` : ''
-                return <option key={v.id} value={v.id}>{v.vehicle_number} ({v.vehicle_type}){ownerTag}</option>
+          : <Autocomplete
+              options={vehicles.map(v => {
+                const ownerTag = v.owner_type === 'own' ? ' [Own]' : v.owner_type === 'third_party' ? ` [${v.transporter_name || 'Third-party'}]` : ''
+                return { value: v.id, label: `${v.vehicle_number} (${v.vehicle_type})${ownerTag}` }
               })}
-            </select>
+              value={form.vehicle_id}
+              onChange={val => set('vehicle_id', val)}
+              placeholder="Search vehicle number…"
+            />
         }
       </div>
 
       {/* Stock Yard */}
       <Field label="Stock Yard / Loading Point">
-        <select className={inp()} value={form.stock_yard} onChange={e => set('stock_yard', e.target.value)}>
-          <option value="">— Select yard —</option>
-          {loadingPoints.filter(p => p.point_type !== 'unloading').map(p => (
-            <option key={p.id} value={p.point_name}>{p.point_name}</option>
-          ))}
-        </select>
+        <Autocomplete
+          freeText
+          options={loadingPoints.filter(p => p.point_type !== 'unloading').map(p => ({ value: p.point_name, label: p.point_name }))}
+          value={form.stock_yard}
+          onChange={val => set('stock_yard', val)}
+          placeholder="Search or type stock yard…"
+        />
       </Field>
 
       {/* Material & Quantity */}
       <Field label="Material">
-        <select className={inp()} value={form.grade_id} onChange={e => handleGradeChange(e.target.value)}>
-          <option value="">— Select grade —</option>
-          {grades.map(g => <option key={g.id} value={g.id}>{g.grade_name}</option>)}
-        </select>
+        <Autocomplete
+          options={grades.map(g => ({ value: g.id, label: g.grade_name }))}
+          value={form.grade_id}
+          onChange={val => handleGradeChange(val)}
+          placeholder="Search grade…"
+        />
       </Field>
       {!form.grade_id && (
         <Field label="Material Name (manual)">
@@ -1250,11 +1343,12 @@ function TokenEditModal({ companyId, token, onClose, onSaved }) {
       </div>
 
       <Field label="Customer">
-        <select className={inp()} value={form.client_id}
-          onChange={e => { set('client_id', e.target.value); set('customer_name', '') }}>
-          <option value="">— Walk-in —</option>
-          {clients.map(c => <option key={c.id} value={c.id}>{c.display_name || c.business_name}</option>)}
-        </select>
+        <Autocomplete
+          options={clients.map(c => ({ value: c.id, label: c.display_name || c.business_name }))}
+          value={form.client_id}
+          onChange={val => { set('client_id', val); set('customer_name', '') }}
+          placeholder="Search client… (blank = walk-in)"
+        />
       </Field>
       {!form.client_id && (
         <Field label="Customer Name (walk-in)">
@@ -1274,30 +1368,35 @@ function TokenEditModal({ companyId, token, onClose, onSaved }) {
         {form.vehicle_manual
           ? <input className={inp()} value={form.vehicle_number}
               onChange={e => set('vehicle_number', e.target.value.toUpperCase())} placeholder="e.g. TN38AB1234" />
-          : <select className={inp()} value={form.vehicle_id} onChange={e => set('vehicle_id', e.target.value)}>
-              <option value="">— Select vehicle —</option>
-              {vehicles.map(v => {
-                const ownerTag = v.owner_type === 'own' ? ' [Own Fleet]' : v.owner_type === 'third_party' ? ` [${v.transporter_name || 'Third-party'}]` : ''
-                return <option key={v.id} value={v.id}>{v.vehicle_number} ({v.vehicle_type}){ownerTag}</option>
+          : <Autocomplete
+              options={vehicles.map(v => {
+                const ownerTag = v.owner_type === 'own' ? ' [Own]' : v.owner_type === 'third_party' ? ` [${v.transporter_name || 'Third-party'}]` : ''
+                return { value: v.id, label: `${v.vehicle_number} (${v.vehicle_type})${ownerTag}` }
               })}
-            </select>
+              value={form.vehicle_id}
+              onChange={val => set('vehicle_id', val)}
+              placeholder="Search vehicle number…"
+            />
         }
       </div>
 
       <Field label="Stock Yard / Loading Point">
-        <select className={inp()} value={form.stock_yard} onChange={e => set('stock_yard', e.target.value)}>
-          <option value="">— Select yard —</option>
-          {loadingPoints.filter(p => p.point_type !== 'unloading').map(p => (
-            <option key={p.id} value={p.point_name}>{p.point_name}</option>
-          ))}
-        </select>
+        <Autocomplete
+          freeText
+          options={loadingPoints.filter(p => p.point_type !== 'unloading').map(p => ({ value: p.point_name, label: p.point_name }))}
+          value={form.stock_yard}
+          onChange={val => set('stock_yard', val)}
+          placeholder="Search or type stock yard…"
+        />
       </Field>
 
       <Field label="Material">
-        <select className={inp()} value={form.grade_id} onChange={e => handleGradeChange(e.target.value)}>
-          <option value="">— Select grade —</option>
-          {grades.map(g => <option key={g.id} value={g.id}>{g.grade_name}</option>)}
-        </select>
+        <Autocomplete
+          options={grades.map(g => ({ value: g.id, label: g.grade_name }))}
+          value={form.grade_id}
+          onChange={val => handleGradeChange(val)}
+          placeholder="Search grade…"
+        />
       </Field>
       {!form.grade_id && (
         <Field label="Material Name (manual)">
@@ -2315,10 +2414,13 @@ function InvoiceEditModal({ companyId, invoice, onClose }) {
       {/* Loading / Unloading */}
       <div className="grid grid-cols-2 gap-3">
         <Field label="Loading Point">
-          <select className={inp()} value={form.loading_point} onChange={e => set('loading_point', e.target.value)}>
-            <option value="">— None —</option>
-            {loadingPoints.map(p => <option key={p.id} value={p.point_name}>{p.point_name}</option>)}
-          </select>
+          <Autocomplete
+            freeText
+            options={loadingPoints.filter(p => p.point_type !== 'unloading').map(p => ({ value: p.point_name, label: p.point_name }))}
+            value={form.loading_point}
+            onChange={val => set('loading_point', val)}
+            placeholder="Search or type loading point…"
+          />
         </Field>
         <Field label="Unloading Point">
           {editClientSites.length > 0 && (
@@ -2349,10 +2451,13 @@ function InvoiceEditModal({ companyId, invoice, onClose }) {
               </button>
             </div>
           )}
-          <select className={inp()} value={form.unloading_point} onChange={e => set('unloading_point', e.target.value)}>
-            <option value="">— None —</option>
-            {loadingPoints.map(p => <option key={p.id} value={p.point_name}>{p.point_name}</option>)}
-          </select>
+          <Autocomplete
+            freeText
+            options={loadingPoints.filter(p => p.point_type !== 'loading').map(p => ({ value: p.point_name, label: p.point_name }))}
+            value={form.unloading_point}
+            onChange={val => set('unloading_point', val)}
+            placeholder="Search or type unloading point…"
+          />
           <input className={`${inp()} mt-2`} value={form.unloading_address}
             onChange={e => set('unloading_address', e.target.value)}
             placeholder="Delivery address (auto-fills from site or type manually)" />
@@ -2411,10 +2516,12 @@ function InvoiceEditModal({ companyId, invoice, onClose }) {
                     </button>
                   )}
                 </div>
-                <select className={inp()} value={item.grade_id} onChange={e => handleGradeChange(i, e.target.value)}>
-                  <option value="">— Select grade —</option>
-                  {grades.map(g => <option key={g.id} value={g.id}>{g.grade_name}</option>)}
-                </select>
+                <Autocomplete
+                  options={grades.map(g => ({ value: g.id, label: g.grade_name }))}
+                  value={item.grade_id}
+                  onChange={val => handleGradeChange(i, val)}
+                  placeholder="Search grade…"
+                />
                 {!item.grade_id && (
                   <input className={inp()} value={item.material_name}
                     onChange={e => setItem(i, 'material_name', e.target.value)}
@@ -3265,14 +3372,13 @@ function ClientModal({ companyId, existing, onClose }) {
             const realIdx = rates.indexOf(rate)
             return (
               <div key={rate.id || rate._tempId} className="flex gap-2 items-center bg-dark-700 rounded-lg p-2 border border-dark-600">
-                <select
-                  className={`${inp('text-sm')} flex-1`}
+                <Autocomplete
+                  className="flex-1"
+                  options={grades.map(g => ({ value: g.id, label: g.grade_name }))}
                   value={rate.grade_id}
-                  onChange={e => updateRate(realIdx, 'grade_id', e.target.value)}
-                >
-                  <option value="">— Select grade —</option>
-                  {grades.map(g => <option key={g.id} value={g.id}>{g.grade_name}</option>)}
-                </select>
+                  onChange={val => updateRate(realIdx, 'grade_id', val)}
+                  placeholder="Search grade…"
+                />
                 <div className="flex items-center gap-1">
                   <span className="text-xs text-slate-500">Rs.</span>
                   <input
