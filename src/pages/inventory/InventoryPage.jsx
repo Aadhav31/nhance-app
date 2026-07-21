@@ -65,7 +65,7 @@ function Field({ label, children, required }) {
 }
 
 // ── OVERVIEW TAB ──────────────────────────────────────────────────────────────
-function OverviewTab({ companyId }) {
+function OverviewTab({ companyId, onNavigate }) {
   const { data: items = [] } = useQuery({
     queryKey: ['inv_items', companyId],
     queryFn: async () => {
@@ -78,7 +78,11 @@ function OverviewTab({ companyId }) {
   const { data: stock = [] } = useQuery({
     queryKey: ['inv_stock', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('inventory_stock').select('*, inventory_items(item_name, item_code, unit, min_stock_level, category), stores(store_name)').eq('company_id', companyId)
+      const { data } = await supabase.from('inventory_stock')
+        .select('*, inventory_items(item_name, item_code, unit, min_stock_level, category), stores(store_name)')
+        .eq('company_id', companyId)
+        .gt('quantity_on_hand', 0)
+        .order('quantity_on_hand', { ascending: false })
       return data || []
     },
     enabled: !!companyId,
@@ -87,94 +91,196 @@ function OverviewTab({ companyId }) {
   const { data: recentTxns = [] } = useQuery({
     queryKey: ['inv_txns_recent', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('stock_transactions').select('*, inventory_items(item_name, unit), stores(store_name)').eq('company_id', companyId).order('created_at', { ascending: false }).limit(15)
+      const { data } = await supabase.from('stock_transactions')
+        .select('*, inventory_items(item_name, unit), stores(store_name)')
+        .eq('company_id', companyId).order('created_at', { ascending: false }).limit(10)
       return data || []
     },
     enabled: !!companyId,
   })
 
-  const lowStock = stock.filter(s => {
-    const minLevel = s.inventory_items?.min_stock_level || 0
-    return minLevel > 0 && s.quantity_on_hand <= minLevel
+  const { data: pendingBills = [] } = useQuery({
+    queryKey: ['pending-stock-bills', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('stock_transactions')
+        .select('id, txn_number, txn_date, quantity, unit, inventory_items(item_name, unit), supplier_name')
+        .eq('company_id', companyId).eq('requires_bill', true).is('bill_id', null).eq('action_taken', false)
+        .order('txn_date', { ascending: false })
+      return data || []
+    },
+    enabled: !!companyId,
   })
 
-  const totalValue = stock.reduce((sum, s) => sum + (s.quantity_on_hand * (s.avg_unit_cost || s.inventory_items?.avg_unit_cost || 0)), 0)
+  const totalValue = stock.reduce((sum, s) => sum + (s.quantity_on_hand || 0) * (s.avg_unit_cost || 0), 0)
+  const lowStock   = stock.filter(s => {
+    const min = s.inventory_items?.min_stock_level || 0
+    return min > 0 && s.quantity_on_hand <= min
+  })
 
-  const TXN_ICON = { in: ArrowDownCircle, out: ArrowUpCircle, transfer: Shuffle, adjustment: RefreshCcw }
+  // Per-category: item count + stock value
+  const catStats = useMemo(() => {
+    const m = {}
+    CATEGORIES.forEach(c => { m[c.value] = { items: 0, value: 0 } })
+    items.forEach(i => { if (m[i.category]) m[i.category].items++ })
+    stock.forEach(s => {
+      const cat = s.inventory_items?.category
+      if (cat && m[cat]) m[cat].value += (s.quantity_on_hand || 0) * (s.avg_unit_cost || 0)
+    })
+    return m
+  }, [items, stock])
+
+  const TXN_ICON  = { in: ArrowDownCircle, out: ArrowUpCircle, transfer: Shuffle, adjustment: RefreshCcw }
   const TXN_COLOR = { in: 'text-emerald-400', out: 'text-red-400', transfer: 'text-blue-400', adjustment: 'text-orange-400' }
+  const TXN_SIGN  = { in: '+', out: '-', transfer: '⇄', adjustment: '~' }
 
   return (
-    <div className="flex-1 overflow-y-auto px-4 pb-4 pt-3 space-y-5">
-      {/* Summary cards */}
+    <div className="flex-1 overflow-y-auto px-4 pb-6 pt-3 space-y-5">
+
+      {/* ── Summary KPIs ── */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {[
-          { label: 'Total Items',    value: items.length,         sub: 'in catalog',          color: 'text-slate-100' },
-          { label: 'Stock Entries',  value: stock.length,         sub: 'item-store pairs',    color: 'text-slate-100' },
-          { label: 'Low Stock',      value: lowStock.length,      sub: 'below minimum',       color: lowStock.length > 0 ? 'text-red-400' : 'text-emerald-400' },
-          { label: 'Total Value',    value: fmtINR(totalValue),   sub: 'at avg cost',         color: 'text-primary-400' },
-        ].map(c => (
-          <div key={c.label} className="bg-dark-800 border border-dark-700 rounded-xl p-4">
-            <p className="text-xs text-slate-500 mb-1">{c.label}</p>
-            <p className={`text-xl font-black ${c.color}`}>{c.value}</p>
-            <p className="text-[10px] text-slate-600 mt-0.5">{c.sub}</p>
-          </div>
-        ))}
+        <button onClick={() => onNavigate('items')} className="bg-dark-800 border border-dark-700 hover:border-primary-600/60 rounded-xl p-4 text-left transition-colors group">
+          <p className="text-xs text-slate-500 mb-1">Total Items</p>
+          <p className="text-2xl font-black text-slate-100">{items.length}</p>
+          <p className="text-[10px] text-slate-600 mt-0.5 group-hover:text-primary-400">in catalog →</p>
+        </button>
+        <button onClick={() => onNavigate('stores')} className="bg-dark-800 border border-dark-700 hover:border-primary-600/60 rounded-xl p-4 text-left transition-colors group">
+          <p className="text-xs text-slate-500 mb-1">In Stock</p>
+          <p className="text-2xl font-black text-slate-100">{stock.length}</p>
+          <p className="text-[10px] text-slate-600 mt-0.5 group-hover:text-primary-400">item-store pairs →</p>
+        </button>
+        <button onClick={() => onNavigate('stock_in')} className={`bg-dark-800 border rounded-xl p-4 text-left transition-colors group ${lowStock.length > 0 ? 'border-red-700/50 hover:border-red-500' : 'border-dark-700 hover:border-primary-600/60'}`}>
+          <p className="text-xs text-slate-500 mb-1">Low Stock</p>
+          <p className={`text-2xl font-black ${lowStock.length > 0 ? 'text-red-400' : 'text-emerald-400'}`}>{lowStock.length}</p>
+          <p className={`text-[10px] mt-0.5 ${lowStock.length > 0 ? 'text-red-500 group-hover:text-red-400' : 'text-slate-600 group-hover:text-primary-400'}`}>{lowStock.length > 0 ? 'needs restocking →' : 'all good'}</p>
+        </button>
+        <div className="bg-dark-800 border border-dark-700 rounded-xl p-4">
+          <p className="text-xs text-slate-500 mb-1">Total Value</p>
+          <p className="text-xl font-black text-primary-400">{fmtINR(totalValue)}</p>
+          <p className="text-[10px] text-slate-600 mt-0.5">at avg cost</p>
+        </div>
       </div>
 
-      {/* Low Stock Alerts */}
+      {/* ── Pending bill alert ── */}
+      {pendingBills.length > 0 && (
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl px-4 py-3 flex items-center gap-3">
+          <span className="text-lg">🚛</span>
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-bold text-amber-400">{pendingBills.length} stock receipt{pendingBills.length > 1 ? 's' : ''} waiting for a bill</p>
+            <p className="text-[11px] text-amber-300/60 mt-0.5">
+              {pendingBills.slice(0, 2).map(r => r.inventory_items?.item_name).filter(Boolean).join(', ')}
+              {pendingBills.length > 2 ? ` +${pendingBills.length - 2} more` : ''}
+            </p>
+          </div>
+          <span className="text-[11px] font-semibold text-amber-400/70 shrink-0">→ Purchase → Bills</span>
+        </div>
+      )}
+
+      {/* ── Low stock alerts ── */}
       {lowStock.length > 0 && (
         <div>
           <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
             <AlertTriangle className="w-3.5 h-3.5 text-red-400" /> Low Stock Alerts
           </p>
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             {lowStock.map(s => (
               <div key={s.id} className="bg-red-500/5 border border-red-700/30 rounded-xl px-4 py-3 flex items-center justify-between">
                 <div>
                   <p className="text-sm font-semibold text-slate-100">{s.inventory_items?.item_name}</p>
                   <p className="text-xs text-slate-500">{s.stores?.store_name} · Min: {fmtQty(s.inventory_items?.min_stock_level, s.inventory_items?.unit)}</p>
                 </div>
-                <div className="text-right">
-                  <p className="text-lg font-black text-red-400">{fmtQty(s.quantity_on_hand, s.inventory_items?.unit)}</p>
-                  <p className="text-[10px] text-red-500">below minimum</p>
-                </div>
+                <p className="text-lg font-black text-red-400">{fmtQty(s.quantity_on_hand, s.inventory_items?.unit)}</p>
               </div>
             ))}
           </div>
         </div>
       )}
 
-      {/* Stock by category */}
+      {/* ── Current Stock Position ── */}
       <div>
-        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Stock by Category</p>
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Current Stock Position</p>
+          <button onClick={() => onNavigate('stores')} className="text-[11px] text-primary-400 hover:text-primary-300">View by store →</button>
+        </div>
+        {stock.length === 0 ? (
+          <div className="bg-dark-800 border border-dark-700 rounded-xl px-4 py-8 text-center">
+            <Package className="w-8 h-8 text-slate-700 mx-auto mb-2" />
+            <p className="text-sm text-slate-500">No stock recorded yet</p>
+            <button onClick={() => onNavigate('stock_in')} className="mt-2 text-xs text-primary-400 hover:text-primary-300 underline underline-offset-2">Receive your first stock →</button>
+          </div>
+        ) : (
+          <div className="space-y-1.5">
+            {stock.map(s => {
+              const item = s.inventory_items
+              const val  = (s.quantity_on_hand || 0) * (s.avg_unit_cost || 0)
+              const isLow = item?.min_stock_level > 0 && s.quantity_on_hand <= item.min_stock_level
+              return (
+                <div key={s.id} className={`flex items-center justify-between rounded-xl px-4 py-3 border ${isLow ? 'bg-red-500/5 border-red-700/30' : 'bg-dark-800 border-dark-700'}`}>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="font-semibold text-sm text-slate-100 truncate">{item?.item_name}</p>
+                      {item?.category && <CategoryBadge cat={item.category} />}
+                      {isLow && <span className="text-[10px] text-red-400 font-bold">⚠ LOW</span>}
+                    </div>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      📍 {s.stores?.store_name}
+                      {s.avg_unit_cost > 0 ? ` · ₹${Number(s.avg_unit_cost).toLocaleString('en-IN', { maximumFractionDigits: 2 })}/unit` : ''}
+                    </p>
+                  </div>
+                  <div className="text-right shrink-0 ml-4">
+                    <p className="text-base font-black text-emerald-400">{fmtQty(s.quantity_on_hand, item?.unit)}</p>
+                    {val > 0 && <p className="text-[10px] text-slate-500">{fmtINR(val)}</p>}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* ── Category breakdown (clickable) ── */}
+      <div>
+        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">By Category</p>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
           {CATEGORIES.map(cat => {
-            const catItems = items.filter(i => i.category === cat.value)
+            const stats = catStats[cat.value] || { items: 0, value: 0 }
             const Icon = cat.icon
             return (
-              <div key={cat.value} className={`bg-dark-800 border rounded-xl p-3 flex items-center gap-3 border-dark-700`}>
+              <button key={cat.value} onClick={() => onNavigate('items')}
+                className="bg-dark-800 border border-dark-700 hover:border-primary-600/50 rounded-xl p-3 flex items-center gap-3 text-left transition-colors">
                 <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${cat.bg} shrink-0`}>
                   <Icon className={`w-4 h-4 ${cat.color}`} />
                 </div>
-                <div>
+                <div className="min-w-0">
                   <p className="text-xs text-slate-500">{cat.label}</p>
-                  <p className="text-base font-bold text-slate-100">{catItems.length} <span className="text-xs font-normal text-slate-500">items</span></p>
+                  <p className="text-sm font-bold text-slate-100">{stats.items} <span className="text-xs font-normal text-slate-500">items</span></p>
+                  {stats.value > 0 && <p className="text-[10px] text-primary-400 font-semibold">{fmtINR(stats.value)}</p>}
                 </div>
-              </div>
+              </button>
             )
           })}
         </div>
       </div>
 
-      {/* Recent movements */}
+      {/* ── Recent movements ── */}
       <div>
-        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Recent Movements</p>
-        {recentTxns.length === 0
-          ? <p className="text-sm text-slate-600 py-4 text-center">No transactions yet</p>
-          : <div className="space-y-1.5">
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Recent Movements</p>
+          <div className="flex gap-2">
+            <button onClick={() => onNavigate('stock_in')}  className="text-[11px] text-emerald-400 hover:text-emerald-300">+ Stock In</button>
+            <button onClick={() => onNavigate('stock_out')} className="text-[11px] text-red-400 hover:text-red-300">- Stock Out</button>
+          </div>
+        </div>
+        {recentTxns.length === 0 ? (
+          <div className="bg-dark-800 border border-dark-700 rounded-xl px-4 py-6 text-center">
+            <p className="text-sm text-slate-500">No movements recorded yet</p>
+            <button onClick={() => onNavigate('stock_in')} className="mt-1 text-xs text-primary-400 hover:text-primary-300 underline underline-offset-2">Record first stock receipt →</button>
+          </div>
+        ) : (
+          <div className="space-y-1.5">
             {recentTxns.map(t => {
               const Icon = TXN_ICON[t.txn_type] || Package
               const col  = TXN_COLOR[t.txn_type] || 'text-slate-400'
+              const sign = TXN_SIGN[t.txn_type] || ''
               return (
                 <div key={t.id} className="bg-dark-800 border border-dark-700 rounded-xl px-4 py-3 flex items-center gap-3">
                   <Icon className={`w-4 h-4 shrink-0 ${col}`} />
@@ -183,14 +289,13 @@ function OverviewTab({ companyId }) {
                     <p className="text-xs text-slate-500">{t.txn_number} · {t.stores?.store_name} · {fmtDate(t.txn_date)}</p>
                   </div>
                   <p className={`text-sm font-bold shrink-0 ${col}`}>
-                    {t.txn_type === 'out' ? '-' : t.txn_type === 'adjustment' && t.quantity < 0 ? '' : '+'}
-                    {fmtQty(Math.abs(t.quantity), t.inventory_items?.unit)}
+                    {sign}{fmtQty(Math.abs(t.quantity), t.unit || t.inventory_items?.unit)}
                   </p>
                 </div>
               )
             })}
           </div>
-        }
+        )}
       </div>
     </div>
   )
@@ -1591,7 +1696,7 @@ export default function InventoryPage() {
 
       {/* Tab content */}
       <div className="flex-1 overflow-hidden">
-        {activeTab === 'overview'    && <OverviewTab     companyId={companyId} />}
+        {activeTab === 'overview'    && <OverviewTab     companyId={companyId} onNavigate={setActiveTab} />}
         {activeTab === 'items'       && <ItemsTab        companyId={companyId} session={session} />}
         {activeTab === 'stores'      && <StoresTab       companyId={companyId} session={session} />}
         {activeTab === 'stock_in'    && <StockInTab      companyId={companyId} session={session} />}
