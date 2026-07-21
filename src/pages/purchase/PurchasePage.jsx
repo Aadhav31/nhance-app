@@ -1080,6 +1080,28 @@ function BillsTab({ companyId, session }) {
     clearAttach(); setAttachUrl(null); setShowCreate(true)
   }
 
+  // Open create form pre-filled for a specific pending stock receipt
+  const openCreateForReceipt = (receipt) => {
+    setEditing(null)
+    setForm({
+      ...blankForm(),
+      stock_receipt_id: receipt.id,
+      vendor_id: receipt.vendor_id || '',
+    })
+    setLines([{
+      _id: Math.random().toString(36).slice(2),
+      description: receipt.inventory_items?.item_name || '',
+      hsn_sac: '',
+      quantity: String(receipt.quantity || 1),
+      unit: receipt.inventory_items?.unit || receipt.unit || 'nos',
+      rate: String(receipt.unit_cost || 0),
+      amount: (receipt.quantity || 0) * (receipt.unit_cost || 0),
+      gst_rate: null, gst_type: null,
+    }])
+    setAddToInv(false); setInvCategory(''); setInvStore('')
+    clearAttach(); setAttachUrl(null); setShowCreate(true)
+  }
+
   const openEdit = async (bill) => {
     const { data: ld } = await supabase.from('bill_line_items').select('*').eq('bill_id', bill.id).order('sort_order')
     setEditing(bill)
@@ -1252,7 +1274,7 @@ function BillsTab({ companyId, session }) {
     queryKey: ['pending-stock-bills', companyId],
     queryFn: async () => {
       const { data } = await supabase.from('stock_transactions')
-        .select('id, txn_number, txn_date, quantity, unit_cost, total_cost, vehicle_number, inventory_items(item_name, unit), stores(store_name)')
+        .select('id, txn_number, txn_date, quantity, unit, unit_cost, total_cost, vehicle_number, vendor_id, supplier_name, delivery_mode, inventory_items(item_name, unit), stores(store_name)')
         .eq('company_id', companyId).eq('requires_bill', true).is('bill_id', null).eq('action_taken', false)
         .order('txn_date', { ascending: false })
       return data || []
@@ -1457,24 +1479,33 @@ function BillsTab({ companyId, session }) {
         <button onClick={openCreate} className="btn-primary"><Plus className="w-4 h-4" /> New Bill</button>
       </div>
       <div className="flex-1 overflow-y-auto px-4 pb-4 pt-3">
-        {/* Pending stock bill alert */}
+        {/* Pending stock receipts — each gets its own Create Bill button */}
         {pendingStockBills.length > 0 && (
-          <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 mb-3 flex items-start gap-3">
-            <span className="text-xl leading-none mt-0.5">🚛</span>
-            <div className="flex-1 min-w-0">
+          <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 mb-3">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-base leading-none">🚛</span>
               <p className="text-xs font-bold text-amber-400">{pendingStockBills.length} Stock Receipt{pendingStockBills.length > 1 ? 's' : ''} Awaiting Bill</p>
-              <div className="mt-1 space-y-0.5">
-                {pendingStockBills.slice(0, 3).map(r => (
-                  <p key={r.id} className="text-[11px] text-amber-300/70">
-                    {r.txn_number} · {r.inventory_items?.item_name} · {r.quantity} {r.inventory_items?.unit}
-                    {r.vehicle_number ? ` · 🚛 ${r.vehicle_number}` : ''}
-                  </p>
-                ))}
-                {pendingStockBills.length > 3 && <p className="text-[11px] text-amber-400/50">+{pendingStockBills.length - 3} more</p>}
-              </div>
-              <button onClick={openCreate} className="mt-2 text-[11px] font-semibold text-amber-400 hover:text-amber-300 underline underline-offset-2">
-                Create Bill & Link Receipt →
-              </button>
+            </div>
+            <div className="space-y-1.5">
+              {pendingStockBills.map(r => (
+                <div key={r.id} className="flex items-center justify-between bg-amber-500/5 border border-amber-700/30 rounded-lg px-3 py-2 gap-3">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-semibold text-amber-300">{r.txn_number} · {r.inventory_items?.item_name}</p>
+                    <p className="text-[11px] text-amber-300/60 mt-0.5">
+                      {r.quantity} {r.inventory_items?.unit}
+                      {r.vehicle_number ? ` · 🚛 ${r.vehicle_number}` : ''}
+                      {r.supplier_name ? ` · 👤 ${r.supplier_name}` : ''}
+                      {r.delivery_mode === 'own_vehicle' ? ' · Own vehicle' : ''}
+                      {' · '}{fmtDate(r.txn_date)}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => openCreateForReceipt(r)}
+                    className="shrink-0 text-[11px] font-bold px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-600/40 rounded-lg transition-colors whitespace-nowrap">
+                    Create Bill →
+                  </button>
+                </div>
+              ))}
             </div>
           </div>
         )}

@@ -429,11 +429,72 @@ function ItemsTab({ companyId, session }) {
   )
 }
 
+// ── STORE DETAIL MODAL ────────────────────────────────────────────────────────
+function StoreDetailModal({ store, companyId, onClose }) {
+  const { data: stock = [], isLoading } = useQuery({
+    queryKey: ['store-stock-detail', store.id],
+    queryFn: async () => {
+      const { data } = await supabase.from('inventory_stock')
+        .select('*, inventory_items(item_name, item_code, unit, category)')
+        .eq('store_id', store.id)
+        .gt('quantity_on_hand', 0)
+        .order('quantity_on_hand', { ascending: false })
+      return data || []
+    },
+    enabled: !!store,
+  })
+
+  const totalValue = stock.reduce((s, r) => s + (r.quantity_on_hand || 0) * (r.avg_unit_cost || 0), 0)
+
+  return (
+    <Modal title={store.store_name} subtitle={[store.store_code, store.location, store.in_charge ? `👤 ${store.in_charge}` : ''].filter(Boolean).join(' · ')} onClose={onClose} wide>
+      <div className="flex items-center justify-between mb-3">
+        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Stock on Hand</p>
+        <div className="flex gap-3">
+          <span className="text-xs bg-dark-700 rounded-lg px-3 py-1 text-slate-400">{stock.length} items</span>
+          <span className="text-xs bg-primary-500/10 border border-primary-500/30 rounded-lg px-3 py-1 text-primary-400 font-semibold">{fmtINR(totalValue)}</span>
+        </div>
+      </div>
+      {isLoading ? (
+        <div className="flex justify-center py-8"><Loader2 className="w-5 h-5 animate-spin text-primary-400" /></div>
+      ) : stock.length === 0 ? (
+        <div className="flex flex-col items-center py-10 gap-2 text-slate-500">
+          <Package className="w-8 h-8 text-slate-700" />
+          <p>No stock currently in this store</p>
+        </div>
+      ) : (
+        <div className="space-y-1.5">
+          {stock.map(r => {
+            const item = r.inventory_items
+            const rowVal = (r.quantity_on_hand || 0) * (r.avg_unit_cost || 0)
+            return (
+              <div key={r.id} className="flex items-center justify-between bg-dark-700 rounded-xl px-4 py-2.5">
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold text-sm text-slate-100 truncate">{item?.item_name}</p>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    {item?.item_code && <span className="text-[10px] font-mono text-primary-500">{item.item_code}</span>}
+                    {item?.category && <CategoryBadge cat={item.category} />}
+                  </div>
+                </div>
+                <div className="text-right shrink-0 ml-4">
+                  <p className="text-base font-black text-emerald-400">{fmtQty(r.quantity_on_hand, item?.unit)}</p>
+                  {r.avg_unit_cost > 0 && <p className="text-[10px] text-slate-500">{fmtINR(rowVal)}</p>}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </Modal>
+  )
+}
+
 // ── STORES TAB ────────────────────────────────────────────────────────────────
 function StoresTab({ companyId, session }) {
   const qc = useQueryClient()
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving]         = useState(false)
+  const [detailStore, setDetailStore] = useState(null)
   const [form, setForm] = useState({ store_name:'', store_code:'', location:'', in_charge:'' })
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
 
@@ -494,15 +555,20 @@ function StoresTab({ companyId, session }) {
           {stores.map(s => {
             const stats = storeStats[s.id] || { items: 0, value: 0 }
             return (
-              <div key={s.id} className="bg-dark-800 border border-dark-700 rounded-xl p-4">
+              <div key={s.id}
+                onClick={() => setDetailStore(s)}
+                className="bg-dark-800 border border-dark-700 rounded-xl p-4 cursor-pointer hover:border-primary-600/60 hover:bg-dark-750 transition-colors group">
                 <div className="flex items-start justify-between">
-                  <div>
-                    <p className="font-semibold text-slate-100">{s.store_name}</p>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="font-semibold text-slate-100">{s.store_name}</p>
+                      <ChevronRight className="w-3.5 h-3.5 text-slate-600 group-hover:text-primary-400 transition-colors" />
+                    </div>
                     {s.store_code && <p className="text-xs font-mono text-primary-500">{s.store_code}</p>}
                     {s.location && <p className="text-xs text-slate-500 mt-0.5">📍 {s.location}</p>}
                     {s.in_charge && <p className="text-xs text-slate-500">👤 {s.in_charge}</p>}
                   </div>
-                  <div className="text-right">
+                  <div className="text-right shrink-0">
                     <p className="text-lg font-black text-slate-100">{stats.items}</p>
                     <p className="text-[10px] text-slate-500">item types</p>
                     <p className="text-xs text-primary-400 font-semibold mt-1">{fmtINR(stats.value)}</p>
@@ -524,6 +590,9 @@ function StoresTab({ companyId, session }) {
           </div>
           <Field label="Location / Address"><input className={inp()} value={form.location} onChange={e => setF('location', e.target.value)} /></Field>
         </Modal>
+      )}
+      {detailStore && (
+        <StoreDetailModal store={detailStore} companyId={companyId} onClose={() => setDetailStore(null)} />
       )}
     </div>
   )
