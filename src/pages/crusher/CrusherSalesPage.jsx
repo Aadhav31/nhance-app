@@ -3930,10 +3930,113 @@ function ClientDetailPanel({ companyId, client, settings, outstanding, advance, 
   )
 }
 
+// ── Record Advance Modal ──────────────────────────────────────────────────────
+function AdvanceModal({ companyId, client, onClose }) {
+  const qc = useQueryClient()
+  const today = new Date().toISOString().split('T')[0]
+  const [amount,  setAmount]  = useState('')
+  const [date,    setDate]    = useState(today)
+  const [mode,    setMode]    = useState('cash')
+  const [notes,   setNotes]   = useState('')
+  const [saving,  setSaving]  = useState(false)
+
+  const handleSave = async () => {
+    const amt = Number(amount)
+    if (!amt || amt <= 0) { toast.error('Enter a valid amount'); return }
+    setSaving(true)
+    try {
+      // Upsert: if a record already exists for this client, add to it; otherwise insert fresh
+      const { data: existing } = await supabase
+        .from('crusher_customer_advances')
+        .select('id, remaining')
+        .eq('company_id', companyId)
+        .eq('client_id', client.id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single()
+
+      if (existing) {
+        await supabase.from('crusher_customer_advances').update({
+          remaining: Number(existing.remaining) + amt,
+          amount:    Number(existing.remaining) + amt,
+          notes:     notes || existing.notes,
+        }).eq('id', existing.id)
+      } else {
+        await supabase.from('crusher_customer_advances').insert({
+          company_id:   companyId,
+          client_id:    client.id,
+          client_name:  client.display_name || client.business_name,
+          amount:       amt,
+          remaining:    amt,
+          notes:        notes || null,
+        })
+      }
+
+      await qc.invalidateQueries({ queryKey: ['crusher-advances', companyId] })
+      toast.success(`Advance of ₹${amt.toLocaleString('en-IN')} recorded`)
+      onClose()
+    } catch (e) {
+      toast.error('Failed to record advance')
+      console.error(e)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Modal
+      title={`Record Advance — ${client.display_name || client.business_name}`}
+      onClose={onClose}
+      footer={
+        <>
+          <button onClick={onClose} className="btn-ghost text-sm">Cancel</button>
+          <button onClick={handleSave} disabled={saving} className="btn-primary text-sm">
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            Save Advance
+          </button>
+        </>
+      }
+    >
+      <Field label="Amount Received (₹)" required>
+        <input
+          type="number" step="0.01" min="0"
+          className={inp()}
+          value={amount}
+          onChange={e => setAmount(e.target.value)}
+          placeholder="e.g. 5000"
+          autoFocus
+        />
+      </Field>
+
+      <Field label="Received Date" required>
+        <input type="date" className={inp()} value={date} onChange={e => setDate(e.target.value)} />
+      </Field>
+
+      <Field label="Payment Mode">
+        <select className={inp()} value={mode} onChange={e => setMode(e.target.value)}>
+          {PAYMENT_MODES.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+        </select>
+      </Field>
+
+      <Field label="Notes">
+        <input className={inp()} value={notes} onChange={e => setNotes(e.target.value)}
+          placeholder="e.g. Advance for July invoices…" />
+      </Field>
+
+      <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2">
+        <p className="text-[11px] text-amber-400">
+          This advance will be available to apply against future invoices for this client.
+        </p>
+      </div>
+    </Modal>
+  )
+}
+
 function ClientsTab({ companyId }) {
   const [clientModal,    setClientModal]    = useState(null)   // null | existing client obj
   const [stmtClient,     setStmtClient]     = useState(null)   // client obj for statement
   const [detailClient,   setDetailClient]   = useState(null)   // client obj for detail panel
+  const [advanceClient,  setAdvanceClient]  = useState(null)   // client obj for advance modal
 
   const { data: clients = [], isLoading } = useQuery({
     queryKey: ['clients', companyId],
@@ -4072,6 +4175,11 @@ function ClientsTab({ companyId }) {
               {/* Action buttons */}
               <div className="flex-shrink-0 flex gap-1.5">
                 <button
+                  onClick={() => setAdvanceClient(client)}
+                  className="flex items-center gap-1.5 text-xs text-amber-400 hover:text-amber-300 bg-amber-500/10 hover:bg-amber-500/20 px-3 py-1.5 rounded-lg transition-all">
+                  <CreditCard className="w-3.5 h-3.5" /> Advance
+                </button>
+                <button
                   onClick={() => setStmtClient(client)}
                   className="flex items-center gap-1.5 text-xs text-primary-400 hover:text-primary-300 bg-primary-500/10 hover:bg-primary-500/20 px-3 py-1.5 rounded-lg transition-all">
                   <FileText className="w-3.5 h-3.5" /> Statement
@@ -4132,6 +4240,13 @@ function ClientsTab({ companyId }) {
           onEdit={() => { setClientModal(detailClient); setDetailClient(null) }}
           onStatement={() => { setStmtClient(detailClient); setDetailClient(null) }}
           onClose={() => setDetailClient(null)}
+        />
+      )}
+      {advanceClient && (
+        <AdvanceModal
+          companyId={companyId}
+          client={advanceClient}
+          onClose={() => setAdvanceClient(null)}
         />
       )}
     </div>
