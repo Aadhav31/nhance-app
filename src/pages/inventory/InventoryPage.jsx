@@ -965,6 +965,29 @@ function StockInTab({ companyId, session }) {
       })
       if (error) throw error
 
+      // ── Update inventory_stock (upsert: add qty, recalculate weighted avg cost) ──
+      const qty  = parseFloat(form.quantity)
+      const cost = parseFloat(form.unit_cost) || 0
+      const { data: existing } = await supabase.from('inventory_stock')
+        .select('id, quantity_on_hand, avg_unit_cost')
+        .eq('company_id', companyId).eq('item_id', realItemId).eq('store_id', realStoreId)
+        .maybeSingle()
+      if (existing) {
+        const oldQty  = Number(existing.quantity_on_hand) || 0
+        const oldCost = Number(existing.avg_unit_cost)    || 0
+        const newQty  = oldQty + qty
+        const newAvg  = newQty > 0 ? ((oldQty * oldCost) + (qty * cost)) / newQty : cost
+        await supabase.from('inventory_stock').update({
+          quantity_on_hand: newQty, avg_unit_cost: newAvg,
+          updated_at: new Date().toISOString(),
+        }).eq('id', existing.id)
+      } else {
+        await supabase.from('inventory_stock').insert({
+          company_id: companyId, item_id: realItemId, store_id: realStoreId,
+          quantity_on_hand: qty, avg_unit_cost: cost,
+        })
+      }
+
       if (receiptMode === 'against_bill')
         toast.success(`Stock received — ${txnNum} · Linked to bill`)
       else if (billIdToLink)
@@ -1305,6 +1328,19 @@ function StockOutTab({ companyId, session }) {
         created_by: session.user.id,
       })
       if (error) throw error
+
+      // ── Deduct from inventory_stock ──
+      const qty = parseFloat(form.quantity)
+      const { data: existing } = await supabase.from('inventory_stock')
+        .select('id, quantity_on_hand').eq('company_id', companyId)
+        .eq('item_id', form.item_id).eq('store_id', form.store_id).maybeSingle()
+      if (existing) {
+        const newQty = Math.max(0, (Number(existing.quantity_on_hand) || 0) - qty)
+        await supabase.from('inventory_stock').update({
+          quantity_on_hand: newQty, updated_at: new Date().toISOString(),
+        }).eq('id', existing.id)
+      }
+
       toast.success(`Stock issued — ${issNum}`)
       setShowCreate(false)
       setForm({ item_id:'', store_id:'', quantity:'', unit:'unit', txn_date: todayStr(), project_id:'', equipment_id:'', issued_to:'', notes:'' })
