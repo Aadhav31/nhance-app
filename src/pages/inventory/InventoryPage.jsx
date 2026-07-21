@@ -415,6 +415,21 @@ function ItemsTab({ companyId, session }) {
     toast.success(item.is_active ? 'Item deactivated' : 'Item activated')
   }
 
+  const deleteItem = async (item) => {
+    if (!window.confirm(`Delete "${item.item_name}" permanently? This cannot be undone.`)) return
+    // Check for existing transactions first
+    const { count } = await supabase.from('stock_transactions').select('id', { count: 'exact', head: true }).eq('item_id', item.id)
+    if (count > 0) {
+      toast.error(`Cannot delete — ${count} stock transaction(s) reference this item. You can keep it deactivated instead.`)
+      return
+    }
+    const { error } = await supabase.from('inventory_items').delete().eq('id', item.id)
+    if (error) return toast.error(error.message)
+    toast.success(`"${item.item_name}" deleted`)
+    qc.invalidateQueries(['inv_items', companyId])
+    qc.invalidateQueries(['inv_stock', companyId])
+  }
+
   return (
     <div className="flex flex-col h-full">
       <div className="px-4 py-3 border-b border-dark-800 shrink-0 flex items-center gap-2 flex-wrap">
@@ -472,6 +487,11 @@ function ItemsTab({ companyId, session }) {
                     <button onClick={() => toggleActive(item)} className={`text-[11px] px-2 py-1 rounded-lg border transition-colors ${item.is_active ? 'border-dark-600 text-slate-500 hover:text-red-400 hover:border-red-700/40' : 'border-emerald-700/40 text-emerald-400 hover:bg-emerald-900/20'}`}>
                       {item.is_active ? 'Off' : 'On'}
                     </button>
+                    {!item.is_active && (
+                      <button onClick={() => deleteItem(item)} className="p-1.5 rounded-lg border border-dark-600 text-slate-600 hover:text-red-400 hover:border-red-700/40 transition-colors" title="Delete permanently">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
