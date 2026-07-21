@@ -433,48 +433,46 @@ function ItemsTab({ companyId, session }) {
       <div className="flex-1 overflow-y-auto px-4 pb-4 pt-2">
         {isLoading ? <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-primary-400" /></div>
         : displayed.length === 0 ? <div className="flex flex-col items-center py-16 gap-2 text-slate-500"><Package className="w-10 h-10 text-slate-700" /><p>No items yet</p></div>
-        : <div className="space-y-2 mt-1">
+        : <div className="mt-1 border border-dark-700 rounded-xl overflow-hidden divide-y divide-dark-700">
           {displayed.map(item => {
             const qoh = stockMap[item.id] || 0
             const low = item.min_stock_level > 0 && qoh <= item.min_stock_level
             return (
-              <div key={item.id} className={`bg-dark-800 border rounded-xl p-4 transition-colors ${low ? 'border-red-700/40' : 'border-dark-700'}`}>
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      {item.item_code && <span className="text-[10px] font-mono text-primary-500">{item.item_code}</span>}
-                      <CategoryBadge cat={item.category} />
-                      {!item.is_active && <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 border border-slate-300">Inactive</span>}
-                      {low && <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-400 border border-red-700/30">Low Stock</span>}
-                    </div>
-                    <p className="font-semibold text-slate-100 text-sm mt-0.5">{item.item_name}</p>
-                    {item.brand && <p className="text-xs text-slate-500">{item.brand}{item.sub_category ? ` · ${item.sub_category}` : ''}</p>}
+              <div key={item.id} className={`flex items-center gap-3 px-4 py-2.5 hover:bg-dark-750 transition-colors ${low ? 'bg-red-500/5' : 'bg-dark-800'}`}>
+                {/* Left: code + name + badges */}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {item.item_code && <span className="text-[10px] font-mono text-primary-500 shrink-0">{item.item_code}</span>}
+                    <span className="font-semibold text-sm text-slate-100 truncate">{item.item_name}</span>
+                    <CategoryBadge cat={item.category} />
+                    {!item.is_active && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-700/50 text-slate-400 border border-slate-600/50 shrink-0">Inactive</span>}
+                    {low && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-500/10 text-red-400 border border-red-700/30 shrink-0">⚠ Low</span>}
                   </div>
-                  <div className="text-right shrink-0">
-                    <p className={`text-lg font-black ${low ? 'text-red-400' : 'text-slate-100'}`}>{fmtQty(qoh, item.unit)}</p>
-                    <p className="text-[10px] text-slate-500">on hand</p>
-                    {item.avg_unit_cost > 0 && <p className="text-xs text-slate-500">{fmtINR(item.avg_unit_cost)}/{item.unit}</p>}
-                  </div>
+                  {(item.brand || item.hsn_code) && (
+                    <p className="text-[11px] text-slate-500 mt-0.5 truncate">
+                      {item.brand}{item.brand && item.hsn_code ? ' · ' : ''}{item.hsn_code ? `HSN ${item.hsn_code}` : ''}
+                    </p>
+                  )}
                 </div>
-                {item.min_stock_level > 0 && (
-                  <div className="mt-2">
-                    <div className="flex justify-between text-[10px] text-slate-500 mb-1">
-                      <span>Stock level</span>
-                      <span>Min: {fmtQty(item.min_stock_level, item.unit)}</span>
-                    </div>
-                    <div className="h-1.5 bg-dark-700 rounded-full overflow-hidden">
-                      <div className={`h-full rounded-full transition-all ${low ? 'bg-red-500' : 'bg-emerald-500'}`}
-                        style={{ width: `${Math.min(100, (qoh / (item.min_stock_level * 2)) * 100)}%` }} />
-                    </div>
+
+                {/* Right: qty + cost + actions */}
+                <div className="flex items-center gap-4 shrink-0">
+                  <div className="text-right">
+                    <p className={`text-sm font-bold ${low ? 'text-red-400' : qoh > 0 ? 'text-emerald-400' : 'text-slate-500'}`}>
+                      {fmtQty(qoh, item.unit)}
+                    </p>
+                    {item.avg_unit_cost > 0 && (
+                      <p className="text-[10px] text-slate-500">{fmtINR(item.avg_unit_cost)}/{item.unit}</p>
+                    )}
                   </div>
-                )}
-                <div className="flex gap-2 mt-3 justify-end">
-                  <button onClick={() => openEdit(item)} className="text-xs px-2 py-1 rounded-lg border border-dark-600 text-slate-400 hover:text-slate-100 hover:border-slate-500">
-                    <Edit2 className="w-3 h-3 inline mr-1" />Edit
-                  </button>
-                  <button onClick={() => toggleActive(item)} className={`text-xs px-2 py-1 rounded-lg border ${item.is_active ? 'border-slate-700 text-slate-500 hover:text-red-400 hover:border-red-700/40' : 'border-emerald-700/40 text-emerald-400 hover:bg-emerald-900/20'}`}>
-                    {item.is_active ? 'Deactivate' : 'Activate'}
-                  </button>
+                  <div className="flex items-center gap-1.5">
+                    <button onClick={() => openEdit(item)} className="p-1.5 rounded-lg border border-dark-600 text-slate-500 hover:text-slate-100 hover:border-slate-500 transition-colors">
+                      <Edit2 className="w-3.5 h-3.5" />
+                    </button>
+                    <button onClick={() => toggleActive(item)} className={`text-[11px] px-2 py-1 rounded-lg border transition-colors ${item.is_active ? 'border-dark-600 text-slate-500 hover:text-red-400 hover:border-red-700/40' : 'border-emerald-700/40 text-emerald-400 hover:bg-emerald-900/20'}`}>
+                      {item.is_active ? 'Off' : 'On'}
+                    </button>
+                  </div>
                 </div>
               </div>
             )
