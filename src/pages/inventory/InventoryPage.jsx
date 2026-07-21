@@ -30,7 +30,7 @@ const CATEGORIES = [
 
 const CAT_MAP = Object.fromEntries(CATEGORIES.map(c => [c.value, c]))
 
-const UNITS = ['unit','nos','kg','g','ton','litre','ml','m','m2','m3','ft','inch','set','box','bag','pair','roll','sheet','length']
+const UNITS = ['tonnes','MT','ton','kg','g','unit','nos','bag','box','litre','ml','m','m2','m3','ft','inch','set','pair','roll','sheet','length']
 
 function CategoryBadge({ cat }) {
   const c = CAT_MAP[cat] || { label: cat, bg: 'bg-slate-500/10 border-slate-400/50', color: 'text-slate-500' }
@@ -657,7 +657,7 @@ function StockInTab({ companyId, session }) {
   const qc = useQueryClient()
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving]         = useState(false)
-  const [form, setForm] = useState({ item_id:'', store_id:'', quantity:'', unit_cost:'', txn_date: todayStr(), vendor_id:'', po_id:'', notes:'', vehicle_number:'' })
+  const [form, setForm] = useState({ item_id:'', store_id:'', quantity:'', unit:'tonnes', unit_cost:'', txn_date: todayStr(), vendor_id:'', po_id:'', notes:'', vehicle_number:'' })
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
   const { items, stores, vendors } = useInventoryData(companyId)
 
@@ -698,7 +698,8 @@ function StockInTab({ companyId, session }) {
       const { error } = await supabase.from('stock_transactions').insert({
         company_id: companyId, txn_number: txnNum, txn_type: 'in',
         txn_date: form.txn_date, item_id: realItemId, store_id: realStoreId,
-        quantity: parseFloat(form.quantity), unit_cost: parseFloat(form.unit_cost) || 0,
+        quantity: parseFloat(form.quantity), unit: form.unit || null,
+        unit_cost: parseFloat(form.unit_cost) || 0,
         total_cost: total, vendor_id: form.vendor_id || null, po_id: form.po_id || null,
         notes: form.notes || null, created_by: session.user.id,
         vehicle_number: isCrusherGrade ? (form.vehicle_number?.trim() || null) : null,
@@ -708,7 +709,7 @@ function StockInTab({ companyId, session }) {
       if (isCrusherGrade) toast.success(`Stock received — ${txnNum} · Bill pending in Purchase`)
       else toast.success(`Stock received — ${txnNum}`)
       setShowCreate(false)
-      setForm({ item_id:'', store_id:'', quantity:'', unit_cost:'', txn_date: todayStr(), vendor_id:'', po_id:'', notes:'', vehicle_number:'' })
+      setForm({ item_id:'', store_id:'', quantity:'', unit:'tonnes', unit_cost:'', txn_date: todayStr(), vendor_id:'', po_id:'', notes:'', vehicle_number:'' })
       qc.invalidateQueries(['pending-stock-bills', companyId])
       qc.invalidateQueries(['stxn_in', companyId])
       qc.invalidateQueries(['inv_stock', companyId])
@@ -725,11 +726,12 @@ function StockInTab({ companyId, session }) {
     toast.success('Receipt marked as resolved')
   }
 
-  // Auto-fill unit cost from item's avg cost; clear vehicle when non-grade selected
+  // Auto-fill unit cost + UOM from item; clear vehicle when non-grade selected
   const onItemChange = (id) => {
     setF('item_id', id)
     const item = items.find(i => i.id === id)
     if (item?.avg_unit_cost) setF('unit_cost', String(item.avg_unit_cost))
+    if (item?.unit) setF('unit', item.unit)
     if (!item?._isGrade) setF('vehicle_number', '')
   }
 
@@ -770,7 +772,7 @@ function StockInTab({ companyId, session }) {
                 )}
               </div>
               <div className="text-right shrink-0">
-                <p className="text-lg font-black text-emerald-400">+{fmtQty(t.quantity, t.inventory_items?.unit)}</p>
+                <p className="text-lg font-black text-emerald-400">+{fmtQty(t.quantity, t.unit || t.inventory_items?.unit)}</p>
                 {t.total_cost > 0 && <p className="text-xs text-slate-500">{fmtINR(t.total_cost)}</p>}
               </div>
             </div>
@@ -847,10 +849,12 @@ function StockInTab({ companyId, session }) {
               </select>
             </Field>
             <Field label="Date"><input type="date" className={inp()} value={form.txn_date} onChange={e => setF('txn_date', e.target.value)} /></Field>
-            <Field label={`Quantity *${selectedItem?.unit ? ` (${selectedItem.unit})` : ''}`}>
+            <Field label="Quantity *">
               <div className="flex items-center gap-2">
                 <input type="number" className={inp() + ' flex-1'} value={form.quantity} onChange={e => setF('quantity', e.target.value)} step="0.001" placeholder="0" />
-                {selectedItem?.unit && <span className="text-xs font-bold text-primary-400 bg-primary-500/10 border border-primary-500/30 rounded-lg px-2.5 py-2 shrink-0 uppercase">{selectedItem.unit}</span>}
+                <select className="text-xs bg-dark-700 border border-dark-600 rounded-lg px-2 py-2 text-slate-200 shrink-0 min-w-[80px]" value={form.unit} onChange={e => setF('unit', e.target.value)}>
+                  {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+                </select>
               </div>
             </Field>
             <Field label="Unit Cost (₹)"><input type="number" className={inp()} value={form.unit_cost} onChange={e => setF('unit_cost', e.target.value)} step="0.01" placeholder="0" /></Field>
@@ -875,9 +879,15 @@ function StockOutTab({ companyId, session }) {
   const qc = useQueryClient()
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving]         = useState(false)
-  const [form, setForm] = useState({ item_id:'', store_id:'', quantity:'', txn_date: todayStr(), project_id:'', equipment_id:'', issued_to:'', notes:'' })
+  const [form, setForm] = useState({ item_id:'', store_id:'', quantity:'', unit:'unit', txn_date: todayStr(), project_id:'', equipment_id:'', issued_to:'', notes:'' })
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
   const { items, stores, projects, equipment } = useInventoryData(companyId)
+
+  const onItemChangeOut = (id) => {
+    setF('item_id', id)
+    const item = items.find(i => i.id === id)
+    if (item?.unit) setF('unit', item.unit)
+  }
 
   const { data: txns = [], isLoading } = useQuery({
     queryKey: ['stxn_out', companyId],
@@ -910,7 +920,7 @@ function StockOutTab({ companyId, session }) {
       const { error } = await supabase.from('stock_transactions').insert({
         company_id: companyId, txn_number: issNum, txn_type: 'out',
         txn_date: form.txn_date, item_id: form.item_id, store_id: form.store_id,
-        quantity: parseFloat(form.quantity),
+        quantity: parseFloat(form.quantity), unit: form.unit || null,
         project_id: form.project_id || null, equipment_id: form.equipment_id || null,
         issued_to: form.issued_to || null, notes: form.notes || null,
         created_by: session.user.id,
@@ -918,7 +928,7 @@ function StockOutTab({ companyId, session }) {
       if (error) throw error
       toast.success(`Stock issued — ${issNum}`)
       setShowCreate(false)
-      setForm({ item_id:'', store_id:'', quantity:'', txn_date: todayStr(), project_id:'', equipment_id:'', issued_to:'', notes:'' })
+      setForm({ item_id:'', store_id:'', quantity:'', unit:'unit', txn_date: todayStr(), project_id:'', equipment_id:'', issued_to:'', notes:'' })
       qc.invalidateQueries(['stxn_out', companyId])
       qc.invalidateQueries(['inv_stock', companyId])
     } catch (e) { toast.error(e.message) } finally { setSaving(false) }
@@ -945,7 +955,7 @@ function StockOutTab({ companyId, session }) {
                 <p className="text-xs text-slate-500">{t.stores?.store_name} · {fmtDate(t.txn_date)}</p>
                 {t.issued_to && <p className="text-xs text-slate-500">To: {t.issued_to}</p>}
               </div>
-              <p className="text-lg font-black text-red-400 shrink-0">-{fmtQty(t.quantity, t.inventory_items?.unit)}</p>
+              <p className="text-lg font-black text-red-400 shrink-0">-{fmtQty(t.quantity, t.unit || t.inventory_items?.unit)}</p>
             </div>
           ))}
         </div>}
@@ -962,7 +972,7 @@ function StockOutTab({ companyId, session }) {
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2">
               <Field label="Item *">
-                <select className={inp()} value={form.item_id} onChange={e => setF('item_id', e.target.value)}>
+                <select className={inp()} value={form.item_id} onChange={e => onItemChangeOut(e.target.value)}>
                   <option value="">-- Select item --</option>
                   {gradeItemsList.length > 0 && <optgroup label="── Material Master (Crusher Grades) ──">{gradeItemsList.map(i => <option key={i.id} value={i.id}>{i.item_name} · {i.unit}</option>)}</optgroup>}
                   {invItemsList.length > 0 && <optgroup label="── Inventory Items ──">{invItemsList.map(i => <option key={i.id} value={i.id}>{i.item_name}{i.item_code ? ` (${i.item_code})` : ''}</option>)}</optgroup>}
@@ -978,7 +988,12 @@ function StockOutTab({ companyId, session }) {
             </Field>
             <Field label="Date"><input type="date" className={inp()} value={form.txn_date} onChange={e => setF('txn_date', e.target.value)} /></Field>
             <Field label="Quantity *">
-              <input type="number" className={inp()} value={form.quantity} onChange={e => setF('quantity', e.target.value)} step="0.001" placeholder="0" />
+              <div className="flex items-center gap-2">
+                <input type="number" className={inp() + ' flex-1'} value={form.quantity} onChange={e => setF('quantity', e.target.value)} step="0.001" placeholder="0" />
+                <select className="text-xs bg-dark-700 border border-dark-600 rounded-lg px-2 py-2 text-slate-200 shrink-0 min-w-[80px]" value={form.unit} onChange={e => setF('unit', e.target.value)}>
+                  {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+                </select>
+              </div>
               {availableStock !== undefined && form.store_id && form.item_id &&
                 <p className="text-[10px] text-slate-500 mt-0.5">Available: {fmtQty(availableStock, '')}</p>}
             </Field>
