@@ -1270,42 +1270,45 @@ function BillsTab({ companyId, session }) {
     enabled: !!companyId,
   })
   // Pending stock receipts waiting for a bill
-  // Deliberately minimal query — only columns that are guaranteed in the DB schema
-  // (requires_bill + bill_id were added by stock_bill_link.sql which ran before
-  // any GRN records were created). Extended columns (action_taken, supplier_name etc.)
-  // are NOT in the WHERE to avoid PostgREST schema-cache failures.
+  // Uses a SEPARATE query key from InventoryPage's banner to avoid cache-overwrite conflicts.
+  // Primary query selects only guaranteed columns; extended columns (vehicle_number, delivery_mode,
+  // supplier_name) are fetched separately so a schema-cache miss never drops the whole list.
   const { data: pendingStockBills = [] } = useQuery({
-    queryKey: ['pending-stock-bills', companyId],
+    queryKey: ['purchase-pending-receipts', companyId],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('stock_transactions')
-        .select('id, txn_number, txn_date, quantity, unit_cost, total_cost, vendor_id, vehicle_number, supplier_name, delivery_mode, inventory_items(item_name, unit), stores(store_name)')
-        .eq('company_id', companyId)
-        .eq('txn_type', 'in')
-        .eq('requires_bill', true)
-        .is('bill_id', null)
-        .order('txn_date', { ascending: false })
-        .limit(100)
-
-      if (!error) return data || []
-
-      // Extended columns not yet in PostgREST cache — retry without them
-      console.error('[pendingStockBills] retrying minimal:', error.message)
-      const { data: d2, error: e2 } = await supabase
+      // Step 1: guaranteed-column query — always works even without extended columns
+      const { data: base, error: baseErr } = await supabase
         .from('stock_transactions')
         .select('id, txn_number, txn_date, quantity, unit_cost, total_cost, vendor_id, inventory_items(item_name, unit), stores(store_name)')
         .eq('company_id', companyId)
         .eq('txn_type', 'in')
         .eq('requires_bill', true)
         .is('bill_id', null)
+        .not('action_taken', 'eq', true)
         .order('txn_date', { ascending: false })
         .limit(100)
 
-      if (e2) console.error('[pendingStockBills] fallback also failed:', e2.message)
-      return d2 || []
+      if (baseErr) {
+        console.error('[purchase-pending-receipts] base query failed:', baseErr.message)
+        return []
+      }
+      if (!base?.length) return []
+
+      // Step 2: try to enrich with extended columns (best-effort, silent on error)
+      const ids = base.map(r => r.id)
+      const { data: ext } = await supabase
+        .from('stock_transactions')
+        .select('id, vehicle_number, supplier_name, delivery_mode')
+        .in('id', ids)
+
+      if (ext?.length) {
+        const extMap = Object.fromEntries(ext.map(r => [r.id, r]))
+        return base.map(r => ({ ...r, ...extMap[r.id] }))
+      }
+      return base
     },
     enabled: !!companyId,
-    retry: 1,
+    staleTime: 30_000,
   })
 
   // Unlinked payments for "Link Payment" modal — fetched on demand
@@ -1479,6 +1482,7 @@ function BillsTab({ companyId, session }) {
       // Link stock receipt if selected
       if (form.stock_receipt_id) {
         await supabase.from('stock_transactions').update({ bill_id: id }).eq('id', form.stock_receipt_id).catch(() => {})
+        qc.invalidateQueries(['purchase-pending-receipts', companyId])
         qc.invalidateQueries(['pending-stock-bills', companyId])
         qc.invalidateQueries(['stxn_in', companyId])
       }
