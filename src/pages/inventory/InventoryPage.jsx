@@ -1463,6 +1463,27 @@ function TransfersTab({ companyId, session }) {
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
   const { items, stores } = useInventoryData(companyId)
 
+  // Available qty for selected item + from-store
+  const { data: availStock } = useQuery({
+    queryKey: ['avail_stock_transfer', companyId, form.item_id, form.store_id],
+    queryFn: async () => {
+      if (!form.item_id || !form.store_id) return null
+      const { data } = await supabase.from('inventory_stock')
+        .select('quantity_on_hand, avg_unit_cost, inventory_items(unit)')
+        .eq('company_id', companyId)
+        .eq('item_id', form.item_id)
+        .eq('store_id', form.store_id)
+        .maybeSingle()
+      return data
+    },
+    enabled: !!(companyId && form.item_id && form.store_id),
+  })
+  const availQty = Number(availStock?.quantity_on_hand) || 0
+  const selectedItem = items.find(i => i.id === form.item_id)
+  const unit = availStock?.inventory_items?.unit || selectedItem?.unit || ''
+  const enteredQty = parseFloat(form.quantity) || 0
+  const overLimit  = enteredQty > 0 && availQty > 0 && enteredQty > availQty
+
   const { data: txns = [], isLoading } = useQuery({
     queryKey: ['stxn_transfer', companyId],
     queryFn: async () => {
@@ -1500,6 +1521,7 @@ function TransfersTab({ companyId, session }) {
     if (!form.to_store_id) return toast.error('Select destination store')
     if (form.store_id === form.to_store_id) return toast.error('Source and destination must differ')
     if (!form.quantity || parseFloat(form.quantity) <= 0) return toast.error('Enter valid quantity')
+    if (availQty > 0 && enteredQty > availQty) return toast.error(`Only ${fmtQty(availQty, unit)} available in source store`)
     setSaving(true)
     try {
       const trfNum = await nextDocNumber(companyId, 'stock_transfer').catch(() => `TRF-${Date.now()}`)
@@ -1581,19 +1603,35 @@ function TransfersTab({ companyId, session }) {
             </Field>
           </div>
           <div className="grid grid-cols-2 gap-3 mt-3">
-            <Field label="From Store / Loading Point *">
-              <select className={inp()} value={form.store_id} onChange={e => setF('store_id', e.target.value)}>
-                <option value="">-- Source --</option>
-                {allStoreOpts(form.to_store_id)}
-              </select>
-            </Field>
+            <div>
+              <Field label="From Store / Loading Point *">
+                <select className={inp()} value={form.store_id} onChange={e => setF('store_id', e.target.value)}>
+                  <option value="">-- Source --</option>
+                  {allStoreOpts(form.to_store_id)}
+                </select>
+              </Field>
+              {form.item_id && form.store_id && (
+                <p className={`mt-1 text-xs font-semibold ${availQty > 0 ? 'text-emerald-500' : 'text-red-400'}`}>
+                  {availQty > 0
+                    ? `Available: ${fmtQty(availQty, unit)}`
+                    : 'No stock at this location'}
+                </p>
+              )}
+            </div>
             <Field label="To Store / Loading Point *">
               <select className={inp()} value={form.to_store_id} onChange={e => setF('to_store_id', e.target.value)}>
                 <option value="">-- Destination --</option>
                 {allStoreOpts(form.store_id)}
               </select>
             </Field>
-            <Field label="Quantity *"><input type="number" className={inp()} value={form.quantity} onChange={e => setF('quantity', e.target.value)} step="0.001" placeholder="0" /></Field>
+            <div>
+              <Field label="Quantity *">
+                <input type="number" className={`${inp()} ${overLimit ? 'border-red-500 focus:ring-red-500' : ''}`} value={form.quantity} onChange={e => setF('quantity', e.target.value)} step="0.001" placeholder="0" max={availQty || undefined} />
+              </Field>
+              {overLimit && (
+                <p className="mt-1 text-xs text-red-400 font-semibold">⚠ Exceeds available stock ({fmtQty(availQty, unit)})</p>
+              )}
+            </div>
             <Field label="Date"><input type="date" className={inp()} value={form.txn_date} onChange={e => setF('txn_date', e.target.value)} /></Field>
             <div className="col-span-2"><Field label="Notes"><input className={inp()} value={form.notes} onChange={e => setF('notes', e.target.value)} /></Field></div>
           </div>
