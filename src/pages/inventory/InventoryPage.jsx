@@ -657,7 +657,11 @@ function StockInTab({ companyId, session }) {
   const qc = useQueryClient()
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving]         = useState(false)
-  const [form, setForm] = useState({ item_id:'', store_id:'', quantity:'', unit:'tonnes', unit_cost:'', txn_date: todayStr(), vendor_id:'', po_id:'', notes:'', vehicle_number:'' })
+  const [receiptMode, setReceiptMode] = useState('direct') // 'direct' | 'against_bill'
+  const [linkBillId, setLinkBillId]   = useState('')
+  const [autoDraft, setAutoDraft]     = useState(true)
+  const blankForm = () => ({ item_id:'', store_id:'', quantity:'', unit:'tonnes', unit_cost:'', txn_date: todayStr(), vendor_id:'', notes:'', vehicle_number:'', delivery_mode:'supplier_vehicle' })
+  const [form, setForm] = useState(blankForm())
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
   const { items, stores, vendors } = useInventoryData(companyId)
 
@@ -667,6 +671,19 @@ function StockInTab({ companyId, session }) {
     queryFn: async () => {
       const { data } = await supabase.from('crusher_client_vehicles')
         .select('id, vehicle_number, vehicle_type').eq('company_id', companyId).order('vehicle_number')
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+
+  // Open bills for "receive against bill" mode
+  const { data: openBills = [] } = useQuery({
+    queryKey: ['open-bills-stkin', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('bills')
+        .select('id, bill_number, vendor_id, vendor_name, balance_due, bill_date, status')
+        .eq('company_id', companyId).in('status', ['draft','pending','partial'])
+        .order('bill_date', { ascending: false })
       return data || []
     },
     enabled: !!companyId,
@@ -687,30 +704,91 @@ function StockInTab({ companyId, session }) {
     if (!form.item_id)  return toast.error('Select an item')
     if (!form.store_id) return toast.error('Select a store / loading point')
     if (!form.quantity || parseFloat(form.quantity) <= 0) return toast.error('Enter valid quantity')
+    if (receiptMode === 'against_bill' && !linkBillId) return toast.error('Select a bill to receive against')
     setSaving(true)
     try {
-      // Resolve virtual IDs (grade:xxx → real inventory_item, lp:xxx → real store)
       const realItemId  = await resolveItemId(companyId, form.item_id, items, session.user.id)
       const realStoreId = await resolveStoreId(companyId, form.store_id, stores)
       const txnNum = await nextDocNumber(companyId, 'stock_in').catch(() => `GRN-${Date.now()}`)
       const selectedItem = items.find(i => i.id === form.item_id)
       const isCrusherGrade = !!(selectedItem?._isGrade || selectedItem?.grade_id)
+
+      let billIdToLink   = null
+      let vendorIdForTxn = form.vendor_id || null
+      let requiresBill   = false
+
+      if (receiptMode === 'against_bill') {
+        // Link directly to existing bill — bill already exists, no further action needed
+        billIdToLink = linkBillId
+        const linkedBill = openBills.find(b => b.id === linkBillId)
+        vendorIdForTxn = linkedBill?.vendor_id || vendorIdForTxn
+        requiresBill   = false
+      } else {
+        // Direct receipt mode
+        if (form.vendor_id && autoDraft) {
+          // Auto-create a draft bill for this supplier
+          const vendor = vendors.find(v => v.id === form.vendor_id)
+          const blNum  = await nextDocNumber(companyId, 'bill').catch(() => `BL-${Date.now()}`)
+          const draftId = crypto.randomUUID()
+          const modeNote = form.delivery_mode === 'own_vehicle'
+            ? ' (Material cost only — transport via own vehicle, tracked separately)'
+            : ' (Material + transport cost)'
+          const { error: billErr } = await supabase.from('bills').insert({
+            id: draftId,
+            company_id: companyId,
+            bill_number: blNum,
+            vendor_id: form.vendor_id,
+            vendor_name: vendor?.name || '',
+            bill_date: form.txn_date,
+            subtotal: total,
+            total_amount: total,
+            paid_amount: 0,
+            balance_due: total,
+            status: 'draft',
+            notes: `Auto-draft from stock receipt ${txnNum}${modeNote}`,
+            created_by: session.user.id,
+          })
+          if (billErr) throw billErr
+          billIdToLink = draftId
+          requiresBill = false
+        } else {
+          // No supplier / no auto draft — flag as pending
+          requiresBill = isCrusherGrade
+        }
+      }
+
       const { error } = await supabase.from('stock_transactions').insert({
         company_id: companyId, txn_number: txnNum, txn_type: 'in',
         txn_date: form.txn_date, item_id: realItemId, store_id: realStoreId,
         quantity: parseFloat(form.quantity), unit: form.unit || null,
         unit_cost: parseFloat(form.unit_cost) || 0,
-        total_cost: total, vendor_id: form.vendor_id || null, po_id: form.po_id || null,
+        total_cost: total,
+        vendor_id: vendorIdForTxn,
         notes: form.notes || null, created_by: session.user.id,
         vehicle_number: isCrusherGrade ? (form.vehicle_number?.trim() || null) : null,
-        requires_bill: isCrusherGrade,
+        requires_bill: requiresBill,
+        bill_id: billIdToLink || null,
+        delivery_mode: receiptMode === 'direct' && form.vendor_id ? form.delivery_mode : null,
+        supplier_name: receiptMode === 'direct' && form.vendor_id ? (vendors.find(v => v.id === form.vendor_id)?.name || null) : null,
       })
       if (error) throw error
-      if (isCrusherGrade) toast.success(`Stock received — ${txnNum} · Bill pending in Purchase`)
-      else toast.success(`Stock received — ${txnNum}`)
+
+      if (receiptMode === 'against_bill')
+        toast.success(`Stock received — ${txnNum} · Linked to bill`)
+      else if (billIdToLink)
+        toast.success(`Stock received — ${txnNum} · Draft bill created in Purchase`)
+      else if (requiresBill)
+        toast.success(`Stock received — ${txnNum} · Bill pending in Purchase`)
+      else
+        toast.success(`Stock received — ${txnNum}`)
+
       setShowCreate(false)
-      setForm({ item_id:'', store_id:'', quantity:'', unit:'tonnes', unit_cost:'', txn_date: todayStr(), vendor_id:'', po_id:'', notes:'', vehicle_number:'' })
+      setReceiptMode('direct')
+      setLinkBillId('')
+      setAutoDraft(true)
+      setForm(blankForm())
       qc.invalidateQueries(['pending-stock-bills', companyId])
+      qc.invalidateQueries(['open-bills-stkin', companyId])
       qc.invalidateQueries(['stxn_in', companyId])
       qc.invalidateQueries(['inv_stock', companyId])
       qc.invalidateQueries(['inv_items_active', companyId])
@@ -760,6 +838,13 @@ function StockInTab({ companyId, session }) {
                 <p className="font-semibold text-slate-100 text-sm">{t.inventory_items?.item_name}</p>
                 <p className="text-xs text-slate-500">{t.stores?.store_name} · {fmtDate(t.txn_date)}</p>
                 {t.vehicle_number && <p className="text-xs text-slate-400 mt-0.5">🚛 {t.vehicle_number}</p>}
+                {t.supplier_name && (
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    👤 {t.supplier_name}
+                    {t.delivery_mode === 'supplier_vehicle' && <span className="ml-1.5 text-[10px] text-blue-400/80 bg-blue-500/10 px-1.5 py-0.5 rounded">Supplier vehicle</span>}
+                    {t.delivery_mode === 'own_vehicle'      && <span className="ml-1.5 text-[10px] text-purple-400/80 bg-purple-500/10 px-1.5 py-0.5 rounded">Own vehicle</span>}
+                  </p>
+                )}
                 {t.notes && <p className="text-xs text-slate-600 mt-0.5">{t.notes}</p>}
                 {/* Action buttons for pending receipts */}
                 {t.requires_bill && !t.bill_id && !t.action_taken && (
@@ -787,10 +872,51 @@ function StockInTab({ companyId, session }) {
         const lpList         = stores.filter(s =>  s._isLP)
         const selectedItem   = items.find(i => i.id === form.item_id)
         const isCrusherGrade = !!(selectedItem?._isGrade || selectedItem?.grade_id)
+        const selectedVendor = vendors.find(v => v.id === form.vendor_id)
+        const selectedBill   = openBills.find(b => b.id === linkBillId)
+        const costLabel = form.delivery_mode === 'own_vehicle'
+          ? 'Material Unit Cost (₹) — no transport'
+          : 'Unit Cost (₹) — material + transport'
         return (
-        <Modal title="Receive Stock" onClose={() => setShowCreate(false)} wide
-          footer={<><button onClick={() => setShowCreate(false)} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Confirm Receipt'}</button></>}>
+        <Modal title="Receive Stock" onClose={() => { setShowCreate(false); setReceiptMode('direct'); setLinkBillId(''); setAutoDraft(true); setForm(blankForm()) }} wide
+          footer={<><button onClick={() => { setShowCreate(false); setReceiptMode('direct'); setLinkBillId(''); setAutoDraft(true); setForm(blankForm()) }} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Confirm Receipt'}</button></>}>
+
+          {/* ── Receipt Mode ── */}
+          <div className="flex rounded-xl overflow-hidden border border-dark-600 mb-4">
+            <button
+              onClick={() => { setReceiptMode('direct'); setLinkBillId('') }}
+              className={`flex-1 py-2 text-xs font-semibold transition-colors ${receiptMode === 'direct' ? 'bg-primary-600 text-white' : 'bg-dark-800 text-slate-400 hover:text-slate-200'}`}>
+              📦 Direct Receipt
+            </button>
+            <button
+              onClick={() => setReceiptMode('against_bill')}
+              className={`flex-1 py-2 text-xs font-semibold transition-colors ${receiptMode === 'against_bill' ? 'bg-primary-600 text-white' : 'bg-dark-800 text-slate-400 hover:text-slate-200'}`}>
+              📄 Against Existing Bill
+            </button>
+          </div>
+
+          {/* ── Against Bill: pick open bill ── */}
+          {receiptMode === 'against_bill' && (
+            <div className="mb-3 p-3 bg-blue-500/10 border border-blue-500/30 rounded-xl">
+              <p className="text-[11px] text-blue-300 mb-2">Select the bill this stock is being received against. The bill must already exist in Purchase.</p>
+              <Field label="Open Bill *">
+                <select className={inp()} value={linkBillId} onChange={e => setLinkBillId(e.target.value)}>
+                  <option value="">-- Select bill --</option>
+                  {openBills.map(b => (
+                    <option key={b.id} value={b.id}>
+                      {b.bill_number} · {b.vendor_name} · {fmtINR(b.balance_due)} pending · {fmtDate(b.bill_date)}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              {selectedBill && (
+                <p className="text-[11px] text-emerald-400 mt-1">✓ Supplier: {selectedBill.vendor_name} · Balance due: {fmtINR(selectedBill.balance_due)}</p>
+              )}
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-3">
+            {/* ── Item picker ── */}
             <div className="col-span-2">
               <Field label="Item *">
                 <select className={inp()} value={form.item_id} onChange={e => onItemChange(e.target.value)}>
@@ -807,17 +933,17 @@ function StockInTab({ companyId, session }) {
                   )}
                 </select>
               </Field>
-              {isCrusherGrade && (
+              {isCrusherGrade && receiptMode === 'direct' && !form.vendor_id && (
                 <p className="text-[11px] text-amber-400/80 mt-1 bg-amber-500/10 rounded px-2 py-1">
-                  ⚡ Auto item code (GRD-xxx) will be generated · A bill will be required in Purchase after saving
+                  ⚠ Select Supplier below so we know who to pay — or the bill will appear as pending
                 </p>
               )}
             </div>
 
-            {/* Vehicle number — shown only for crusher grade items */}
+            {/* ── Vehicle number — crusher grades only ── */}
             {isCrusherGrade && (
               <div className="col-span-2">
-                <Field label="Vehicle Number *">
+                <Field label="Vehicle Number">
                   <div className="flex gap-2">
                     <input
                       list="vehicle-list"
@@ -833,6 +959,8 @@ function StockInTab({ companyId, session }) {
                 </Field>
               </div>
             )}
+
+            {/* ── Store / Loading Point ── */}
             <Field label="Store / Loading Point *">
               <select className={inp()} value={form.store_id} onChange={e => setF('store_id', e.target.value)}>
                 <option value="">-- Select location --</option>
@@ -848,7 +976,9 @@ function StockInTab({ companyId, session }) {
                 )}
               </select>
             </Field>
+
             <Field label="Date"><input type="date" className={inp()} value={form.txn_date} onChange={e => setF('txn_date', e.target.value)} /></Field>
+
             <Field label="Quantity *">
               <div className="flex items-center gap-2">
                 <input type="number" className={inp() + ' flex-1'} value={form.quantity} onChange={e => setF('quantity', e.target.value)} step="0.001" placeholder="0" />
@@ -857,16 +987,73 @@ function StockInTab({ companyId, session }) {
                 </select>
               </div>
             </Field>
-            <Field label="Unit Cost (₹)"><input type="number" className={inp()} value={form.unit_cost} onChange={e => setF('unit_cost', e.target.value)} step="0.01" placeholder="0" /></Field>
-            {vendors.length > 0 && <Field label="Vendor">
-              <select className={inp()} value={form.vendor_id} onChange={e => setF('vendor_id', e.target.value)}>
-                <option value="">-- Vendor (optional) --</option>
-                {vendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
-              </select>
-            </Field>}
-            <div className="col-span-2"><Field label="Notes / Reference (e.g. Bill No.)"><input className={inp()} value={form.notes} onChange={e => setF('notes', e.target.value)} /></Field></div>
+
+            <Field label={receiptMode === 'direct' && form.vendor_id ? costLabel : 'Unit Cost (₹)'}>
+              <input type="number" className={inp()} value={form.unit_cost} onChange={e => setF('unit_cost', e.target.value)} step="0.01" placeholder="0" />
+            </Field>
+
+            {/* ── Supplier section — only for Direct Receipt ── */}
+            {receiptMode === 'direct' && (
+              <div className="col-span-2 border border-dark-600 rounded-xl p-3 bg-dark-800/50">
+                <p className="text-[11px] font-semibold text-slate-400 mb-2 uppercase tracking-wide">Supplier / Who to Pay</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="col-span-2">
+                    <Field label="Supplier (Vendor)">
+                      <select className={inp()} value={form.vendor_id} onChange={e => setF('vendor_id', e.target.value)}>
+                        <option value="">-- Select supplier --</option>
+                        {vendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+                      </select>
+                    </Field>
+                  </div>
+                  {form.vendor_id && (<>
+                    <div className="col-span-2">
+                      <p className="text-[11px] text-slate-500 mb-1.5">How is material being delivered?</p>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setF('delivery_mode', 'supplier_vehicle')}
+                          className={`flex-1 text-xs py-2 px-3 rounded-lg border transition-colors ${form.delivery_mode === 'supplier_vehicle' ? 'bg-primary-600/30 border-primary-500 text-primary-300' : 'bg-dark-700 border-dark-600 text-slate-400 hover:text-slate-200'}`}>
+                          🚛 Supplier's Vehicle<br />
+                          <span className="text-[10px] opacity-70">Bill covers material + transport</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setF('delivery_mode', 'own_vehicle')}
+                          className={`flex-1 text-xs py-2 px-3 rounded-lg border transition-colors ${form.delivery_mode === 'own_vehicle' ? 'bg-primary-600/30 border-primary-500 text-primary-300' : 'bg-dark-700 border-dark-600 text-slate-400 hover:text-slate-200'}`}>
+                          🏗 Our Vehicle<br />
+                          <span className="text-[10px] opacity-70">Bill = material only; transport separate</span>
+                        </button>
+                      </div>
+                    </div>
+                    <div className="col-span-2 flex items-center gap-2 pt-1">
+                      <input id="auto-draft" type="checkbox" checked={autoDraft} onChange={e => setAutoDraft(e.target.checked)} className="w-3.5 h-3.5 rounded accent-primary-500" />
+                      <label htmlFor="auto-draft" className="text-xs text-slate-400 cursor-pointer">
+                        Auto-create draft bill for <span className="text-slate-200 font-semibold">{selectedVendor?.name}</span> in Purchase
+                      </label>
+                    </div>
+                    {autoDraft && (
+                      <p className="col-span-2 text-[11px] text-emerald-400/80 bg-emerald-500/10 rounded px-2 py-1">
+                        ✓ A draft bill will be created automatically · Go to Purchase → Bills to review &amp; finalise
+                      </p>
+                    )}
+                  </>)}
+                  {!form.vendor_id && (
+                    <p className="col-span-2 text-[11px] text-amber-400/70 bg-amber-500/10 rounded px-2 py-1">
+                      ⚠ No supplier selected — receipt will show as "Action Required" until a bill is linked or it is marked resolved
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            <div className="col-span-2"><Field label="Notes / Reference"><input className={inp()} value={form.notes} onChange={e => setF('notes', e.target.value)} /></Field></div>
           </div>
-          {total > 0 && <div className="bg-dark-700 rounded-xl p-3 flex justify-between items-center"><span className="text-sm text-slate-400">Total Cost</span><span className="text-base font-bold text-primary-400">{fmtINR(total)}</span></div>}
+          {total > 0 && (
+            <div className="bg-dark-700 rounded-xl p-3 flex justify-between items-center mt-1">
+              <span className="text-sm text-slate-400">Total Cost</span>
+              <span className="text-base font-bold text-primary-400">{fmtINR(total)}</span>
+            </div>
+          )}
         </Modal>
         )
       })()}
