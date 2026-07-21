@@ -6,7 +6,7 @@ import {
   Users, Truck, MapPin, Package, FileText, Plus, Edit2, Trash2, X, Save,
   Loader2, CheckCircle, Settings2, ChevronRight, AlertCircle, ToggleLeft,
   ToggleRight, Phone, Mail, CreditCard, Calendar, Building2, Hash,
-  Eye, Download, Ban, Printer, ClipboardCheck, RefreshCw, ArrowLeftRight, BarChart2
+  Eye, Download, Ban, Printer, ClipboardCheck, RefreshCw, ArrowLeftRight, BarChart2, GripVertical
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import jsPDF from 'jspdf'
@@ -5035,11 +5035,50 @@ function AgingTab({ companyId }) {
 }
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
+const TAB_ORDER_KEY = 'crusher_tab_order_v1'
+
+function loadTabOrder() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(TAB_ORDER_KEY) || 'null')
+    if (Array.isArray(saved)) {
+      const allKeys = TABS.map(t => t.key)
+      const valid   = saved.filter(k => allKeys.includes(k))
+      const missing = allKeys.filter(k => !valid.includes(k))
+      return [...valid, ...missing]
+    }
+  } catch {}
+  return TABS.map(t => t.key)
+}
+
 export default function CrusherSalesPage() {
   const { companyId } = useAuth()
-  const [tab, setTab] = useState('invoices')
+  const [tab,         setTab]         = useState('invoices')
+  const [tabOrder,    setTabOrder]    = useState(loadTabOrder)
+  const [customizing, setCustomizing] = useState(false)
+  const [dragFrom,    setDragFrom]    = useState(null)
+  const [dragOver,    setDragOver]    = useState(null)
 
-  const tabIcons = { invoices: FileText, clients: Users, vehicles: Truck, locations: MapPin, materials: Package }
+  const orderedTabs = tabOrder.map(k => TABS.find(t => t.key === k)).filter(Boolean)
+
+  const saveOrder = (next) => {
+    setTabOrder(next)
+    try { localStorage.setItem(TAB_ORDER_KEY, JSON.stringify(next)) } catch {}
+  }
+
+  const handleDrop = (toIdx) => {
+    if (dragFrom === null || dragFrom === toIdx) { setDragFrom(null); setDragOver(null); return }
+    const next = [...tabOrder]
+    const [moved] = next.splice(dragFrom, 1)
+    next.splice(toIdx, 0, moved)
+    saveOrder(next)
+    setDragFrom(null)
+    setDragOver(null)
+  }
+
+  const resetOrder = () => {
+    saveOrder(TABS.map(t => t.key))
+    setCustomizing(false)
+  }
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
@@ -5051,21 +5090,72 @@ export default function CrusherSalesPage() {
 
       {/* Tabs */}
       <div className="flex-shrink-0 border-b border-dark-700 px-4">
-        <nav className="flex gap-1 overflow-x-auto py-2">
-          {TABS.map(t => {
-            const Icon = t.icon
-            const isActive = tab === t.key
-            return (
-              <button key={t.key} onClick={() => setTab(t.key)}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap flex-shrink-0
-                  ${isActive ? 'bg-primary-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200 hover:bg-dark-700'}`}>
-                <Icon className="w-4 h-4" />
-                {t.label}
-              </button>
-            )
-          })}
-        </nav>
+        <div className="flex items-center gap-1 py-2">
+          <nav className="flex gap-1 overflow-x-auto flex-1">
+            {orderedTabs.map(t => {
+              const Icon    = t.icon
+              const isActive = tab === t.key
+              return (
+                <button key={t.key} onClick={() => !customizing && setTab(t.key)}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap flex-shrink-0
+                    ${isActive && !customizing ? 'bg-primary-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200 hover:bg-dark-700'}
+                    ${customizing ? 'cursor-default opacity-60' : ''}`}>
+                  <Icon className="w-4 h-4" />
+                  {t.label}
+                </button>
+              )
+            })}
+          </nav>
+          {/* Customize button */}
+          <button
+            onClick={() => setCustomizing(v => !v)}
+            title="Rearrange tabs"
+            className={`flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-lg transition-all ml-1
+              ${customizing ? 'bg-primary-500/20 text-primary-400' : 'text-slate-500 hover:text-slate-300 hover:bg-dark-700'}`}>
+            <Settings2 className="w-4 h-4" />
+          </button>
+        </div>
       </div>
+
+      {/* Reorder panel */}
+      {customizing && (
+        <div className="flex-shrink-0 border-b border-dark-700 bg-dark-800 px-6 py-3">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-xs font-semibold text-primary-400 uppercase tracking-widest">Drag to rearrange tabs</p>
+            <div className="flex gap-2">
+              <button onClick={resetOrder} className="text-xs text-slate-400 hover:text-slate-200 underline">Reset to default</button>
+              <button onClick={() => setCustomizing(false)}
+                className="text-xs px-3 py-1 rounded-lg bg-primary-600 text-white hover:bg-primary-500 transition-all">
+                Done
+              </button>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {orderedTabs.map((t, i) => {
+              const Icon = t.icon
+              const isDragging = dragFrom === i
+              const isTarget   = dragOver  === i
+              return (
+                <div
+                  key={t.key}
+                  draggable
+                  onDragStart={() => setDragFrom(i)}
+                  onDragOver={e => { e.preventDefault(); setDragOver(i) }}
+                  onDrop={() => handleDrop(i)}
+                  onDragEnd={() => { setDragFrom(null); setDragOver(null) }}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-medium cursor-grab active:cursor-grabbing select-none transition-all
+                    ${isDragging  ? 'opacity-40 scale-95 border-primary-500/50 bg-primary-500/10' :
+                      isTarget    ? 'border-primary-400 bg-primary-400/10 text-primary-300' :
+                                    'border-dark-600 bg-dark-700 text-slate-300 hover:border-primary-500/40'}`}>
+                  <GripVertical className="w-3.5 h-3.5 text-slate-500" />
+                  <Icon className="w-3.5 h-3.5" />
+                  {t.label}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-6">
