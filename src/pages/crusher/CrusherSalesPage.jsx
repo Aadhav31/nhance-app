@@ -6,7 +6,7 @@ import {
   Users, Truck, MapPin, Package, FileText, Plus, Edit2, Trash2, X, Save,
   Loader2, CheckCircle, Settings2, ChevronRight, AlertCircle, ToggleLeft,
   ToggleRight, Phone, Mail, CreditCard, Calendar, Building2, Hash,
-  Eye, Download, Ban, Printer, ClipboardCheck, RefreshCw, ArrowLeftRight, BarChart2, GripVertical
+  Eye, Download, Ban, Printer, ClipboardCheck, RefreshCw, ArrowLeftRight, BarChart2, GripVertical, Lock
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import jsPDF from 'jspdf'
@@ -88,21 +88,29 @@ function Badge({ label, color = 'slate' }) {
 
 // ── Autocomplete Input ────────────────────────────────────────────────────────
 // freeText: allow typing a value not in the list (for loading/unloading points)
-function Autocomplete({ options = [], value = '', onChange, placeholder = 'Search…', freeText = false, className = '' }) {
+function Autocomplete({ options = [], value = '', onChange, placeholder = 'Search…', freeText = false, className = '', disabled = false }) {
   const [query,  setQuery]  = useState('')
   const [open,   setOpen]   = useState(false)
   const [hiIdx,  setHiIdx]  = useState(-1)
   const wrapRef  = useRef(null)
 
-  // Display the label when not in search mode
   const selectedLabel = options.find(o => o.value === value)?.label ?? value ?? ''
 
-  // Close on outside click
   useEffect(() => {
     const fn = e => { if (wrapRef.current && !wrapRef.current.contains(e.target)) { setOpen(false); setQuery('') } }
     document.addEventListener('mousedown', fn)
     return () => document.removeEventListener('mousedown', fn)
   }, [])
+
+  // Locked/disabled display
+  if (disabled) {
+    return (
+      <div className={`flex items-center gap-2 px-3 py-2.5 rounded-xl bg-dark-800/60 border border-dark-700 ${className}`}>
+        <Lock className="w-3 h-3 text-slate-500 flex-shrink-0" />
+        <span className="text-sm text-slate-300 truncate">{selectedLabel || <span className="text-slate-600 text-xs italic">—</span>}</span>
+      </div>
+    )
+  }
 
   const filtered = query
     ? options.filter(o => o.label.toLowerCase().includes(query.toLowerCase()))
@@ -163,7 +171,7 @@ function Autocomplete({ options = [], value = '', onChange, placeholder = 'Searc
 }
 
 // ── Invoice Form Modal ────────────────────────────────────────────────────────
-function InvoiceFormModal({ companyId, onClose, prefill = null, onAfterSave = null }) {
+function InvoiceFormModal({ companyId, onClose, prefill = null, onAfterSave = null, fromToken = null }) {
   const qc = useQueryClient()
   const today = new Date().toISOString().split('T')[0]
 
@@ -196,6 +204,15 @@ function InvoiceFormModal({ companyId, onClose, prefill = null, onAfterSave = nu
   ])
   const [saving, setSaving] = useState(false)
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
+
+  // Lock helpers — fields pre-filled from token are read-only
+  const lk   = (key)     => !!fromToken && !!(prefill?.[key])
+  const lkLn = (lineKey) => !!fromToken && !!(prefill?.[
+    lineKey === 'grade_id' ? 'tokenGradeId' :
+    lineKey === 'quantity' ? 'tokenQty'     :
+    lineKey === 'unit'     ? 'tokenUnit'    : ''
+  ])
+  const lockedInp = `${inp()} opacity-70 cursor-not-allowed pointer-events-none bg-dark-800/60`
 
   const { data: clients = [] } = useQuery({
     queryKey: ['clients-inv', companyId],
@@ -493,6 +510,20 @@ function InvoiceFormModal({ companyId, onClose, prefill = null, onAfterSave = nu
         </>
       }>
 
+      {/* Token source banner */}
+      {fromToken && (
+        <div className="bg-primary-500/10 border border-primary-500/30 rounded-xl p-3 flex items-center gap-3">
+          <Printer className="w-4 h-4 text-primary-400 flex-shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-semibold text-primary-300">Converting Token → Invoice</p>
+            <p className="text-[11px] text-primary-400/70">{fromToken.token_number} · {fromToken.token_date} · {fromToken.token_time?.slice(0,5)}</p>
+          </div>
+          <div className="flex items-center gap-1 text-[10px] text-primary-400/60">
+            <Lock className="w-3 h-3" /> locked fields from token
+          </div>
+        </div>
+      )}
+
       {/* Invoice Type toggle */}
       <div className="bg-dark-700 rounded-xl p-1 flex gap-1">
         {[{ v: 'non_tax', label: '📄 Non-Tax Invoice' }, { v: 'tax', label: '🧾 Tax Invoice (GST)' }].map(opt => (
@@ -509,20 +540,22 @@ function InvoiceFormModal({ companyId, onClose, prefill = null, onAfterSave = nu
       </Field>
 
       {/* Client */}
-      <Field label="Client">
+      <Field label={lk('client_id') || lk('walkin_name') ? <span className="flex items-center gap-1">Client <Lock className="w-3 h-3 text-slate-500" /></span> : 'Client'}>
         <Autocomplete
           options={clients.map(c => ({ value: c.id, label: c.display_name || c.business_name }))}
           value={form.client_id}
           onChange={val => { set('client_id', val); set('vehicle_id', ''); set('walkin_name', '') }}
           placeholder="Search client… (blank = walk-in)"
+          disabled={lk('client_id')}
         />
       </Field>
 
       {/* Walk-in name (only when no registered client selected) */}
       {!form.client_id && (
-        <Field label="Customer Name (optional — for walk-in)">
-          <input className={inp()} value={form.walkin_name}
+        <Field label={lk('walkin_name') ? <span className="flex items-center gap-1">Customer Name <Lock className="w-3 h-3 text-slate-500" /></span> : 'Customer Name (optional — for walk-in)'}>
+          <input className={lk('walkin_name') ? lockedInp : inp()} value={form.walkin_name}
             onChange={e => set('walkin_name', e.target.value)}
+            readOnly={lk('walkin_name')}
             placeholder="e.g. Rajan, Murugan Traders…" />
         </Field>
       )}
@@ -530,17 +563,23 @@ function InvoiceFormModal({ companyId, onClose, prefill = null, onAfterSave = nu
       {/* Vehicle — toggle between registry and manual */}
       <div>
         <div className="flex items-center justify-between mb-1">
-          <label className="text-xs font-medium text-slate-400">Vehicle</label>
-          <button type="button"
-            onClick={() => { set('vehicle_manual', !form.vehicle_manual); set('vehicle_id', ''); set('walkin_vehicle_num', '') }}
-            className="text-[11px] text-primary-400 hover:text-primary-300 underline underline-offset-2">
-            {form.vehicle_manual ? 'Pick from registry instead' : 'Type vehicle number instead'}
-          </button>
+          <label className="text-xs font-medium text-slate-400 flex items-center gap-1">
+            Vehicle {(lk('vehicle_id') || lk('walkin_vehicle_num')) && <Lock className="w-3 h-3 text-slate-500" />}
+          </label>
+          {/* Hide toggle when locked from token */}
+          {!(lk('vehicle_id') || lk('walkin_vehicle_num')) && (
+            <button type="button"
+              onClick={() => { set('vehicle_manual', !form.vehicle_manual); set('vehicle_id', ''); set('walkin_vehicle_num', '') }}
+              className="text-[11px] text-primary-400 hover:text-primary-300 underline underline-offset-2">
+              {form.vehicle_manual ? 'Pick from registry instead' : 'Type vehicle number instead'}
+            </button>
+          )}
         </div>
 
         {form.vehicle_manual ? (
-          <input className={inp()} value={form.walkin_vehicle_num}
+          <input className={lk('walkin_vehicle_num') ? lockedInp : inp()} value={form.walkin_vehicle_num}
             onChange={e => set('walkin_vehicle_num', e.target.value.toUpperCase())}
+            readOnly={lk('walkin_vehicle_num')}
             placeholder="e.g. TN38AB1234" />
         ) : (
           <Autocomplete
@@ -551,6 +590,7 @@ function InvoiceFormModal({ companyId, onClose, prefill = null, onAfterSave = nu
             value={form.vehicle_id}
             onChange={val => handleVehicleChange(val)}
             placeholder="Search vehicle number…"
+            disabled={lk('vehicle_id')}
           />
         )}
       </div>
@@ -575,15 +615,16 @@ function InvoiceFormModal({ companyId, onClose, prefill = null, onAfterSave = nu
 
       {/* Loading / Unloading */}
       <div className="grid grid-cols-2 gap-3">
-        <Field label="Loading Point">
+        <Field label={lk('loading_point') ? <span className="flex items-center gap-1">Loading Point <Lock className="w-3 h-3 text-slate-500" /></span> : 'Loading Point'}>
           <Autocomplete
             freeText
             options={loadingPoints.filter(p => p.point_type !== 'unloading').map(p => ({ value: p.point_name, label: p.point_name }))}
             value={form.loading_point}
             onChange={val => set('loading_point', val)}
             placeholder="Search or type loading point…"
+            disabled={lk('loading_point')}
           />
-          {companyAddress && (
+          {companyAddress && !lk('loading_point') && (
             <p className="text-[11px] text-slate-500 mt-1.5 bg-dark-700 rounded px-2 py-1 leading-snug">
               📍 {companyAddress}
             </p>
@@ -712,12 +753,13 @@ function InvoiceFormModal({ companyId, onClose, prefill = null, onAfterSave = nu
                 )}
               </div>
 
-              <Field label="Material (from grade list)">
+              <Field label={lkLn('grade_id') && i === 0 ? <span className="flex items-center gap-1">Material (from grade list) <Lock className="w-3 h-3 text-slate-500" /></span> : 'Material (from grade list)'}>
                 <Autocomplete
                   options={grades.map(g => ({ value: g.id, label: g.grade_name }))}
                   value={item.grade_id}
                   onChange={val => handleGradeChange(i, val)}
                   placeholder="Search grade…"
+                  disabled={lkLn('grade_id') && i === 0}
                 />
               </Field>
 
@@ -737,13 +779,16 @@ function InvoiceFormModal({ companyId, onClose, prefill = null, onAfterSave = nu
               )}
 
               <div className="grid grid-cols-3 gap-2">
-                <Field label="Quantity">
-                  <input type="number" className={inp()} value={item.quantity}
+                <Field label={lkLn('quantity') && i === 0 ? <span className="flex items-center gap-1">Quantity <Lock className="w-3 h-3 text-slate-500" /></span> : 'Quantity'}>
+                  <input type="number" className={lkLn('quantity') && i === 0 ? lockedInp : inp()} value={item.quantity}
                     onChange={e => setItem(i, 'quantity', e.target.value)}
+                    readOnly={lkLn('quantity') && i === 0}
                     placeholder="0" step="0.001" min="0" />
                 </Field>
-                <Field label="Unit">
-                  <select className={inp()} value={item.unit} onChange={e => setItem(i, 'unit', e.target.value)}>
+                <Field label={lkLn('unit') && i === 0 ? <span className="flex items-center gap-1">Unit <Lock className="w-3 h-3 text-slate-500" /></span> : 'Unit'}>
+                  <select className={lkLn('unit') && i === 0 ? lockedInp : inp()} value={item.unit}
+                    onChange={e => setItem(i, 'unit', e.target.value)}
+                    disabled={lkLn('unit') && i === 0}>
                     <option value="tonnes">Tonnes</option>
                     <option value="cum">CUM</option>
                     <option value="units">Units (Vol)</option>
@@ -1645,6 +1690,7 @@ function InvoiceFromTokenModal({ companyId, token, onClose }) {
         tokenQty:           token.quantity      ? String(token.quantity) : '',
         tokenUnit:          token.unit          || 'tonnes',
       }}
+      fromToken={token}
       onClose={onClose}
       onAfterSave={handleSaved}
     />
