@@ -283,7 +283,13 @@ function AppShell() {
       case 'fleet':        return wrap(FleetPage,          MODULES.FLEET)
       case 'operations':   return wrap(OperationsPage,     MODULES.OPERATIONS)
       case 'maintenance':  return wrap(MaintenancePage,    MODULES.MAINTENANCE)
-      case 'inventory':    return wrap(InventoryPage,      MODULES.INVENTORY)
+      case 'inventory':
+        if (hasModule && !hasModule(MODULES.INVENTORY)) return isOnline ? <ModuleNotActive page="inventory" /> : <OfflineScreen />
+        return (
+          <Suspense fallback={<LoadingScreen message="Loading inventory…" />}>
+            <InventoryPage onNavigate={handleNavigate} />
+          </Suspense>
+        )
       case 'clients':      return wrap(ClientsPage,        MODULES.CLIENTS_PROJECTS)
       case 'projects':     return wrap(ProjectsPage,       MODULES.CLIENTS_PROJECTS)
       case 'accounts':     return wrap(AccountsPage,       MODULES.ACCOUNTS)

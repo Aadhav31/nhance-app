@@ -65,7 +65,7 @@ function Field({ label, children, required }) {
 }
 
 // ── OVERVIEW TAB ──────────────────────────────────────────────────────────────
-function OverviewTab({ companyId, onNavigate }) {
+function OverviewTab({ companyId, onNavigate, onNavigatePage }) {
   const { data: items = [] } = useQuery({
     queryKey: ['inv_items', companyId],
     queryFn: async () => {
@@ -162,7 +162,10 @@ function OverviewTab({ companyId, onNavigate }) {
 
       {/* ── Pending bill alert ── */}
       {pendingBills.length > 0 && (
-        <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl px-4 py-3 flex items-center gap-3">
+        <div
+          onClick={() => onNavigatePage?.('purchase')}
+          className="bg-amber-500/10 border border-amber-500/30 rounded-xl px-4 py-3 flex items-center gap-3 cursor-pointer hover:bg-amber-500/20 transition-colors"
+        >
           <span className="text-lg">🚛</span>
           <div className="flex-1 min-w-0">
             <p className="text-xs font-bold text-amber-400">{pendingBills.length} stock receipt{pendingBills.length > 1 ? 's' : ''} waiting for a bill</p>
@@ -171,7 +174,12 @@ function OverviewTab({ companyId, onNavigate }) {
               {pendingBills.length > 2 ? ` +${pendingBills.length - 2} more` : ''}
             </p>
           </div>
-          <span className="text-[11px] font-semibold text-amber-400/70 shrink-0">→ Purchase → Bills</span>
+          <button
+            onClick={e => { e.stopPropagation(); onNavigatePage?.('purchase') }}
+            className="text-[11px] font-semibold bg-amber-500 hover:bg-amber-400 text-white px-3 py-1.5 rounded-lg shrink-0 transition-colors"
+          >
+            Go to Bills →
+          </button>
         </div>
       )}
 
@@ -1766,7 +1774,7 @@ function AdjustmentsTab({ companyId, session }) {
 }
 
 // ── MAIN INVENTORY PAGE ───────────────────────────────────────────────────────
-export default function InventoryPage() {
+export default function InventoryPage({ onNavigate: onNavigatePage }) {
   const { companyId, session } = useAuth()
   const [activeTab, setActiveTab] = useState('overview')
 
@@ -1807,7 +1815,7 @@ export default function InventoryPage() {
 
       {/* Tab content */}
       <div className="flex-1 overflow-hidden">
-        {activeTab === 'overview'    && <OverviewTab     companyId={companyId} onNavigate={setActiveTab} />}
+        {activeTab === 'overview'    && <OverviewTab     companyId={companyId} onNavigate={setActiveTab} onNavigatePage={onNavigatePage} />}
         {activeTab === 'items'       && <ItemsTab        companyId={companyId} session={session} />}
         {activeTab === 'stores'      && <StoresTab       companyId={companyId} session={session} />}
         {activeTab === 'stock_in'    && <StockInTab      companyId={companyId} session={session} />}
