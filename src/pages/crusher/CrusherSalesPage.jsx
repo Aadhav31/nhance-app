@@ -217,6 +217,19 @@ function InvoiceFormModal({ companyId, onClose, prefill = null, onAfterSave = nu
     enabled: !!form.client_id,
   })
 
+  // Per-client rate overrides — auto-applied when grade selected
+  const { data: clientRates = [] } = useQuery({
+    queryKey: ['crusher-client-rates', companyId, form.client_id],
+    queryFn: async () => {
+      if (!form.client_id) return []
+      const { data } = await supabase.from('crusher_client_rates')
+        .select('grade_id, custom_rate')
+        .eq('company_id', companyId).eq('client_id', form.client_id).eq('is_active', true)
+      return data || []
+    },
+    enabled: !!form.client_id,
+  })
+
   // Auto-fill loading point, unloading point, and first line grade from client defaults
   useEffect(() => {
     if (!clientDefaults) return
@@ -270,16 +283,19 @@ function InvoiceFormModal({ companyId, onClose, prefill = null, onAfterSave = nu
   const setItem    = (i, k, v) => setItems(p => p.map((it, idx) => idx === i ? { ...it, [k]: v } : it))
 
   const handleGradeChange = (i, gradeId) => {
-    const g = grades.find(x => x.id === gradeId)
+    const g          = grades.find(x => x.id === gradeId)
+    const clientRate = clientRates.find(r => r.grade_id === gradeId)
     setItems(p => p.map((it, idx) => idx === i
       ? {
           ...it,
           grade_id:      gradeId,
-          material_name: g?.grade_name   || '',
-          hsn_code:      g?.hsn_code     || '',
-          unit:          g?.default_uom  || it.unit || 'tonnes',
-          // auto-fill rate from grade default; keep existing if grade has no rate set
-          rate: g?.default_rate ? String(g.default_rate) : it.rate,
+          material_name: g?.grade_name  || '',
+          hsn_code:      g?.hsn_code    || '',
+          unit:          g?.default_uom || it.unit || 'tonnes',
+          // prefer client-specific rate, then grade default, then keep existing
+          rate: clientRate
+            ? String(clientRate.custom_rate)
+            : g?.default_rate ? String(g.default_rate) : it.rate,
         }
       : it))
   }
@@ -648,11 +664,19 @@ function InvoiceFormModal({ companyId, onClose, prefill = null, onAfterSave = nu
                     <option value="trips">Trips</option>
                   </select>
                 </Field>
-                <Field label="Rate (₹)">
+                <div>
+                  <label className="block text-xs font-medium text-slate-400 mb-1">
+                    Rate (₹)
+                    {item.grade_id && clientRates.find(r => r.grade_id === item.grade_id) && (
+                      <span className="ml-2 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-primary-500/20 text-primary-400 border border-primary-500/30">
+                        Custom Rate
+                      </span>
+                    )}
+                  </label>
                   <input type="number" className={inp()} value={item.rate}
                     onChange={e => setItem(i, 'rate', e.target.value)}
                     placeholder="0.00" step="0.01" min="0" />
-                </Field>
+                </div>
               </div>
 
               {item.quantity && item.rate && (
@@ -2110,6 +2134,19 @@ function InvoiceEditModal({ companyId, invoice, onClose }) {
     enabled: !!invoice.client_id,
   })
 
+  // Per-client rate overrides for edit modal
+  const { data: editClientRates = [] } = useQuery({
+    queryKey: ['crusher-client-rates', companyId, invoice.client_id],
+    queryFn: async () => {
+      if (!invoice.client_id) return []
+      const { data } = await supabase.from('crusher_client_rates')
+        .select('grade_id, custom_rate')
+        .eq('company_id', companyId).eq('client_id', invoice.client_id).eq('is_active', true)
+      return data || []
+    },
+    enabled: !!invoice.client_id,
+  })
+
   // Load existing line items
   useEffect(() => {
     supabase.from('crusher_invoice_items').select('*')
@@ -2133,14 +2170,17 @@ function InvoiceEditModal({ companyId, invoice, onClose }) {
   const setItem    = (i, k, v) => setItems(p => p.map((it, idx) => idx === i ? { ...it, [k]: v } : it))
 
   const handleGradeChange = (i, gradeId) => {
-    const g = grades.find(x => x.id === gradeId)
+    const g          = grades.find(x => x.id === gradeId)
+    const clientRate = editClientRates.find(r => r.grade_id === gradeId)
     setItems(p => p.map((it, idx) => idx === i ? {
       ...it,
       grade_id:      gradeId,
       material_name: g?.grade_name  || '',
       hsn_code:      g?.hsn_code    || '',
       unit:          g?.default_uom || it.unit || 'tonnes',
-      rate: g?.default_rate ? String(g.default_rate) : it.rate,
+      rate: clientRate
+        ? String(clientRate.custom_rate)
+        : g?.default_rate ? String(g.default_rate) : it.rate,
     } : it))
   }
 
@@ -2826,6 +2866,7 @@ function ClientModal({ companyId, existing, onClose }) {
   })
   const [settingsId, setSettingsId] = useState(null)  // existing crusher_client_settings id
   const [sites, setSites]           = useState([])     // delivery sites array
+  const [rates, setRates]           = useState([])     // per-client rate overrides
   const [saving, setSaving]         = useState(false)
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
 
@@ -2833,6 +2874,11 @@ function ClientModal({ companyId, existing, onClose }) {
   const addSite = () => setSites(p => [...p, { _tempId: Date.now(), site_name: '', address: '', _new: true }])
   const removeSite = (idx) => setSites(p => p.map((s, i) => i === idx ? { ...s, _deleted: true } : s))
   const updateSite = (idx, field, val) => setSites(p => p.map((s, i) => i === idx ? { ...s, [field]: val } : s))
+
+  // Rate override helpers
+  const addRate    = () => setRates(p => [...p, { _tempId: Date.now(), grade_id: '', custom_rate: '', notes: '', _new: true }])
+  const removeRate = (idx) => setRates(p => p.map((r, i) => i === idx ? { ...r, _deleted: true } : r))
+  const updateRate = (idx, field, val) => setRates(p => p.map((r, i) => i === idx ? { ...r, [field]: val } : r))
 
   // Load existing crusher_client_settings + delivery sites when editing
   useEffect(() => {
@@ -2861,6 +2907,11 @@ function ClientModal({ companyId, existing, onClose }) {
       .eq('company_id', companyId).eq('client_id', existing.id)
       .eq('is_active', true).order('sort_order')
       .then(({ data }) => { if (data) setSites(data) })
+    // Load rate overrides
+    supabase.from('crusher_client_rates')
+      .select('id, grade_id, custom_rate, notes')
+      .eq('company_id', companyId).eq('client_id', existing.id).eq('is_active', true)
+      .then(({ data }) => { if (data) setRates(data) })
   }, [existing?.id, companyId])
 
   // Grades for default grade selector
@@ -2947,9 +2998,32 @@ function ClientModal({ companyId, existing, onClose }) {
         if (iErr) throw iErr
       }
 
+      // 4 — Save rate overrides: delete removed, upsert active ones
+      const ratesToDelete = rates.filter(r => r._deleted && r.id)
+      const ratesToUpsert = rates.filter(r => !r._deleted && r.grade_id && r.custom_rate !== '')
+      if (ratesToDelete.length) {
+        await supabase.from('crusher_client_rates').delete().in('id', ratesToDelete.map(r => r.id))
+      }
+      if (ratesToUpsert.length) {
+        const { error: rErr } = await supabase.from('crusher_client_rates').upsert(
+          ratesToUpsert.map(r => ({
+            ...(r.id ? { id: r.id } : {}),
+            company_id:  companyId,
+            client_id:   clientId,
+            grade_id:    r.grade_id,
+            custom_rate: Number(r.custom_rate),
+            notes:       r.notes || null,
+            is_active:   true,
+          })),
+          { onConflict: 'company_id,client_id,grade_id' }
+        )
+        if (rErr) throw rErr
+      }
+
       await qc.invalidateQueries({ queryKey: ['clients', companyId] })
       await qc.invalidateQueries({ queryKey: ['crusher_client_settings', companyId] })
       await qc.invalidateQueries({ queryKey: ['crusher-client-sites', companyId] })
+      await qc.invalidateQueries({ queryKey: ['crusher-client-rates', companyId] })
       toast.success(isEdit ? 'Client updated' : 'Client added')
       onClose()
     } catch (e) {
@@ -3153,7 +3227,66 @@ function ClientModal({ companyId, existing, onClose }) {
           onChange={e => set('notes', e.target.value)} placeholder="Billing notes, special terms…" />
       </Field>
 
-      {/* ── 4. Bank & Opening Balance ── */}
+      {/* ── 4. Rate Overrides ── */}
+      <SectionHead label="Custom Rate Overrides" />
+      {!isEdit ? (
+        <p className="text-xs text-slate-500 italic mb-3">Save the client first, then re-open to set custom rates.</p>
+      ) : (
+        <div className="space-y-2 mb-3">
+          {rates.filter(r => !r._deleted).length === 0 && (
+            <p className="text-xs text-slate-500 italic">No overrides set — default grade rates apply.</p>
+          )}
+          {rates.filter(r => !r._deleted).map((rate, idx) => {
+            const realIdx = rates.indexOf(rate)
+            return (
+              <div key={rate.id || rate._tempId} className="flex gap-2 items-center bg-dark-700 rounded-lg p-2 border border-dark-600">
+                <select
+                  className={`${inp('text-sm')} flex-1`}
+                  value={rate.grade_id}
+                  onChange={e => updateRate(realIdx, 'grade_id', e.target.value)}
+                >
+                  <option value="">— Select grade —</option>
+                  {grades.map(g => <option key={g.id} value={g.id}>{g.grade_name}</option>)}
+                </select>
+                <div className="flex items-center gap-1">
+                  <span className="text-xs text-slate-500">Rs.</span>
+                  <input
+                    type="number"
+                    className={`${inp('text-sm font-mono w-24')}`}
+                    value={rate.custom_rate}
+                    onChange={e => updateRate(realIdx, 'custom_rate', e.target.value)}
+                    placeholder="Rate"
+                    step="0.01" min="0"
+                  />
+                </div>
+                <input
+                  className={`${inp('text-sm')} flex-1`}
+                  value={rate.notes || ''}
+                  onChange={e => updateRate(realIdx, 'notes', e.target.value)}
+                  placeholder="Notes (optional)"
+                />
+                <button
+                  type="button"
+                  onClick={() => removeRate(realIdx)}
+                  className="p-1 text-red-400 hover:text-red-300 hover:bg-dark-600 rounded"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )
+          })}
+          <button
+            type="button"
+            onClick={addRate}
+            className="flex items-center gap-1 text-xs text-primary-400 hover:text-primary-300 mt-1"
+          >
+            <Plus className="w-3.5 h-3.5" /> Add rate override
+          </button>
+          <p className="text-[10px] text-slate-600 mt-1">These rates auto-fill when this client is selected on an invoice, and can still be edited per invoice.</p>
+        </div>
+      )}
+
+      {/* ── 5. Bank & Opening Balance ── */}
       <SectionHead label="Bank Details & Opening Balance" />
       <Field label="Opening Balance (Rs.) — amount owed at migration">
         <input type="number" className={inp('w-48')} value={form.opening_balance}
