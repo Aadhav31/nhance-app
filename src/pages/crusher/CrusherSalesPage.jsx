@@ -179,9 +179,25 @@ function InvoiceFormModal({ companyId, onClose, prefill = null, onAfterSave = nu
     queryFn: async () => {
       if (!form.client_id) return null
       const { data } = await supabase.from('crusher_client_settings')
-        .select('default_grade_id, default_loading_pt, default_unloading_pt')
+        .select('default_grade_id, default_loading_pt, default_unloading_pt, credit_limit, payment_type')
         .eq('company_id', companyId).eq('client_id', form.client_id).single()
       return data || null
+    },
+    enabled: !!form.client_id,
+  })
+
+  // Outstanding balance for selected client — used for credit limit check
+  const { data: clientOutstanding = 0 } = useQuery({
+    queryKey: ['crusher-client-outstanding-inv', companyId, form.client_id],
+    queryFn: async () => {
+      if (!form.client_id) return 0
+      const { data } = await supabase.from('crusher_invoices')
+        .select('balance')
+        .eq('company_id', companyId)
+        .eq('client_id', form.client_id)
+        .neq('status', 'void')
+        .gt('balance', 0)
+      return (data || []).reduce((sum, row) => sum + Number(row.balance || 0), 0)
     },
     enabled: !!form.client_id,
   })
@@ -537,6 +553,41 @@ function InvoiceFormModal({ companyId, onClose, prefill = null, onAfterSave = nu
             <input type="date" className={inp()} value={form.credit_due_date} onChange={e => set('credit_due_date', e.target.value)} />
           </Field>
         )}
+
+        {/* Credit limit status — shown when credit selected, client chosen, and limit configured */}
+        {form.payment_type === 'credit' && form.client_id && Number(clientDefaults?.credit_limit) > 0 && (() => {
+          const limit       = Number(clientDefaults.credit_limit)
+          const outstanding = Number(clientOutstanding)
+          const thisInv     = totalAmount
+          const headroom    = limit - outstanding - thisInv
+          const overLimit   = headroom < 0
+          const fmtC = n => `₹${n.toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
+          return (
+            <div className={`rounded-lg border p-3 space-y-2 mt-1 ${overLimit ? 'border-red-500/50 bg-red-500/5' : 'border-dark-600 bg-dark-700/60'}`}>
+              <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Credit Position</p>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                <span className="text-slate-500">Credit Limit</span>
+                <span className="text-right font-mono text-slate-200">{fmtC(limit)}</span>
+                <span className="text-slate-500">Current Outstanding</span>
+                <span className="text-right font-mono text-yellow-300">{fmtC(outstanding)}</span>
+                <span className="text-slate-500">This Invoice</span>
+                <span className="text-right font-mono text-slate-300">{fmtC(thisInv)}</span>
+                <span className={`font-semibold ${overLimit ? 'text-red-400' : 'text-emerald-400'}`}>Headroom</span>
+                <span className={`text-right font-mono font-semibold ${overLimit ? 'text-red-400' : 'text-emerald-400'}`}>
+                  {overLimit ? `−${fmtC(Math.abs(headroom))}` : fmtC(headroom)}
+                </span>
+              </div>
+              {overLimit && (
+                <div className="flex items-start gap-2 mt-1 p-2 rounded bg-red-500/10 border border-red-500/30">
+                  <AlertCircle className="w-3.5 h-3.5 text-red-400 flex-shrink-0 mt-0.5" />
+                  <p className="text-[11px] text-red-300">
+                    This invoice exceeds the credit limit by {fmtC(Math.abs(headroom))}. You can still save — please get approval before issuing.
+                  </p>
+                </div>
+              )}
+            </div>
+          )
+        })()}
       </div>
 
       {/* Line Items */}
@@ -2406,6 +2457,28 @@ function InvoicesTab({ companyId }) {
 
   const statusColor = { issued: 'blue', paid: 'green', partial: 'yellow', overdue: 'red', draft: 'slate', void: 'slate' }
 
+  // Credit limits per client — used to flag over-limit clients in the list
+  const { data: creditLimits = {} } = useQuery({
+    queryKey: ['crusher-credit-limits', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('crusher_client_settings')
+        .select('client_id, credit_limit')
+        .eq('company_id', companyId)
+        .gt('credit_limit', 0)
+      const map = {}
+      ;(data || []).forEach(r => { map[r.client_id] = Number(r.credit_limit) })
+      return map
+    },
+  })
+
+  // Compute outstanding per client from current invoice list (live, no extra fetch)
+  const outstandingByClient = invoices.reduce((acc, inv) => {
+    if (inv.status === 'void' || !inv.client_id) return acc
+    const bal = Number(inv.balance || 0)
+    if (bal > 0) acc[inv.client_id] = (acc[inv.client_id] || 0) + bal
+    return acc
+  }, {})
+
   const handleVoid = async (inv) => {
     const isVoided  = inv.status === 'void'
     const paidAmt   = Number(inv.paid_amount || 0)
@@ -2619,6 +2692,12 @@ function InvoicesTab({ companyId }) {
                     <span className="text-sm font-semibold text-primary-400 font-mono">{inv.invoice_number}</span>
                     <Badge label={inv.invoice_type === 'tax' ? 'GST' : 'Non-Tax'} color={inv.invoice_type === 'tax' ? 'blue' : 'slate'} />
                     <Badge label={inv.status} color={statusColor[inv.status] || 'slate'} />
+                    {inv.payment_type === 'credit' && inv.client_id && creditLimits[inv.client_id] &&
+                      outstandingByClient[inv.client_id] > creditLimits[inv.client_id] && inv.status !== 'void' && (
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-orange-500/15 text-orange-400 border border-orange-500/30">
+                        <AlertCircle className="w-2.5 h-2.5" /> Over Limit
+                      </span>
+                    )}
                   </div>
                   <p className="text-xs text-slate-400">
                     {inv.invoice_date} · {inv.client_name || 'Walk-in'}{inv.vehicle_number ? ` · ${inv.vehicle_number}` : ''}
