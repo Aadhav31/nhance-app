@@ -2484,6 +2484,9 @@ function InvoiceEditModal({ companyId, invoice, onClose }) {
 // ── Invoices Tab ──────────────────────────────────────────────────────────────
 function InvoicesTab({ companyId }) {
   const qc = useQueryClient()
+  const { role } = useAuth()
+  const canDirectCreate = ['admin', 'superadmin', 'manager'].includes(role)
+
   const [createOpen, setCreateOpen] = useState(false)
   const [viewId,     setViewId]     = useState(null)
   const [editInv,    setEditInv]    = useState(null)
@@ -2713,11 +2716,29 @@ function InvoicesTab({ companyId }) {
           <h3 className="text-sm font-semibold text-slate-200">Crusher Invoices</h3>
           <p className="text-xs text-slate-500">{invoices.length} invoice{invoices.length !== 1 ? 's' : ''}</p>
         </div>
-        <button onClick={() => setCreateOpen(true)}
-          className="flex items-center gap-2 px-3 py-2 rounded-lg bg-primary-600 hover:bg-primary-700 text-white text-sm font-medium transition-all">
-          <Plus className="w-4 h-4" /> Create Invoice
-        </button>
+        {canDirectCreate ? (
+          <button onClick={() => setCreateOpen(true)}
+            className="flex items-center gap-2 px-3 py-2 rounded-lg bg-primary-600 hover:bg-primary-700 text-white text-sm font-medium transition-all">
+            <Plus className="w-4 h-4" /> Create Invoice
+          </button>
+        ) : (
+          <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-dark-700 border border-dark-600 text-xs text-slate-400">
+            <ClipboardCheck className="w-4 h-4 text-primary-400 flex-shrink-0" />
+            Convert a token to create an invoice
+          </div>
+        )}
       </div>
+
+      {/* Token-first workflow hint for non-admin users */}
+      {!canDirectCreate && (
+        <div className="flex items-start gap-3 p-3 rounded-xl bg-primary-500/10 border border-primary-500/20">
+          <AlertCircle className="w-4 h-4 text-primary-400 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="text-xs font-semibold text-primary-300">Token-first workflow</p>
+            <p className="text-xs text-slate-400 mt-0.5">All invoices must come from a token. Go to the <strong className="text-slate-300">Tokens</strong> tab, find the token, and use <strong className="text-slate-300">Convert to Invoice</strong>.</p>
+          </div>
+        </div>
+      )}
 
       {isLoading && (
         <div className="text-center py-12 text-slate-500 text-sm">
@@ -2729,10 +2750,14 @@ function InvoicesTab({ companyId }) {
         <div className="text-center py-16 space-y-3">
           <FileText className="w-10 h-10 text-slate-600 mx-auto" />
           <p className="text-sm text-slate-500">No invoices yet.</p>
-          <button onClick={() => setCreateOpen(true)}
-            className="px-4 py-2 rounded-lg bg-primary-600 hover:bg-primary-700 text-white text-sm font-medium">
-            Create First Invoice
-          </button>
+          {canDirectCreate ? (
+            <button onClick={() => setCreateOpen(true)}
+              className="px-4 py-2 rounded-lg bg-primary-600 hover:bg-primary-700 text-white text-sm font-medium">
+              Create First Invoice
+            </button>
+          ) : (
+            <p className="text-xs text-slate-600">Convert a token from the Tokens tab to generate invoices.</p>
+          )}
         </div>
       )}
 
