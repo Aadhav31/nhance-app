@@ -104,7 +104,7 @@ function OverviewTab({ companyId, onNavigate }) {
     queryFn: async () => {
       const { data } = await supabase.from('stock_transactions')
         .select('id, txn_number, txn_date, quantity, unit, inventory_items(item_name, unit), supplier_name')
-        .eq('company_id', companyId).eq('requires_bill', true).is('bill_id', null).eq('action_taken', false)
+        .eq('company_id', companyId).eq('requires_bill', true).is('bill_id', null).not('action_taken', 'eq', true)
         .order('txn_date', { ascending: false })
       return data || []
     },
