@@ -1269,29 +1269,34 @@ function BillsTab({ companyId, session }) {
     },
     enabled: !!companyId,
   })
-  // Pending stock receipts (crusher grades received but bill not yet created)
+  // Pending stock receipts (received but bill not yet created)
   const { data: pendingStockBills = [] } = useQuery({
     queryKey: ['pending-stock-bills', companyId],
     queryFn: async () => {
-      try {
-        // Select only guaranteed-to-exist columns first, then join for extras
-        const { data, error } = await supabase.from('stock_transactions')
-          .select('id, txn_number, txn_date, quantity, unit, unit_cost, total_cost, vehicle_number, vendor_id, supplier_name, delivery_mode, inventory_items(item_name, unit), stores(store_name)')
+      // Step 1: fetch with all extended columns
+      const { data, error } = await supabase.from('stock_transactions')
+        .select('id, txn_number, txn_date, quantity, unit, unit_cost, total_cost, vehicle_number, vendor_id, supplier_name, delivery_mode, inventory_items(item_name, unit), stores(store_name)')
+        .eq('company_id', companyId)
+        .eq('requires_bill', true)
+        .is('bill_id', null)
+        .not('action_taken', 'eq', true)
+        .order('txn_date', { ascending: false })
+      if (!error) return data || []
+
+      // Step 2: if column-missing error, retry with minimal select
+      if (error.code === '42703' || error.message?.toLowerCase().includes('column')) {
+        const { data: d2 } = await supabase.from('stock_transactions')
+          .select('id, txn_number, txn_date, quantity, unit_cost, total_cost, vendor_id, inventory_items(item_name, unit), stores(store_name)')
           .eq('company_id', companyId)
           .eq('requires_bill', true)
           .is('bill_id', null)
-          .not('action_taken', 'eq', true)
           .order('txn_date', { ascending: false })
-        if (error) {
-          // Column missing — migration not run yet, return empty silently
-          if (error.code === '42703' || error.message?.toLowerCase().includes('column')) return []
-          throw error
-        }
-        return data || []
-      } catch { return [] }
+        return d2 || []
+      }
+      console.error('pendingStockBills query error:', error)
+      return []
     },
     enabled: !!companyId,
-    staleTime: 30_000,
   })
 
   // Unlinked payments for "Link Payment" modal — fetched on demand
