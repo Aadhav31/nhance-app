@@ -1764,7 +1764,8 @@ async function downloadCrusherPDF(inv, items, companyInfo = {}, clientInfo = nul
   tx('ORIGINAL FOR RECIPIENT', W - MR, 8, { align: 'right' })
 
   // ── LOGO / COMPANY HEADER ─────────────────────────────────────────────────────
-  const logoBase64 = companyInfo.logo_base64 || null   // pre-encoded at upload time
+  // logo_url stores base64 PNG (encoded at upload time from local file — no CORS)
+  const logoBase64 = companyInfo.logo_url?.startsWith('data:') ? companyInfo.logo_url : null
   if (logoBase64) {
     // Logo image: up to 40mm wide, 20mm tall — top-left corner
     doc.addImage(logoBase64, getImgFmt(logoBase64), ML, 6, 40, 20, '', 'FAST')

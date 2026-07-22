@@ -106,21 +106,11 @@ function ProfileTab({ companyId, company, onSaved }) {
     if (!form.name.trim()) return toast.error('Company name is required')
     setSaving(true)
     try {
-      let logo_url    = company?.logo_url    || null
-      let logo_base64 = company?.logo_base64 || null
+      let logo_url = company?.logo_url || null
 
-      // Upload logo if changed
+      // Convert logo to base64 from local File (no network, no CORS)
       if (logoFile) {
-        const ext  = logoFile.name.split('.').pop()
-        const path = `logos/${companyId}.${ext}`
-        const { error: upErr } = await supabase.storage
-          .from('company-assets')
-          .upload(path, logoFile, { upsert: true })
-        if (upErr) throw upErr
-        logo_url = supabase.storage.from('company-assets').getPublicUrl(path).data.publicUrl
-
-        // Also encode as base64 (from local File — no CORS) for use in PDFs
-        logo_base64 = await new Promise((resolve) => {
+        logo_url = await new Promise((resolve) => {
           const objectUrl = URL.createObjectURL(logoFile)
           const img = new Image()
           img.onload = () => {
@@ -151,7 +141,6 @@ function ProfileTab({ companyId, company, onSaved }) {
         bank_ifsc:         form.bank_ifsc.trim()     || null,
         bank_account_name: form.bank_account_name.trim() || null,
         logo_url,
-        logo_base64,
       }).eq('id', companyId)
 
       if (error) throw error
