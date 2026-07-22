@@ -2984,7 +2984,7 @@ function InvoicesTab({ companyId }) {
       }
       // Company details (fetch all fields for PDF — missing cols return null gracefully)
       const { data: co } = await supabase.from('companies')
-        .select('name, address, phone, phone2, office_phone, email, gstin, msme, bank_name, bank_account_number, bank_branch, bank_ifsc, upi_id, logo_url, logo_base64')
+        .select('name, address, phone, phone2, office_phone, email, gstin, msme, bank_name, bank_account_number, bank_branch, bank_ifsc, upi_id, logo_url')
         .eq('id', companyId).single()
       const companyInfo = co || { name: company?.name }
       // Client details (if registered, not walk-in)
