@@ -34,6 +34,28 @@ import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import QRCode from 'qrcode'
 
+// ── Logo loader: URL → base64 for jsPDF.addImage ─────────────────────────────
+async function loadLogoAsBase64(url) {
+  if (!url) return null
+  try {
+    const res = await fetch(url)
+    if (!res.ok) return null
+    const blob = await res.blob()
+    return new Promise((resolve) => {
+      const reader = new FileReader()
+      reader.onloadend = () => resolve(reader.result)
+      reader.onerror  = () => resolve(null)
+      reader.readAsDataURL(blob)
+    })
+  } catch { return null }
+}
+function getImgFmt(dataUrl) {
+  if (!dataUrl) return 'JPEG'
+  if (dataUrl.includes('image/png'))  return 'PNG'
+  if (dataUrl.includes('image/webp')) return 'WEBP'
+  return 'JPEG'
+}
+
 // ── QR code (generated locally — no external API, no network dependency) ──────
 // verifyUrl is preferred (short UUID URL → small QR, opens verification page).
 // Falls back to a text payload if no verifyUrl is provided.
@@ -210,7 +232,8 @@ export async function generateInvoicePDF(invoice, lineItems, company, verifyUrl 
 
   // ── QR code (right area) — generated from invoice verification payload ──
   const qrPayload = buildQRPayload(invoice, company, verifyUrl)
-  const qrDataUrl = await makeQRDataURL(qrPayload)
+  const qrDataUrl  = await makeQRDataURL(qrPayload)
+  const logoBase64 = await loadLogoAsBase64(company?.logo_url)
   if (qrDataUrl) {
     // Center a 24×24 mm QR square in the 48×28 mm box
     const qrSize = 24
@@ -256,19 +279,28 @@ export async function generateInvoicePDF(invoice, lineItems, company, verifyUrl 
   doc.setFont('helvetica', 'bold'); doc.setFontSize(6.5); doc.setTextColor(0)
   doc.text('Vendor Name and Address (Bill from)', xA + 2, y + 4)
 
-  // Vendor company name — 8pt to keep it proportional
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(8)
-  const coName = company?.name || ''
-  const coNameLines = doc.splitTextToSize(coName, cA - 4)
-  coNameLines.slice(0, 2).forEach((l, i) => doc.text(l, xA + 2, y + 9 + i * 3.8))
+  // Vendor company name / logo
+  let addrStartY
+  if (logoBase64) {
+    // Logo: fit within vendor box, left-aligned, max 32×14 mm
+    const logoH = 13
+    const logoW = Math.min(32, cA - 4)
+    doc.addImage(logoBase64, getImgFmt(logoBase64), xA + 2, y + 7, logoW, logoH, '', 'FAST')
+    addrStartY = y + 7 + logoH + 2
+  } else {
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(8)
+    const coName = company?.name || ''
+    const coNameLines = doc.splitTextToSize(coName, cA - 4)
+    coNameLines.slice(0, 2).forEach((l, i) => doc.text(l, xA + 2, y + 9 + i * 3.8))
+    const nameLineCount = Math.min(coNameLines.length, 2)
+    addrStartY = y + 9 + nameLineCount * 3.8 + 1.5
+  }
 
   // Vendor address — up to 3 lines
   doc.setFont('helvetica', 'normal'); doc.setFontSize(7)
   const coAddr = company?.address || ''
   const coAddrLines = doc.splitTextToSize(coAddr, cA - 4)
   const shownCoLines = coAddrLines.slice(0, 3)
-  const nameLineCount = Math.min(coNameLines.length, 2)
-  const addrStartY = y + 9 + nameLineCount * 3.8 + 1.5
   shownCoLines.forEach((l, i) => doc.text(l, xA + 2, addrStartY + i * 3.5))
 
   // Vendor GST — positioned right after address (not pinned to bottom)

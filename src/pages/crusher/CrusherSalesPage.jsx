@@ -1720,6 +1720,28 @@ function numToWords(amount) {
   return w + ' Only'
 }
 
+// ── Logo image loader (fetch URL → base64 for jsPDF) ─────────────────────────
+async function loadLogoAsBase64(url) {
+  if (!url) return null
+  try {
+    const res = await fetch(url)
+    if (!res.ok) return null
+    const blob = await res.blob()
+    return new Promise((resolve) => {
+      const reader = new FileReader()
+      reader.onloadend = () => resolve(reader.result)
+      reader.onerror  = () => resolve(null)
+      reader.readAsDataURL(blob)
+    })
+  } catch { return null }
+}
+function getImgFmt(dataUrl) {
+  if (!dataUrl) return 'JPEG'
+  if (dataUrl.includes('image/png'))  return 'PNG'
+  if (dataUrl.includes('image/webp')) return 'WEBP'
+  return 'JPEG'
+}
+
 // ── Professional Crusher Invoice PDF ─────────────────────────────────────────
 async function downloadCrusherPDF(inv, items, companyInfo = {}, clientInfo = null) {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
@@ -1742,8 +1764,16 @@ async function downloadCrusherPDF(inv, items, companyInfo = {}, clientInfo = nul
   tx('ORIGINAL FOR RECIPIENT', W - MR, 8, { align: 'right' })
 
   // ── LOGO / COMPANY HEADER ─────────────────────────────────────────────────────
-  st(26, 'bold', 0, 0, 0); tx('GVR', ML, 22)
-  st(8, 'normal', 60, 60, 60); tx(companyInfo.name || 'GVR M Sand', ML, 28)
+  const logoBase64 = await loadLogoAsBase64(companyInfo.logo_url)
+  if (logoBase64) {
+    // Logo image: up to 40mm wide, 20mm tall — top-left corner
+    doc.addImage(logoBase64, getImgFmt(logoBase64), ML, 6, 40, 20, '', 'FAST')
+  } else {
+    // Fallback: company name as text
+    st(22, 'bold', 0, 0, 0)
+    tx(companyInfo.name?.toUpperCase().split(' ')[0] || 'GVR', ML, 22)
+    st(8, 'normal', 60, 60, 60); tx(companyInfo.name || 'GVR M Sand', ML, 28)
+  }
 
   // ── TITLE ─────────────────────────────────────────────────────────────────────
   st(13, 'bold', 0, 0, 0)
@@ -2953,7 +2983,7 @@ function InvoicesTab({ companyId }) {
       }
       // Company details (fetch all fields for PDF — missing cols return null gracefully)
       const { data: co } = await supabase.from('companies')
-        .select('name, address, phone, phone2, office_phone, email, gstin, msme, bank_name, bank_account_number, bank_branch, bank_ifsc, upi_id')
+        .select('name, address, phone, phone2, office_phone, email, gstin, msme, bank_name, bank_account_number, bank_branch, bank_ifsc, upi_id, logo_url')
         .eq('id', companyId).single()
       const companyInfo = co || { name: company?.name }
       // Client details (if registered, not walk-in)
