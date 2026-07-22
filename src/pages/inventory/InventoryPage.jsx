@@ -861,17 +861,20 @@ function StockInTab({ companyId, session }) {
   const [receiptMode, setReceiptMode] = useState('direct') // 'direct' | 'against_bill'
   const [linkBillId, setLinkBillId]   = useState('')
   const [autoDraft, setAutoDraft]     = useState(true)
-  const blankForm = () => ({ item_id:'', store_id:'', quantity:'', unit:'tonnes', unit_cost:'', txn_date: todayStr(), vendor_id:'', notes:'', vehicle_number:'', delivery_mode:'supplier_vehicle' })
+  const blankForm = () => ({ item_id:'', store_id:'', quantity:'', unit:'tonnes', unit_cost:'', txn_date: todayStr(), vendor_id:'', notes:'', vehicle_number:'', transport_cost:'' })
   const [form, setForm] = useState(blankForm())
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
   const { items, stores, vendors } = useInventoryData(companyId)
 
-  // Vehicles for crusher grade stock-in
-  const { data: vehicles = [] } = useQuery({
-    queryKey: ['crusher-vehicles-inv', companyId],
+  // Company fleet — used for vehicle ownership auto-detection
+  const { data: fleetVehicles = [] } = useQuery({
+    queryKey: ['fleet-vehicles-inv', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('crusher_client_vehicles')
-        .select('id, vehicle_number, vehicle_type').eq('company_id', companyId).order('vehicle_number')
+      const { data } = await supabase.from('equipment')
+        .select('id, registration_number, ownership_type, name')
+        .eq('company_id', companyId)
+        .not('registration_number', 'is', null)
+        .order('registration_number')
       return data || []
     },
     enabled: !!companyId,
@@ -896,7 +899,7 @@ function StockInTab({ companyId, session }) {
       // Primary: full select with joins
       const { data, error } = await supabase
         .from('stock_transactions')
-        .select('id, txn_number, txn_date, quantity, unit_cost, total_cost, txn_type, notes, vehicle_number, supplier_name, requires_bill, bill_id, inventory_items(item_name, unit), stores(store_name)')
+        .select('id, txn_number, txn_date, quantity, unit_cost, total_cost, txn_type, notes, vehicle_number, vehicle_ownership_type, transport_cost, supplier_name, requires_bill, bill_id, delivery_mode, inventory_items(item_name, unit), stores(store_name)')
         .eq('company_id', companyId)
         .eq('txn_type', 'in')
         .order('txn_date', { ascending: false })
@@ -961,9 +964,18 @@ function StockInTab({ companyId, session }) {
           const vendor = vendors.find(v => v.id === form.vendor_id)
           const blNum  = await nextDocNumber(companyId, 'bill').catch(() => `BL-${Date.now()}`)
           const draftId = crypto.randomUUID()
-          const modeNote = form.delivery_mode === 'own_vehicle'
-            ? ' (Material cost only — transport via own vehicle, tracked separately)'
-            : ' (Material + transport cost)'
+          // Compute ownership at save time from fleet lookup
+          const _fleetMatch = fleetVehicles.find(
+            v => v.registration_number?.toUpperCase() === form.vehicle_number?.trim()?.toUpperCase()
+          )
+          const _ownershipType = form.vehicle_number?.trim()
+            ? (_fleetMatch ? 'company_fleet' : 'external_hired')
+            : null
+          const modeNote = _ownershipType === 'company_fleet'
+            ? ' (Material cost only — company fleet vehicle)'
+            : _ownershipType === 'external_hired'
+            ? ' (Material + transport cost — external hired vehicle)'
+            : ''
           const { error: billErr } = await supabase.from('bills').insert({
             id: draftId,
             company_id: companyId,
@@ -1006,12 +1018,24 @@ function StockInTab({ companyId, session }) {
       if (form.unit)                                   txnPayload.unit          = form.unit
       if (requiresBill)                                txnPayload.requires_bill = true
       if (billIdToLink)                                txnPayload.bill_id       = billIdToLink
-      if (isCrusherGrade && form.vehicle_number?.trim()) txnPayload.vehicle_number = form.vehicle_number.trim()
+      if (isCrusherGrade && form.vehicle_number?.trim()) {
+        txnPayload.vehicle_number = form.vehicle_number.trim()
+        // Determine ownership type from fleet lookup
+        const fleetMatch = fleetVehicles.find(
+          v => v.registration_number?.toUpperCase() === form.vehicle_number.trim().toUpperCase()
+        )
+        const ownershipType = fleetMatch ? 'company_fleet' : 'external_hired'
+        txnPayload.vehicle_ownership_type = ownershipType
+        // Transport cost only for external hired vehicles
+        const tc = parseFloat(form.transport_cost) || 0
+        if (ownershipType === 'external_hired' && tc > 0) {
+          txnPayload.transport_cost = tc
+        }
+      }
       if (receiptMode === 'direct' && form.vendor_id) {
         const vObj = vendors.find(v => v.id === form.vendor_id)
         txnPayload.supplier_id   = form.vendor_id
-        if (vObj?.name)        txnPayload.supplier_name = vObj.name
-        if (form.delivery_mode) txnPayload.delivery_mode = form.delivery_mode
+        if (vObj?.name) txnPayload.supplier_name = vObj.name
       }
 
       const { error } = await supabase.from('stock_transactions').insert(txnPayload)
@@ -1110,13 +1134,20 @@ function StockInTab({ companyId, session }) {
                 </div>
                 <p className="font-semibold text-slate-100 text-sm">{t.inventory_items?.item_name}</p>
                 <p className="text-xs text-slate-500">{t.stores?.store_name} · {fmtDate(t.txn_date)}</p>
-                {t.vehicle_number && <p className="text-xs text-slate-400 mt-0.5">🚛 {t.vehicle_number}</p>}
-                {t.supplier_name && (
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    👤 {t.supplier_name}
-                    {t.delivery_mode === 'supplier_vehicle' && <span className="ml-1.5 text-[10px] text-blue-400/80 bg-blue-500/10 px-1.5 py-0.5 rounded">Supplier vehicle</span>}
-                    {t.delivery_mode === 'own_vehicle'      && <span className="ml-1.5 text-[10px] text-purple-400/80 bg-purple-500/10 px-1.5 py-0.5 rounded">Own vehicle</span>}
+                {t.vehicle_number && (
+                  <p className="text-xs text-slate-400 mt-0.5 flex items-center gap-1.5 flex-wrap">
+                    🚛 {t.vehicle_number}
+                    {/* New: vehicle_ownership_type from auto-detection */}
+                    {t.vehicle_ownership_type === 'company_fleet' && <span className="text-[10px] text-purple-400/80 bg-purple-500/10 px-1.5 py-0.5 rounded border border-purple-500/20">Company Fleet</span>}
+                    {t.vehicle_ownership_type === 'external_hired' && <span className="text-[10px] text-amber-400/80 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">External Hired</span>}
+                    {/* Legacy fallback for old records */}
+                    {!t.vehicle_ownership_type && t.delivery_mode === 'own_vehicle' && <span className="text-[10px] text-purple-400/80 bg-purple-500/10 px-1.5 py-0.5 rounded">Own vehicle</span>}
+                    {!t.vehicle_ownership_type && t.delivery_mode === 'supplier_vehicle' && <span className="text-[10px] text-blue-400/80 bg-blue-500/10 px-1.5 py-0.5 rounded">Supplier vehicle</span>}
+                    {t.transport_cost > 0 && <span className="text-[10px] text-orange-400/80 bg-orange-500/10 px-1.5 py-0.5 rounded border border-orange-500/20">+{fmtINR(t.transport_cost)} transport</span>}
                   </p>
+                )}
+                {t.supplier_name && (
+                  <p className="text-xs text-slate-400 mt-0.5">👤 {t.supplier_name}</p>
                 )}
                 {t.notes && <p className="text-xs text-slate-600 mt-0.5">{t.notes}</p>}
                 {/* Action buttons for pending receipts */}
@@ -1147,9 +1178,18 @@ function StockInTab({ companyId, session }) {
         const isCrusherGrade = !!(selectedItem?._isGrade || selectedItem?.grade_id)
         const selectedVendor = vendors.find(v => v.id === form.vendor_id)
         const selectedBill   = openBills.find(b => b.id === linkBillId)
-        const costLabel = form.delivery_mode === 'own_vehicle'
-          ? 'Material Unit Cost (₹) — no transport'
-          : 'Unit Cost (₹) — material + transport'
+        // Auto-detect vehicle ownership from fleet DB
+        const fleetMatch = form.vehicle_number?.trim()
+          ? fleetVehicles.find(v => v.registration_number?.toUpperCase() === form.vehicle_number.trim().toUpperCase())
+          : null
+        const vehicleStatus = form.vehicle_number?.trim()
+          ? (fleetMatch ? 'company_fleet' : 'external_hired')
+          : null
+        const costLabel = vehicleStatus === 'company_fleet'
+          ? 'Material Unit Cost per unit (₹)'
+          : vehicleStatus === 'external_hired'
+          ? 'Material Unit Cost per unit (₹)'
+          : 'Unit Cost (₹)'
         return (
         <Modal title="Receive Stock" onClose={() => { setShowCreate(false); setReceiptMode('direct'); setLinkBillId(''); setAutoDraft(true); setForm(blankForm()) }} wide
           footer={<><button onClick={() => { setShowCreate(false); setReceiptMode('direct'); setLinkBillId(''); setAutoDraft(true); setForm(blankForm()) }} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Confirm Receipt'}</button></>}>
@@ -1217,7 +1257,7 @@ function StockInTab({ companyId, session }) {
             {isCrusherGrade && (
               <div className="col-span-2">
                 <Field label="Vehicle Number">
-                  <div className="flex gap-2">
+                  <div className="flex gap-2 items-center">
                     <input
                       list="vehicle-list"
                       className={inp() + ' flex-1'}
@@ -1226,9 +1266,26 @@ function StockInTab({ companyId, session }) {
                       placeholder="e.g. TN 39 AB 1234"
                     />
                     <datalist id="vehicle-list">
-                      {vehicles.map(v => <option key={v.id} value={v.vehicle_number}>{v.vehicle_type ? `${v.vehicle_number} · ${v.vehicle_type}` : v.vehicle_number}</option>)}
+                      {fleetVehicles.map(v => (
+                        <option key={v.id} value={v.registration_number}>
+                          {v.name ? `${v.registration_number} · ${v.name}` : v.registration_number}
+                          {v.ownership_type === 'hired' ? ' (Hired)' : ''}
+                        </option>
+                      ))}
                     </datalist>
                   </div>
+                  {/* Live ownership detection feedback */}
+                  {vehicleStatus === 'company_fleet' && (
+                    <p className="text-[11px] text-purple-400 mt-1 bg-purple-500/10 rounded px-2 py-1">
+                      🏗 <strong>Company Fleet</strong>
+                      {fleetMatch?.ownership_type === 'hired' ? ' (Hired-In)' : ' (Owned)'} — bill covers <strong>materials only</strong>; transport tracked separately
+                    </p>
+                  )}
+                  {vehicleStatus === 'external_hired' && (
+                    <p className="text-[11px] text-amber-400 mt-1 bg-amber-500/10 rounded px-2 py-1">
+                      🚛 <strong>External Vehicle</strong> — not in your fleet. Enter transport cost below.
+                    </p>
+                  )}
                 </Field>
               </div>
             )}
@@ -1279,25 +1336,31 @@ function StockInTab({ companyId, session }) {
                     </Field>
                   </div>
                   {form.vendor_id && (<>
-                    <div className="col-span-2">
-                      <p className="text-[11px] text-slate-500 mb-1.5">How is material being delivered?</p>
-                      <div className="flex gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setF('delivery_mode', 'supplier_vehicle')}
-                          className={`flex-1 text-xs py-2 px-3 rounded-lg border transition-colors ${form.delivery_mode === 'supplier_vehicle' ? 'bg-primary-600/30 border-primary-500 text-primary-300' : 'bg-dark-700 border-dark-600 text-slate-400 hover:text-slate-200'}`}>
-                          🚛 Supplier's Vehicle<br />
-                          <span className="text-[10px] opacity-70">Bill covers material + transport</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setF('delivery_mode', 'own_vehicle')}
-                          className={`flex-1 text-xs py-2 px-3 rounded-lg border transition-colors ${form.delivery_mode === 'own_vehicle' ? 'bg-primary-600/30 border-primary-500 text-primary-300' : 'bg-dark-700 border-dark-600 text-slate-400 hover:text-slate-200'}`}>
-                          🏗 Our Vehicle<br />
-                          <span className="text-[10px] opacity-70">Bill = material only; transport separate</span>
-                        </button>
+                    {/* Transport cost — only for external hired vehicles */}
+                    {vehicleStatus === 'external_hired' && (
+                      <div className="col-span-2">
+                        <Field label="Transport Cost (₹) — this delivery">
+                          <input
+                            type="number"
+                            className={inp()}
+                            value={form.transport_cost}
+                            onChange={e => setF('transport_cost', e.target.value)}
+                            step="0.01"
+                            placeholder="e.g. 1200"
+                          />
+                        </Field>
+                        <p className="text-[11px] text-orange-400/80 mt-1 bg-orange-500/10 rounded px-2 py-1">
+                          ⚡ Transport cost is recorded against this GRN and billed separately to the transporter. Material unit cost above = materials only.
+                        </p>
                       </div>
-                    </div>
+                    )}
+                    {vehicleStatus === 'company_fleet' && (
+                      <div className="col-span-2">
+                        <p className="text-[11px] text-emerald-400/80 bg-emerald-500/10 rounded px-2 py-1">
+                          ✓ Company fleet vehicle — bill will be raised for <strong>material cost only</strong>. Fleet operating cost tracked in Equipment module.
+                        </p>
+                      </div>
+                    )}
                     <div className="col-span-2 flex items-center gap-2 pt-1">
                       <input id="auto-draft" type="checkbox" checked={autoDraft} onChange={e => setAutoDraft(e.target.checked)} className="w-3.5 h-3.5 rounded accent-primary-500" />
                       <label htmlFor="auto-draft" className="text-xs text-slate-400 cursor-pointer">
@@ -1321,12 +1384,34 @@ function StockInTab({ companyId, session }) {
 
             <div className="col-span-2"><Field label="Notes / Reference"><input className={inp()} value={form.notes} onChange={e => setF('notes', e.target.value)} /></Field></div>
           </div>
-          {total > 0 && (
-            <div className="bg-dark-700 rounded-xl p-3 flex justify-between items-center mt-1">
-              <span className="text-sm text-slate-400">Total Cost</span>
-              <span className="text-base font-bold text-primary-400">{fmtINR(total)}</span>
-            </div>
-          )}
+          {total > 0 && (() => {
+            const tc = parseFloat(form.transport_cost) || 0
+            const grandTotal = total + tc
+            return (
+              <div className="bg-dark-700 rounded-xl p-3 mt-1 space-y-1">
+                <div className="flex justify-between items-center">
+                  <span className="text-xs text-slate-400">Material Cost</span>
+                  <span className="text-sm font-semibold text-slate-200">{fmtINR(total)}</span>
+                </div>
+                {tc > 0 && (
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs text-orange-400">Transport Cost</span>
+                    <span className="text-sm font-semibold text-orange-300">+{fmtINR(tc)}</span>
+                  </div>
+                )}
+                {tc > 0 && <div className="border-t border-dark-600 pt-1 flex justify-between items-center">
+                  <span className="text-sm text-slate-400">Grand Total</span>
+                  <span className="text-base font-black text-primary-400">{fmtINR(grandTotal)}</span>
+                </div>}
+                {tc === 0 && (
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-slate-400">Total</span>
+                    <span className="text-base font-black text-primary-400">{fmtINR(total)}</span>
+                  </div>
+                )}
+              </div>
+            )
+          })()}
         </Modal>
         )
       })()}
