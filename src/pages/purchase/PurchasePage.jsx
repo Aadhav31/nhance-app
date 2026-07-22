@@ -1092,15 +1092,30 @@ function BillsTab({ companyId, session }) {
   }
 
   // Open create form pre-filled for a specific pending stock receipt
-  const openCreateForReceipt = (receipt) => {
-    const vendor    = vendors.find(v => v.id === receipt.vendor_id)
-    const hsnCode   = receipt.inventory_items?.hsn_code || ''
-    const hsnInfo   = hsnCode ? lookupHsnSac(hsnCode) : null
+  const openCreateForReceipt = async (receipt) => {
+    const vendor = vendors.find(v => v.id === receipt.vendor_id)
+
+    // Use embedded item data if available; otherwise fetch directly (FK embed may have been null)
+    let itemData = receipt.inventory_items
+    if (!itemData?.item_name && receipt.item_id) {
+      const { data: fetched } = await supabase
+        .from('inventory_items')
+        .select('item_name, unit, hsn_code')
+        .eq('id', receipt.item_id)
+        .single()
+      itemData = fetched
+    }
+
+    const hsnCode = itemData?.hsn_code || ''
+    const hsnInfo = hsnCode ? lookupHsnSac(hsnCode) : null
+    const qty     = parseFloat(receipt.quantity) || 0
+    const rate    = parseFloat(receipt.unit_cost) || 0
+
     setEditing(null)
     setForm({
       ...blankForm(),
       stock_receipt_id: receipt.id,
-      vendor_id:   receipt.vendor_id || '',
+      vendor_id:    receipt.vendor_id || '',
       vendor_gstin: vendor?.gstin || 'URP',
       notes: receipt.txn_number
         ? `Auto-draft from stock receipt ${receipt.txn_number}${receipt.vehicle_number ? ` · Vehicle ${receipt.vehicle_number}` : ''}`
@@ -1108,23 +1123,25 @@ function BillsTab({ companyId, session }) {
     })
     setLines([{
       _id: Math.random().toString(36).slice(2),
-      description: receipt.inventory_items?.item_name || '',
-      hsn_sac: hsnCode,
-      quantity: String(receipt.quantity || 1),
-      unit: receipt.inventory_items?.unit || receipt.unit || 'nos',
-      rate: String(receipt.unit_cost || 0),
-      amount: (receipt.quantity || 0) * (receipt.unit_cost || 0),
-      gst_rate: hsnInfo?.gst ?? null,
-      _gst_desc: hsnInfo?.desc ?? null,
-      _hsn_open: !!hsnCode,
-      gst_type: null,
+      description: itemData?.item_name || '',
+      hsn_sac:     hsnCode,
+      quantity:    String(qty),
+      unit:        itemData?.unit || 'nos',
+      rate:        String(rate),
+      amount:      qty * rate,
+      gst_rate:    hsnInfo?.gst ?? null,
+      _gst_desc:   hsnInfo?.desc ?? null,
+      _hsn_open:   !!hsnCode,
+      gst_type:    null,
     }])
     setAddToInv(false); setInvCategory(''); setInvStore('')
     clearAttach(); setAttachUrl(null); setShowCreate(true)
   }
 
   const openEdit = async (bill) => {
-    const { data: ld } = await supabase.from('bill_line_items').select('*').eq('bill_id', bill.id).order('sort_order')
+    const [{ data: ld }] = await Promise.all([
+      supabase.from('bill_line_items').select('*').eq('bill_id', bill.id).order('sort_order'),
+    ])
     const vendor = vendors.find(v => v.id === bill.vendor_id)
     setEditing(bill)
     setForm({
@@ -1137,19 +1154,53 @@ function BillsTab({ companyId, session }) {
       payment_type: bill.payment_type === 'credit' ? 'credit' : 'standard',
       credit_days: String(bill.credit_days || 30),
       equipment_id: bill.equipment_id || '',
+      stock_receipt_id: bill.stock_receipt_id || '',
     })
     clearAttach(); setAttachUrl(bill.attachment_url || null)
-    setLines(ld?.map(l => {
-      const found = l.hsn_sac ? lookupHsnSac(l.hsn_sac) : null
-      return {
-        _id: Math.random().toString(36).slice(2),
-        description: l.description || '', hsn_sac: l.hsn_sac || '',
-        quantity: String(l.quantity || 1), unit: l.unit || 'nos',
-        rate: String(l.rate || 0), amount: l.amount || 0,
-        gst_rate: found ? found.gst : null,
-        _gst_desc: found ? found.desc : null, _hsn_open: false,
+
+    if (ld?.length) {
+      // Normal path: load saved line items
+      setLines(ld.map(l => {
+        const found = l.hsn_sac ? lookupHsnSac(l.hsn_sac) : null
+        return {
+          _id: Math.random().toString(36).slice(2),
+          description: l.description || '', hsn_sac: l.hsn_sac || '',
+          quantity: String(l.quantity || 1), unit: l.unit || 'nos',
+          rate: String(l.rate || 0), amount: l.amount || 0,
+          gst_rate: found ? found.gst : null,
+          _gst_desc: found ? found.desc : null, _hsn_open: false,
+        }
+      }))
+    } else {
+      // Fallback: no saved line items — check if there's a GRN linked to this bill
+      const { data: rcpt } = await supabase
+        .from('stock_transactions')
+        .select('id, quantity, unit_cost, item_id, inventory_items(item_name, unit, hsn_code)')
+        .eq('bill_id', bill.id)
+        .eq('txn_type', 'in')
+        .maybeSingle()
+      if (rcpt) {
+        let itemData = rcpt.inventory_items
+        if (!itemData?.item_name && rcpt.item_id) {
+          const { data: fetched } = await supabase
+            .from('inventory_items').select('item_name, unit, hsn_code').eq('id', rcpt.item_id).single()
+          itemData = fetched
+        }
+        const hsnCode = itemData?.hsn_code || ''
+        const hsnInfo = hsnCode ? lookupHsnSac(hsnCode) : null
+        const qty  = parseFloat(rcpt.quantity) || 0
+        const rate = parseFloat(rcpt.unit_cost) || 0
+        setLines([{
+          _id: Math.random().toString(36).slice(2),
+          description: itemData?.item_name || '', hsn_sac: hsnCode,
+          quantity: String(qty), unit: itemData?.unit || 'nos',
+          rate: String(rate), amount: qty * rate,
+          gst_rate: hsnInfo?.gst ?? null, _gst_desc: hsnInfo?.desc ?? null, _hsn_open: !!hsnCode,
+        }])
+      } else {
+        setLines([blankLine()])
       }
-    }) || [blankLine()])
+    }
     setShowCreate(true)
   }
 
@@ -1294,7 +1345,7 @@ function BillsTab({ companyId, session }) {
       // Step 1: guaranteed-column query — always works even without extended columns
       const { data: base, error: baseErr } = await supabase
         .from('stock_transactions')
-        .select('id, txn_number, txn_date, quantity, unit_cost, total_cost, vendor_id, inventory_items(item_name, unit, hsn_code), stores(store_name)')
+        .select('id, txn_number, txn_date, quantity, unit_cost, total_cost, vendor_id, item_id, inventory_items(item_name, unit, hsn_code), stores(store_name)')
         .eq('company_id', companyId)
         .eq('txn_type', 'in')
         .eq('requires_bill', true)
