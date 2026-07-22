@@ -1441,6 +1441,8 @@ function BillsTab({ companyId, session }) {
           cgst_rate: 0, sgst_rate: 0, igst_rate: 0,
           cgst_amount: cgst_amt, sgst_amount: sgst_amt, igst_amount: igst_amt,
           total_amount: total, balance_due: Math.max(0, total - (Number(editing.paid_amount) || 0)),
+          // Promote draft → pending when user explicitly saves (verifies) the bill
+          status: editing.status === 'draft' ? 'pending' : editing.status,
           notes: form.notes || null,
           // Facility: loading point for crusher, equipment for others
           equipment_id:     isCrusher ? null : (form.equipment_id || null),
