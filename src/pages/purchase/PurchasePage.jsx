@@ -1048,10 +1048,11 @@ function ExpensesTab({ companyId, session }) {
 // ── BILLS TAB ─────────────────────────────────────────────────────────────────
 function BillsTab({ companyId, session }) {
   const qc = useQueryClient()
-  const { company, userProfile } = useAuth()
+  const { company, userProfile, industryType } = useAuth()
+  const isCrusher = industryType === 'crusher'
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving] = useState(false)
-  const blankForm = () => ({ vendor_id: '', vendor_gstin: '', bill_date: todayStr(), due_date: '', bill_ref: '', use_igst: false, discount_amount: 0, notes: '', is_tax_invoice: true, tax_inclusive: false, payment_type: 'standard', credit_days: '30', equipment_id: '', stock_receipt_id: '' })
+  const blankForm = () => ({ vendor_id: '', vendor_gstin: '', bill_date: todayStr(), due_date: '', bill_ref: '', use_igst: false, discount_amount: 0, notes: '', is_tax_invoice: true, tax_inclusive: false, payment_type: 'standard', credit_days: '30', equipment_id: '', loading_point_id: '', stock_receipt_id: '' })
 
   // Auto-compute due date from bill_date + credit_days
   const computeDueDate = (billDate, days) => {
@@ -1155,6 +1156,7 @@ function BillsTab({ companyId, session }) {
       payment_type: bill.payment_type === 'credit' ? 'credit' : 'standard',
       credit_days: String(bill.credit_days || 30),
       equipment_id: bill.equipment_id || '',
+      loading_point_id: bill.loading_point_id || '',
       stock_receipt_id: bill.stock_receipt_id || '',
     })
     clearAttach(); setAttachUrl(bill.attachment_url || null)
@@ -1334,7 +1336,21 @@ function BillsTab({ companyId, session }) {
       const { data } = await supabase.from('equipment').select('id, name, equipment_number, category').eq('company_id', companyId).order('name')
       return data || []
     },
-    enabled: !!companyId,
+    enabled: !!companyId && !isCrusher,
+  })
+  // Crusher industry: loading points are the "manufacturing units / plants"
+  const { data: loadingPoints = [] } = useQuery({
+    queryKey: ['loading-points-bills', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('crusher_loading_points')
+        .select('id, point_name, address, point_type')
+        .eq('company_id', companyId)
+        .in('point_type', ['loading', 'both'])
+        .eq('is_active', true)
+        .order('sort_order').order('point_name')
+      return data || []
+    },
+    enabled: !!companyId && isCrusher,
   })
   // Pending stock receipts waiting for a bill
   // Uses a SEPARATE query key from InventoryPage's banner to avoid cache-overwrite conflicts.
@@ -1413,7 +1429,8 @@ function BillsTab({ companyId, session }) {
 
       if (editing) {
         // ── UPDATE ──
-        const selEq   = billEquipment.find(e => e.id === form.equipment_id)
+        const selEq = billEquipment.find(e => e.id === form.equipment_id)
+        const selLp = loadingPoints.find(p => p.id === form.loading_point_id)
         const { error } = await supabase.from('bills').update({
           vendor_id: form.vendor_id, vendor_name: vendor?.name || '',
           vendor_gstin: form.vendor_gstin || null,
@@ -1425,8 +1442,10 @@ function BillsTab({ companyId, session }) {
           cgst_amount: cgst_amt, sgst_amount: sgst_amt, igst_amount: igst_amt,
           total_amount: total, balance_due: Math.max(0, total - (Number(editing.paid_amount) || 0)),
           notes: form.notes || null,
-          equipment_id:   form.equipment_id || null,
-          equipment_name: selEq?.name || null,
+          // Facility: loading point for crusher, equipment for others
+          equipment_id:     isCrusher ? null : (form.equipment_id || null),
+          equipment_name:   isCrusher ? null : (selEq?.name || null),
+          loading_point_id: isCrusher ? (form.loading_point_id || null) : null,
         }).eq('id', editing.id)
         if (error) throw error
         await supabase.from('bill_line_items').delete().eq('bill_id', editing.id)
@@ -1451,7 +1470,8 @@ function BillsTab({ companyId, session }) {
       }
 
       // ── CREATE ──
-      const selEq   = billEquipment.find(e => e.id === form.equipment_id)
+      const selEq = billEquipment.find(e => e.id === form.equipment_id)
+      const selLp = loadingPoints.find(p => p.id === form.loading_point_id)
       const id = crypto.randomUUID()
       const blNum = await nextDocNumber(companyId, 'bill').catch(() => `BL-${Date.now()}`)
       const { error } = await supabase.from('bills').insert({
@@ -1469,8 +1489,10 @@ function BillsTab({ companyId, session }) {
         balance_due: total,
         status: 'pending',
         notes: form.notes || null, created_by: session.user.id,
-        equipment_id:   form.equipment_id || null,
-        equipment_name: selEq?.name || null,
+        // Facility: loading point for crusher, equipment for others
+        equipment_id:     isCrusher ? null : (form.equipment_id || null),
+        equipment_name:   isCrusher ? null : (selEq?.name || null),
+        loading_point_id: isCrusher ? (form.loading_point_id || null) : null,
       })
       if (error) throw error
 
@@ -1824,23 +1846,41 @@ function BillsTab({ companyId, session }) {
             )}
             <div className="col-span-2"><Field label="Vendor Bill / Reference No."><input className={inp()} value={form.bill_ref} onChange={e => setF('bill_ref', e.target.value)} /></Field></div>
 
-            {/* Facility tagging for P&L */}
+            {/* Facility / Manufacturing Unit tagging for P&L */}
             <div className="col-span-2 pt-1">
               <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                <Wrench className="w-3.5 h-3.5" /> Facility / Production Unit (for P&L)
+                <Wrench className="w-3.5 h-3.5" /> {isCrusher ? 'Manufacturing Unit / Plant (for P&L)' : 'Facility / Production Unit (for P&L)'}
               </p>
-              <Field label="Facility / Production Unit">
-                <select className={inp()} value={form.equipment_id} onChange={e => setF('equipment_id', e.target.value)}>
-                  <option value="">-- Select facility --</option>
-                  {billEquipment.map(eq => (
-                    <option key={eq.id} value={eq.id}>{eq.name}{eq.equipment_number ? ` · ${eq.equipment_number}` : ''}</option>
-                  ))}
-                </select>
-              </Field>
-              {form.equipment_id && (
+              {isCrusher ? (
+                <Field label="Manufacturing Unit">
+                  <select className={inp()} value={form.loading_point_id} onChange={e => setF('loading_point_id', e.target.value)}>
+                    <option value="">-- Select plant / unit --</option>
+                    {loadingPoints.map(lp => (
+                      <option key={lp.id} value={lp.id}>
+                        {lp.point_name}{lp.address ? ` · ${lp.address}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                  {loadingPoints.length === 0 && (
+                    <p className="text-[11px] text-amber-500 mt-1">
+                      ⚠ No loading points found — add plants in Sales &amp; Invoicing → Locations tab
+                    </p>
+                  )}
+                </Field>
+              ) : (
+                <Field label="Facility / Production Unit">
+                  <select className={inp()} value={form.equipment_id} onChange={e => setF('equipment_id', e.target.value)}>
+                    <option value="">-- Select facility --</option>
+                    {billEquipment.map(eq => (
+                      <option key={eq.id} value={eq.id}>{eq.name}{eq.equipment_number ? ` · ${eq.equipment_number}` : ''}</option>
+                    ))}
+                  </select>
+                </Field>
+              )}
+              {(form.loading_point_id || form.equipment_id) && (
                 <p className="text-[10px] text-teal-600 mt-1 flex items-center gap-1">
                   <Wrench className="w-3 h-3" />
-                  Bill amount will appear in Facility P&amp;L report
+                  Bill amount will appear in {isCrusher ? 'Plant' : 'Facility'} P&amp;L report
                 </p>
               )}
             </div>
