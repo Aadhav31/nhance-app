@@ -263,6 +263,37 @@ function EquipmentFormModal({ companyId, initialValues, onClose, onSaved }) {
   const [saving, setSaving] = useState(false)
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
 
+  // Vendor list for Hired-In / Client-Supplied owner picker
+  const { data: vendorList = [] } = useQuery({
+    queryKey: ['vendors-fleet', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('vendors')
+        .select('id, name, contact_phone, contact_email')
+        .eq('company_id', companyId).order('name')
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+  // '_vendorId' tracks selected vendor in form state (not persisted — drives owner_name/contact)
+  const [selectedVendorId, setSelectedVendorId] = useState(() => {
+    if (!initialValues?.owner_name) return ''
+    const match = vendorList.find(v => v.name === initialValues.owner_name)
+    return match?.id || '__manual__'
+  })
+  const handleVendorPick = (vendorId) => {
+    setSelectedVendorId(vendorId)
+    if (vendorId && vendorId !== '__manual__') {
+      const v = vendorList.find(v => v.id === vendorId)
+      if (v) {
+        set('owner_name', v.name)
+        set('owner_contact', v.contact_phone || v.contact_email || '')
+      }
+    } else if (vendorId === '__manual__') {
+      set('owner_name', '')
+      set('owner_contact', '')
+    }
+  }
+
   const handleCategoryChange = (cat) => {
     const prefix    = getPrefix(cat, activeTypes)
     const subCats   = getSubCategories(cat, activeTypes)
@@ -450,11 +481,30 @@ function EquipmentFormModal({ companyId, initialValues, onClose, onSaved }) {
       {form.ownership_type !== 'own' && (
         <>
           <div className="grid grid-cols-2 gap-3">
-            <Field label={form.ownership_type === 'hired' ? 'Owner / Vendor Name' : 'Client / Company Name'}>
-              <input className={inp()} value={form.owner_name} onChange={e => set('owner_name', e.target.value)} placeholder="Name" />
+            <Field label={form.ownership_type === 'hired' ? 'Owner / Vendor' : 'Client / Company'}>
+              {/* Vendor picker — pulls from Purchase → Vendors */}
+              <select
+                className={inp()}
+                value={selectedVendorId}
+                onChange={e => handleVendorPick(e.target.value)}
+              >
+                <option value="">-- Select from vendors --</option>
+                {vendorList.map(v => (
+                  <option key={v.id} value={v.id}>{v.name}</option>
+                ))}
+                <option value="__manual__">✏ Enter manually…</option>
+              </select>
+              {selectedVendorId === '__manual__' && (
+                <input
+                  className={inp() + ' mt-1.5'}
+                  value={form.owner_name}
+                  onChange={e => set('owner_name', e.target.value)}
+                  placeholder="Type name manually"
+                />
+              )}
             </Field>
             <Field label="Contact (Phone / Email)">
-              <input className={inp()} value={form.owner_contact} onChange={e => set('owner_contact', e.target.value)} placeholder="Phone or email" />
+              <input className={inp()} value={form.owner_contact} onChange={e => set('owner_contact', e.target.value)} placeholder="Auto-filled or type" />
             </Field>
           </div>
           {form.ownership_type === 'hired' && (
