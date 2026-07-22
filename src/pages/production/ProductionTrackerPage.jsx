@@ -704,6 +704,247 @@ function useOpsEquipment(companyId) {
   })
 }
 
+// ── Assignment constants ──────────────────────────────────────────────────────
+const ASSIGN_ROLES = [
+  { value: 'primary_operator',   label: 'Primary Operator',    short: 'P.Operator', color: 'text-blue-400 bg-blue-500/10 border-blue-700/30' },
+  { value: 'assistant_operator', label: 'Assistant Operator',  short: 'Assistant',  color: 'text-indigo-400 bg-indigo-500/10 border-indigo-700/30' },
+  { value: 'driver',             label: 'Driver',              short: 'Driver',     color: 'text-teal-400 bg-teal-500/10 border-teal-700/30' },
+  { value: 'helper',             label: 'Helper',              short: 'Helper',     color: 'text-slate-400 bg-dark-700 border-dark-600' },
+]
+
+const ASSIGN_STATUSES = [
+  { value: 'assigned',  label: 'Assigned',  color: 'text-slate-400 bg-dark-700 border-dark-600' },
+  { value: 'present',   label: 'Present',   color: 'text-green-400 bg-green-500/10 border-green-700/30' },
+  { value: 'half_day',  label: 'Half Day',  color: 'text-yellow-400 bg-yellow-500/10 border-yellow-700/30' },
+  { value: 'absent',    label: 'Absent',    color: 'text-red-400 bg-red-500/10 border-red-700/30' },
+]
+
+// ── useOperatorEmployees hook ─────────────────────────────────────────────────
+function useOperatorEmployees(companyId) {
+  return useQuery({
+    queryKey: ['operator_employees', companyId],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('hr_employees')
+        .select('id, name, designation, employee_number')
+        .eq('company_id', companyId)
+        .eq('status', 'active')
+        .order('name')
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+}
+
+// ── useAssignments hook ───────────────────────────────────────────────────────
+function useAssignments(companyId, date) {
+  return useQuery({
+    queryKey: ['equipment_assignments', companyId, date],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('equipment_assignments')
+        .select('*')
+        .eq('company_id', companyId)
+        .eq('assignment_date', date)
+        .order('equipment_name')
+        .order('assignment_role')
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+}
+
+// ── AssignmentCard ────────────────────────────────────────────────────────────
+function AssignmentCard({ a, isAdmin, onStatus, onEdit, onDelete }) {
+  const ri = ASSIGN_ROLES.find(r => r.value === a.assignment_role) || ASSIGN_ROLES[0]
+  const si = ASSIGN_STATUSES.find(s => s.value === a.status) || ASSIGN_STATUSES[0]
+  return (
+    <div className={`bg-dark-800 border rounded-xl px-3 py-2.5 ${
+      a.status === 'absent' ? 'border-red-800/40' :
+      a.status === 'present' ? 'border-green-800/30' :
+      a.status === 'half_day' ? 'border-yellow-800/30' : 'border-dark-700'
+    }`}>
+      <div className="flex items-center gap-2 flex-wrap">
+        {/* Employee info */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <p className="text-xs font-bold text-slate-100">{a.employee_name || '—'}</p>
+            <span className="text-[10px] font-mono text-slate-500">{a.employee_number}</span>
+            <span className={`text-[10px] px-1.5 py-0.5 rounded border font-semibold flex-shrink-0 ${ri.color}`}>
+              {ri.short}
+            </span>
+            <span className="text-[10px] text-slate-600">
+              {a.shift_type === 'day' ? '☀️' : a.shift_type === 'night' ? '🌙' : '🔄'}
+            </span>
+          </div>
+          {a.notes && <p className="text-[10px] text-slate-500 italic mt-0.5">{a.notes}</p>}
+        </div>
+        {/* Status toggle row */}
+        <div className="flex items-center gap-1 flex-shrink-0">
+          {['present', 'half_day', 'absent'].map(sv => {
+            const sInfo = ASSIGN_STATUSES.find(x => x.value === sv)
+            const isActive = a.status === sv
+            return (
+              <button key={sv}
+                onClick={() => onStatus(a, isActive ? 'assigned' : sv)}
+                title={sInfo.label}
+                className={`text-[10px] px-2 py-1 rounded-lg border font-semibold transition-all ${
+                  isActive ? sInfo.color : 'border-dark-600 text-slate-600 hover:text-slate-400 hover:border-dark-500'
+                }`}>
+                {sv === 'present' ? '✓' : sv === 'half_day' ? '½' : '✗'}
+              </button>
+            )
+          })}
+          {isAdmin && (
+            <>
+              <button onClick={onEdit} className="text-slate-600 hover:text-primary-400 p-1 transition-colors">
+                <Edit2 className="w-3 h-3" />
+              </button>
+              <button onClick={onDelete} className="text-slate-600 hover:text-red-400 p-1 transition-colors">
+                <Trash2 className="w-3 h-3" />
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Assign Modal ──────────────────────────────────────────────────────────────
+function AssignModal({ companyId, session, opsEquipment, employees, existing, viewDate, onClose, onSaved }) {
+  const isEdit = !!existing
+  const [date,        setDate]        = useState(existing?.assignment_date || viewDate || todayStr())
+  const [shift,       setShift]       = useState(existing?.shift_type      || 'day')
+  const [equipmentId, setEquipmentId] = useState(existing?.equipment_id    || '')
+  const [employeeId,  setEmployeeId]  = useState(existing?.employee_id     || '')
+  const [role,        setRole]        = useState(existing?.assignment_role  || 'primary_operator')
+  const [notes,       setNotes]       = useState(existing?.notes            || '')
+  const [saving,      setSaving]      = useState(false)
+
+  const handleSave = async () => {
+    if (!equipmentId) return toast.error('Select an equipment')
+    if (!employeeId)  return toast.error('Select an employee')
+    setSaving(true)
+    try {
+      const eq  = opsEquipment.find(e => e.id === equipmentId)
+      const emp = employees.find(e => e.id === employeeId)
+      const payload = {
+        company_id:       companyId,
+        assignment_date:  date,
+        shift_type:       shift,
+        equipment_id:     equipmentId,
+        equipment_name:   eq  ? `${eq.equipment_number} — ${eq.name}` : null,
+        employee_id:      employeeId,
+        employee_name:    emp?.name            || null,
+        employee_number:  emp?.employee_number || null,
+        assignment_role:  role,
+        notes:            notes.trim() || null,
+        assigned_by:      session.user.id,
+      }
+      if (isEdit) {
+        const { error } = await supabase.from('equipment_assignments').update(payload).eq('id', existing.id)
+        if (error) throw error
+      } else {
+        const { error } = await supabase.from('equipment_assignments').insert(payload)
+        if (error) throw error
+      }
+      toast.success(isEdit ? 'Assignment updated' : 'Employee assigned')
+      onSaved()
+    } catch (e) { toast.error(e.message) } finally { setSaving(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+      <div className="bg-dark-800 border border-dark-600 rounded-2xl w-full max-w-lg max-h-[88vh] flex flex-col shadow-2xl">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-dark-700">
+          <p className="text-sm font-bold text-slate-100">{isEdit ? 'Edit Assignment' : 'Assign Operator / Driver'}</p>
+          <button onClick={onClose} className="text-slate-500 hover:text-slate-200"><X className="w-4 h-4" /></button>
+        </div>
+
+        <div className="overflow-y-auto px-5 py-4 flex-1 space-y-4">
+          {/* Date + Shift */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <p className="text-xs text-slate-400 mb-1">Date *</p>
+              <input type="date" className={inp} value={date} onChange={e => setDate(e.target.value)} />
+            </div>
+            <div>
+              <p className="text-xs text-slate-400 mb-1">Shift</p>
+              <select className={inp} value={shift} onChange={e => setShift(e.target.value)}>
+                <option value="day">☀️ Day</option>
+                <option value="night">🌙 Night</option>
+                <option value="general">🔄 General</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Equipment */}
+          <div>
+            <p className="text-xs text-slate-400 mb-1">Equipment *</p>
+            <select className={inp} value={equipmentId} onChange={e => setEquipmentId(e.target.value)}>
+              <option value="">Select equipment…</option>
+              {opsEquipment.map(e => (
+                <option key={e.id} value={e.id}>{e.equipment_number} — {e.name}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Employee */}
+          <div>
+            <p className="text-xs text-slate-400 mb-1">Operator / Driver *</p>
+            {employees.length === 0 ? (
+              <div className="bg-amber-900/20 border border-amber-700/30 rounded-xl p-3 text-xs text-amber-300">
+                ⚠️ No active employees. Add them in the HR module first.
+              </div>
+            ) : (
+              <select className={inp} value={employeeId} onChange={e => setEmployeeId(e.target.value)}>
+                <option value="">Select employee…</option>
+                {employees.map(e => (
+                  <option key={e.id} value={e.id}>
+                    {e.employee_number} — {e.name}{e.designation ? ` · ${e.designation}` : ''}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+
+          {/* Role chips */}
+          <div>
+            <p className="text-xs text-slate-400 mb-1.5">Role in this assignment</p>
+            <div className="flex flex-wrap gap-2">
+              {ASSIGN_ROLES.map(r => (
+                <button key={r.value} onClick={() => setRole(r.value)}
+                  className={`text-xs px-3 py-1.5 rounded-xl border font-semibold transition-all ${
+                    role === r.value ? r.color : 'border-dark-600 text-slate-500 hover:text-slate-300 hover:border-dark-500'
+                  }`}>
+                  {r.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Notes */}
+          <div>
+            <p className="text-xs text-slate-400 mb-1">Notes / Instructions</p>
+            <input className={inp} value={notes} onChange={e => setNotes(e.target.value)}
+              placeholder="Any specific instructions for this assignment…" />
+          </div>
+        </div>
+
+        <div className="px-5 py-4 border-t border-dark-700 flex gap-3">
+          <button onClick={onClose} className="flex-1 btn-ghost">Cancel</button>
+          <button onClick={handleSave} disabled={saving}
+            className="flex-1 btn-primary flex items-center justify-center gap-2">
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            {isEdit ? 'Update' : 'Assign'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Log Daily Operation Modal ─────────────────────────────────────────────────
 function LogOpsModal({ companyId, session, opsEquipment, existing, onClose, onSaved }) {
   const isEdit = !!existing
@@ -908,38 +1149,28 @@ function LogOpsModal({ companyId, session, opsEquipment, existing, onClose, onSa
 // ── DAILY OPS TAB ─────────────────────────────────────────────────────────────
 function DailyOpsTab({ companyId, session, isAdmin }) {
   const qc = useQueryClient()
-  const [showForm,   setShowForm]   = useState(false)
-  const [editEntry,  setEditEntry]  = useState(null)
-  const [viewDate,   setViewDate]   = useState(todayStr())
+  const [section,        setSection]        = useState('assignments') // 'assignments' | 'operations'
+  const [showForm,       setShowForm]       = useState(false)
+  const [editEntry,      setEditEntry]      = useState(null)
+  const [showAssignForm, setShowAssignForm] = useState(false)
+  const [editAssignment, setEditAssignment] = useState(null)
+  const [viewDate,       setViewDate]       = useState(todayStr())
 
   const { data: opsEquipment = [] } = useOpsEquipment(companyId)
+  const { data: employees    = [] } = useOperatorEmployees(companyId)
+  const { data: assignments  = [], isLoading: assignLoading } = useAssignments(companyId, viewDate)
 
-  const { data: entries = [], isLoading } = useQuery({
+  const { data: entries = [], isLoading: opsLoading } = useQuery({
     queryKey: ['daily_ops', companyId, viewDate],
     queryFn: async () => {
       const { data } = await supabase
-        .from('daily_operations')
-        .select('*')
-        .eq('company_id', companyId)
-        .eq('ops_date', viewDate)
+        .from('daily_operations').select('*')
+        .eq('company_id', companyId).eq('ops_date', viewDate)
         .order('created_at', { ascending: false })
       return data || []
     },
     enabled: !!companyId,
   })
-
-  const deleteEntry = async (id) => {
-    if (!window.confirm('Delete this operation log?')) return
-    const { error } = await supabase.from('daily_operations').delete().eq('id', id)
-    if (error) { toast.error(error.message); return }
-    toast.success('Entry deleted')
-    qc.invalidateQueries(['daily_ops', companyId, viewDate])
-  }
-
-  const onSaved = () => {
-    setShowForm(false); setEditEntry(null)
-    qc.invalidateQueries(['daily_ops', companyId, viewDate])
-  }
 
   const prevDay = () => setViewDate(format(subDays(parseISO(viewDate), 1), 'yyyy-MM-dd'))
   const nextDay = () => {
@@ -947,21 +1178,94 @@ function DailyOpsTab({ companyId, session, isAdmin }) {
     if (next <= todayStr()) setViewDate(next)
   }
 
-  // Day-level aggregates
+  // ── Assignment actions ──────────────────────────────────────────────────────
+  const updateAssignmentStatus = async (assignment, newStatus) => {
+    try {
+      await supabase.from('equipment_assignments').update({ status: newStatus }).eq('id', assignment.id)
+
+      // Sync to hr_attendance (only for confirmed statuses)
+      if (newStatus !== 'assigned') {
+        const { data: existing } = await supabase
+          .from('hr_attendance').select('id')
+          .eq('employee_id', assignment.employee_id)
+          .eq('attendance_date', assignment.assignment_date)
+          .maybeSingle()
+
+        const attPayload = { status: newStatus, source: 'equipment_assignment' }
+        if (existing) {
+          await supabase.from('hr_attendance').update(attPayload).eq('id', existing.id)
+        } else {
+          await supabase.from('hr_attendance').insert({
+            company_id: companyId,
+            employee_id: assignment.employee_id,
+            attendance_date: assignment.assignment_date,
+            ...attPayload,
+          })
+        }
+        toast.success(`${assignment.employee_name} marked ${newStatus.replace('_', ' ')} — attendance updated`)
+      } else {
+        toast.success('Status reset to Assigned')
+      }
+      qc.invalidateQueries(['equipment_assignments', companyId, viewDate])
+    } catch (e) { toast.error(e.message) }
+  }
+
+  const deleteAssignment = async (id) => {
+    if (!window.confirm('Remove this assignment?')) return
+    await supabase.from('equipment_assignments').delete().eq('id', id)
+    qc.invalidateQueries(['equipment_assignments', companyId, viewDate])
+    toast.success('Assignment removed')
+  }
+
+  const onAssignSaved = () => {
+    setShowAssignForm(false); setEditAssignment(null)
+    qc.invalidateQueries(['equipment_assignments', companyId, viewDate])
+  }
+
+  // ── Ops actions ─────────────────────────────────────────────────────────────
+  const deleteEntry = async (id) => {
+    if (!window.confirm('Delete this operation log?')) return
+    const { error } = await supabase.from('daily_operations').delete().eq('id', id)
+    if (error) { toast.error(error.message); return }
+    toast.success('Entry deleted')
+    qc.invalidateQueries(['daily_ops', companyId, viewDate])
+  }
+  const onOpsSaved = () => {
+    setShowForm(false); setEditEntry(null)
+    qc.invalidateQueries(['daily_ops', companyId, viewDate])
+  }
+
+  // ── Assignments — group by equipment, then compute summary ──────────────────
+  const assignByEquip = useMemo(() => {
+    const map = {}
+    assignments.forEach(a => {
+      const key = a.equipment_id || '__none__'
+      if (!map[key]) map[key] = { name: a.equipment_name || 'Unassigned equipment', list: [] }
+      map[key].list.push(a)
+    })
+    return Object.values(map)
+  }, [assignments])
+
+  const assignSummary = useMemo(() => {
+    const sc = { assigned: 0, present: 0, half_day: 0, absent: 0 }
+    assignments.forEach(a => { sc[a.status] = (sc[a.status] || 0) + 1 })
+    return { ...sc, total: assignments.length }
+  }, [assignments])
+
+  // ── Operations aggregates ───────────────────────────────────────────────────
   const daySummary = useMemo(() => {
     const sc = { working: 0, idle: 0, breakdown: 0, maintenance: 0 }
     let hours = 0, fuel = 0, trips = 0, km = 0
     entries.forEach(e => {
       sc[e.status] = (sc[e.status] || 0) + 1
-      hours += Number(e.running_hours)  || 0
-      fuel  += Number(e.fuel_consumed)  || 0
-      trips += Number(e.trip_count)     || 0
-      km    += Number(e.kilometer_run)  || 0
+      hours += Number(e.running_hours) || 0
+      fuel  += Number(e.fuel_consumed) || 0
+      trips += Number(e.trip_count)    || 0
+      km    += Number(e.kilometer_run) || 0
     })
     return { sc, hours, fuel, trips, km, total: entries.length }
   }, [entries])
 
-  // Group entries by OPS_GROUPS for display
   const grouped = useMemo(() => (
     OPS_GROUPS.map(g => ({
       ...g,
@@ -969,11 +1273,11 @@ function DailyOpsTab({ companyId, session, isAdmin }) {
     })).filter(g => g.entries.length > 0)
   ), [entries])
 
-  const statusInfo = (val) => OPS_STATUSES.find(s => s.value === val) || OPS_STATUSES[0]
+  const opsStatusInfo = (val) => OPS_STATUSES.find(s => s.value === val) || OPS_STATUSES[0]
 
   return (
     <div className="flex flex-col h-full">
-      {/* Date nav + Log button */}
+      {/* Date nav */}
       <div className="px-4 py-3 border-b border-dark-700 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2">
           <button onClick={prevDay} className="p-1.5 rounded-lg hover:bg-dark-700 text-slate-400 hover:text-slate-200">
@@ -987,186 +1291,245 @@ function DailyOpsTab({ companyId, session, isAdmin }) {
             <ChevronRight className="w-4 h-4" />
           </button>
         </div>
-        <button onClick={() => setShowForm(true)}
-          className="btn-primary flex items-center gap-1.5 text-sm px-3 py-2">
-          <Plus className="w-4 h-4" /> Log Operation
-        </button>
+        {section === 'assignments'
+          ? <button onClick={() => setShowAssignForm(true)}
+              className="btn-primary flex items-center gap-1.5 text-sm px-3 py-2">
+              <Plus className="w-4 h-4" /> Assign
+            </button>
+          : <button onClick={() => setShowForm(true)}
+              className="btn-primary flex items-center gap-1.5 text-sm px-3 py-2">
+              <Plus className="w-4 h-4" /> Log Operation
+            </button>
+        }
+      </div>
+
+      {/* Section toggle */}
+      <div className="px-4 py-2 border-b border-dark-700 shrink-0 flex gap-1">
+        {[
+          { key: 'assignments', label: `👥 Assignments${assignments.length > 0 ? ` (${assignments.length})` : ''}` },
+          { key: 'operations',  label: `📋 Operations${entries.length > 0 ? ` (${entries.length})` : ''}` },
+        ].map(s => (
+          <button key={s.key} onClick={() => setSection(s.key)}
+            className={`text-xs font-semibold px-3 py-1.5 rounded-xl border transition-all ${
+              section === s.key
+                ? 'bg-primary-600/20 border-primary-500/50 text-primary-300'
+                : 'bg-dark-800 border-dark-700 text-slate-500 hover:text-slate-300'
+            }`}>
+            {s.label}
+          </button>
+        ))}
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
 
-        {/* Day summary cards */}
-        {entries.length > 0 && (
+        {/* ── ASSIGNMENTS SECTION ── */}
+        {section === 'assignments' && (
           <>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="bg-dark-800 border border-dark-700 rounded-xl p-3">
-                <p className="text-xs text-slate-500 mb-1">Active Equipment</p>
-                <p className="text-xl font-black text-green-400">{daySummary.sc.working || 0}
-                  <span className="text-xs font-normal text-slate-500"> / {daySummary.total}</span>
-                </p>
-              </div>
-              <div className="bg-dark-800 border border-dark-700 rounded-xl p-3">
-                <p className="text-xs text-slate-500 mb-1">Hours Logged</p>
-                <p className="text-xl font-black text-blue-400">{daySummary.hours.toFixed(1)}
-                  <span className="text-xs font-normal text-slate-500"> hrs</span>
-                </p>
-              </div>
-              {daySummary.fuel > 0 && (
-                <div className="bg-dark-800 border border-dark-700 rounded-xl p-3">
-                  <p className="text-xs text-slate-500 mb-1">Fuel Consumed</p>
-                  <p className="text-xl font-black text-orange-400">{daySummary.fuel.toFixed(1)}
-                    <span className="text-xs font-normal text-slate-500"> L</span>
-                  </p>
-                </div>
-              )}
-              {daySummary.trips > 0 && (
-                <div className="bg-dark-800 border border-dark-700 rounded-xl p-3">
-                  <p className="text-xs text-slate-500 mb-1">Total Trips</p>
-                  <p className="text-xl font-black text-teal-400">{daySummary.trips}
-                    <span className="text-xs font-normal text-slate-500"> trips</span>
-                  </p>
-                </div>
-              )}
-              {daySummary.km > 0 && (
-                <div className="bg-dark-800 border border-dark-700 rounded-xl p-3">
-                  <p className="text-xs text-slate-500 mb-1">KM Run</p>
-                  <p className="text-xl font-black text-purple-400">{daySummary.km.toFixed(0)}
-                    <span className="text-xs font-normal text-slate-500"> km</span>
-                  </p>
-                </div>
-              )}
-            </div>
-
-            {/* Alert badges for non-working equipment */}
-            {(daySummary.sc.breakdown > 0 || daySummary.sc.maintenance > 0 || daySummary.sc.idle > 0) && (
-              <div className="flex flex-wrap gap-2">
-                {daySummary.sc.breakdown > 0 && (
-                  <span className="text-xs px-2.5 py-1 rounded-xl bg-red-500/10 border border-red-700/30 text-red-400 font-semibold">
-                    🔴 {daySummary.sc.breakdown} Breakdown{daySummary.sc.breakdown > 1 ? 's' : ''}
-                  </span>
-                )}
-                {daySummary.sc.maintenance > 0 && (
-                  <span className="text-xs px-2.5 py-1 rounded-xl bg-blue-500/10 border border-blue-700/30 text-blue-400 font-semibold">
-                    🔧 {daySummary.sc.maintenance} Under Maintenance
-                  </span>
-                )}
-                {daySummary.sc.idle > 0 && (
-                  <span className="text-xs px-2.5 py-1 rounded-xl bg-yellow-500/10 border border-yellow-700/30 text-yellow-400 font-semibold">
-                    💤 {daySummary.sc.idle} Idle
-                  </span>
-                )}
+            {/* Summary strip */}
+            {assignments.length > 0 && (
+              <div className="grid grid-cols-4 gap-2">
+                {[
+                  { label: 'Total',    val: assignSummary.total,    color: 'text-slate-200' },
+                  { label: 'Present',  val: assignSummary.present,  color: 'text-green-400' },
+                  { label: 'Half Day', val: assignSummary.half_day, color: 'text-yellow-400' },
+                  { label: 'Absent',   val: assignSummary.absent,   color: 'text-red-400' },
+                ].map(c => (
+                  <div key={c.label} className="bg-dark-800 border border-dark-700 rounded-xl p-2 text-center">
+                    <p className="text-[10px] text-slate-500">{c.label}</p>
+                    <p className={`text-lg font-black ${c.color}`}>{c.val}</p>
+                  </div>
+                ))}
               </div>
             )}
+
+            {/* Assignments grouped by equipment */}
+            {assignLoading
+              ? <div className="flex justify-center py-12"><Loader2 className="w-5 h-5 animate-spin text-primary-400" /></div>
+              : assignments.length === 0
+                ? (
+                  <div className="flex flex-col items-center py-16 gap-3 text-slate-600">
+                    <Truck className="w-12 h-12 opacity-30" />
+                    <p className="text-sm">No assignments for {viewDate === todayStr() ? 'today' : fmtDate(viewDate)}</p>
+                    <p className="text-xs text-slate-600 text-center max-w-xs">Assign operators and drivers to equipment before the shift starts</p>
+                    <button onClick={() => setShowAssignForm(true)} className="text-xs text-primary-400 hover:underline">
+                      + Create first assignment
+                    </button>
+                  </div>
+                )
+                : assignByEquip.map(group => (
+                  <div key={group.name}>
+                    <p className="text-xs font-bold text-slate-400 mb-2 flex items-center gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-primary-500 inline-block" />
+                      {group.name}
+                    </p>
+                    <div className="space-y-1.5">
+                      {group.list.map(a => (
+                        <AssignmentCard
+                          key={a.id} a={a} isAdmin={isAdmin}
+                          onStatus={updateAssignmentStatus}
+                          onEdit={() => setEditAssignment(a)}
+                          onDelete={() => deleteAssignment(a.id)}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                ))
+            }
           </>
         )}
 
-        {/* Entry list grouped by category */}
-        {isLoading
-          ? <div className="flex justify-center py-12"><Loader2 className="w-5 h-5 animate-spin text-primary-400" /></div>
-          : entries.length === 0
-            ? (
-              <div className="flex flex-col items-center py-16 gap-3 text-slate-600">
-                <Clipboard className="w-12 h-12 opacity-30" />
-                <p className="text-sm">No operations logged for {viewDate === todayStr() ? 'today' : fmtDate(viewDate)}</p>
-                <button onClick={() => setShowForm(true)} className="text-xs text-primary-400 hover:underline">
-                  + Log first entry
-                </button>
-              </div>
-            )
-            : grouped.map(group => (
-              <div key={group.label}>
-                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
-                  {group.emoji} {group.label}
-                </p>
-                <div className="space-y-2">
-                  {group.entries.map(e => {
-                    const si = statusInfo(e.status)
-                    return (
-                      <div key={e.id} className={`bg-dark-800 border rounded-xl p-4 ${
-                        e.status === 'breakdown' ? 'border-red-800/50' :
-                        e.status === 'maintenance' ? 'border-blue-800/40' :
-                        e.status === 'idle' ? 'border-yellow-800/40' : 'border-dark-700'
-                      }`}>
-                        <div className="flex items-start justify-between gap-2 mb-2">
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 flex-wrap mb-0.5">
-                              <p className="text-sm font-semibold text-slate-100 truncate">{e.equipment_name || '—'}</p>
-                              <span className={`text-[10px] px-1.5 py-0.5 rounded border font-semibold flex-shrink-0 ${si.color}`}>
-                                {si.label}
-                              </span>
-                              <span className="text-[10px] text-slate-500 flex-shrink-0">
-                                {e.shift_type === 'day' ? '☀️ Day' : e.shift_type === 'night' ? '🌙 Night' : '🔄 General'}
-                              </span>
-                            </div>
-                            {e.operator_name && (
-                              <p className="text-xs text-slate-500">👤 {e.operator_name}</p>
-                            )}
-                          </div>
-                          {isAdmin && (
-                            <div className="flex items-center gap-1.5 shrink-0">
-                              <button onClick={() => setEditEntry(e)}
-                                className="text-slate-500 hover:text-primary-400 transition-colors">
-                                <Edit2 className="w-3.5 h-3.5" />
-                              </button>
-                              <button onClick={() => deleteEntry(e.id)}
-                                className="text-slate-500 hover:text-red-400 transition-colors">
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Metric chips */}
-                        <div className="flex flex-wrap gap-1.5 mt-1">
-                          {e.running_hours != null && (
-                            <span className="text-xs px-2 py-1 rounded-lg bg-dark-700 border border-dark-600 text-slate-300 font-mono">
-                              ⏱ {Number(e.running_hours).toFixed(1)} hrs
-                            </span>
-                          )}
-                          {e.kilometer_run != null && (
-                            <span className="text-xs px-2 py-1 rounded-lg bg-dark-700 border border-dark-600 text-slate-300 font-mono">
-                              📍 {Number(e.kilometer_run).toFixed(0)} km
-                            </span>
-                          )}
-                          {e.trip_count != null && (
-                            <span className="text-xs px-2 py-1 rounded-lg bg-teal-500/10 border border-teal-700/30 text-teal-300 font-mono">
-                              🔄 {e.trip_count} trips
-                            </span>
-                          )}
-                          {e.material_moved != null && (
-                            <span className="text-xs px-2 py-1 rounded-lg bg-amber-500/10 border border-amber-700/30 text-amber-300 font-mono">
-                              📦 {Number(e.material_moved).toFixed(2)} T
-                            </span>
-                          )}
-                          {e.fuel_consumed != null && (
-                            <span className="text-xs px-2 py-1 rounded-lg bg-orange-500/10 border border-orange-700/30 text-orange-300 font-mono">
-                              ⛽ {Number(e.fuel_consumed).toFixed(1)} L
-                            </span>
-                          )}
-                        </div>
-
-                        {e.activity && (
-                          <p className="text-xs text-slate-400 mt-2">📋 {e.activity}</p>
-                        )}
-                        {e.notes && (
-                          <p className="text-xs text-slate-500 mt-1 italic">{e.notes}</p>
-                        )}
-                      </div>
-                    )
-                  })}
+        {/* ── OPERATIONS SECTION ── */}
+        {section === 'operations' && (
+          <>
+            {/* Day summary cards */}
+            {entries.length > 0 && (
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="bg-dark-800 border border-dark-700 rounded-xl p-3">
+                    <p className="text-xs text-slate-500 mb-1">Active Equipment</p>
+                    <p className="text-xl font-black text-green-400">{daySummary.sc.working || 0}
+                      <span className="text-xs font-normal text-slate-500"> / {daySummary.total}</span>
+                    </p>
+                  </div>
+                  <div className="bg-dark-800 border border-dark-700 rounded-xl p-3">
+                    <p className="text-xs text-slate-500 mb-1">Hours Logged</p>
+                    <p className="text-xl font-black text-blue-400">{daySummary.hours.toFixed(1)}
+                      <span className="text-xs font-normal text-slate-500"> hrs</span>
+                    </p>
+                  </div>
+                  {daySummary.fuel > 0 && (
+                    <div className="bg-dark-800 border border-dark-700 rounded-xl p-3">
+                      <p className="text-xs text-slate-500 mb-1">Fuel Consumed</p>
+                      <p className="text-xl font-black text-orange-400">{daySummary.fuel.toFixed(1)}
+                        <span className="text-xs font-normal text-slate-500"> L</span>
+                      </p>
+                    </div>
+                  )}
+                  {daySummary.trips > 0 && (
+                    <div className="bg-dark-800 border border-dark-700 rounded-xl p-3">
+                      <p className="text-xs text-slate-500 mb-1">Total Trips</p>
+                      <p className="text-xl font-black text-teal-400">{daySummary.trips}
+                        <span className="text-xs font-normal text-slate-500"> trips</span>
+                      </p>
+                    </div>
+                  )}
+                  {daySummary.km > 0 && (
+                    <div className="bg-dark-800 border border-dark-700 rounded-xl p-3">
+                      <p className="text-xs text-slate-500 mb-1">KM Run</p>
+                      <p className="text-xl font-black text-purple-400">{daySummary.km.toFixed(0)}
+                        <span className="text-xs font-normal text-slate-500"> km</span>
+                      </p>
+                    </div>
+                  )}
                 </div>
-              </div>
-            ))
-        }
+                {(daySummary.sc.breakdown > 0 || daySummary.sc.maintenance > 0 || daySummary.sc.idle > 0) && (
+                  <div className="flex flex-wrap gap-2">
+                    {daySummary.sc.breakdown > 0 && (
+                      <span className="text-xs px-2.5 py-1 rounded-xl bg-red-500/10 border border-red-700/30 text-red-400 font-semibold">
+                        🔴 {daySummary.sc.breakdown} Breakdown{daySummary.sc.breakdown > 1 ? 's' : ''}
+                      </span>
+                    )}
+                    {daySummary.sc.maintenance > 0 && (
+                      <span className="text-xs px-2.5 py-1 rounded-xl bg-blue-500/10 border border-blue-700/30 text-blue-400 font-semibold">
+                        🔧 {daySummary.sc.maintenance} Under Maintenance
+                      </span>
+                    )}
+                    {daySummary.sc.idle > 0 && (
+                      <span className="text-xs px-2.5 py-1 rounded-xl bg-yellow-500/10 border border-yellow-700/30 text-yellow-400 font-semibold">
+                        💤 {daySummary.sc.idle} Idle
+                      </span>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* Entry list grouped by category */}
+            {opsLoading
+              ? <div className="flex justify-center py-12"><Loader2 className="w-5 h-5 animate-spin text-primary-400" /></div>
+              : entries.length === 0
+                ? (
+                  <div className="flex flex-col items-center py-16 gap-3 text-slate-600">
+                    <Clipboard className="w-12 h-12 opacity-30" />
+                    <p className="text-sm">No operations logged for {viewDate === todayStr() ? 'today' : fmtDate(viewDate)}</p>
+                    <button onClick={() => setShowForm(true)} className="text-xs text-primary-400 hover:underline">
+                      + Log first entry
+                    </button>
+                  </div>
+                )
+                : grouped.map(group => (
+                  <div key={group.label}>
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
+                      {group.emoji} {group.label}
+                    </p>
+                    <div className="space-y-2">
+                      {group.entries.map(e => {
+                        const si = opsStatusInfo(e.status)
+                        return (
+                          <div key={e.id} className={`bg-dark-800 border rounded-xl p-4 ${
+                            e.status === 'breakdown'   ? 'border-red-800/50'  :
+                            e.status === 'maintenance' ? 'border-blue-800/40' :
+                            e.status === 'idle'        ? 'border-yellow-800/40' : 'border-dark-700'
+                          }`}>
+                            <div className="flex items-start justify-between gap-2 mb-2">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap mb-0.5">
+                                  <p className="text-sm font-semibold text-slate-100 truncate">{e.equipment_name || '—'}</p>
+                                  <span className={`text-[10px] px-1.5 py-0.5 rounded border font-semibold flex-shrink-0 ${si.color}`}>
+                                    {si.label}
+                                  </span>
+                                  <span className="text-[10px] text-slate-500 flex-shrink-0">
+                                    {e.shift_type === 'day' ? '☀️ Day' : e.shift_type === 'night' ? '🌙 Night' : '🔄 General'}
+                                  </span>
+                                </div>
+                              </div>
+                              {isAdmin && (
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  <button onClick={() => setEditEntry(e)} className="text-slate-500 hover:text-primary-400 transition-colors">
+                                    <Edit2 className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button onClick={() => deleteEntry(e.id)} className="text-slate-500 hover:text-red-400 transition-colors">
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                            <div className="flex flex-wrap gap-1.5 mt-1">
+                              {e.running_hours  != null && <span className="text-xs px-2 py-1 rounded-lg bg-dark-700 border border-dark-600 text-slate-300 font-mono">⏱ {Number(e.running_hours).toFixed(1)} hrs</span>}
+                              {e.kilometer_run  != null && <span className="text-xs px-2 py-1 rounded-lg bg-dark-700 border border-dark-600 text-slate-300 font-mono">📍 {Number(e.kilometer_run).toFixed(0)} km</span>}
+                              {e.trip_count     != null && <span className="text-xs px-2 py-1 rounded-lg bg-teal-500/10 border border-teal-700/30 text-teal-300 font-mono">🔄 {e.trip_count} trips</span>}
+                              {e.material_moved != null && <span className="text-xs px-2 py-1 rounded-lg bg-amber-500/10 border border-amber-700/30 text-amber-300 font-mono">📦 {Number(e.material_moved).toFixed(2)} T</span>}
+                              {e.fuel_consumed  != null && <span className="text-xs px-2 py-1 rounded-lg bg-orange-500/10 border border-orange-700/30 text-orange-300 font-mono">⛽ {Number(e.fuel_consumed).toFixed(1)} L</span>}
+                            </div>
+                            {e.activity && <p className="text-xs text-slate-400 mt-2">📋 {e.activity}</p>}
+                            {e.notes    && <p className="text-xs text-slate-500 mt-1 italic">{e.notes}</p>}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                ))
+            }
+          </>
+        )}
       </div>
 
+      {/* Modals */}
       {(showForm || editEntry) && (
         <LogOpsModal
           companyId={companyId} session={session}
-          opsEquipment={opsEquipment}
-          existing={editEntry}
+          opsEquipment={opsEquipment} existing={editEntry}
           onClose={() => { setShowForm(false); setEditEntry(null) }}
-          onSaved={onSaved}
+          onSaved={onOpsSaved}
+        />
+      )}
+      {(showAssignForm || editAssignment) && (
+        <AssignModal
+          companyId={companyId} session={session}
+          opsEquipment={opsEquipment} employees={employees}
+          existing={editAssignment} viewDate={viewDate}
+          onClose={() => { setShowAssignForm(false); setEditAssignment(null) }}
+          onSaved={onAssignSaved}
         />
       )}
     </div>
