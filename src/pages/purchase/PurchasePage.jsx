@@ -43,11 +43,26 @@ const STATUS_COLORS = {
   applied:             'bg-emerald-500/10 text-emerald-400 border-emerald-700/40',
 }
 
+const STATUS_LABELS = {
+  draft:               'Draft',
+  pending:             'Unpaid',
+  partial:             'Part Paid',
+  paid:                'Paid',
+  overdue:             'Overdue',
+  cancelled:           'Cancelled',
+  sent:                'Sent',
+  confirmed:           'Confirmed',
+  received:            'Received',
+  partially_received:  'Part Received',
+  issued:              'Issued',
+  applied:             'Applied',
+}
+
 function StatusBadge({ status }) {
   const cls = STATUS_COLORS[status] || STATUS_COLORS.draft
   return (
-    <span className={`text-xs px-2 py-0.5 rounded-full border font-medium capitalize ${cls}`}>
-      {status?.replace(/_/g, ' ') || 'draft'}
+    <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${cls}`}>
+      {STATUS_LABELS[status] || status?.replace(/_/g, ' ') || 'Draft'}
     </span>
   )
 }
