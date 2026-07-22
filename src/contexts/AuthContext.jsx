@@ -8,6 +8,8 @@ export function AuthProvider({ children }) {
   const [userProfile, setUserProfile] = useState(null)
   const [userRole,    setUserRole]    = useState(null)
   const [company,     setCompany]     = useState(null)
+  const [userUnit,    setUserUnit]    = useState(null)   // company_units row or null (all-access)
+  const [allUnits,    setAllUnits]    = useState([])     // all units for this company
   const [modules,     setModules]     = useState([])
   const [loading,     setLoading]     = useState(true)
   const [authError,   setAuthError]   = useState(null)  // shown on login page if profile missing
@@ -18,6 +20,8 @@ export function AuthProvider({ children }) {
       setUserProfile(null)
       setUserRole(null)
       setCompany(null)
+      setUserUnit(null)
+      setAllUnits([])
       setModules([])
       setLoading(false)
       return
@@ -74,10 +78,26 @@ export function AuthProvider({ children }) {
         .eq('company_id', profile.company_id)
         .eq('is_enabled', true)
 
+      // Load all company units
+      const { data: unitsData } = await supabase
+        .from('company_units')
+        .select('*')
+        .eq('company_id', profile.company_id)
+        .eq('is_active', true)
+        .order('sort_order')
+
+      // Load the user's assigned unit (NULL = all-access)
+      let assignedUnit = null
+      if (profile.unit_id && unitsData) {
+        assignedUnit = unitsData.find(u => u.id === profile.unit_id) || null
+      }
+
       setAuthError(null)
       setUserProfile(profile)
       setUserRole(roleData)
       setCompany(companyData)
+      setUserUnit(assignedUnit)
+      setAllUnits(unitsData || [])
       setModules(moduleData?.map(m => m.module_key) || [])
     } catch (err) {
       console.error('Failed to load user data:', err)
@@ -86,6 +106,8 @@ export function AuthProvider({ children }) {
       setUserProfile(null)
       setUserRole(null)
       setCompany(null)
+      setUserUnit(null)
+      setAllUnits([])
       setModules([])
     } finally {
       setLoading(false)
@@ -137,6 +159,15 @@ export function AuthProvider({ children }) {
   const role          = userRole?.role || null
   const industryType  = company?.industry || 'construction'
 
+  // Unit helpers
+  // isAllUnits: true for admin / accounts / superadmin roles, or if no units are set up yet
+  const ALL_UNIT_ROLES = ['admin', 'superadmin', 'accounts', 'hr']
+  const isAllUnits = ALL_UNIT_ROLES.includes(role) || !userUnit
+  // unitFilter(col): returns Supabase filter args or null (meaning no filter needed)
+  // Usage: const filter = unitFilter('unit_id')
+  //        if (filter) query = query.eq(...filter)
+  const unitFilter = (col = 'unit_id') => isAllUnits ? null : [col, userUnit?.id]
+
   const signOut = async () => {
     setAuthError(null)
     await supabase.auth.signOut()
@@ -153,6 +184,12 @@ export function AuthProvider({ children }) {
     loading,
     role,
     authError,
+    // ── Multi-unit ────────────────────────────────────────────────────────────
+    userUnit,     // company_units row for the logged-in user, or null (all-access)
+    allUnits,     // all active company_units[]
+    isAllUnits,   // true = admin/accounts sees all units
+    unitFilter,   // fn(col?) → [col, unitId] | null — apply to Supabase queries
+    // ─────────────────────────────────────────────────────────────────────────
     signIn,
     signOut,
     resetPassword,

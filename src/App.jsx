@@ -13,7 +13,7 @@ import { useRealtimeSync } from './hooks/useRealtimeSync'
 import {
   LayoutDashboard, Receipt, ClipboardList, BarChart3,
   Users, Wallet, Package, X, Truck, Wrench, FolderOpen,
-  Settings, ShoppingCart, TrendingUp, CalendarDays,
+  Settings, ShoppingCart, TrendingUp, CalendarDays, Building2,
 } from 'lucide-react'
 
 // Lazy-load all pages for performance
@@ -38,6 +38,7 @@ const LettersPage             = lazy(() => import('./pages/letters/LettersPage')
 const ExpensesPage            = lazy(() => import('./pages/expenses/ExpensesPage'))
 const ProductionTrackerPage   = lazy(() => import('./pages/production/ProductionTrackerPage'))
 const CrusherSalesPage        = lazy(() => import('./pages/crusher/CrusherSalesPage'))
+const CompanyProfilePage      = lazy(() => import('./pages/company/CompanyProfilePage'))
 
 // ── Connectivity hook ─────────────────────────────────────────────────────────
 function useOnlineStatus() {
@@ -143,6 +144,7 @@ const ALL_PAGES = [
   { key: 'reports',      Icon: BarChart3,       label: 'Reports'              },
   { key: 'hr',           Icon: Users,           label: 'Employee Management'  },
   { key: 'settings',     Icon: Settings,        label: 'Settings'             },
+  { key: 'company',      Icon: Building2,       label: 'Company Profile'      },
 ]
 
 // ── Mobile bottom nav + "More" drawer ────────────────────────────────────────
@@ -319,6 +321,12 @@ function AppShell() {
         return (
           <Suspense fallback={<LoadingScreen message="Loading crusher sales…" />}>
             <CrusherSalesPage />
+          </Suspense>
+        )
+      case 'company':
+        return (
+          <Suspense fallback={<LoadingScreen message="Loading company profile…" />}>
+            <CompanyProfilePage />
           </Suspense>
         )
       case 'showroom':     return <ComingSoon page="Vehicle Stock / Showroom" />

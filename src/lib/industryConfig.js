@@ -142,6 +142,8 @@ export const INDUSTRY_NAV = {
       items: [
         { key: 'settings', label: 'Settings', icon: 'Settings', module: MODULES.CORE,
           roles: [ROLES.ADMIN] },
+        { key: 'company',  label: 'Company Profile', icon: 'Building2', module: MODULES.CORE,
+          roles: [ROLES.ADMIN] },
       ],
     },
   ],
@@ -215,6 +217,8 @@ export const INDUSTRY_NAV = {
       items: [
         { key: 'settings', label: 'Settings', icon: 'Settings', module: MODULES.CORE,
           roles: [ROLES.ADMIN] },
+        { key: 'company',  label: 'Company Profile', icon: 'Building2', module: MODULES.CORE,
+          roles: [ROLES.ADMIN] },
       ],
     },
   ],
@@ -281,6 +285,8 @@ export const INDUSTRY_NAV = {
       section: 'Admin',
       items: [
         { key: 'settings', label: 'Settings', icon: 'Settings', module: MODULES.CORE,
+          roles: [ROLES.ADMIN] },
+        { key: 'company',  label: 'Company Profile', icon: 'Building2', module: MODULES.CORE,
           roles: [ROLES.ADMIN] },
       ],
     },
