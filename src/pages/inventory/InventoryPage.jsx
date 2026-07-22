@@ -892,8 +892,27 @@ function StockInTab({ companyId, session }) {
   const { data: txns = [], isLoading } = useQuery({
     queryKey: ['stxn_in', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('stock_transactions').select('*, inventory_items(item_name, unit), stores(store_name)').eq('company_id', companyId).eq('txn_type', 'in').order('created_at', { ascending: false }).limit(100)
-      return data || []
+      // Primary: full select with joins
+      const { data, error } = await supabase
+        .from('stock_transactions')
+        .select('id, txn_number, txn_date, quantity, unit_cost, total_cost, txn_type, notes, vehicle_number, supplier_name, requires_bill, bill_id, inventory_items(item_name, unit), stores(store_name)')
+        .eq('company_id', companyId)
+        .eq('txn_type', 'in')
+        .order('txn_date', { ascending: false })
+        .limit(200)
+      if (!error) return data || []
+
+      // Fallback: minimal guaranteed columns (no extended cols)
+      console.error('[stxn_in] primary failed, retrying minimal:', error.message)
+      const { data: d2, error: e2 } = await supabase
+        .from('stock_transactions')
+        .select('id, txn_number, txn_date, quantity, unit_cost, total_cost, notes, inventory_items(item_name, unit), stores(store_name)')
+        .eq('company_id', companyId)
+        .eq('txn_type', 'in')
+        .order('txn_date', { ascending: false })
+        .limit(200)
+      if (e2) console.error('[stxn_in] fallback also failed:', e2.message)
+      return d2 || []
     },
     enabled: !!companyId,
   })
