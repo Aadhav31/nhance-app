@@ -902,7 +902,7 @@ function StockInTab({ companyId, session }) {
         .limit(200)
       if (!error) return data || []
 
-      // Fallback: minimal guaranteed columns (no extended cols)
+      // Fallback level 1: drop extended cols but keep joins
       console.error('[stxn_in] primary failed, retrying minimal:', error.message)
       const { data: d2, error: e2 } = await supabase
         .from('stock_transactions')
@@ -911,8 +911,19 @@ function StockInTab({ companyId, session }) {
         .eq('txn_type', 'in')
         .order('txn_date', { ascending: false })
         .limit(200)
-      if (e2) console.error('[stxn_in] fallback also failed:', e2.message)
-      return d2 || []
+      if (!e2) return d2 || []
+
+      // Fallback level 2: no joins at all — always works
+      console.error('[stxn_in] fallback-1 failed (FK join issue?):', e2.message)
+      const { data: d3, error: e3 } = await supabase
+        .from('stock_transactions')
+        .select('id, txn_number, txn_date, quantity, unit_cost, total_cost, notes, item_id, store_id')
+        .eq('company_id', companyId)
+        .eq('txn_type', 'in')
+        .order('txn_date', { ascending: false })
+        .limit(200)
+      if (e3) console.error('[stxn_in] fallback-2 also failed:', e3.message)
+      return d3 || []
     },
     enabled: !!companyId,
   })
