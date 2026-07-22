@@ -1089,6 +1089,7 @@ function BillsTab({ companyId, session }) {
   const [linkPayBill, setLinkPayBill] = useState(null)      // bill being linked
   const [linkSelIds, setLinkSelIds] = useState(new Set())   // selected payment IDs
   const [linkSaving, setLinkSaving] = useState(false)
+  const [billFilter, setBillFilter] = useState('all')
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
 
   const clearAttach = () => {
@@ -1603,11 +1604,31 @@ function BillsTab({ companyId, session }) {
 
   const totalPending = bills.filter(b => b.status !== 'paid' && b.status !== 'cancelled').reduce((s, b) => s + Number(b.balance_due || 0), 0)
 
-  // EOD / end-of-shift draft bill alert
+  // Bill filter logic
   const todayISO        = todayStr()
   const currentHour     = new Date().getHours()
-  const isApproachingEOD = currentHour >= 17  // 5 PM onwards
+  const isApproachingEOD = currentHour >= 17
   const draftBillsToday = bills.filter(b => b.status === 'draft' && b.bill_date === todayISO)
+
+  const filteredBills = bills.filter(b => {
+    if (billFilter === 'today')   return b.bill_date === todayISO
+    if (billFilter === 'action')  return b.status === 'draft'
+    if (billFilter === 'unpaid')  return b.status === 'pending'
+    if (billFilter === 'overdue') {
+      const dueD = b.due_date ? new Date(b.due_date + 'T00:00:00') : null
+      const today = new Date(); today.setHours(0,0,0,0)
+      return dueD && dueD < today && !['paid','cancelled'].includes(b.status)
+    }
+    return true // 'all'
+  })
+
+  const BILL_FILTERS = [
+    { id: 'all',     label: 'All' },
+    { id: 'action',  label: `Needs Action${draftBillsToday.length ? ` (${draftBillsToday.length})` : ''}`, warn: draftBillsToday.length > 0 },
+    { id: 'today',   label: 'Today' },
+    { id: 'unpaid',  label: 'Unpaid' },
+    { id: 'overdue', label: 'Overdue' },
+  ]
 
   return (
     <div className="flex flex-col h-full">
@@ -1615,24 +1636,22 @@ function BillsTab({ companyId, session }) {
         <div className="bg-dark-800 rounded-xl px-3 py-2 text-xs"><span className="text-slate-500">Payable </span><span className="font-bold text-orange-400">{fmtINR(totalPending)}</span></div>
         <button onClick={openCreate} className="btn-primary"><Plus className="w-4 h-4" /> New Bill</button>
       </div>
+      {/* ── Filter chips ── */}
+      <div className="px-4 py-2 border-b border-dark-800 shrink-0 flex items-center gap-1.5 overflow-x-auto">
+        {BILL_FILTERS.map(f => (
+          <button
+            key={f.id}
+            onClick={() => setBillFilter(f.id)}
+            className={`shrink-0 text-[11px] font-semibold px-3 py-1 rounded-full border transition-colors whitespace-nowrap ${
+              billFilter === f.id
+                ? f.warn ? 'bg-amber-500/20 border-amber-500/60 text-amber-300' : 'bg-primary-600/20 border-primary-500/60 text-primary-300'
+                : f.warn ? 'bg-amber-500/10 border-amber-700/40 text-amber-400 hover:border-amber-500/60' : 'bg-dark-800 border-dark-700 text-slate-400 hover:text-slate-200 hover:border-dark-600'
+            }`}>
+            {f.warn && billFilter !== f.id && <span className="mr-1">⚠</span>}{f.label}
+          </button>
+        ))}
+      </div>
       <div className="flex-1 overflow-y-auto px-4 pb-4 pt-3">
-
-        {/* ── EOD / End-of-shift draft bill alert ── */}
-        {draftBillsToday.length > 0 && (
-          <div className={`rounded-xl p-3 mb-3 border ${isApproachingEOD ? 'bg-red-500/10 border-red-500/40' : 'bg-amber-500/10 border-amber-500/30'}`}>
-            <div className="flex items-center gap-2">
-              <span className="text-base leading-none">{isApproachingEOD ? '🔴' : '⏰'}</span>
-              <div>
-                <p className={`text-xs font-bold ${isApproachingEOD ? 'text-red-400' : 'text-amber-400'}`}>
-                  {isApproachingEOD ? 'End of Shift — Action Required!' : 'Bills Pending Initiation'}
-                </p>
-                <p className={`text-[11px] mt-0.5 ${isApproachingEOD ? 'text-red-300/80' : 'text-amber-300/70'}`}>
-                  {draftBillsToday.length} bill{draftBillsToday.length > 1 ? 's' : ''} from today's stock receipts not yet initiated — click <strong>Initiate Bill</strong> to confirm and go live.
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
 
         {/* Pending stock receipts — each gets its own Create Bill button */}
         {pendingStockBills.length > 0 && (
@@ -1666,23 +1685,29 @@ function BillsTab({ companyId, session }) {
         )}
 
         {isLoading ? <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-primary-400" /></div>
-        : bills.length === 0 ? <div className="flex flex-col items-center py-16 gap-2 text-slate-500"><FileText className="w-10 h-10 text-slate-700" /><p>No bills yet</p></div>
+        : filteredBills.length === 0 ? <div className="flex flex-col items-center py-16 gap-2 text-slate-500"><FileText className="w-10 h-10 text-slate-700" /><p>{billFilter === 'all' ? 'No bills yet' : 'No bills match this filter'}</p></div>
         : <div className="space-y-2">
-          {bills.map(b => {
+          {filteredBills.map(b => {
             const today      = new Date(); today.setHours(0,0,0,0)
             const dueD       = b.due_date ? new Date(b.due_date+'T00:00:00') : null
             const daysLeft   = dueD ? Math.ceil((dueD - today) / 86400000) : null
             const isCredit   = b.payment_type === 'credit'
             const isOverdue  = isCredit && dueD && dueD < today && !['paid','cancelled'].includes(b.status)
             const isDueSoon  = isCredit && daysLeft !== null && daysLeft >= 0 && daysLeft <= 7 && !['paid','cancelled'].includes(b.status)
+            const needsAction = b.status === 'draft' && b.bill_date === todayISO
             return (
-            <div key={b.id} className={`bg-dark-800 border rounded-xl p-4 ${isOverdue ? 'border-red-700/60' : isDueSoon ? 'border-amber-700/60' : 'border-dark-700'}`}>
+            <div key={b.id} className={`bg-dark-800 border rounded-xl p-4 ${needsAction ? (isApproachingEOD ? 'border-red-700/50' : 'border-amber-700/50') : isOverdue ? 'border-red-700/60' : isDueSoon ? 'border-amber-700/60' : 'border-dark-700'}`}>
               <div className="flex items-start justify-between gap-3">
                 <div className="flex-1 min-w-0">
                   <div className="flex gap-2 items-center flex-wrap">
                     <p className="text-xs font-mono text-primary-500">{b.bill_number}</p>
                     <StatusBadge status={b.status} />
                     {isCredit && <span className="text-[10px] px-1.5 py-0.5 rounded font-semibold bg-blue-500/10 text-blue-400 border border-blue-700/40">🗓️ {b.credit_days}d Credit</span>}
+                    {needsAction && (
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold border flex items-center gap-0.5 ${isApproachingEOD ? 'bg-red-500/15 border-red-600/50 text-red-400' : 'bg-amber-500/15 border-amber-600/40 text-amber-400'}`}>
+                        {isApproachingEOD ? '🔴' : '⚠'} {isApproachingEOD ? 'Action Required' : 'Pending Initiation'}
+                      </span>
+                    )}
                   </div>
                   <p className="font-semibold text-slate-100 text-sm mt-0.5">{b.vendor_name || b.vendors?.vendor_name}</p>
                   {b.bill_ref && <p className="text-xs text-slate-500">Ref: {b.bill_ref}</p>}
