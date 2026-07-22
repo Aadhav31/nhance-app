@@ -1125,9 +1125,10 @@ function BillsTab({ companyId, session }) {
 
   const openEdit = async (bill) => {
     const { data: ld } = await supabase.from('bill_line_items').select('*').eq('bill_id', bill.id).order('sort_order')
+    const vendor = vendors.find(v => v.id === bill.vendor_id)
     setEditing(bill)
     setForm({
-      vendor_id: bill.vendor_id || '', vendor_gstin: bill.vendor_gstin || '',
+      vendor_id: bill.vendor_id || '', vendor_gstin: bill.vendor_gstin || vendor?.gstin || 'URP',
       bill_date: bill.bill_date || todayStr(), due_date: bill.due_date || '',
       bill_ref: bill.bill_ref || '',
       use_igst: (bill.igst_amount || 0) > 0, discount_amount: bill.discount_amount || 0,
