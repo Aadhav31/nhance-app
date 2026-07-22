@@ -321,28 +321,33 @@ function TaxSummary({ lines, form, setF }) {
 // Returns { subtotal, taxable, cgst_amt, sgst_amt, igst_amt, total, slabs }
 // slabs = { '18': { taxable, cgst, sgst, igst }, ... }
 function calcTotalFromLines(form, lines) {
-  const isTax    = form.is_tax_invoice !== false
-  const useIgst  = !!form.use_igst
-  const discount = parseFloat(form.discount_amount) || 0
-  const subtotal = lines.reduce((s, l) => s + (l.amount || 0), 0)
-  const discRatio = subtotal > 0 ? discount / subtotal : 0
+  const isTax       = form.is_tax_invoice !== false
+  const useIgst     = !!form.use_igst
+  const taxInclusive = !!form.tax_inclusive
+  const discount    = parseFloat(form.discount_amount) || 0
 
   let totalCgst = 0, totalSgst = 0, totalIgst = 0
   const slabs = {}   // { rate: { taxable, cgst, sgst, igst } }
 
+  // subtotal: sum of entered line amounts (inclusive price when taxInclusive, else pre-tax)
+  const rawTotal = lines.reduce((s, l) => s + (l.amount || 0), 0)
+  const discRatio = rawTotal > 0 ? discount / rawTotal : 0
+
   if (isTax) {
     lines.forEach(l => {
-      const lineAmt = (l.amount || 0) * (1 - discRatio)  // proportional discount
+      const entered = (l.amount || 0) * (1 - discRatio)
       const rate    = parseFloat(l.gst_rate) || 0
+      // When tax-inclusive, back-calculate the pre-tax (taxable) base
+      const taxable = taxInclusive && rate > 0 ? entered / (1 + rate / 100) : entered
       if (!slabs[rate]) slabs[rate] = { taxable: 0, cgst: 0, sgst: 0, igst: 0 }
-      slabs[rate].taxable += lineAmt
+      slabs[rate].taxable += taxable
       if (rate > 0) {
         if (useIgst) {
-          const igst = lineAmt * rate / 100
+          const igst = taxable * rate / 100
           slabs[rate].igst += igst; totalIgst += igst
         } else {
           const half = rate / 2
-          const cgst = lineAmt * half / 100
+          const cgst = taxable * half / 100
           slabs[rate].cgst += cgst; slabs[rate].sgst += cgst
           totalCgst += cgst; totalSgst += cgst
         }
@@ -350,8 +355,14 @@ function calcTotalFromLines(form, lines) {
     })
   }
 
-  const taxable = subtotal - discount
-  const total   = taxable + totalCgst + totalSgst + totalIgst
+  // subtotal = pre-tax amount; when tax-inclusive the "subtotal" shown is the base
+  const subtotal = isTax && taxInclusive
+    ? Object.values(slabs).reduce((s, sl) => s + sl.taxable, 0)
+    : rawTotal
+  const taxable  = subtotal - (taxInclusive ? 0 : discount)
+  const total    = taxInclusive
+    ? rawTotal - discount + 0           // inclusive: total = entered amounts - discount (tax already inside)
+    : taxable + totalCgst + totalSgst + totalIgst
   return { subtotal, taxable, cgst_amt: totalCgst, sgst_amt: totalSgst, igst_amt: totalIgst, total, slabs }
 }
 
@@ -1039,7 +1050,7 @@ function BillsTab({ companyId, session }) {
   const { company, userProfile } = useAuth()
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving] = useState(false)
-  const blankForm = () => ({ vendor_id: '', vendor_gstin: '', bill_date: todayStr(), due_date: '', bill_ref: '', use_igst: false, discount_amount: 0, notes: '', is_tax_invoice: true, payment_type: 'standard', credit_days: '30', project_id: '', equipment_id: '', stock_receipt_id: '' })
+  const blankForm = () => ({ vendor_id: '', vendor_gstin: '', bill_date: todayStr(), due_date: '', bill_ref: '', use_igst: false, discount_amount: 0, notes: '', is_tax_invoice: true, tax_inclusive: false, payment_type: 'standard', credit_days: '30', equipment_id: '', stock_receipt_id: '' })
 
   // Auto-compute due date from bill_date + credit_days
   const computeDueDate = (billDate, days) => {
@@ -1082,21 +1093,31 @@ function BillsTab({ companyId, session }) {
 
   // Open create form pre-filled for a specific pending stock receipt
   const openCreateForReceipt = (receipt) => {
+    const vendor    = vendors.find(v => v.id === receipt.vendor_id)
+    const hsnCode   = receipt.inventory_items?.hsn_code || ''
+    const hsnInfo   = hsnCode ? lookupHsnSac(hsnCode) : null
     setEditing(null)
     setForm({
       ...blankForm(),
       stock_receipt_id: receipt.id,
-      vendor_id: receipt.vendor_id || '',
+      vendor_id:   receipt.vendor_id || '',
+      vendor_gstin: vendor?.gstin || 'URP',
+      notes: receipt.txn_number
+        ? `Auto-draft from stock receipt ${receipt.txn_number}${receipt.vehicle_number ? ` · Vehicle ${receipt.vehicle_number}` : ''}`
+        : '',
     })
     setLines([{
       _id: Math.random().toString(36).slice(2),
       description: receipt.inventory_items?.item_name || '',
-      hsn_sac: '',
+      hsn_sac: hsnCode,
       quantity: String(receipt.quantity || 1),
       unit: receipt.inventory_items?.unit || receipt.unit || 'nos',
       rate: String(receipt.unit_cost || 0),
       amount: (receipt.quantity || 0) * (receipt.unit_cost || 0),
-      gst_rate: null, gst_type: null,
+      gst_rate: hsnInfo?.gst ?? null,
+      _gst_desc: hsnInfo?.desc ?? null,
+      _hsn_open: !!hsnCode,
+      gst_type: null,
     }])
     setAddToInv(false); setInvCategory(''); setInvStore('')
     clearAttach(); setAttachUrl(null); setShowCreate(true)
@@ -1111,9 +1132,10 @@ function BillsTab({ companyId, session }) {
       bill_ref: bill.bill_ref || '',
       use_igst: (bill.igst_amount || 0) > 0, discount_amount: bill.discount_amount || 0,
       notes: bill.notes || '', is_tax_invoice: bill.is_tax_invoice !== false,
+      tax_inclusive: false,
       payment_type: bill.payment_type === 'credit' ? 'credit' : 'standard',
       credit_days: String(bill.credit_days || 30),
-      project_id: bill.project_id || '', equipment_id: bill.equipment_id || '',
+      equipment_id: bill.equipment_id || '',
     })
     clearAttach(); setAttachUrl(bill.attachment_url || null)
     setLines(ld?.map(l => {
@@ -1253,14 +1275,6 @@ function BillsTab({ companyId, session }) {
     },
     enabled: !!companyId,
   })
-  const { data: billProjects = [] } = useQuery({
-    queryKey: ['projects_active', companyId],
-    queryFn: async () => {
-      const { data } = await supabase.from('projects').select('id, project_name, project_code').eq('company_id', companyId).eq('is_active', true).order('project_name')
-      return data || []
-    },
-    enabled: !!companyId,
-  })
   const { data: billEquipment = [] } = useQuery({
     queryKey: ['equipment_active', companyId],
     queryFn: async () => {
@@ -1279,7 +1293,7 @@ function BillsTab({ companyId, session }) {
       // Step 1: guaranteed-column query — always works even without extended columns
       const { data: base, error: baseErr } = await supabase
         .from('stock_transactions')
-        .select('id, txn_number, txn_date, quantity, unit_cost, total_cost, vendor_id, inventory_items(item_name, unit), stores(store_name)')
+        .select('id, txn_number, txn_date, quantity, unit_cost, total_cost, vendor_id, inventory_items(item_name, unit, hsn_code), stores(store_name)')
         .eq('company_id', companyId)
         .eq('txn_type', 'in')
         .eq('requires_bill', true)
@@ -1331,7 +1345,6 @@ function BillsTab({ companyId, session }) {
 
   const save = async () => {
     if (!form.vendor_id) return toast.error('Select a vendor')
-    if (isTax && !form.vendor_gstin.trim()) return toast.error('Vendor GSTIN is required for Tax Bill')
     if (lines.every(l => !l.description.trim())) return toast.error('Add at least one line item')
     if (!editing && addToInv && !invCategory) return toast.error('Select an inventory category')
     if (!editing && addToInv && !invStore) return toast.error('Select a store / location')
@@ -1347,10 +1360,10 @@ function BillsTab({ companyId, session }) {
 
       if (editing) {
         // ── UPDATE ──
-        const selProj = billProjects.find(p => p.id === form.project_id)
         const selEq   = billEquipment.find(e => e.id === form.equipment_id)
         const { error } = await supabase.from('bills').update({
           vendor_id: form.vendor_id, vendor_name: vendor?.name || '',
+          vendor_gstin: form.vendor_gstin || null,
           bill_date: form.bill_date, due_date: dueDateVal || null,
           payment_type: form.payment_type, credit_days: isCredit ? creditDays : null,
           bill_ref: form.bill_ref || null,
@@ -1359,9 +1372,7 @@ function BillsTab({ companyId, session }) {
           cgst_amount: cgst_amt, sgst_amount: sgst_amt, igst_amount: igst_amt,
           total_amount: total, balance_due: Math.max(0, total - (Number(editing.paid_amount) || 0)),
           notes: form.notes || null,
-          project_id:     form.project_id   || null,
           equipment_id:   form.equipment_id || null,
-          project_name:   selProj?.project_name || null,
           equipment_name: selEq?.name || null,
         }).eq('id', editing.id)
         if (error) throw error
@@ -1387,13 +1398,13 @@ function BillsTab({ companyId, session }) {
       }
 
       // ── CREATE ──
-      const selProj = billProjects.find(p => p.id === form.project_id)
       const selEq   = billEquipment.find(e => e.id === form.equipment_id)
       const id = crypto.randomUUID()
       const blNum = await nextDocNumber(companyId, 'bill').catch(() => `BL-${Date.now()}`)
       const { error } = await supabase.from('bills').insert({
         id, company_id: companyId, bill_number: blNum,
         vendor_id: form.vendor_id, vendor_name: vendor?.name || '',
+        vendor_gstin: form.vendor_gstin || null,
         bill_date: form.bill_date, due_date: dueDateVal || null,
         payment_type: form.payment_type, credit_days: isCredit ? creditDays : null,
         bill_ref: form.bill_ref || null,
@@ -1405,9 +1416,7 @@ function BillsTab({ companyId, session }) {
         balance_due: total,
         status: 'pending',
         notes: form.notes || null, created_by: session.user.id,
-        project_id:     form.project_id   || null,
         equipment_id:   form.equipment_id || null,
-        project_name:   selProj?.project_name || null,
         equipment_name: selEq?.name || null,
       })
       if (error) throw error
@@ -1685,21 +1694,34 @@ function BillsTab({ companyId, session }) {
               <Field label="Vendor *">
                 <select className={inp()} value={form.vendor_id} onChange={e => {
                   const v = vendors.find(x => x.id === e.target.value)
-                  setForm(p => ({ ...p, vendor_id: e.target.value, vendor_gstin: v?.gstin || '' }))
+                  setForm(p => ({ ...p, vendor_id: e.target.value, vendor_gstin: v?.gstin || 'URP' }))
                 }}>
                   <option value="">-- Select vendor --</option>
-                  {vendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+                  {vendors.map(v => (
+                    <option key={v.id} value={v.id}>
+                      {v.name}{!v.gstin ? ' · URP' : ` · ${v.gstin}`}
+                    </option>
+                  ))}
                 </select>
               </Field>
             </div>
-            <TaxTypeToggle isTax={isTax} onToggle={v => setF('is_tax_invoice', v)} label="Bill" />
-            {isTax && (
-              <div className="col-span-2">
-                <Field label="Vendor GSTIN *">
-                  <input className={inp()} value={form.vendor_gstin} onChange={e => setF('vendor_gstin', e.target.value)} placeholder="22AAAAA0000A1Z5" />
-                </Field>
-              </div>
-            )}
+            <div className="col-span-2">
+              <Field label="Vendor GSTIN">
+                <div className="relative">
+                  <input
+                    className={inp()}
+                    value={form.vendor_gstin}
+                    onChange={e => setF('vendor_gstin', e.target.value)}
+                    placeholder="22AAAAA0000A1Z5 or URP"
+                  />
+                  {(form.vendor_gstin === 'URP' || !form.vendor_gstin) && (
+                    <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] font-bold text-orange-500 bg-orange-100 px-1.5 py-0.5 rounded pointer-events-none">
+                      URP – Unregistered
+                    </span>
+                  )}
+                </div>
+              </Field>
+            </div>
             <Field label="Bill Date"><input type="date" className={inp()} value={form.bill_date} onChange={e => setF('bill_date', e.target.value)} /></Field>
 
             {/* Credit checkbox */}
@@ -1749,38 +1771,35 @@ function BillsTab({ companyId, session }) {
             )}
             <div className="col-span-2"><Field label="Vendor Bill / Reference No."><input className={inp()} value={form.bill_ref} onChange={e => setF('bill_ref', e.target.value)} /></Field></div>
 
-            {/* Project & Equipment tagging */}
+            {/* Facility tagging for P&L */}
             <div className="col-span-2 pt-1">
               <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                <FolderOpen className="w-3.5 h-3.5" /> Project & Equipment (for P&L tracking)
+                <Wrench className="w-3.5 h-3.5" /> Facility / Production Unit (for P&L)
               </p>
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="Project">
-                  <select className={inp()} value={form.project_id} onChange={e => setF('project_id', e.target.value)}>
-                    <option value="">-- No project --</option>
-                    {billProjects.map(p => (
-                      <option key={p.id} value={p.id}>{p.project_name}{p.project_code ? ` (${p.project_code})` : ''}</option>
-                    ))}
-                  </select>
-                </Field>
-                <Field label="Equipment / Machine">
-                  <select className={inp()} value={form.equipment_id} onChange={e => setF('equipment_id', e.target.value)}>
-                    <option value="">-- No machine --</option>
-                    {billEquipment.map(eq => (
-                      <option key={eq.id} value={eq.id}>{eq.name}{eq.equipment_number ? ` · ${eq.equipment_number}` : ''}</option>
-                    ))}
-                  </select>
-                </Field>
-              </div>
-              {(form.project_id || form.equipment_id) && (
-                <p className="text-[10px] text-teal-400 mt-1.5 flex items-center gap-1">
+              <Field label="Facility / Production Unit">
+                <select className={inp()} value={form.equipment_id} onChange={e => setF('equipment_id', e.target.value)}>
+                  <option value="">-- Select facility --</option>
+                  {billEquipment.map(eq => (
+                    <option key={eq.id} value={eq.id}>{eq.name}{eq.equipment_number ? ` · ${eq.equipment_number}` : ''}</option>
+                  ))}
+                </select>
+              </Field>
+              {form.equipment_id && (
+                <p className="text-[10px] text-teal-600 mt-1 flex items-center gap-1">
                   <Wrench className="w-3 h-3" />
-                  Bill amount will appear in Equipment P&amp;L report
+                  Bill amount will appear in Facility P&amp;L report
                 </p>
               )}
             </div>
           </div>
           <LineItemsEditor lines={lines} setLines={setLines} isTax={isTax} />
+
+          {/* Tax Inclusive toggle */}
+          <label className="flex items-center gap-2.5 cursor-pointer select-none mt-1">
+            <input type="checkbox" checked={!!form.tax_inclusive} onChange={e => setF('tax_inclusive', e.target.checked)}
+              className="w-4 h-4 rounded accent-violet-500 cursor-pointer" />
+            <span className="text-xs text-slate-400">Prices are <strong>tax-inclusive</strong> (GST already included in the rates entered above)</span>
+          </label>
 
           {/* ── Add to Inventory (create only) ── */}
           {!editing && (
