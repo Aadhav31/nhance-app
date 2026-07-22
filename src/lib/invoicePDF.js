@@ -34,27 +34,26 @@ import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import QRCode from 'qrcode'
 
-// ── Logo loader: URL → base64 for jsPDF.addImage ─────────────────────────────
+// ── Logo loader: URL → base64 via Image+canvas (handles cross-origin CDN URLs) ─
 async function loadLogoAsBase64(url) {
   if (!url) return null
-  try {
-    const res = await fetch(url)
-    if (!res.ok) return null
-    const blob = await res.blob()
-    return new Promise((resolve) => {
-      const reader = new FileReader()
-      reader.onloadend = () => resolve(reader.result)
-      reader.onerror  = () => resolve(null)
-      reader.readAsDataURL(blob)
-    })
-  } catch { return null }
+  return new Promise((resolve) => {
+    const img = new Image()
+    img.crossOrigin = 'anonymous'
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas')
+        canvas.width  = img.naturalWidth  || img.width
+        canvas.height = img.naturalHeight || img.height
+        canvas.getContext('2d').drawImage(img, 0, 0)
+        resolve(canvas.toDataURL('image/png'))
+      } catch { resolve(null) }
+    }
+    img.onerror = () => resolve(null)
+    img.src = url.includes('?') ? url : url + '?t=' + Date.now()
+  })
 }
-function getImgFmt(dataUrl) {
-  if (!dataUrl) return 'JPEG'
-  if (dataUrl.includes('image/png'))  return 'PNG'
-  if (dataUrl.includes('image/webp')) return 'WEBP'
-  return 'JPEG'
-}
+function getImgFmt() { return 'PNG' }  // canvas.toDataURL always yields PNG
 
 // ── QR code (generated locally — no external API, no network dependency) ──────
 // verifyUrl is preferred (short UUID URL → small QR, opens verification page).
