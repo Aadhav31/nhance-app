@@ -69,7 +69,7 @@ CREATE POLICY "company members can manage daily_operations"
   ON daily_operations FOR ALL
   USING (
     company_id IN (
-      SELECT company_id FROM user_profiles WHERE user_id = auth.uid()
+      SELECT company_id FROM user_profiles WHERE id = auth.uid()
     )
   );
 
