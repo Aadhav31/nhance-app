@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import { nextDocNumber } from '../../utils/docNumbers'
+import { UOM_LIST } from '../../utils/units'
 import {
   Package, Plus, X, Loader2, Search, ChevronRight, AlertTriangle,
   ArrowDownCircle, ArrowUpCircle, RefreshCcw, Shuffle, Store,
@@ -30,7 +31,7 @@ const CATEGORIES = [
 
 const CAT_MAP = Object.fromEntries(CATEGORIES.map(c => [c.value, c]))
 
-const UNITS = ['tonnes','MT','ton','kg','g','unit','nos','bag','box','litre','ml','m','m2','m3','ft','inch','set','pair','roll','sheet','length']
+const UNITS = UOM_LIST
 
 function CategoryBadge({ cat }) {
   const c = CAT_MAP[cat] || { label: cat, bg: 'bg-slate-500/10 border-slate-400/50', color: 'text-slate-500' }

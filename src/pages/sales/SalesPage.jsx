@@ -5,6 +5,7 @@ import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import { lookupHsnSac } from '../../utils/hsnSacLookup'
 import { nextDocNumber } from '../../utils/docNumbers'
+import { UOM_LIST } from '../../utils/units'
 import {
   Plus, X, Loader2, FileText, TrendingUp, Truck, RefreshCcw,
   ArrowDownCircle, ShoppingCart, ChevronRight, CheckCircle,
@@ -94,7 +95,7 @@ function Field({ label, children, required }) {
 
 const blankLine = () => ({ _id: Math.random().toString(36).slice(2), description: '', hsn_sac: '', quantity: 1, unit: 'hrs', rate: '', amount: 0, _gst_rate: null, _gst_desc: null, _hsn_open: false })
 
-const LINE_UNITS = ['unit','nos','hrs','days','kg','ton','m3','km','ls','set','mtr','sqm','sqft','cum','rmt','ltr']
+const LINE_UNITS = UOM_LIST
 
 function LineItemsEditor({ lines, setLines, onGstRate, isTax }) {
   const update = (id, key, val) => setLines(p => p.map(l => {

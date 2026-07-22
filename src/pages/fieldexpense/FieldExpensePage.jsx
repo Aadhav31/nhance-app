@@ -10,6 +10,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import { nextDocNumber } from '../../utils/docNumbers'
+import { UOM_LIST } from '../../utils/units'
 import {
   Receipt, Camera, X, ChevronDown, Loader2, CheckCircle2,
   ArrowLeft, Plus, AlertCircle, IndianRupee, Smartphone,
@@ -56,7 +57,7 @@ const PAYMENT_MODES = [
 ]
 const PAY_MAP = Object.fromEntries(PAYMENT_MODES.map(m => [m.value, m]))
 
-const INV_UNITS = ['unit','nos','kg','g','ton','litre','ml','m','m2','m3','ft','inch','set','box','bag','pair','roll','sheet','length']
+const INV_UNITS = UOM_LIST
 
 // ── Photo capture ─────────────────────────────────────────────────────────────
 function PhotoCapture({ label, value, onChange }) {

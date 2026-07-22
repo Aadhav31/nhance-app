@@ -4,6 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import { lookupHsnSac } from '../../utils/hsnSacLookup'
 import { nextDocNumber } from '../../utils/docNumbers'
+import { UOM_LIST } from '../../utils/units'
 import {
   Plus, X, Loader2, ShoppingCart, FileText, Building, CreditCard,
   ArrowUpCircle, RefreshCcw, Wallet, Search, ChevronRight,
@@ -93,7 +94,7 @@ const INV_CATEGORIES = [
   { value: 'consumable',   label: 'Consumable' },
 ]
 
-const LINE_UNITS = ['unit','nos','hrs','days','kg','ton','m3','km','ls','set','mtr','sqm','sqft','cum','rmt','ltr']
+const LINE_UNITS = UOM_LIST
 
 function LineItemsEditor({ lines, setLines, isTax }) {
   const update = (id, key, val) => setLines(p => p.map(l => {

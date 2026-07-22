@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
+import { UOM_LIST } from '../../utils/units'
 import { VendorPicker } from '../../components/shared/EntityPicker'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
@@ -34,22 +35,7 @@ const EXPENSE_CATS = [
 ]
 
 const PAYMENT_MODES = ['cash', 'bank', 'upi', 'cheque']
-const UNITS = [
-  // Time
-  'hrs', 'days', 'weeks', 'months',
-  // Count / Lump Sum
-  'nos', 'LS', 'set', 'trips',
-  // Volume
-  'cum', 'm3',
-  // Area
-  'sqm', 'sqft',
-  // Length
-  'mtr', 'rmt', 'km',
-  // Weight
-  'mt', 'kg', 'ton',
-  // Liquid
-  'ltr',
-]
+const UNITS = UOM_LIST
 
 const INV_STATUS = {
   draft:     { label: 'Draft',     cls: 'bg-slate-500/20 text-slate-400 border-slate-600' },
