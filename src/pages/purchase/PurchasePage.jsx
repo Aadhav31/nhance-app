@@ -1603,6 +1603,12 @@ function BillsTab({ companyId, session }) {
 
   const totalPending = bills.filter(b => b.status !== 'paid' && b.status !== 'cancelled').reduce((s, b) => s + Number(b.balance_due || 0), 0)
 
+  // EOD / end-of-shift draft bill alert
+  const todayISO        = todayStr()
+  const currentHour     = new Date().getHours()
+  const isApproachingEOD = currentHour >= 17  // 5 PM onwards
+  const draftBillsToday = bills.filter(b => b.status === 'draft' && b.bill_date === todayISO)
+
   return (
     <div className="flex flex-col h-full">
       <div className="px-4 py-3 border-b border-dark-800 shrink-0 flex items-center justify-between">
@@ -1610,6 +1616,24 @@ function BillsTab({ companyId, session }) {
         <button onClick={openCreate} className="btn-primary"><Plus className="w-4 h-4" /> New Bill</button>
       </div>
       <div className="flex-1 overflow-y-auto px-4 pb-4 pt-3">
+
+        {/* ── EOD / End-of-shift draft bill alert ── */}
+        {draftBillsToday.length > 0 && (
+          <div className={`rounded-xl p-3 mb-3 border ${isApproachingEOD ? 'bg-red-500/10 border-red-500/40' : 'bg-amber-500/10 border-amber-500/30'}`}>
+            <div className="flex items-center gap-2">
+              <span className="text-base leading-none">{isApproachingEOD ? '🔴' : '⏰'}</span>
+              <div>
+                <p className={`text-xs font-bold ${isApproachingEOD ? 'text-red-400' : 'text-amber-400'}`}>
+                  {isApproachingEOD ? 'End of Shift — Action Required!' : 'Bills Pending Initiation'}
+                </p>
+                <p className={`text-[11px] mt-0.5 ${isApproachingEOD ? 'text-red-300/80' : 'text-amber-300/70'}`}>
+                  {draftBillsToday.length} bill{draftBillsToday.length > 1 ? 's' : ''} from today's stock receipts not yet initiated — click <strong>Initiate Bill</strong> to confirm and go live.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Pending stock receipts — each gets its own Create Bill button */}
         {pendingStockBills.length > 0 && (
           <div className="bg-amber-50 border border-amber-300 rounded-xl p-3 mb-3">
@@ -1696,7 +1720,16 @@ function BillsTab({ companyId, session }) {
                   )}
                 </div>
                 <div className="flex items-center gap-1">
-                  {b.status !== 'cancelled' && <button onClick={() => openEdit(b)} className="p-1.5 rounded-lg text-slate-500 hover:text-blue-400 hover:bg-blue-900/20" title="Edit"><Pencil className="w-3.5 h-3.5" /></button>}
+                  {/* Draft bills: show Initiate Bill CTA; others: show pencil edit */}
+                  {b.status === 'draft' ? (
+                    <button
+                      onClick={() => openEdit(b)}
+                      className="flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 bg-primary-600 hover:bg-primary-500 text-white rounded-lg transition-colors whitespace-nowrap">
+                      Initiate Bill →
+                    </button>
+                  ) : b.status !== 'cancelled' ? (
+                    <button onClick={() => openEdit(b)} className="p-1.5 rounded-lg text-slate-500 hover:text-blue-400 hover:bg-blue-900/20" title="Edit"><Pencil className="w-3.5 h-3.5" /></button>
+                  ) : null}
                   {b.status !== 'cancelled' && <button onClick={() => { setLinkPayBill(b); setLinkSelIds(new Set()) }} className="p-1.5 rounded-lg text-slate-500 hover:text-violet-400 hover:bg-violet-900/20" title="Link advance payment to this bill"><Link2 className="w-3.5 h-3.5" /></button>}
                   {b.status !== 'cancelled' && <button onClick={() => voidBill(b)} className="p-1.5 rounded-lg text-slate-500 hover:text-yellow-400 hover:bg-yellow-900/20" title="Void"><Ban className="w-3.5 h-3.5" /></button>}
                   {<button onClick={() => deleteBill(b)} className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-900/20" title="Delete"><Trash2 className="w-3.5 h-3.5" /></button>}
