@@ -232,7 +232,7 @@ export async function generateInvoicePDF(invoice, lineItems, company, verifyUrl 
   // ── QR code (right area) — generated from invoice verification payload ──
   const qrPayload = buildQRPayload(invoice, company, verifyUrl)
   const qrDataUrl  = await makeQRDataURL(qrPayload)
-  const logoBase64 = await loadLogoAsBase64(company?.logo_url)
+  const logoBase64 = company?.logo_base64 || null   // pre-encoded at upload time, no fetch needed
   if (qrDataUrl) {
     // Center a 24×24 mm QR square in the 48×28 mm box
     const qrSize = 24

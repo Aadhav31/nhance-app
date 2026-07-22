@@ -1764,7 +1764,7 @@ async function downloadCrusherPDF(inv, items, companyInfo = {}, clientInfo = nul
   tx('ORIGINAL FOR RECIPIENT', W - MR, 8, { align: 'right' })
 
   // ── LOGO / COMPANY HEADER ─────────────────────────────────────────────────────
-  const logoBase64 = await loadLogoAsBase64(companyInfo.logo_url)
+  const logoBase64 = companyInfo.logo_base64 || null   // pre-encoded at upload time
   if (logoBase64) {
     // Logo image: up to 40mm wide, 20mm tall — top-left corner
     doc.addImage(logoBase64, getImgFmt(logoBase64), ML, 6, 40, 20, '', 'FAST')
@@ -2983,7 +2983,7 @@ function InvoicesTab({ companyId }) {
       }
       // Company details (fetch all fields for PDF — missing cols return null gracefully)
       const { data: co } = await supabase.from('companies')
-        .select('name, address, phone, phone2, office_phone, email, gstin, msme, bank_name, bank_account_number, bank_branch, bank_ifsc, upi_id, logo_url')
+        .select('name, address, phone, phone2, office_phone, email, gstin, msme, bank_name, bank_account_number, bank_branch, bank_ifsc, upi_id, logo_url, logo_base64')
         .eq('id', companyId).single()
       const companyInfo = co || { name: company?.name }
       // Client details (if registered, not walk-in)
