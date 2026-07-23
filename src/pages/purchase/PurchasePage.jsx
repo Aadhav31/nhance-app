@@ -10,8 +10,9 @@ import {
   ArrowUpCircle, RefreshCcw, Wallet, Search, ChevronRight,
   CheckCircle, User, Phone, Mail, MapPin, Hash, Upload, ExternalLink,
   Pencil, Trash2, Ban, FileDown, Sheet, ShieldOff,
-  Paperclip, Camera, Eye, Link2, Unlink, FolderOpen, Wrench,
+  Paperclip, Camera, Eye, Link2, Unlink, FolderOpen, Wrench, Truck,
 } from 'lucide-react'
+import VehiclesTab from '../../components/vehicles/VehiclesTab'
 import toast from 'react-hot-toast'
 import { format } from 'date-fns'
 import {
@@ -2712,6 +2713,7 @@ export default function PurchasePage() {
     { id: 'pos',      label: 'Purchase Orders',   icon: ShoppingCart },
     { id: 'vcredits', label: 'Vendor Credits',    icon: RefreshCcw },
     { id: 'payments', label: 'Payments Made',     icon: ArrowUpCircle },
+    { id: 'vehicles', label: 'Vehicles',          icon: Truck },
   ]
 
   return (
@@ -2748,6 +2750,11 @@ export default function PurchasePage() {
         {activeTab === 'pos'      && <PurchaseOrdersTab companyId={companyId} session={session} />}
         {activeTab === 'vcredits' && <VendorCreditsTab  companyId={companyId} session={session} />}
         {activeTab === 'payments' && <PaymentsMadeTab   companyId={companyId} session={session} />}
+        {activeTab === 'vehicles' && (
+          <div className="flex-1 overflow-y-auto p-4">
+            <VehiclesTab context="purchase" />
+          </div>
+        )}
       </div>
     </div>
   )

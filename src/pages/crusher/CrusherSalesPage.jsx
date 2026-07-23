@@ -11,6 +11,7 @@ import {
 import toast from 'react-hot-toast'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
+import UnifiedVehiclesTab from '../../components/vehicles/VehiclesTab'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const TABS = [
@@ -5569,7 +5570,11 @@ export default function CrusherSalesPage() {
         {tab === 'invoices'  && <InvoicesTab   companyId={companyId} />}
         {tab === 'aging'     && <AgingTab      companyId={companyId} />}
         {tab === 'clients'   && <ClientsTab    companyId={companyId} />}
-        {tab === 'vehicles'  && <VehiclesTab   companyId={companyId} />}
+        {tab === 'vehicles'  && (
+          <div className="overflow-y-auto p-4 h-full">
+            <UnifiedVehiclesTab context="sales" />
+          </div>
+        )}
         {tab === 'locations' && <LocationsTab  companyId={companyId} />}
         {tab === 'materials' && <MaterialsTab  companyId={companyId} />}
       </div>
