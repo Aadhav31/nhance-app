@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS vehicles (
 -- ── 2. Migrate existing crusher_client_vehicles data ────────────────────────
 INSERT INTO vehicles (
   company_id, vehicle_number, vehicle_type, ownership_type,
-  client_id, driver_name, is_active, created_at
+  client_id, is_active, created_at
 )
 SELECT
   ccv.company_id,
@@ -50,7 +50,6 @@ SELECT
     ELSE 'client'
   END,
   ccv.client_id,
-  ccv.driver_name,
   TRUE,
   NOW()
 FROM crusher_client_vehicles ccv
