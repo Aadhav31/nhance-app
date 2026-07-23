@@ -861,12 +861,27 @@ function StockInTab({ companyId, session }) {
   const [receiptMode, setReceiptMode] = useState('direct') // 'direct' | 'against_bill'
   const [linkBillId, setLinkBillId]   = useState('')
   const [autoDraft, setAutoDraft]     = useState(true)
-  const blankForm = () => ({ item_id:'', store_id:'', quantity:'', unit:'tonnes', unit_cost:'', txn_date: todayStr(), vendor_id:'', notes:'', vehicle_number:'', transport_cost:'' })
+  const blankForm = () => ({ item_id:'', store_id:'', quantity:'', unit:'tonnes', unit_cost:'', txn_date: todayStr(), vendor_id:'', notes:'', vehicle_number:'', vehicle_id:'', transport_cost:'' })
   const [form, setForm] = useState(blankForm())
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
   const { items, stores, vendors } = useInventoryData(companyId)
 
-  // Company fleet — used for vehicle ownership auto-detection
+  // Unified vehicles registry (new table) — primary vehicle picker source
+  const { data: regVehicles = [] } = useQuery({
+    queryKey: ['vehicles-unified', companyId],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('vehicles')
+        .select('id, vehicle_number, vehicle_type, ownership_type, vendor_id, client_id, driver_name, transport_rate, transport_rate_unit, vendors(id, name)')
+        .eq('company_id', companyId)
+        .eq('is_active', true)
+        .order('vehicle_number')
+      if (error) return [] // graceful: migration may not be run yet
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+
+  // Company fleet — fallback datalist for unregistered vehicles
   const { data: fleetVehicles = [] } = useQuery({
     queryKey: ['fleet-vehicles-inv', companyId],
     queryFn: async () => {
@@ -1000,6 +1015,49 @@ function StockInTab({ companyId, session }) {
         }
       }
 
+      // ── Transport bill for registered vendor vehicles ───────────────────────
+      let transportBillId  = null
+      let transportCostVal = null
+      if (isCrusherGrade && form.vehicle_id) {
+        const regVeh = regVehicles.find(v => v.id === form.vehicle_id)
+        if (regVeh && ['vendor','transporter'].includes(regVeh.ownership_type) && regVeh.vendor_id) {
+          // Calculate transport cost
+          const enteredTc = parseFloat(form.transport_cost) || 0
+          const qty2 = parseFloat(form.quantity) || 0
+          const autoTc = regVeh.transport_rate
+            ? regVeh.transport_rate_unit === 'per_trip' ? regVeh.transport_rate
+            : regVeh.transport_rate_unit === 'per_ton'  ? regVeh.transport_rate * qty2
+            : 0
+            : 0
+          transportCostVal = enteredTc > 0 ? enteredTc : autoTc
+          if (transportCostVal > 0) {
+            // Create a separate draft transport bill for the transporter
+            const tBlNum = await nextDocNumber(companyId, 'bill').catch(() => `TBL-${Date.now()}`)
+            const tBillId = crypto.randomUUID()
+            const { error: tBillErr } = await supabase.from('bills').insert({
+              id: tBillId,
+              company_id: companyId,
+              bill_number: tBlNum,
+              vendor_id: regVeh.vendor_id,
+              vendor_name: regVeh.vendors?.name || '',
+              bill_date: form.txn_date,
+              subtotal: transportCostVal,
+              total_amount: transportCostVal,
+              paid_amount: 0,
+              balance_due: transportCostVal,
+              status: 'draft',
+              notes: `Transport bill — ${regVeh.vehicle_number} · GRN ${txnNum}`,
+              created_by: session.user.id,
+            })
+            if (tBillErr) {
+              console.warn('[transport-bill] creation failed:', tBillErr.message)
+            } else {
+              transportBillId = tBillId
+            }
+          }
+        }
+      }
+
       // Build payload dynamically — only include extended columns when they carry
       // an actual value. This prevents 400 errors when DB migrations haven't been
       // run yet (Supabase rejects inserts that reference non-existent columns,
@@ -1018,18 +1076,31 @@ function StockInTab({ companyId, session }) {
       if (form.unit)                                   txnPayload.unit          = form.unit
       if (requiresBill)                                txnPayload.requires_bill = true
       if (billIdToLink)                                txnPayload.bill_id       = billIdToLink
-      if (isCrusherGrade && form.vehicle_number?.trim()) {
-        txnPayload.vehicle_number = form.vehicle_number.trim()
-        // Determine ownership type from fleet lookup
-        const fleetMatch = fleetVehicles.find(
-          v => v.registration_number?.toUpperCase() === form.vehicle_number.trim().toUpperCase()
-        )
-        const ownershipType = fleetMatch ? 'company_fleet' : 'external_hired'
-        txnPayload.vehicle_ownership_type = ownershipType
-        // Transport cost only for external hired vehicles
-        const tc = parseFloat(form.transport_cost) || 0
-        if (ownershipType === 'external_hired' && tc > 0) {
-          txnPayload.transport_cost = tc
+      if (isCrusherGrade) {
+        // Registered vehicle from unified table takes priority
+        if (form.vehicle_id) {
+          const regVeh = regVehicles.find(v => v.id === form.vehicle_id)
+          txnPayload.vehicle_number = regVeh?.vehicle_number || form.vehicle_number?.trim() || null
+          txnPayload.vehicle_id = form.vehicle_id
+          if (['vendor','transporter'].includes(regVeh?.ownership_type)) {
+            txnPayload.vehicle_ownership_type = 'external_hired'
+          } else {
+            txnPayload.vehicle_ownership_type = 'company_fleet'
+          }
+          if (transportCostVal > 0)  txnPayload.transport_cost    = transportCostVal
+          if (transportBillId)       txnPayload.transport_bill_id = transportBillId
+        } else if (form.vehicle_number?.trim()) {
+          // Unregistered vehicle — legacy fleet lookup
+          txnPayload.vehicle_number = form.vehicle_number.trim()
+          const fleetMatch = fleetVehicles.find(
+            v => v.registration_number?.toUpperCase() === form.vehicle_number.trim().toUpperCase()
+          )
+          const ownershipType = fleetMatch ? 'company_fleet' : 'external_hired'
+          txnPayload.vehicle_ownership_type = ownershipType
+          const tc = parseFloat(form.transport_cost) || 0
+          if (ownershipType === 'external_hired' && tc > 0) {
+            txnPayload.transport_cost = tc
+          }
         }
       }
       if (receiptMode === 'direct' && form.vendor_id) {
@@ -1072,6 +1143,10 @@ function StockInTab({ companyId, session }) {
 
       if (receiptMode === 'against_bill')
         toast.success(`Stock received — ${txnNum} · Linked to bill`)
+      else if (transportBillId && billIdToLink)
+        toast.success(`Stock received — ${txnNum} · Material bill + transport bill created`)
+      else if (transportBillId)
+        toast.success(`Stock received — ${txnNum} · Transport draft bill created in Purchase`)
       else if (billIdToLink)
         toast.success(`Stock received — ${txnNum} · Draft bill created in Purchase`)
       else if (requiresBill)
@@ -1107,7 +1182,21 @@ function StockInTab({ companyId, session }) {
     const item = items.find(i => i.id === id)
     if (item?.avg_unit_cost) setF('unit_cost', String(item.avg_unit_cost))
     if (item?.unit) setF('unit', item.unit)
-    if (!item?._isGrade) setF('vehicle_number', '')
+    if (!item?._isGrade) setForm(p => ({ ...p, item_id: id, vehicle_number: '', vehicle_id: '' }))
+  }
+
+  // Handle vehicle picker selection from unified vehicles registry
+  const onVehicleSelect = (vehicleId) => {
+    const v = regVehicles.find(r => r.id === vehicleId)
+    setForm(p => ({
+      ...p,
+      vehicle_id: vehicleId,
+      vehicle_number: v?.vehicle_number || p.vehicle_number,
+      // Auto-set transport cost for per_trip vehicles
+      transport_cost: v && ['vendor','transporter'].includes(v.ownership_type) && v.transport_rate && v.transport_rate_unit === 'per_trip'
+        ? String(v.transport_rate)
+        : '',
+    }))
   }
 
   return (
@@ -1178,14 +1267,27 @@ function StockInTab({ companyId, session }) {
         const isCrusherGrade = !!(selectedItem?._isGrade || selectedItem?.grade_id)
         const selectedVendor = vendors.find(v => v.id === form.vendor_id)
         const selectedBill   = openBills.find(b => b.id === linkBillId)
-        // Auto-detect vehicle ownership from fleet DB
-        const fleetMatch = form.vehicle_number?.trim()
+        // Unified vehicle registry selection
+        const selectedRegVeh = regVehicles.find(v => v.id === form.vehicle_id)
+        const isVendorVehicle = selectedRegVeh && ['vendor','transporter'].includes(selectedRegVeh.ownership_type)
+        const hasTransportRate = isVendorVehicle && selectedRegVeh.transport_rate > 0
+        // Compute expected transport cost from rate
+        const qty = parseFloat(form.quantity) || 0
+        const computedTransportCost = hasTransportRate
+          ? selectedRegVeh.transport_rate_unit === 'per_trip' ? selectedRegVeh.transport_rate
+          : selectedRegVeh.transport_rate_unit === 'per_ton'  ? selectedRegVeh.transport_rate * qty
+          : null  // per_km needs manual entry
+          : null
+        // Fleet fallback for unregistered vehicles
+        const fleetMatch = !form.vehicle_id && form.vehicle_number?.trim()
           ? fleetVehicles.find(v => v.registration_number?.toUpperCase() === form.vehicle_number.trim().toUpperCase())
           : null
-        const vehicleStatus = form.vehicle_number?.trim()
+        const vehicleStatus = form.vehicle_id
+          ? (isVendorVehicle ? 'vendor_transport' : 'own_or_client')
+          : form.vehicle_number?.trim()
           ? (fleetMatch ? 'company_fleet' : 'external_hired')
           : null
-        const costLabel = vehicleStatus === 'company_fleet'
+        const costLabel = (vehicleStatus === 'company_fleet' || vehicleStatus === 'vendor_transport')
           ? 'Material Unit Cost per unit (₹)'
           : vehicleStatus === 'external_hired'
           ? 'Material Unit Cost per unit (₹)'
@@ -1253,37 +1355,82 @@ function StockInTab({ companyId, session }) {
               )}
             </div>
 
-            {/* ── Vehicle number — crusher grades only ── */}
+            {/* ── Vehicle picker — crusher grades only ── */}
             {isCrusherGrade && (
               <div className="col-span-2">
-                <Field label="Vehicle Number">
-                  <div className="flex gap-2 items-center">
-                    <input
-                      list="vehicle-list"
-                      className={inp() + ' flex-1'}
-                      value={form.vehicle_number}
+                <Field label="Vehicle">
+                  {regVehicles.length > 0 ? (
+                    <select className={inp()} value={form.vehicle_id}
+                      onChange={e => {
+                        if (e.target.value === '__manual') {
+                          setForm(p => ({ ...p, vehicle_id: '', vehicle_number: '' }))
+                        } else {
+                          onVehicleSelect(e.target.value)
+                        }
+                      }}>
+                      <option value="">-- Select registered vehicle --</option>
+                      {['own','vendor','transporter','client'].map(ot => {
+                        const group = regVehicles.filter(v => v.ownership_type === ot)
+                        if (!group.length) return null
+                        const groupLabel = { own:'Own Fleet', vendor:'Vendor / Hired', transporter:'Transporter', client:"Client's Vehicle" }[ot]
+                        return (
+                          <optgroup key={ot} label={`── ${groupLabel} ──`}>
+                            {group.map(v => (
+                              <option key={v.id} value={v.id}>
+                                {v.vehicle_number} · {v.vehicle_type}
+                                {v.vendors?.name ? ` · ${v.vendors.name}` : ''}
+                                {v.transport_rate ? ` · ₹${v.transport_rate}/${v.transport_rate_unit?.replace('per_','')}` : ''}
+                              </option>
+                            ))}
+                          </optgroup>
+                        )
+                      })}
+                      <option value="__manual">⌨ Enter manually (unregistered vehicle)</option>
+                    </select>
+                  ) : (
+                    /* Registry empty — fall back to text input with fleet datalist */
+                    <div className="flex gap-2 items-center">
+                      <input list="vehicle-list" className={inp() + ' flex-1'} value={form.vehicle_number}
+                        onChange={e => setF('vehicle_number', e.target.value.toUpperCase())}
+                        placeholder="e.g. TN 39 AB 1234" />
+                      <datalist id="vehicle-list">
+                        {fleetVehicles.map(v => (
+                          <option key={v.id} value={v.registration_number}>
+                            {v.name ? `${v.registration_number} · ${v.name}` : v.registration_number}
+                          </option>
+                        ))}
+                      </datalist>
+                    </div>
+                  )}
+                  {/* Manual text entry when selected from picker or registry empty */}
+                  {(form.vehicle_id === '' && regVehicles.length > 0) || !form.vehicle_id ? null : null}
+                  {form.vehicle_id === '' && regVehicles.length > 0 && (
+                    <input className={inp() + ' mt-1'} value={form.vehicle_number}
                       onChange={e => setF('vehicle_number', e.target.value.toUpperCase())}
-                      placeholder="e.g. TN 39 AB 1234"
-                    />
-                    <datalist id="vehicle-list">
-                      {fleetVehicles.map(v => (
-                        <option key={v.id} value={v.registration_number}>
-                          {v.name ? `${v.registration_number} · ${v.name}` : v.registration_number}
-                          {v.ownership_type === 'hired' ? ' (Hired)' : ''}
-                        </option>
-                      ))}
-                    </datalist>
-                  </div>
-                  {/* Live ownership detection feedback */}
+                      placeholder="Vehicle number (manual)" />
+                  )}
+                  {/* Status hints */}
+                  {vehicleStatus === 'vendor_transport' && (
+                    <p className="text-[11px] text-amber-400 mt-1 bg-amber-500/10 rounded px-2 py-1">
+                      🚛 <strong>{selectedRegVeh?.vendors?.name || 'Vendor'}</strong> vehicle
+                      {hasTransportRate
+                        ? ` · Rate: ₹${selectedRegVeh.transport_rate}/${selectedRegVeh.transport_rate_unit?.replace('per_','')} → auto-draft transport bill`
+                        : ' · No transport rate set — enter cost manually'}
+                    </p>
+                  )}
+                  {vehicleStatus === 'own_or_client' && (
+                    <p className="text-[11px] text-emerald-400 mt-1 bg-emerald-500/10 rounded px-2 py-1">
+                      ✓ {selectedRegVeh?.ownership_type === 'own' ? 'Own fleet' : "Client's vehicle"} — no transport bill generated
+                    </p>
+                  )}
                   {vehicleStatus === 'company_fleet' && (
                     <p className="text-[11px] text-purple-400 mt-1 bg-purple-500/10 rounded px-2 py-1">
-                      🏗 <strong>Company Fleet</strong>
-                      {fleetMatch?.ownership_type === 'hired' ? ' (Hired-In)' : ' (Owned)'} — bill covers <strong>materials only</strong>; transport tracked separately
+                      🏗 <strong>Company Fleet</strong>{fleetMatch?.ownership_type === 'hired' ? ' (Hired-In)' : ' (Owned)'} — bill covers <strong>materials only</strong>
                     </p>
                   )}
                   {vehicleStatus === 'external_hired' && (
                     <p className="text-[11px] text-amber-400 mt-1 bg-amber-500/10 rounded px-2 py-1">
-                      🚛 <strong>External Vehicle</strong> — not in your fleet. Enter transport cost below.
+                      🚛 <strong>External Vehicle</strong> — not in registry. Enter transport cost below if applicable.
                     </p>
                   )}
                 </Field>
@@ -1336,22 +1483,33 @@ function StockInTab({ companyId, session }) {
                     </Field>
                   </div>
                   {form.vendor_id && (<>
-                    {/* Transport cost — only for external hired vehicles */}
-                    {vehicleStatus === 'external_hired' && (
+                    {/* Transport cost — for external hired vehicles or vendor/transporter registered vehicles */}
+                    {(vehicleStatus === 'external_hired' || (vehicleStatus === 'vendor_transport' && isVendorVehicle)) && (
                       <div className="col-span-2">
-                        <Field label="Transport Cost (₹) — this delivery">
+                        <Field label={hasTransportRate && selectedRegVeh?.transport_rate_unit !== 'per_km'
+                          ? `Transport Cost (₹) — auto-calculated`
+                          : 'Transport Cost (₹) — this delivery'}>
                           <input
                             type="number"
                             className={inp()}
                             value={form.transport_cost}
                             onChange={e => setF('transport_cost', e.target.value)}
                             step="0.01"
-                            placeholder="e.g. 1200"
+                            placeholder={computedTransportCost != null ? String(computedTransportCost) : 'e.g. 1200'}
                           />
                         </Field>
-                        <p className="text-[11px] text-orange-400/80 mt-1 bg-orange-500/10 rounded px-2 py-1">
-                          ⚡ Transport cost is recorded against this GRN and billed separately to the transporter. Material unit cost above = materials only.
-                        </p>
+                        {vehicleStatus === 'vendor_transport' && hasTransportRate && (
+                          <p className="text-[11px] text-amber-400/80 mt-1 bg-amber-500/10 rounded px-2 py-1">
+                            ⚡ Rate: ₹{selectedRegVeh.transport_rate}/{selectedRegVeh.transport_rate_unit?.replace('per_','')}
+                            {computedTransportCost != null ? ` = ₹${computedTransportCost.toLocaleString('en-IN')} auto-filled` : ' — enter cost'}
+                            {' · '}A separate draft transport bill will be created for <strong>{selectedRegVeh.vendors?.name || 'this vendor'}</strong>
+                          </p>
+                        )}
+                        {vehicleStatus === 'external_hired' && (
+                          <p className="text-[11px] text-orange-400/80 mt-1 bg-orange-500/10 rounded px-2 py-1">
+                            ⚡ External vehicle — transport cost recorded against this GRN.
+                          </p>
+                        )}
                       </div>
                     )}
                     {vehicleStatus === 'company_fleet' && (
