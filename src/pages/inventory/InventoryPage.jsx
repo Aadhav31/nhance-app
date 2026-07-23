@@ -1018,7 +1018,7 @@ function StockInTab({ companyId, session }) {
       // ── Transport bill for registered vendor vehicles ───────────────────────
       let transportBillId  = null
       let transportCostVal = null
-      if (isCrusherGrade && form.vehicle_id) {
+      if (form.vehicle_id) {
         const regVeh = regVehicles.find(v => v.id === form.vehicle_id)
         if (regVeh && ['vendor','transporter'].includes(regVeh.ownership_type) && regVeh.vendor_id) {
           // Calculate transport cost
@@ -1077,7 +1077,7 @@ function StockInTab({ companyId, session }) {
       if (form.unit)                                   txnPayload.unit          = form.unit
       if (requiresBill)                                txnPayload.requires_bill = true
       if (billIdToLink)                                txnPayload.bill_id       = billIdToLink
-      if (isCrusherGrade) {
+      if (form.vehicle_id || form.vehicle_number?.trim()) {
         // Registered vehicle from unified table takes priority
         if (form.vehicle_id) {
           const regVeh = regVehicles.find(v => v.id === form.vehicle_id)
@@ -1183,7 +1183,7 @@ function StockInTab({ companyId, session }) {
     const item = items.find(i => i.id === id)
     if (item?.avg_unit_cost) setF('unit_cost', String(item.avg_unit_cost))
     if (item?.unit) setF('unit', item.unit)
-    if (!item?._isGrade) setForm(p => ({ ...p, item_id: id, vehicle_number: '', vehicle_id: '' }))
+    // vehicle selection persists across item changes
   }
 
   // Handle vehicle picker selection from unified vehicles registry
@@ -1357,8 +1357,8 @@ function StockInTab({ companyId, session }) {
               )}
             </div>
 
-            {/* ── Vehicle picker — crusher grades only ── */}
-            {isCrusherGrade && (
+            {/* ── Vehicle picker — all stock receipts ── */}
+            {(
               <div className="col-span-2">
                 <Field label="Vehicle">
                   {regVehicles.length > 0 ? (
