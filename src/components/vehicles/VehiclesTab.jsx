@@ -25,6 +25,7 @@ const OWNERSHIP_TYPES = [
 const RATE_UNITS = [
   { value: 'per_trip', label: 'Per Trip' },
   { value: 'per_ton',  label: 'Per Ton' },
+  { value: 'per_unit', label: 'Per Unit' },
   { value: 'per_km',   label: 'Per KM' },
 ]
 

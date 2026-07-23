@@ -1027,6 +1027,7 @@ function StockInTab({ companyId, session }) {
           const autoTc = regVeh.transport_rate
             ? regVeh.transport_rate_unit === 'per_trip' ? regVeh.transport_rate
             : regVeh.transport_rate_unit === 'per_ton'  ? regVeh.transport_rate * qty2
+            : regVeh.transport_rate_unit === 'per_unit' ? regVeh.transport_rate * qty2
             : 0
             : 0
           transportCostVal = enteredTc > 0 ? enteredTc : autoTc
@@ -1192,7 +1193,7 @@ function StockInTab({ companyId, session }) {
       ...p,
       vehicle_id: vehicleId,
       vehicle_number: v?.vehicle_number || p.vehicle_number,
-      // Auto-set transport cost for per_trip vehicles
+      // Auto-set transport cost for per_trip vehicles (per_ton/per_unit computed at save time from qty)
       transport_cost: v && ['vendor','transporter'].includes(v.ownership_type) && v.transport_rate && v.transport_rate_unit === 'per_trip'
         ? String(v.transport_rate)
         : '',
@@ -1276,6 +1277,7 @@ function StockInTab({ companyId, session }) {
         const computedTransportCost = hasTransportRate
           ? selectedRegVeh.transport_rate_unit === 'per_trip' ? selectedRegVeh.transport_rate
           : selectedRegVeh.transport_rate_unit === 'per_ton'  ? selectedRegVeh.transport_rate * qty
+          : selectedRegVeh.transport_rate_unit === 'per_unit' ? selectedRegVeh.transport_rate * qty
           : null  // per_km needs manual entry
           : null
         // Fleet fallback for unregistered vehicles
