@@ -2503,6 +2503,32 @@ function PayrollTab({ companyId }) {
         employee_count: payrollItems.length,
       }, { onConflict: 'company_id,month,year' })
 
+      // ── Write total salary to ledger ──
+      if (totalSalary > 0) {
+        const _MO = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+        const monthStr  = String(month).padStart(2, '0')
+        const daysInMo  = new Date(year, month, 0).getDate()
+        const payDate   = `${year}-${monthStr}-${String(daysInMo).padStart(2,'0')}`
+        const monthLabel = `${_MO[month-1]} ${year}`
+        // Remove previous salary ledger entry for this month (re-post scenario)
+        await supabase.from('account_transactions')
+          .delete()
+          .eq('company_id', companyId)
+          .eq('reference_type', 'payroll')
+          .like('description', `%${monthLabel}%`)
+        await supabase.from('account_transactions').insert({
+          company_id:     companyId,
+          type:           'expense',
+          txn_date:       payDate,
+          description:    `Salary — ${monthLabel} (${payrollItems.length} employees)`,
+          amount:         totalSalary,
+          payment_mode:   'bank',
+          reference_type: 'payroll',
+          notes:          `Payroll posted for ${monthLabel}`,
+          created_by:     session?.user?.id || null,
+        })
+      }
+
       await refetchPosting()
       toast.success(`₹${totalSalary.toLocaleString('en-IN')} salary posted to Equipment P&L`)
     } catch (err) {

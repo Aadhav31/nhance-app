@@ -2151,6 +2151,7 @@ function InvoiceViewModal({ invoiceId, onClose, onDownload }) {
 // ── Record Payment Modal ──────────────────────────────────────────────────────
 function RecordPaymentModal({ companyId, invoice, onClose }) {
   const qc = useQueryClient()
+  const { company } = useAuth()
   const today   = new Date().toISOString().split('T')[0]
   const balance = Math.max(0, Number(invoice.balance ?? invoice.total_amount) )
 
@@ -2211,9 +2212,9 @@ function RecordPaymentModal({ companyId, invoice, onClose }) {
       }).eq('id', invoice.id)
       if (error) throw error
 
-      // 2. Cash/bank payment record
+      // 2. Cash/bank payment record + ledger entry
       if (cash > 0) {
-        await supabase.from('crusher_invoice_payments').insert({
+        const { data: cipRow } = await supabase.from('crusher_invoice_payments').insert({
           company_id:   companyId,
           invoice_id:   invoice.id,
           client_id:    invoice.client_id  || null,
@@ -2221,6 +2222,18 @@ function RecordPaymentModal({ companyId, invoice, onClose }) {
           amount:       cash,
           payment_mode: mode,
           payment_date: date,
+        }).select('id').single()
+        // ── Write to ledger ──
+        await supabase.from('account_transactions').insert({
+          company_id:     companyId,
+          type:           'income',
+          txn_date:       date,
+          description:    `Invoice payment — ${invoice.invoice_number} · ${invoice.client_name || ''}`,
+          amount:         cash,
+          payment_mode:   mode,
+          reference_type: 'crusher_invoice_payment',
+          reference_id:   cipRow?.id || invoice.id,
+          notes:          `Invoice ${invoice.invoice_number}`,
         })
       }
 
@@ -2258,6 +2271,7 @@ function RecordPaymentModal({ companyId, invoice, onClose }) {
       qc.invalidateQueries({ queryKey: ['crusher-aging',          companyId] })
       qc.invalidateQueries({ queryKey: ['crusher-advances',       companyId] })
       qc.invalidateQueries({ queryKey: ['crusher-client-advance', companyId, invoice.client_id] })
+      qc.invalidateQueries({ queryKey: ['acct_txns_ledger',       companyId] })
       onClose()
     } catch (e) {
       toast.error(e.message)
@@ -4131,6 +4145,7 @@ function AdvanceModal({ companyId, client, onClose }) {
     if (!amt || amt <= 0) { toast.error('Enter a valid amount'); return }
     setSaving(true)
     try {
+      const clientName = client.display_name || client.business_name
       // Upsert: if a record already exists for this client, add to it; otherwise insert fresh
       const { data: existing } = await supabase
         .from('crusher_customer_advances')
@@ -4141,6 +4156,7 @@ function AdvanceModal({ companyId, client, onClose }) {
         .limit(1)
         .single()
 
+      let advId = existing?.id
       if (existing) {
         await supabase.from('crusher_customer_advances').update({
           remaining: Number(existing.remaining) + amt,
@@ -4148,17 +4164,32 @@ function AdvanceModal({ companyId, client, onClose }) {
           notes:     notes || existing.notes,
         }).eq('id', existing.id)
       } else {
-        await supabase.from('crusher_customer_advances').insert({
+        const { data: newAdv } = await supabase.from('crusher_customer_advances').insert({
           company_id:   companyId,
           client_id:    client.id,
-          client_name:  client.display_name || client.business_name,
+          client_name:  clientName,
           amount:       amt,
           remaining:    amt,
           notes:        notes || null,
-        })
+        }).select('id').single()
+        advId = newAdv?.id
       }
 
-      await qc.invalidateQueries({ queryKey: ['crusher-advances', companyId] })
+      // ── Write advance receipt to ledger ──
+      await supabase.from('account_transactions').insert({
+        company_id:     companyId,
+        type:           'income',
+        txn_date:       date,
+        description:    `Advance received — ${clientName}`,
+        amount:         amt,
+        payment_mode:   mode,
+        reference_type: 'crusher_advance',
+        reference_id:   advId || client.id,
+        notes:          notes || null,
+      })
+
+      await qc.invalidateQueries({ queryKey: ['crusher-advances',  companyId] })
+      await qc.invalidateQueries({ queryKey: ['acct_txns_ledger',  companyId] })
       toast.success(`Advance of ₹${amt.toLocaleString('en-IN')} recorded`)
       onClose()
     } catch (e) {
