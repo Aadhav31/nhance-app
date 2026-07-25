@@ -23,6 +23,20 @@
 --   Supabase Dashboard → SQL Editor → New Query → paste & run.
 -- ─────────────────────────────────────────────────────────────────────────────
 
+-- ── 0. Widen the reference_type check constraint ────────────────────────────
+-- The existing constraint doesn't include 'field_expense'. Drop and recreate
+-- it with all values currently used across the codebase.
+ALTER TABLE account_transactions
+  DROP CONSTRAINT IF EXISTS account_transactions_reference_type_check;
+
+ALTER TABLE account_transactions
+  ADD CONSTRAINT account_transactions_reference_type_check
+  CHECK (reference_type IN (
+    'expense', 'payment_made', 'payment_received', 'invoice',
+    'payroll', 'crusher_invoice_payment', 'crusher_advance',
+    'field_expense'
+  ));
+
 -- ── 1. Updated trigger function ──────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION fn_sync_field_expense_to_accounts()
 RETURNS TRIGGER
