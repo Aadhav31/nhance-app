@@ -84,7 +84,7 @@ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM account_transactions
     WHERE reference_type = 'field_expense'
-      AND reference_id   = NEW.id::text
+      AND reference_id   = NEW.id
   ) THEN
 
     -- Build description: "Category — Payee · Payment mode"
@@ -121,7 +121,7 @@ BEGIN
       COALESCE(NEW.amount, 0),
       v_pay_mode,
       'field_expense',
-      NEW.id::text,
+      NEW.id,
       NEW.created_by
     );
   END IF;
@@ -165,13 +165,13 @@ SELECT
     ELSE COALESCE(fe.payment_mode::text, 'cash')
   END,
   'field_expense',
-  fe.id::text,
+  fe.id,
   fe.created_by
 FROM field_expenses fe
 WHERE NOT EXISTS (
   SELECT 1 FROM account_transactions at2
   WHERE at2.reference_type = 'field_expense'
-    AND at2.reference_id   = fe.id::text
+    AND at2.reference_id   = fe.id
 )
   -- Skip expenses already linked to a bill payment (those are recorded via payments_made)
   AND fe.linked_bill_id IS NULL;
