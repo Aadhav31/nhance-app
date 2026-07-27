@@ -5,19 +5,18 @@ import { useAuth } from '../../contexts/AuthContext'
 import { format, differenceInDays } from 'date-fns'
 import {
   Search, X, ChevronRight, Truck, MapPin, Calendar,
-  User, IndianRupee, FileSignature, Clock, CheckCircle,
-  AlertTriangle, ChevronDown, ChevronUp, Building2,
-  BarChart2, Wrench, History,
+  User, IndianRupee, FileSignature, CheckCircle,
+  Building2, History, Clock,
 } from 'lucide-react'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-const fmtDate   = (d) => d ? format(new Date(d), 'd MMM yyyy') : '—'
-const fmt       = (n) => n != null ? `₹${Number(n).toLocaleString('en-IN')}` : '—'
-const daysOn    = (d) => d ? differenceInDays(new Date(), new Date(d)) : null
+const fmtDate = (d) => d ? format(new Date(d), 'd MMM yyyy') : '—'
+const fmt     = (n) => n != null ? `₹${Number(n).toLocaleString('en-IN')}` : '—'
+const daysOn  = (d) => d ? differenceInDays(new Date(), new Date(d)) : null
 
 // ── Row label/value ───────────────────────────────────────────────────────────
 function Row({ label, value }) {
-  if (!value || value === '—') return null
+  if (value == null || value === '' || value === '—') return null
   return (
     <div className="flex justify-between py-1.5 border-b border-dark-700/50 last:border-0">
       <span className="text-xs text-slate-400">{label}</span>
@@ -27,66 +26,73 @@ function Row({ label, value }) {
 }
 
 // ── Section header ─────────────────────────────────────────────────────────────
-function SectionHead({ icon: Icon, title }) {
+function SHead({ icon: Icon, title }) {
   return (
-    <div className="flex items-center gap-2 mt-4 mb-2">
+    <div className="flex items-center gap-2 mt-5 mb-2">
       <Icon className="w-3.5 h-3.5 text-primary-400" />
       <span className="text-xs font-semibold text-slate-300 uppercase tracking-wider">{title}</span>
     </div>
   )
 }
 
-// ── Status badge ──────────────────────────────────────────────────────────────
-function DeployBadge({ days }) {
+// ── Days badge ────────────────────────────────────────────────────────────────
+function DaysBadge({ date }) {
+  const days = daysOn(date)
   if (days === null) return null
-  if (days > 180) return <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30">{days}d on site</span>
-  return <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">{days}d on site</span>
+  const cls = days > 180
+    ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+    : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+  return (
+    <span className={`text-xs px-2 py-0.5 rounded-full border ${cls}`}>
+      {days}d on site
+    </span>
+  )
 }
 
-// ── Contract terms badge ──────────────────────────────────────────────────────
-function BillingBadge({ basis }) {
-  const map = { hourly: 'Hourly', daily: 'Daily', monthly: 'Monthly', lump_sum: 'Lump Sum' }
-  if (!basis) return null
-  return <span className="text-xs px-2 py-0.5 rounded-full bg-primary-500/15 text-primary-300 border border-primary-500/30">{map[basis] || basis}</span>
-}
-
-// ── Deployment detail slide-in panel ─────────────────────────────────────────
-function DeploymentPanel({ item, onClose }) {
+// ── Detail slide-in panel ─────────────────────────────────────────────────────
+function DeploymentPanel({ eq, onClose }) {
   const { companyId } = useAuth()
 
-  // Full project details
+  // Full project + client details
   const { data: project } = useQuery({
-    queryKey: ['project_detail', item.project_id],
+    queryKey: ['project_full', eq.current_project_id],
     queryFn: async () => {
-      if (!item.project_id) return null
-      const { data } = await supabase.from('projects')
-        .select('*').eq('id', item.project_id).single()
+      const { data } = await supabase
+        .from('projects')
+        .select('*, clients(display_name, business_name)')
+        .eq('id', eq.current_project_id)
+        .single()
       return data
     },
-    enabled: !!item.project_id,
+    enabled: !!eq.current_project_id,
   })
 
-  // All commissionings for this equipment
-  const { data: history = [] } = useQuery({
-    queryKey: ['eq_commissionings_history', item.equipment_id],
+  // Equipment deployment record for this project (billing terms)
+  const { data: deployment } = useQuery({
+    queryKey: ['eq_deployment_rate', eq.id, eq.current_project_id],
     queryFn: async () => {
-      const { data } = await supabase.from('equipment_commissionings')
-        .select('*, projects(project_name, project_number)')
-        .eq('equipment_id', item.equipment_id)
-        .eq('company_id', companyId)
-        .order('commissioned_date', { ascending: false })
-      return data || []
-    },
-    enabled: !!item.equipment_id,
-  })
-
-  // Hire contract linked to this equipment (active/latest)
-  const { data: contract } = useQuery({
-    queryKey: ['hire_contract_for_eq', item.equipment_id],
-    queryFn: async () => {
-      const { data } = await supabase.from('hire_contracts')
+      const { data } = await supabase
+        .from('equipment_deployments')
         .select('*')
-        .eq('equipment_id', item.equipment_id)
+        .eq('equipment_id', eq.id)
+        .eq('project_id', eq.current_project_id)
+        .is('withdrawn_date', null)
+        .order('deployed_date', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      return data
+    },
+    enabled: !!eq.id && !!eq.current_project_id,
+  })
+
+  // Hire contract linked to this equipment
+  const { data: contract } = useQuery({
+    queryKey: ['hire_contract_eq', eq.id],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('hire_contracts')
+        .select('*')
+        .eq('equipment_id', eq.id)
         .eq('company_id', companyId)
         .in('status', ['active', 'draft'])
         .order('created_at', { ascending: false })
@@ -94,26 +100,43 @@ function DeploymentPanel({ item, onClose }) {
         .maybeSingle()
       return data
     },
-    enabled: !!item.equipment_id,
+    enabled: !!eq.id,
   })
 
   // Recent operator assignments
   const { data: operators = [] } = useQuery({
-    queryKey: ['eq_operators_recent', item.equipment_id],
+    queryKey: ['eq_ops_recent', eq.id],
     queryFn: async () => {
-      const { data } = await supabase.from('equipment_assignments')
+      const { data } = await supabase
+        .from('equipment_assignments')
         .select('employee_name, assignment_role, assignment_date, status')
-        .eq('equipment_id', item.equipment_id)
+        .eq('equipment_id', eq.id)
         .eq('company_id', companyId)
         .order('assignment_date', { ascending: false })
         .limit(5)
       return data || []
     },
-    enabled: !!item.equipment_id,
+    enabled: !!eq.id,
   })
 
-  const p = project
-  const days = daysOn(item.commissioned_date)
+  // Deployment history (all past deployments)
+  const { data: history = [] } = useQuery({
+    queryKey: ['eq_deploy_history', eq.id],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('equipment_deployments')
+        .select('*, projects:project_id(project_name, project_code)')
+        .eq('equipment_id', eq.id)
+        .order('deployed_date', { ascending: false })
+        .limit(10)
+      return data || []
+    },
+    enabled: !!eq.id,
+  })
+
+  const p       = project
+  const client  = p?.clients
+  const days    = daysOn(eq.mobilization_date || p?.mobilization_date || p?.start_date)
 
   return (
     <div className="fixed inset-0 z-40 flex justify-end">
@@ -124,83 +147,94 @@ function DeploymentPanel({ item, onClose }) {
         <div className="sticky top-0 z-10 bg-dark-800 border-b border-dark-700 px-5 py-4">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <h2 className="text-base font-semibold text-slate-100">{item.equipment_name}</h2>
-              <p className="text-xs text-slate-400 mt-0.5">{item.equipment_type} · {item.equipment_number || 'No Reg.'}</p>
+              <h2 className="text-base font-semibold text-slate-100">{eq.name}</h2>
+              <p className="text-xs text-slate-400 mt-0.5">
+                {[eq.category, eq.make, eq.model].filter(Boolean).join(' · ')} · {eq.equipment_number}
+              </p>
             </div>
-            <button onClick={onClose} className="text-slate-500 hover:text-slate-300 mt-0.5"><X className="w-5 h-5" /></button>
+            <button onClick={onClose} className="text-slate-500 hover:text-slate-300 mt-0.5">
+              <X className="w-5 h-5" />
+            </button>
           </div>
-
-          {/* Status chips */}
           <div className="flex flex-wrap gap-2 mt-3">
             <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
               <CheckCircle className="w-3 h-3" /> Active Deployment
             </span>
-            {days !== null && <DeployBadge days={days} />}
-            {contract && <BillingBadge basis={contract.billing_basis} />}
+            {days !== null && <DaysBadge date={eq.mobilization_date || p?.mobilization_date || p?.start_date} />}
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-1">
+        <div className="flex-1 overflow-y-auto px-5 py-4">
 
-          {/* ── Project overview ─────────────────────────────── */}
-          <SectionHead icon={Building2} title="Project Overview" />
+          {/* ── Equipment Details ──────────────────────── */}
+          <SHead icon={Truck} title="Equipment Details" />
           <div className="bg-dark-750 rounded-xl border border-dark-600 p-3">
-            <Row label="Project" value={p?.project_name || item.project_name || '—'} />
-            <Row label="Project #" value={p?.project_number} />
-            <Row label="Client" value={p?.client_name || item.client_name} />
-            <Row label="Status" value={p?.status ? p.status.charAt(0).toUpperCase() + p.status.slice(1) : '—'} />
-            <Row label="Type" value={p?.type} />
+            <Row label="Name"        value={eq.name} />
+            <Row label="Reg / ID"    value={eq.equipment_number} />
+            <Row label="Category"    value={eq.category} />
+            <Row label="Make"        value={eq.make} />
+            <Row label="Model"       value={eq.model} />
+            <Row label="Year"        value={eq.year_of_manufacture} />
+            <Row label="Status"      value={eq.status} />
           </div>
 
-          {/* ── Site & Location ──────────────────────────────── */}
-          {(p?.site_name || p?.city) && (
+          {/* ── Project Overview ───────────────────────── */}
+          {p && (
             <>
-              <SectionHead icon={MapPin} title="Site & Location" />
+              <SHead icon={Building2} title="Project Overview" />
               <div className="bg-dark-750 rounded-xl border border-dark-600 p-3">
-                <Row label="Site Name" value={p?.site_name} />
-                <Row label="Address" value={p?.address} />
-                <Row label="City" value={p?.city} />
-                <Row label="State" value={p?.state} />
-                <Row label="Pincode" value={p?.pincode} />
+                <Row label="Project"     value={p.project_name} />
+                <Row label="Project #"   value={p.project_code} />
+                <Row label="Client"      value={client?.display_name || client?.business_name} />
+                <Row label="Status"      value={p.status ? p.status.charAt(0).toUpperCase() + p.status.slice(1) : '—'} />
+                <Row label="Nature of Job" value={p.nature_of_job} />
               </div>
             </>
           )}
 
-          {/* ── Timeline ────────────────────────────────────── */}
-          <SectionHead icon={Calendar} title="Timeline" />
-          <div className="bg-dark-750 rounded-xl border border-dark-600 p-3">
-            <Row label="Mobilization" value={fmtDate(p?.start_date || item.commissioned_date)} />
-            <Row label="Commencement" value={fmtDate(p?.commencement_date)} />
-            <Row label="Expected End" value={fmtDate(p?.expected_end_date)} />
-            <Row label="Actual End" value={fmtDate(p?.actual_end_date)} />
-            <Row label="Commissioned Since" value={fmtDate(item.commissioned_date)} />
-            {item.withdrawn_date && <Row label="Withdrawn" value={fmtDate(item.withdrawn_date)} />}
-          </div>
-
-          {/* ── Operators ────────────────────────────────────── */}
-          {item.operator_name && (
+          {/* ── Site & Location ────────────────────────── */}
+          {p && (p.site_name || p.site_location || p.city) && (
             <>
-              <SectionHead icon={User} title="Deployed Operator" />
+              <SHead icon={MapPin} title="Site & Location" />
               <div className="bg-dark-750 rounded-xl border border-dark-600 p-3">
-                <Row label="Operator" value={item.operator_name} />
-                {item.operator_notes && <Row label="Notes" value={item.operator_notes} />}
+                <Row label="Site Name"  value={p.site_name} />
+                <Row label="Address"    value={p.site_location} />
+                <Row label="City"       value={p.city} />
+                <Row label="State"      value={p.state} />
+                <Row label="Pincode"    value={p.pincode} />
               </div>
             </>
           )}
 
+          {/* ── Timeline ──────────────────────────────── */}
+          {p && (
+            <>
+              <SHead icon={Calendar} title="Timeline" />
+              <div className="bg-dark-750 rounded-xl border border-dark-600 p-3">
+                <Row label="Mobilization"   value={fmtDate(p.mobilization_date)} />
+                <Row label="Start / Comm."  value={fmtDate(p.commencement_date || p.start_date)} />
+                <Row label="Expected End"   value={fmtDate(p.end_date)} />
+                <Row label="Actual End"     value={fmtDate(p.actual_end_date)} />
+              </div>
+            </>
+          )}
+
+          {/* ── Operators ─────────────────────────────── */}
           {operators.length > 0 && (
             <>
-              <SectionHead icon={History} title="Recent Assignments" />
+              <SHead icon={User} title="Recent Assignments" />
               <div className="bg-dark-750 rounded-xl border border-dark-600 divide-y divide-dark-700">
                 {operators.map((op, i) => (
-                  <div key={i} className="flex items-center justify-between px-3 py-2">
+                  <div key={i} className="flex items-center justify-between px-3 py-2.5">
                     <div>
                       <p className="text-xs text-slate-200">{op.employee_name}</p>
-                      <p className="text-xs text-slate-500">{op.assignment_role?.replace('_', ' ')}</p>
+                      <p className="text-xs text-slate-500 capitalize">{op.assignment_role?.replace('_', ' ')}</p>
                     </div>
                     <div className="text-right">
                       <p className="text-xs text-slate-400">{fmtDate(op.assignment_date)}</p>
-                      <span className={`text-xs ${op.status === 'present' ? 'text-emerald-400' : op.status === 'absent' ? 'text-red-400' : 'text-amber-400'}`}>
+                      <span className={`text-xs font-medium ${
+                        op.status === 'present' ? 'text-emerald-400' :
+                        op.status === 'absent'  ? 'text-red-400' : 'text-amber-400'}`}>
                         {op.status}
                       </span>
                     </div>
@@ -210,83 +244,94 @@ function DeploymentPanel({ item, onClose }) {
             </>
           )}
 
-          {/* ── Contract Terms ───────────────────────────────── */}
+          {/* ── Contract Terms (from project) ─────────── */}
+          {p && (p.contract_value || p.billing_cycle || p.payment_terms) && (
+            <>
+              <SHead icon={IndianRupee} title="Contract Terms" />
+              <div className="bg-dark-750 rounded-xl border border-dark-600 p-3">
+                <Row label="Contract Value"   value={fmt(p.contract_value)} />
+                <Row label="Billing Cycle"    value={p.billing_cycle} />
+                <Row label="Payment Terms"    value={p.payment_terms} />
+                <Row label="GST Rate"         value={p.gst_rate ? `${p.gst_rate}%` : '—'} />
+                <Row label="Mob. Advance"     value={fmt(p.mobilization_advance)} />
+                <Row label="Retention %"      value={p.retention_pct ? `${p.retention_pct}%` : null} />
+              </div>
+            </>
+          )}
+
+          {/* ── Deployment Rate (from equipment_deployments) ─ */}
+          {deployment && (deployment.billing_basis || deployment.rate_per_day || deployment.rate_per_hour) && (
+            <>
+              <SHead icon={Clock} title="Deployed Rate" />
+              <div className="bg-dark-750 rounded-xl border border-dark-600 p-3">
+                <Row label="Billing Basis"   value={deployment.billing_basis} />
+                <Row label="Rate / Hour"     value={deployment.rate_per_hour ? fmt(deployment.rate_per_hour) : null} />
+                <Row label="Rate / Day"      value={deployment.rate_per_day  ? fmt(deployment.rate_per_day)  : null} />
+                <Row label="Rate / Month"    value={deployment.rate_per_month ? fmt(deployment.rate_per_month) : null} />
+                <Row label="Min. Hours/Day"  value={deployment.minimum_hours_per_day ? `${deployment.minimum_hours_per_day} hrs` : null} />
+                <Row label="Deployed Date"   value={fmtDate(deployment.deployed_date)} />
+              </div>
+            </>
+          )}
+
+          {/* ── Hire Contract ─────────────────────────── */}
           {contract && (
             <>
-              <SectionHead icon={FileSignature} title="Hire Contract" />
+              <SHead icon={FileSignature} title="Hire Contract" />
               <div className="bg-dark-750 rounded-xl border border-dark-600 p-3">
-                <Row label="Contract #" value={contract.contract_number} />
-                <Row label="Status" value={contract.status} />
-                <Row label="Client" value={contract.client_name} />
-                <Row label="Billing Basis" value={contract.billing_basis?.replace('_', ' ')} />
-                <Row label="Rate" value={fmt(contract.rate)} />
-                {contract.minimum_hours_per_day && <Row label="Min hrs/day" value={`${contract.minimum_hours_per_day} hrs`} />}
-                {contract.overtime_rate && <Row label="OT Rate" value={fmt(contract.overtime_rate)} />}
-                <Row label="GST" value={contract.gst_applicable ? `${contract.gst_rate}%` : 'N/A'} />
-                <Row label="Site" value={contract.site_location} />
-                <Row label="Start" value={fmtDate(contract.start_date)} />
-                <Row label="End" value={fmtDate(contract.end_date)} />
-                {contract.mobilization_charge > 0 && <Row label="Mob. Charge" value={fmt(contract.mobilization_charge)} />}
-                {contract.security_deposit > 0 && <Row label="Security Deposit" value={fmt(contract.security_deposit)} />}
-              </div>
-              {contract.terms_conditions && (
-                <div className="bg-dark-750 rounded-xl border border-dark-600 p-3 mt-2">
-                  <p className="text-xs text-slate-400 mb-1">Terms & Conditions</p>
-                  <p className="text-xs text-slate-300 whitespace-pre-wrap">{contract.terms_conditions}</p>
-                </div>
-              )}
-            </>
-          )}
-
-          {/* ── Contract Terms from project ──────────────────── */}
-          {p && !contract && (p.billing_cycle || p.payment_terms || p.contract_value) && (
-            <>
-              <SectionHead icon={IndianRupee} title="Contract Terms" />
-              <div className="bg-dark-750 rounded-xl border border-dark-600 p-3">
-                <Row label="Contract Value" value={fmt(p.contract_value)} />
-                <Row label="Billing Cycle" value={p.billing_cycle} />
-                <Row label="Payment Terms" value={p.payment_terms} />
-                <Row label="GST Rate" value={p.gst_rate ? `${p.gst_rate}%` : '—'} />
-                {p.mobilization_advance && <Row label="Mob. Advance" value={fmt(p.mobilization_advance)} />}
+                <Row label="Contract #"   value={contract.contract_number} />
+                <Row label="Status"       value={contract.status} />
+                <Row label="Client"       value={contract.client_name} />
+                <Row label="Basis"        value={contract.billing_basis?.replace('_', ' ')} />
+                <Row label="Rate"         value={fmt(contract.rate)} />
+                <Row label="GST"          value={contract.gst_applicable ? `${contract.gst_rate}%` : 'N/A'} />
+                <Row label="Start"        value={fmtDate(contract.start_date)} />
+                <Row label="End"          value={fmtDate(contract.end_date)} />
+                <Row label="Deposit"      value={contract.security_deposit > 0 ? fmt(contract.security_deposit) : null} />
               </div>
             </>
           )}
 
-          {/* ── Deployment History ───────────────────────────── */}
-          {history.length > 1 && (
+          {/* ── Deployment History ────────────────────── */}
+          {history.length > 0 && (
             <>
-              <SectionHead icon={History} title="Deployment History" />
+              <SHead icon={History} title="Deployment History" />
               <div className="bg-dark-750 rounded-xl border border-dark-600 divide-y divide-dark-700">
                 {history.map((h, i) => (
                   <div key={h.id} className="px-3 py-2.5">
                     <div className="flex items-center justify-between">
-                      <p className="text-xs text-slate-200">{h.projects?.project_name || h.site_location || 'Unknown Site'}</p>
-                      {i === 0 && h.withdrawn_date === null && (
+                      <p className="text-xs text-slate-200">
+                        {h.projects?.project_name || h.item_name || 'Project'}
+                      </p>
+                      {!h.withdrawn_date && (
                         <span className="text-xs px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300">Current</span>
                       )}
                     </div>
                     <div className="flex items-center gap-2 mt-0.5 text-xs text-slate-500">
-                      <span>{fmtDate(h.commissioned_date)}</span>
-                      {h.withdrawn_date && <><span>→</span><span>{fmtDate(h.withdrawn_date)}</span></>}
-                      {h.withdrawn_date === null && <span className="text-emerald-400">→ present</span>}
+                      <span>{fmtDate(h.deployed_date)}</span>
+                      {h.withdrawn_date
+                        ? <><span>→</span><span>{fmtDate(h.withdrawn_date)}</span></>
+                        : <span className="text-emerald-400">→ present</span>
+                      }
                     </div>
-                    {h.operator_name && <p className="text-xs text-slate-400 mt-0.5">Operator: {h.operator_name}</p>}
                   </div>
                 ))}
               </div>
             </>
           )}
 
-          <div className="h-6" />
+          <div className="h-8" />
         </div>
       </div>
     </div>
   )
 }
 
-// ── Equipment deployment card ─────────────────────────────────────────────────
-function DeployCard({ item, onClick }) {
-  const days = daysOn(item.commissioned_date)
+// ── Equipment card ────────────────────────────────────────────────────────────
+function EquipCard({ eq, onClick }) {
+  const days = daysOn(eq.mobilization_date || eq.project?.mobilization_date || eq.project?.start_date)
+  const proj = eq.project
+  const client = proj?.clients
 
   return (
     <div
@@ -294,45 +339,52 @@ function DeployCard({ item, onClick }) {
       onClick={onClick}
     >
       <div className="flex items-start gap-3">
-        {/* Icon */}
         <div className="w-10 h-10 rounded-xl bg-primary-500/10 border border-primary-500/20 flex items-center justify-center shrink-0">
           <Truck className="w-5 h-5 text-primary-400" />
         </div>
 
-        {/* Equipment info */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between gap-2">
-            <h3 className="text-sm font-semibold text-slate-100 truncate">{item.equipment_name}</h3>
+            <h3 className="text-sm font-semibold text-slate-100 truncate">{eq.name}</h3>
             <ChevronRight className="w-4 h-4 text-slate-500 group-hover:text-primary-400 transition-colors shrink-0" />
           </div>
-          <p className="text-xs text-slate-400 mt-0.5">{item.equipment_type} · {item.equipment_number || 'No Reg.'}</p>
+          <p className="text-xs text-slate-400 mt-0.5">
+            {[eq.category, eq.make, eq.model].filter(Boolean).join(' · ')} · {eq.equipment_number}
+          </p>
 
-          {/* Project & site */}
-          {(item.project_name || item.site_location) && (
-            <div className="flex items-center gap-1 mt-2">
-              <MapPin className="w-3 h-3 text-slate-500 shrink-0" />
-              <span className="text-xs text-slate-300 truncate">
-                {item.project_name || item.site_location}
-              </span>
-            </div>
-          )}
-          {item.client_name && (
-            <div className="flex items-center gap-1 mt-0.5">
-              <Building2 className="w-3 h-3 text-slate-500 shrink-0" />
-              <span className="text-xs text-slate-400 truncate">{item.client_name}</span>
-            </div>
-          )}
-          {item.operator_name && (
-            <div className="flex items-center gap-1 mt-0.5">
-              <User className="w-3 h-3 text-slate-500 shrink-0" />
-              <span className="text-xs text-slate-400 truncate">{item.operator_name}</span>
+          {proj && (
+            <div className="mt-2 space-y-0.5">
+              {(proj.project_name) && (
+                <div className="flex items-center gap-1">
+                  <Building2 className="w-3 h-3 text-slate-500 shrink-0" />
+                  <span className="text-xs text-slate-300 truncate">{proj.project_name}</span>
+                </div>
+              )}
+              {(proj.site_name || proj.site_location || proj.city) && (
+                <div className="flex items-center gap-1">
+                  <MapPin className="w-3 h-3 text-slate-500 shrink-0" />
+                  <span className="text-xs text-slate-400 truncate">
+                    {proj.site_name || proj.site_location || proj.city}
+                    {proj.city && proj.site_name ? `, ${proj.city}` : ''}
+                  </span>
+                </div>
+              )}
+              {(client?.display_name || client?.business_name) && (
+                <div className="flex items-center gap-1">
+                  <User className="w-3 h-3 text-slate-500 shrink-0" />
+                  <span className="text-xs text-slate-400 truncate">
+                    {client.display_name || client.business_name}
+                  </span>
+                </div>
+              )}
             </div>
           )}
 
-          {/* Footer chips */}
           <div className="flex items-center gap-2 mt-3 flex-wrap">
-            <DeployBadge days={days} />
-            <span className="text-xs text-slate-500">Since {fmtDate(item.commissioned_date)}</span>
+            {days !== null && <DaysBadge date={eq.mobilization_date || proj?.mobilization_date || proj?.start_date} />}
+            {proj?.mobilization_date || proj?.start_date
+              ? <span className="text-xs text-slate-500">Since {fmtDate(proj.mobilization_date || proj.start_date)}</span>
+              : null}
           </div>
         </div>
       </div>
@@ -343,48 +395,35 @@ function DeployCard({ item, onClick }) {
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function ActiveDeploymentsPage() {
   const { companyId } = useAuth()
-  const [search, setSearch] = useState('')
+  const [search, setSearch]   = useState('')
   const [selected, setSelected] = useState(null)
 
-  // Fetch all active deployments (commissionings where withdrawn_date IS NULL)
-  // Join with equipment and projects
+  // Equipment currently on a project (current_project_id IS NOT NULL)
   const { data: deployments = [], isLoading } = useQuery({
     queryKey: ['active_deployments', companyId],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from('equipment_commissionings')
+        .from('equipment')
         .select(`
-          id,
-          commissioned_date,
-          withdrawn_date,
-          site_location,
-          client_name,
-          operator_name,
-          notes,
-          equipment_id,
-          project_id,
-          equipment:equipment_id (
-            id, name, equipment_number, equipment_type
-          ),
-          projects:project_id (
-            id, project_name, project_number, client_name, site_name,
-            city, state, status, type, contract_value, billing_cycle,
-            payment_terms, gst_rate, start_date, expected_end_date
+          id, name, equipment_number, category, make, model,
+          year_of_manufacture, status, current_project_id,
+          current_client_id, current_site_name,
+          projects:current_project_id (
+            id, project_name, project_code, site_name, site_location,
+            city, state, pincode, status, nature_of_job,
+            contract_value, billing_cycle, payment_terms, gst_rate,
+            mobilization_advance, retention_pct,
+            start_date, end_date, actual_end_date, mobilization_date,
+            commencement_date,
+            clients:client_id (display_name, business_name)
           )
         `)
         .eq('company_id', companyId)
-        .is('withdrawn_date', null)
-        .order('commissioned_date', { ascending: false })
+        .not('current_project_id', 'is', null)
+        .order('name')
 
       if (error) throw error
-      return (data || []).map(d => ({
-        ...d,
-        equipment_name:   d.equipment?.name || '—',
-        equipment_number: d.equipment?.equipment_number || '',
-        equipment_type:   d.equipment?.equipment_type || '',
-        project_name:     d.projects?.project_name || '',
-        project_client:   d.projects?.client_name || d.client_name || '',
-      }))
+      return (data || []).map(eq => ({ ...eq, project: eq.projects }))
     },
     enabled: !!companyId,
   })
@@ -392,40 +431,45 @@ export default function ActiveDeploymentsPage() {
   const filtered = useMemo(() => {
     if (!search.trim()) return deployments
     const q = search.toLowerCase()
-    return deployments.filter(d =>
-      d.equipment_name.toLowerCase().includes(q) ||
-      d.project_name.toLowerCase().includes(q) ||
-      (d.project_client || '').toLowerCase().includes(q) ||
-      (d.site_location || '').toLowerCase().includes(q) ||
-      (d.operator_name || '').toLowerCase().includes(q)
+    return deployments.filter(eq =>
+      eq.name?.toLowerCase().includes(q) ||
+      eq.equipment_number?.toLowerCase().includes(q) ||
+      eq.project?.project_name?.toLowerCase().includes(q) ||
+      eq.project?.city?.toLowerCase().includes(q) ||
+      eq.project?.clients?.display_name?.toLowerCase().includes(q) ||
+      eq.project?.clients?.business_name?.toLowerCase().includes(q)
     )
   }, [deployments, search])
 
+  const uniqueProjects = useMemo(
+    () => new Set(deployments.map(e => e.current_project_id).filter(Boolean)).size,
+    [deployments]
+  )
+
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto">
-
-      {/* Page header */}
       <div className="mb-6">
         <h1 className="text-xl font-bold text-slate-100">Active Deployments</h1>
         <p className="text-sm text-slate-400 mt-0.5">Equipment currently deployed on site</p>
       </div>
 
-      {/* Stats bar */}
+      {/* Stats */}
       {deployments.length > 0 && (
         <div className="grid grid-cols-3 gap-3 mb-5">
           <div className="bg-dark-800 border border-dark-700 rounded-xl p-3 text-center">
             <p className="text-2xl font-bold text-primary-400">{deployments.length}</p>
-            <p className="text-xs text-slate-400 mt-0.5">On Site</p>
+            <p className="text-xs text-slate-400 mt-0.5">Machines on Site</p>
           </div>
           <div className="bg-dark-800 border border-dark-700 rounded-xl p-3 text-center">
-            <p className="text-2xl font-bold text-emerald-400">
-              {new Set(deployments.map(d => d.project_id).filter(Boolean)).size}
-            </p>
-            <p className="text-xs text-slate-400 mt-0.5">Projects</p>
+            <p className="text-2xl font-bold text-emerald-400">{uniqueProjects}</p>
+            <p className="text-xs text-slate-400 mt-0.5">Active Projects</p>
           </div>
           <div className="bg-dark-800 border border-dark-700 rounded-xl p-3 text-center">
             <p className="text-2xl font-bold text-amber-400">
-              {deployments.filter(d => daysOn(d.commissioned_date) > 90).length}
+              {deployments.filter(e => {
+                const d = daysOn(e.project?.mobilization_date || e.project?.start_date)
+                return d !== null && d > 90
+              }).length}
             </p>
             <p className="text-xs text-slate-400 mt-0.5">90d+ Deployed</p>
           </div>
@@ -438,7 +482,7 @@ export default function ActiveDeploymentsPage() {
         <input
           value={search}
           onChange={e => setSearch(e.target.value)}
-          placeholder="Search equipment, project, operator…"
+          placeholder="Search machine, project, city, client…"
           className="w-full bg-dark-800 border border-dark-700 rounded-xl pl-9 pr-4 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-primary-500 placeholder-slate-500"
         />
         {search && (
@@ -455,7 +499,7 @@ export default function ActiveDeploymentsPage() {
             <div key={i} className="bg-dark-800 border border-dark-700 rounded-xl p-4 animate-pulse">
               <div className="flex gap-3">
                 <div className="w-10 h-10 rounded-xl bg-dark-700" />
-                <div className="flex-1 space-y-2">
+                <div className="flex-1 space-y-2 pt-1">
                   <div className="h-3 bg-dark-700 rounded w-3/4" />
                   <div className="h-2.5 bg-dark-700 rounded w-1/2" />
                   <div className="h-2.5 bg-dark-700 rounded w-2/3" />
@@ -468,28 +512,26 @@ export default function ActiveDeploymentsPage() {
         <div className="flex flex-col items-center justify-center py-20 text-center">
           <Truck className="w-12 h-12 text-slate-600 mb-3" />
           <p className="text-slate-400 font-medium">
-            {deployments.length === 0 ? 'No active deployments' : 'No results for that search'}
+            {deployments.length === 0
+              ? 'No equipment currently deployed'
+              : 'No results for that search'}
           </p>
           <p className="text-slate-500 text-sm mt-1">
             {deployments.length === 0
-              ? 'Commission equipment from a project to see it here'
+              ? 'Assign equipment to a project from the Fleet or Projects page'
               : 'Try a different search term'}
           </p>
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {filtered.map(item => (
-            <DeployCard key={item.id} item={item} onClick={() => setSelected(item)} />
+          {filtered.map(eq => (
+            <EquipCard key={eq.id} eq={eq} onClick={() => setSelected(eq)} />
           ))}
         </div>
       )}
 
-      {/* Detail panel */}
       {selected && (
-        <DeploymentPanel
-          item={selected}
-          onClose={() => setSelected(null)}
-        />
+        <DeploymentPanel eq={selected} onClose={() => setSelected(null)} />
       )}
     </div>
   )
