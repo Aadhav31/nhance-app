@@ -74,8 +74,91 @@ export const INDUSTRY_DEFAULT_MODULES = {
 export const INDUSTRY_NAV = {
   // Existing industries — null means "use constants.js NAV_ITEMS unchanged"
   construction:    null,
-  equipment_rental: null,
   transport:       null,
+
+  // ── Equipment Rental ────────────────────────────────────────────────────────
+  equipment_rental: [
+    {
+      section: 'Overview',
+      items: [
+        { key: 'dashboard',      label: 'Dashboard',           icon: 'LayoutDashboard', module: MODULES.CORE,
+          roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
+      ],
+    },
+    {
+      section: 'Equipment',
+      items: [
+        { key: 'fleet',          label: 'Equipment & Machines',icon: 'Truck',           module: MODULES.FLEET,
+          roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
+        { key: 'maintenance',    label: 'Maintenance',         icon: 'Wrench',          module: MODULES.MAINTENANCE,
+          roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ADMIN] },
+        { key: 'availability',   label: 'Availability',        icon: 'CalendarDays',    module: MODULES.FLEET,
+          roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
+      ],
+    },
+    {
+      section: 'Contracts',
+      items: [
+        { key: 'hire_contracts', label: 'Hire Contracts',      icon: 'FileSignature',   module: MODULES.CLIENTS_PROJECTS,
+          roles: [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
+        { key: 'projects',       label: 'Active Deployments',  icon: 'FolderOpen',      module: MODULES.CLIENTS_PROJECTS,
+          roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
+        { key: 'clients',        label: 'Clients',             icon: 'Building2',       module: MODULES.CLIENTS_PROJECTS,
+          roles: [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
+      ],
+    },
+    {
+      section: 'Operations',
+      items: [
+        { key: 'operations',     label: 'Site Operations',     icon: 'ClipboardList',   module: MODULES.OPERATIONS,
+          roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ADMIN] },
+        { key: 'fieldexpense',   label: 'Field Expenses',      icon: 'Receipt',         module: MODULES.OPERATIONS,
+          roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
+        { key: 'inventory',      label: 'Inventory & Parts',   icon: 'Package',         module: MODULES.INVENTORY,
+          roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
+      ],
+    },
+    {
+      section: 'Finance',
+      items: [
+        { key: 'sales',          label: 'Sales & Invoicing',   icon: 'TrendingUp',      module: MODULES.SALES,
+          roles: [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
+        { key: 'purchase',       label: 'Purchase',            icon: 'ShoppingCart',    module: MODULES.PURCHASE,
+          roles: [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
+        { key: 'accounts',       label: 'Accounts & Ledger',   icon: 'Wallet',          module: MODULES.ACCOUNTS,
+          roles: [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
+        { key: 'expenses',       label: 'Expenses',            icon: 'ArrowDownCircle', module: MODULES.ACCOUNTS,
+          roles: [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
+        { key: 'planner',        label: 'Expense Planner',     icon: 'CalendarDays',    module: MODULES.ACCOUNTS,
+          roles: [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
+      ],
+    },
+    {
+      section: 'Insights',
+      items: [
+        { key: 'reports',        label: 'Reports',             icon: 'BarChart3',       module: MODULES.REPORTS,
+          roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
+      ],
+    },
+    {
+      section: 'People',
+      items: [
+        { key: 'hr',             label: 'Employee Management', icon: 'Users',           module: MODULES.HR_PAYROLL,
+          roles: [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
+        { key: 'letters',        label: 'Letters',             icon: 'FileText',        module: MODULES.CORE,
+          roles: [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
+      ],
+    },
+    {
+      section: 'Admin',
+      items: [
+        { key: 'settings',       label: 'Settings',            icon: 'Settings',        module: MODULES.CORE,
+          roles: [ROLES.ADMIN] },
+        { key: 'company',        label: 'Company Profile',     icon: 'Building2',       module: MODULES.CORE,
+          roles: [ROLES.ADMIN] },
+      ],
+    },
+  ],
 
   // ── Crusher / Quarry ────────────────────────────────────────────────────────
   crusher: [
