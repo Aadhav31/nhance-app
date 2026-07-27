@@ -40,6 +40,7 @@ const ProductionTrackerPage   = lazy(() => import('./pages/production/Production
 const CrusherSalesPage        = lazy(() => import('./pages/crusher/CrusherSalesPage'))
 const CompanyProfilePage      = lazy(() => import('./pages/company/CompanyProfilePage'))
 const HireContractsPage       = lazy(() => import('./pages/hire/HireContractsPage'))
+const ActiveDeploymentsPage   = lazy(() => import('./pages/hire/ActiveDeploymentsPage'))
 
 // ── Connectivity hook ─────────────────────────────────────────────────────────
 function useOnlineStatus() {
@@ -334,6 +335,12 @@ function AppShell() {
         return (
           <Suspense fallback={<LoadingScreen message="Loading hire contracts…" />}>
             <HireContractsPage />
+          </Suspense>
+        )
+      case 'active_deployments':
+        return (
+          <Suspense fallback={<LoadingScreen message="Loading deployments…" />}>
+            <ActiveDeploymentsPage />
           </Suspense>
         )
       case 'availability': return <ComingSoon page="Equipment Availability Calendar" />

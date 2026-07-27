@@ -642,7 +642,7 @@ export default function HireContractsPage() {
     queryFn: async () => {
       const { data } = await supabase.from('equipment')
         .select('id, name, equipment_number, equipment_type')
-        .eq('company_id', companyId).eq('is_active', true)
+        .eq('company_id', companyId)
         .order('name')
       return data || []
     },
@@ -653,7 +653,7 @@ export default function HireContractsPage() {
     queryFn: async () => {
       const { data } = await supabase.from('clients')
         .select('id, display_name, business_name')
-        .eq('company_id', companyId).eq('is_active', true)
+        .eq('company_id', companyId)
         .order('display_name')
       return data || []
     },
