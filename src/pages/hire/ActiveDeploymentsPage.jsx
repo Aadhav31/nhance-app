@@ -9,9 +9,9 @@ import {
   Building2, History, Clock,
 } from 'lucide-react'
 
-const fmtDate = (d) => d ? format(new Date(d), 'd MMM yyyy') : '—'
+const fmtDate  = (d) => d ? format(new Date(d), 'd MMM yyyy') : '—'
 const fmtMoney = (n) => (n != null && Number(n) !== 0) ? `₹${Number(n).toLocaleString('en-IN')}` : null
-const daysOn  = (d) => d ? differenceInDays(new Date(), new Date(d)) : null
+const daysOn   = (d) => d ? differenceInDays(new Date(), new Date(d)) : null
 
 function Row({ label, value }) {
   if (value == null || value === '' || value === '—') return null
@@ -40,11 +40,49 @@ function DaysBadge({ days }) {
   return <span className={`text-xs px-2 py-0.5 rounded-full border ${cls}`}>{days}d on site</span>
 }
 
+// ── Hook: fetch project + client by project_id ────────────────────────────────
+function useProjectDetail(projectId) {
+  return useQuery({
+    queryKey: ['project_detail_deploy', projectId],
+    queryFn: async () => {
+      if (!projectId) return null
+      const { data } = await supabase
+        .from('projects')
+        .select('id, project_name, project_code, site_name, site_location, city, state, pincode, status, nature_of_job, contract_value, billing_cycle, payment_terms, gst_rate, mobilization_advance, retention_pct, start_date, end_date, actual_end_date, mobilization_date, commencement_date, client_id')
+        .eq('id', projectId)
+        .single()
+      return data
+    },
+    enabled: !!projectId,
+    staleTime: 5 * 60 * 1000,
+  })
+}
+
+function useClientDetail(clientId) {
+  return useQuery({
+    queryKey: ['client_detail_deploy', clientId],
+    queryFn: async () => {
+      if (!clientId) return null
+      const { data } = await supabase
+        .from('clients')
+        .select('id, display_name, business_name')
+        .eq('id', clientId)
+        .single()
+      return data
+    },
+    enabled: !!clientId,
+    staleTime: 10 * 60 * 1000,
+  })
+}
+
 // ── Detail panel ──────────────────────────────────────────────────────────────
 function DeploymentPanel({ dep, onClose }) {
   const { companyId } = useAuth()
   const eq = dep.equipment
-  const pr = dep.projects
+
+  // Fetch project + client separately (avoids PostgREST FK join issues)
+  const { data: pr } = useProjectDetail(dep.project_id)
+  const { data: client } = useClientDetail(dep.client_id || pr?.client_id)
 
   const { data: operators = [] } = useQuery({
     queryKey: ['eq_ops', eq?.id],
@@ -83,7 +121,7 @@ function DeploymentPanel({ dep, onClose }) {
     queryFn: async () => {
       const { data } = await supabase
         .from('equipment_deployments')
-        .select('deployed_date, withdrawn_date, status, billing_basis, rate_per_day, rate_per_hour, rate_per_month, projects:project_id(project_name, project_code)')
+        .select('deployed_date, withdrawn_date, status, billing_basis, rate_per_day, rate_per_hour, rate_per_month, project_id')
         .eq('equipment_id', eq.id)
         .order('deployed_date', { ascending: false })
         .limit(10)
@@ -92,8 +130,21 @@ function DeploymentPanel({ dep, onClose }) {
     enabled: !!eq?.id,
   })
 
-  const deployDate = dep.deployed_date
-  const days = daysOn(deployDate)
+  // Project names for history rows
+  const historyProjectIds = useMemo(() => [...new Set(history.map(h => h.project_id).filter(Boolean))], [history])
+  const { data: historyProjects = [] } = useQuery({
+    queryKey: ['history_projects', historyProjectIds.join(',')],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('projects').select('id, project_name, project_code').in('id', historyProjectIds)
+      return data || []
+    },
+    enabled: historyProjectIds.length > 0,
+  })
+  const histProjMap = useMemo(() => Object.fromEntries(historyProjects.map(p => [p.id, p])), [historyProjects])
+
+  const days = daysOn(dep.deployed_date)
+  const clientName = client?.display_name || client?.business_name
 
   return (
     <div className="fixed inset-0 z-40 flex justify-end">
@@ -126,12 +177,12 @@ function DeploymentPanel({ dep, onClose }) {
           {/* Equipment */}
           <SHead icon={Truck} title="Equipment" />
           <div className="bg-dark-750 rounded-xl border border-dark-600 p-3">
-            <Row label="Name"      value={eq?.name} />
-            <Row label="Reg / ID"  value={eq?.equipment_number} />
-            <Row label="Category"  value={eq?.category} />
-            <Row label="Make"      value={eq?.make} />
-            <Row label="Model"     value={eq?.model} />
-            <Row label="Year"      value={eq?.year_of_manufacture} />
+            <Row label="Name"     value={eq?.name} />
+            <Row label="Reg / ID" value={eq?.equipment_number} />
+            <Row label="Category" value={eq?.category} />
+            <Row label="Make"     value={eq?.make} />
+            <Row label="Model"    value={eq?.model} />
+            <Row label="Year"     value={eq?.year_of_manufacture} />
           </div>
 
           {/* Project Overview */}
@@ -141,7 +192,7 @@ function DeploymentPanel({ dep, onClose }) {
               <div className="bg-dark-750 rounded-xl border border-dark-600 p-3">
                 <Row label="Project"       value={pr.project_name} />
                 <Row label="Project #"     value={pr.project_code} />
-                <Row label="Client"        value={dep.clients?.display_name || dep.clients?.business_name} />
+                <Row label="Client"        value={clientName} />
                 <Row label="Status"        value={pr.status ? pr.status.charAt(0).toUpperCase() + pr.status.slice(1) : null} />
                 <Row label="Nature of Job" value={pr.nature_of_job} />
               </div>
@@ -177,6 +228,7 @@ function DeploymentPanel({ dep, onClose }) {
                     <Row label="Payment Terms"  value={pr.payment_terms} />
                     <Row label="GST Rate"       value={pr.gst_rate ? `${pr.gst_rate}%` : null} />
                     <Row label="Mob. Advance"   value={fmtMoney(pr.mobilization_advance)} />
+                    <Row label="Retention"      value={pr.retention_pct ? `${pr.retention_pct}%` : null} />
                   </div>
                 </>
               )}
@@ -188,13 +240,13 @@ function DeploymentPanel({ dep, onClose }) {
             <>
               <SHead icon={Clock} title="Deployed Rate" />
               <div className="bg-dark-750 rounded-xl border border-dark-600 p-3">
-                <Row label="Deployed Date"  value={fmtDate(dep.deployed_date)} />
-                <Row label="Billing Basis"  value={dep.billing_basis} />
-                <Row label="Rate / Hour"    value={fmtMoney(dep.rate_per_hour)} />
-                <Row label="Rate / Day"     value={fmtMoney(dep.rate_per_day)} />
-                <Row label="Rate / Month"   value={fmtMoney(dep.rate_per_month)} />
-                <Row label="Max Hrs/Day"    value={dep.max_hours_per_day ? `${dep.max_hours_per_day} hrs` : null} />
-                <Row label="OT %"           value={dep.ot_percentage ? `${dep.ot_percentage}%` : null} />
+                <Row label="Deployed Date" value={fmtDate(dep.deployed_date)} />
+                <Row label="Billing Basis" value={dep.billing_basis} />
+                <Row label="Rate / Hour"   value={fmtMoney(dep.rate_per_hour)} />
+                <Row label="Rate / Day"    value={fmtMoney(dep.rate_per_day)} />
+                <Row label="Rate / Month"  value={fmtMoney(dep.rate_per_month)} />
+                <Row label="Max Hrs/Day"   value={dep.max_hours_per_day ? `${dep.max_hours_per_day} hrs` : null} />
+                <Row label="OT %"          value={dep.ot_percentage ? `${dep.ot_percentage}%` : null} />
                 <Row label="Fuel by Client" value={dep.fuel_by_client ? 'Yes' : null} />
               </div>
             </>
@@ -249,7 +301,9 @@ function DeploymentPanel({ dep, onClose }) {
                 {history.map((h, i) => (
                   <div key={i} className="px-3 py-2.5">
                     <div className="flex items-center justify-between">
-                      <p className="text-xs text-slate-200">{h.projects?.project_name || '—'}</p>
+                      <p className="text-xs text-slate-200">
+                        {histProjMap[h.project_id]?.project_name || '—'}
+                      </p>
                       {h.status === 'active' && (
                         <span className="text-xs px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300">Current</span>
                       )}
@@ -274,11 +328,15 @@ function DeploymentPanel({ dep, onClose }) {
   )
 }
 
-// ── Equipment card ────────────────────────────────────────────────────────────
+// ── Equipment card — fetches its own project ──────────────────────────────────
 function EquipCard({ dep, onClick }) {
   const eq   = dep.equipment
-  const pr   = dep.projects
   const days = daysOn(dep.deployed_date)
+
+  const { data: pr }     = useProjectDetail(dep.project_id)
+  const { data: client } = useClientDetail(dep.client_id || pr?.client_id)
+
+  const clientName = client?.display_name || client?.business_name
 
   return (
     <div
@@ -314,12 +372,10 @@ function EquipCard({ dep, onClick }) {
                   </span>
                 </div>
               )}
-              {(dep.clients?.display_name || dep.clients?.business_name) && (
+              {clientName && (
                 <div className="flex items-center gap-1.5">
                   <User className="w-3 h-3 text-slate-500 shrink-0" />
-                  <span className="text-xs text-slate-400 truncate">
-                    {dep.clients.display_name || dep.clients.business_name}
-                  </span>
+                  <span className="text-xs text-slate-400 truncate">{clientName}</span>
                 </div>
               )}
             </div>
@@ -341,7 +397,7 @@ export default function ActiveDeploymentsPage() {
   const [search, setSearch]     = useState('')
   const [selected, setSelected] = useState(null)
 
-  // Primary source: equipment_deployments (has proper FKs → PostgREST joins work)
+  // equipment_deployments WHERE status='active' — only the equipment join (works reliably)
   const { data: fromDeployments = [], isLoading: d1 } = useQuery({
     queryKey: ['active_eq_deployments', companyId],
     queryFn: async () => {
@@ -355,17 +411,6 @@ export default function ActiveDeploymentsPage() {
           equipment:equipment_id (
             id, name, equipment_number, category, make, model,
             year_of_manufacture, status
-          ),
-          projects:project_id (
-            id, project_name, project_code, site_name, site_location,
-            city, state, pincode, status, nature_of_job,
-            contract_value, billing_cycle, payment_terms, gst_rate,
-            mobilization_advance, start_date, end_date,
-            actual_end_date, mobilization_date, commencement_date,
-            client_id
-          ),
-          clients:client_id (
-            id, display_name, business_name
           )
         `)
         .eq('company_id', companyId)
@@ -377,13 +422,13 @@ export default function ActiveDeploymentsPage() {
     enabled: !!companyId,
   })
 
-  // Fallback: equipment with current_project_id set but no active deployment record
+  // Fallback: equipment with current_project_id but no active deployment record
   const { data: fromEquipment = [], isLoading: d2 } = useQuery({
     queryKey: ['eq_with_project', companyId],
     queryFn: async () => {
       const { data, error } = await supabase
         .from('equipment')
-        .select('id, name, equipment_number, category, make, model, year_of_manufacture, status, current_project_id')
+        .select('id, name, equipment_number, category, make, model, year_of_manufacture, status, current_project_id, current_client_id')
         .eq('company_id', companyId)
         .not('current_project_id', 'is', null)
         .order('name')
@@ -393,23 +438,20 @@ export default function ActiveDeploymentsPage() {
     enabled: !!companyId,
   })
 
-  // Merge: deployment records first, then add any equipment not already covered
   const deployedEquipIds = useMemo(() => new Set(fromDeployments.map(d => d.equipment_id)), [fromDeployments])
 
   const fallbackItems = useMemo(() =>
     fromEquipment
       .filter(eq => !deployedEquipIds.has(eq.id))
       .map(eq => ({
-        id: `fallback-${eq.id}`,
+        id: `fb-${eq.id}`,
         equipment_id: eq.id,
         project_id: eq.current_project_id,
+        client_id: eq.current_client_id,
         deployed_date: null,
         billing_basis: null, rate_per_hour: null, rate_per_day: null, rate_per_month: null,
         max_hours_per_day: null, ot_percentage: null, fuel_by_client: false,
         equipment: eq,
-        projects: null,   // will show without project details
-        clients: null,
-        _fallback: true,
       })),
     [fromEquipment, deployedEquipIds]
   )
@@ -421,12 +463,7 @@ export default function ActiveDeploymentsPage() {
     const q = search.toLowerCase()
     return all.filter(dep =>
       dep.equipment?.name?.toLowerCase().includes(q) ||
-      dep.equipment?.equipment_number?.toLowerCase().includes(q) ||
-      dep.projects?.project_name?.toLowerCase().includes(q) ||
-      dep.projects?.city?.toLowerCase().includes(q) ||
-      dep.projects?.site_name?.toLowerCase().includes(q) ||
-      dep.clients?.display_name?.toLowerCase().includes(q) ||
-      dep.clients?.business_name?.toLowerCase().includes(q)
+      dep.equipment?.equipment_number?.toLowerCase().includes(q)
     )
   }, [all, search])
 
@@ -434,8 +471,6 @@ export default function ActiveDeploymentsPage() {
     () => new Set(all.map(d => d.project_id).filter(Boolean)).size,
     [all]
   )
-
-  const isLoading = d1 || d2
 
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto">
@@ -456,7 +491,7 @@ export default function ActiveDeploymentsPage() {
           </div>
           <div className="bg-dark-800 border border-dark-700 rounded-xl p-3 text-center">
             <p className="text-2xl font-bold text-amber-400">
-              {all.filter(d => daysOn(d.deployed_date) !== null && daysOn(d.deployed_date) > 90).length}
+              {all.filter(d => { const n = daysOn(d.deployed_date); return n !== null && n > 90 }).length}
             </p>
             <p className="text-xs text-slate-400 mt-0.5">90d+ Deployed</p>
           </div>
@@ -468,7 +503,7 @@ export default function ActiveDeploymentsPage() {
         <input
           value={search}
           onChange={e => setSearch(e.target.value)}
-          placeholder="Search machine, project, city, client…"
+          placeholder="Search machine, registration…"
           className="w-full bg-dark-800 border border-dark-700 rounded-xl pl-9 pr-4 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-primary-500 placeholder-slate-500"
         />
         {search && (
@@ -478,7 +513,7 @@ export default function ActiveDeploymentsPage() {
         )}
       </div>
 
-      {isLoading ? (
+      {(d1 || d2) ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {[1,2,3].map(i => <div key={i} className="bg-dark-800 border border-dark-700 rounded-xl p-4 animate-pulse h-32" />)}
         </div>
@@ -486,8 +521,8 @@ export default function ActiveDeploymentsPage() {
         <div className="flex flex-col items-center justify-center py-20 text-center">
           <Truck className="w-12 h-12 text-slate-600 mb-3" />
           <p className="text-slate-400 font-medium">No active deployments found</p>
-          <p className="text-slate-500 text-sm mt-1 max-w-xs">
-            Open Equipment & Machines, select a machine, and use the Deploy button to assign it to a project.
+          <p className="text-slate-500 text-sm mt-1">
+            Open a machine in Equipment & Machines and use the Deploy button to assign it to a project.
           </p>
         </div>
       ) : (
