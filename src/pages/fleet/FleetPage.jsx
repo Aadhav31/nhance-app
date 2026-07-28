@@ -1370,6 +1370,15 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
   const [deployFuelByClient, setDeployFuelByClient] = useState(equipmentProp.fuel_by_client || false)
   const [deployFormSynced, setDeployFormSynced] = useState(false)
 
+  // Deployment record fields
+  const [deployHourMeter,        setDeployHourMeter]        = useState(equipmentProp.current_meter_reading || '')
+  const [deployOperatorName,     setDeployOperatorName]     = useState('')
+  const [deploySiteIncharge,     setDeploySiteIncharge]     = useState('')
+  const [deployWorkOrderRef,     setDeployWorkOrderRef]     = useState('')
+  const [deployMachinePhotoUrl,  setDeployMachinePhotoUrl]  = useState('')
+  const [deployMeterPhotoUrl,    setDeployMeterPhotoUrl]    = useState('')
+  const { location: deployGpsLoc, loading: deployGpsLoading } = useGPS()
+
   // Re-sync deploy form when fresh equipment data arrives (on mount fetch above)
   useEffect(() => {
     if (deployFormSynced) return   // don't overwrite user changes after initial sync
@@ -1643,6 +1652,14 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
         working_days_per_month: effectiveRate?.working_days_per_month || 26,
         ot_percentage:          effectiveRate?.ot_percentage          || 125,
         fuel_by_client:      deployFuelByClient,
+        // Deployment record
+        hour_meter_at_deployment: deployHourMeter !== '' ? Number(deployHourMeter) : null,
+        operator_name:        deployOperatorName   || null,
+        site_incharge:        deploySiteIncharge   || null,
+        work_order_ref:       deployWorkOrderRef   || null,
+        machine_photo_url:    deployMachinePhotoUrl || null,
+        hour_meter_photo_url: deployMeterPhotoUrl  || null,
+        deployment_location:  deployGpsLoc?.address || null,
       })
 
       setEquipment(e => ({ ...e, current_client_id: deployClientId, current_project_id: deployProjectId, current_site_name: deploySiteName, fuel_by_client: deployFuelByClient }))
@@ -2019,6 +2036,75 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
                   <span className="text-xs text-slate-300">Fuel supplied by client</span>
                   {deployFuelByClient && <span className="text-[10px] text-amber-400 bg-amber-900/20 border border-amber-700/30 rounded px-1.5 py-0.5">Fuel costs excluded from our P&L</span>}
                 </label>
+              )}
+
+              {/* ── Deployment Record ── */}
+              {deployProjectId && (
+                <div className="bg-dark-750 border border-dark-500 rounded-lg p-2.5 space-y-2.5">
+                  <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Deployment Record</p>
+
+                  {/* Hour meter reading */}
+                  <div>
+                    <label className="text-[10px] text-slate-500 uppercase tracking-wider">Hour Meter at Deployment</label>
+                    <input type="number" min="0" step="0.1"
+                      className={inp('text-xs mt-1')}
+                      value={deployHourMeter}
+                      onChange={e => setDeployHourMeter(e.target.value)}
+                      placeholder={`Current: ${equipment.current_meter_reading || 0} hrs`} />
+                  </div>
+
+                  {/* Operator at deployment */}
+                  <div>
+                    <label className="text-[10px] text-slate-500 uppercase tracking-wider">Operator at Deployment</label>
+                    <select className={inp('text-xs mt-1')} value={deployOperatorName} onChange={e => setDeployOperatorName(e.target.value)}>
+                      <option value="">Select operator…</option>
+                      {hrOperators.map(e => <option key={e.id} value={e.name}>{e.name}</option>)}
+                    </select>
+                  </div>
+
+                  {/* Site in-charge */}
+                  <div>
+                    <label className="text-[10px] text-slate-500 uppercase tracking-wider">Site In-charge</label>
+                    <input className={inp('text-xs mt-1')} value={deploySiteIncharge}
+                      onChange={e => setDeploySiteIncharge(e.target.value)}
+                      placeholder="Name of person responsible at site" />
+                  </div>
+
+                  {/* Work order / hire contract ref */}
+                  <div>
+                    <label className="text-[10px] text-slate-500 uppercase tracking-wider">Work Order / PO / Contract Ref</label>
+                    <input className={inp('text-xs mt-1')} value={deployWorkOrderRef}
+                      onChange={e => setDeployWorkOrderRef(e.target.value)}
+                      placeholder="e.g. WO-2026-042 or HC-001" />
+                  </div>
+
+                  {/* Machine photo */}
+                  <div>
+                    <label className="text-[10px] text-slate-500 uppercase tracking-wider">Machine Photo</label>
+                    <CameraButton
+                      companyId={companyId}
+                      label={`deploy_machine_${equipment.id}`}
+                      photoUrl={deployMachinePhotoUrl}
+                      onCapture={setDeployMachinePhotoUrl}
+                      location={deployGpsLoc}
+                    />
+                  </div>
+
+                  {/* Hour meter photo */}
+                  <div>
+                    <label className="text-[10px] text-slate-500 uppercase tracking-wider">Hour Meter Photo <span className="normal-case text-slate-600">(optional)</span></label>
+                    <CameraButton
+                      companyId={companyId}
+                      label={`deploy_meter_${equipment.id}`}
+                      photoUrl={deployMeterPhotoUrl}
+                      onCapture={setDeployMeterPhotoUrl}
+                      location={deployGpsLoc}
+                    />
+                  </div>
+
+                  {/* GPS */}
+                  <GPSField location={deployGpsLoc} loading={deployGpsLoading} />
+                </div>
               )}
 
               <button onClick={handleDeploy} disabled={deploySaving || !deployProjectId}

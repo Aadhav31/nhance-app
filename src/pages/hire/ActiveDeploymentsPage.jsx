@@ -6,7 +6,7 @@ import { format, differenceInDays } from 'date-fns'
 import {
   Search, X, ChevronRight, Truck, MapPin, Calendar,
   User, IndianRupee, FileSignature, CheckCircle,
-  Building2, History, Clock,
+  Building2, History, Clock, Camera, Gauge, ClipboardList,
 } from 'lucide-react'
 
 const fmtDate  = (d) => d ? format(new Date(d), 'd MMM yyyy') : '—'
@@ -235,6 +235,52 @@ function DeploymentPanel({ dep, onClose }) {
             </>
           )}
 
+          {/* Deployment Record */}
+          {(dep.deployed_date || dep.hour_meter_at_deployment || dep.operator_name || dep.site_incharge || dep.work_order_ref || dep.machine_photo_url || dep.hour_meter_photo_url) && (
+            <>
+              <SHead icon={ClipboardList} title="Deployment Record" />
+              <div className="bg-dark-750 rounded-xl border border-dark-600 p-3 space-y-2">
+                <Row label="Deployed On"    value={fmtDate(dep.deployed_date)} />
+                <Row label="Hour Meter"     value={dep.hour_meter_at_deployment != null ? `${dep.hour_meter_at_deployment} hrs` : null} />
+                <Row label="Operator"       value={dep.operator_name} />
+                <Row label="Site In-charge" value={dep.site_incharge} />
+                <Row label="Work Order / Ref" value={dep.work_order_ref} />
+                {dep.deployment_location && (
+                  <div className="flex items-start gap-1.5 py-1.5 border-b border-dark-700/50">
+                    <MapPin className="w-3 h-3 text-slate-500 shrink-0 mt-0.5" />
+                    <span className="text-xs text-slate-400 leading-relaxed">{dep.deployment_location}</span>
+                  </div>
+                )}
+                {(dep.machine_photo_url || dep.hour_meter_photo_url) && (
+                  <div className="flex gap-2 pt-1">
+                    {dep.machine_photo_url && (
+                      <a href={dep.machine_photo_url} target="_blank" rel="noopener noreferrer"
+                        className="flex-1 relative rounded-lg overflow-hidden border border-dark-600 group">
+                        <img src={dep.machine_photo_url} alt="Machine at deployment"
+                          className="w-full h-28 object-cover group-hover:opacity-80 transition-opacity" />
+                        <div className="absolute bottom-0 left-0 right-0 bg-black/60 px-2 py-1 flex items-center gap-1">
+                          <Camera className="w-3 h-3 text-slate-300" />
+                          <span className="text-[10px] text-slate-300">Machine</span>
+                        </div>
+                      </a>
+                    )}
+                    {dep.hour_meter_photo_url && (
+                      <a href={dep.hour_meter_photo_url} target="_blank" rel="noopener noreferrer"
+                        className="flex-1 relative rounded-lg overflow-hidden border border-dark-600 group">
+                        <img src={dep.hour_meter_photo_url} alt="Hour meter at deployment"
+                          className="w-full h-28 object-cover group-hover:opacity-80 transition-opacity" />
+                        <div className="absolute bottom-0 left-0 right-0 bg-black/60 px-2 py-1 flex items-center gap-1">
+                          <Gauge className="w-3 h-3 text-slate-300" />
+                          <span className="text-[10px] text-slate-300">Hour Meter</span>
+                        </div>
+                      </a>
+                    )}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+
           {/* Deployed Rate */}
           {(dep.billing_basis || dep.rate_per_day || dep.rate_per_hour || dep.rate_per_month) && (
             <>
@@ -408,6 +454,9 @@ export default function ActiveDeploymentsPage() {
           rate_per_hour, rate_per_day, rate_per_month,
           max_hours_per_day, ot_percentage, fuel_by_client,
           equipment_id, project_id, client_id,
+          hour_meter_at_deployment, operator_name, site_incharge,
+          work_order_ref, machine_photo_url, hour_meter_photo_url,
+          deployment_location,
           equipment:equipment_id (
             id, name, equipment_number, category, make, model,
             year_of_manufacture, status
