@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { VendorPicker } from '../../components/shared/EntityPicker'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
@@ -14,7 +14,8 @@ import {
   Gauge, User, Mic, MicOff, MapPin, Camera, Building2, Users,
   Save, Trash2, Edit2, FileText, Wrench, Shield, Phone, Mail,
   ChevronRight, AlertCircle, Clock, Activity, LayoutGrid, List,
-  Upload, Download, Eye, FolderOpen, Bell
+  Upload, Download, Eye, FolderOpen, Bell,
+  Search, History, BookOpen
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format, differenceInDays } from 'date-fns'
@@ -2690,6 +2691,322 @@ function IncidentsTab({ companyId }) {
   )
 }
 
+// ── History Tab ───────────────────────────────────────────────────────────────
+function HistoryTab({ companyId }) {
+  const [search,       setSearch]       = useState('')
+  const [statusFilter, setStatusFilter] = useState('all')
+
+  const { data: deployments = [], isLoading } = useQuery({
+    queryKey: ['all_deployments_hist', companyId],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('equipment_deployments')
+        .select(`
+          id, deployed_date, withdrawn_date, status, billing_basis,
+          rate_per_hour, rate_per_day, rate_per_month,
+          equipment_id, project_id, client_id,
+          operator_name, hour_meter_at_deployment, work_order_ref,
+          equipment:equipment_id (id, name, equipment_number, category)
+        `)
+        .eq('company_id', companyId)
+        .order('deployed_date', { ascending: false })
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+
+  const projectIds = useMemo(() => [...new Set(deployments.map(d => d.project_id).filter(Boolean))], [deployments])
+  const { data: projects = [] } = useQuery({
+    queryKey: ['hist_projects', projectIds.join(',')],
+    queryFn: async () => {
+      const { data } = await supabase.from('projects').select('id, project_name, project_code').in('id', projectIds)
+      return data || []
+    },
+    enabled: projectIds.length > 0,
+  })
+  const projMap = useMemo(() => Object.fromEntries(projects.map(p => [p.id, p])), [projects])
+
+  const clientIds = useMemo(() => [...new Set(deployments.map(d => d.client_id).filter(Boolean))], [deployments])
+  const { data: histClients = [] } = useQuery({
+    queryKey: ['hist_clients', clientIds.join(',')],
+    queryFn: async () => {
+      const { data } = await supabase.from('clients').select('id, display_name, business_name').in('id', clientIds)
+      return data || []
+    },
+    enabled: clientIds.length > 0,
+  })
+  const clientMap = useMemo(() => Object.fromEntries(histClients.map(c => [c.id, c])), [histClients])
+
+  const filtered = useMemo(() => {
+    let rows = deployments
+    if (statusFilter !== 'all') rows = rows.filter(d => d.status === statusFilter)
+    if (search.trim()) {
+      const q = search.toLowerCase()
+      rows = rows.filter(d =>
+        d.equipment?.name?.toLowerCase().includes(q) ||
+        d.equipment?.equipment_number?.toLowerCase().includes(q) ||
+        projMap[d.project_id]?.project_name?.toLowerCase().includes(q) ||
+        d.operator_name?.toLowerCase().includes(q) ||
+        d.work_order_ref?.toLowerCase().includes(q)
+      )
+    }
+    return rows
+  }, [deployments, search, statusFilter, projMap])
+
+  const daysOnSite = (dep, wit) => {
+    if (!dep) return null
+    return differenceInDays(wit ? new Date(wit) : new Date(), new Date(dep))
+  }
+
+  const rateLabel = (d) => {
+    if (d.billing_basis === 'hourly'  && d.rate_per_hour)  return `₹${Number(d.rate_per_hour).toLocaleString('en-IN')}/hr`
+    if (d.billing_basis === 'daily'   && d.rate_per_day)   return `₹${Number(d.rate_per_day).toLocaleString('en-IN')}/day`
+    if (d.billing_basis === 'monthly' && d.rate_per_month) return `₹${Number(d.rate_per_month).toLocaleString('en-IN')}/mo`
+    return null
+  }
+
+  const ST = {
+    active:    'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
+    withdrawn: 'bg-slate-500/15 text-slate-400 border-slate-600/30',
+    completed: 'bg-blue-500/15 text-blue-300 border-blue-500/30',
+  }
+
+  return (
+    <div className="p-4 space-y-3 overflow-y-auto h-full">
+      <div className="flex gap-2">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+          <input value={search} onChange={e => setSearch(e.target.value)}
+            placeholder="Equipment, project, operator, work order…"
+            className="w-full bg-dark-800 border border-dark-700 rounded-xl pl-9 pr-9 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-primary-500 placeholder-slate-500" />
+          {search && <button onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"><X className="w-4 h-4" /></button>}
+        </div>
+        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
+          className="bg-dark-800 border border-dark-700 rounded-xl px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-primary-500">
+          <option value="all">All</option>
+          <option value="active">Active</option>
+          <option value="withdrawn">Withdrawn</option>
+          <option value="completed">Completed</option>
+        </select>
+      </div>
+
+      {isLoading ? (
+        <div className="space-y-2">{[1,2,3,4].map(i => <div key={i} className="h-20 bg-dark-800 rounded-xl animate-pulse" />)}</div>
+      ) : filtered.length === 0 ? (
+        <div className="flex flex-col items-center py-16 text-center">
+          <History className="w-10 h-10 text-slate-600 mb-2" />
+          <p className="text-slate-400 text-sm">No deployment history found</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {filtered.map(dep => {
+            const proj   = projMap[dep.project_id]
+            const client = clientMap[dep.client_id]
+            const d      = daysOnSite(dep.deployed_date, dep.withdrawn_date)
+            const rl     = rateLabel(dep)
+            return (
+              <div key={dep.id} className="bg-dark-800 border border-dark-700 rounded-xl p-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-semibold text-slate-100 truncate">{dep.equipment?.name || '—'}</span>
+                      {dep.equipment?.equipment_number && (
+                        <span className="text-xs font-mono text-primary-400 bg-primary-500/10 px-1.5 py-0.5 rounded">{dep.equipment.equipment_number}</span>
+                      )}
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded-full border capitalize ${ST[dep.status] || ST.withdrawn}`}>{dep.status}</span>
+                    </div>
+                    {proj && (
+                      <p className="text-xs text-slate-300 mt-0.5">
+                        {proj.project_name}{proj.project_code ? <span className="text-slate-500 ml-1">{proj.project_code}</span> : ''}
+                      </p>
+                    )}
+                    {client && <p className="text-xs text-slate-500">{client.display_name || client.business_name}</p>}
+                  </div>
+                  <div className="text-right shrink-0">
+                    {rl && <p className="text-xs text-emerald-400 font-medium">{rl}</p>}
+                    {d !== null && <p className="text-xs text-slate-400">{d}d</p>}
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1.5 text-xs text-slate-500">
+                  <span>↓ {dep.deployed_date ? format(new Date(dep.deployed_date), 'd MMM yyyy') : '—'}</span>
+                  {dep.withdrawn_date && <span>↑ {format(new Date(dep.withdrawn_date), 'd MMM yyyy')}</span>}
+                  {dep.operator_name && <span>· Op: {dep.operator_name}</span>}
+                  {dep.hour_meter_at_deployment != null && <span>· {dep.hour_meter_at_deployment} hrs</span>}
+                  {dep.work_order_ref && <span>· {dep.work_order_ref}</span>}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Ledger Tab ────────────────────────────────────────────────────────────────
+function LedgerTab({ companyId }) {
+  const [selectedEquipId, setSelectedEquipId] = useState('')
+  const [selectedMonth,   setSelectedMonth]   = useState(format(new Date(), 'yyyy-MM'))
+
+  const { data: allEquip = [] } = useQuery({
+    queryKey: ['equip_list_ledger', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('equipment')
+        .select('id, name, equipment_number, category')
+        .eq('company_id', companyId).order('name')
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+
+  const { data: deployment } = useQuery({
+    queryKey: ['active_dep_ledger', selectedEquipId],
+    queryFn: async () => {
+      const { data } = await supabase.from('equipment_deployments')
+        .select('billing_basis, rate_per_hour, rate_per_day, rate_per_month, project_id, client_id')
+        .eq('equipment_id', selectedEquipId).eq('status', 'active').maybeSingle()
+      return data
+    },
+    enabled: !!selectedEquipId,
+  })
+
+  const periodStart = selectedMonth ? `${selectedMonth}-01` : null
+  const periodEnd   = useMemo(() => {
+    if (!selectedMonth) return null
+    const [y, m] = selectedMonth.split('-').map(Number)
+    const last   = new Date(y, m, 0).getDate()
+    return `${selectedMonth}-${String(last).padStart(2, '0')}`
+  }, [selectedMonth])
+
+  const { data: ops = [], isLoading: opsLoading } = useQuery({
+    queryKey: ['daily_ops_ledger', selectedEquipId, selectedMonth],
+    queryFn: async () => {
+      const { data } = await supabase.from('daily_operations')
+        .select('id, ops_date, shift_type, status, running_hours, kilometer_run, trip_count, fuel_consumed, operator_name, activity')
+        .eq('company_id', companyId)
+        .eq('equipment_id', selectedEquipId)
+        .gte('ops_date', periodStart)
+        .lte('ops_date', periodEnd)
+        .order('ops_date')
+      return data || []
+    },
+    enabled: !!selectedEquipId && !!selectedMonth,
+  })
+
+  const totalHours  = useMemo(() => ops.reduce((s, o) => s + (Number(o.running_hours) || 0), 0), [ops])
+  const workingDays = useMemo(() => new Set(ops.filter(o => o.status === 'working').map(o => o.ops_date)).size, [ops])
+  const totalFuel   = useMemo(() => ops.reduce((s, o) => s + (Number(o.fuel_consumed) || 0), 0), [ops])
+
+  const billable = useMemo(() => {
+    if (!deployment) return 0
+    if (deployment.billing_basis === 'hourly'  && deployment.rate_per_hour)  return totalHours * Number(deployment.rate_per_hour)
+    if (deployment.billing_basis === 'daily'   && deployment.rate_per_day)   return workingDays * Number(deployment.rate_per_day)
+    if (deployment.billing_basis === 'monthly' && deployment.rate_per_month) return Number(deployment.rate_per_month)
+    return 0
+  }, [deployment, totalHours, workingDays])
+
+  const STATUS_CLR = { working: 'text-emerald-400', idle: 'text-amber-400', breakdown: 'text-red-400', maintenance: 'text-orange-400' }
+
+  return (
+    <div className="p-4 space-y-3 overflow-y-auto h-full">
+      <div className="flex gap-2">
+        <select value={selectedEquipId} onChange={e => setSelectedEquipId(e.target.value)}
+          className="flex-1 bg-dark-800 border border-dark-700 rounded-xl px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-primary-500">
+          <option value="">Select equipment…</option>
+          {allEquip.map(e => <option key={e.id} value={e.id}>{e.name}{e.equipment_number ? ` · ${e.equipment_number}` : ''}</option>)}
+        </select>
+        <input type="month" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)}
+          className="bg-dark-800 border border-dark-700 rounded-xl px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-primary-500" />
+      </div>
+
+      {selectedEquipId && (
+        <>
+          {/* Stats */}
+          <div className="grid grid-cols-3 gap-2">
+            {[
+              { label: 'Total Hours', value: totalHours.toFixed(1), cls: 'text-primary-400' },
+              { label: 'Working Days', value: workingDays, cls: 'text-emerald-400' },
+              { label: 'Fuel (L)', value: totalFuel.toFixed(0), cls: 'text-amber-400' },
+            ].map(s => (
+              <div key={s.label} className="bg-dark-800 border border-dark-700 rounded-xl p-3 text-center">
+                <p className={`text-xl font-bold ${s.cls}`}>{s.value}</p>
+                <p className="text-xs text-slate-400 mt-0.5">{s.label}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Billing estimate */}
+          {deployment && billable > 0 && (
+            <div className="bg-emerald-900/20 border border-emerald-700/30 rounded-xl p-3 flex items-center justify-between">
+              <div>
+                <p className="text-xs font-semibold text-emerald-400">Estimated Billable</p>
+                <p className="text-[10px] text-slate-400 mt-0.5">
+                  {deployment.billing_basis === 'hourly'  && `${totalHours.toFixed(1)} hrs × ₹${Number(deployment.rate_per_hour).toLocaleString('en-IN')}/hr`}
+                  {deployment.billing_basis === 'daily'   && `${workingDays} days × ₹${Number(deployment.rate_per_day).toLocaleString('en-IN')}/day`}
+                  {deployment.billing_basis === 'monthly' && 'Monthly flat rate'}
+                </p>
+              </div>
+              <p className="text-lg font-bold text-emerald-300">₹{Math.round(billable).toLocaleString('en-IN')}</p>
+            </div>
+          )}
+
+          {/* Daily log */}
+          {opsLoading ? (
+            <div className="space-y-1.5">{[1,2,3].map(i => <div key={i} className="h-9 bg-dark-800 rounded animate-pulse" />)}</div>
+          ) : ops.length === 0 ? (
+            <div className="flex flex-col items-center py-12 text-center">
+              <Gauge className="w-10 h-10 text-slate-600 mb-2" />
+              <p className="text-slate-400 text-sm">No operations logged for this period</p>
+              <p className="text-slate-500 text-xs mt-1">Log daily ops in Site Operations to populate this ledger</p>
+            </div>
+          ) : (
+            <div className="bg-dark-800 border border-dark-700 rounded-xl overflow-hidden">
+              {/* Header */}
+              <div className="grid grid-cols-[72px_50px_60px_55px_1fr] px-3 py-2 border-b border-dark-700 bg-dark-750 text-[10px] text-slate-500 uppercase tracking-wider gap-1">
+                <span>Date</span><span>Shift</span><span className="text-right">Hrs</span><span className="text-right">Fuel L</span><span className="pl-2">Operator / Activity</span>
+              </div>
+              <div className="divide-y divide-dark-700/60">
+                {ops.map(op => (
+                  <div key={op.id} className="grid grid-cols-[72px_50px_60px_55px_1fr] px-3 py-2 gap-1 items-center">
+                    <span className="text-xs text-slate-300">{format(new Date(op.ops_date), 'd MMM')}</span>
+                    <span className="text-xs text-slate-500 capitalize">{op.shift_type}</span>
+                    <span className={`text-xs text-right font-mono font-semibold ${STATUS_CLR[op.status] || 'text-slate-400'}`}>
+                      {op.running_hours != null ? Number(op.running_hours).toFixed(1) : '—'}
+                    </span>
+                    <span className="text-xs text-right text-slate-500 font-mono">
+                      {op.fuel_consumed != null ? Number(op.fuel_consumed).toFixed(0) : '—'}
+                    </span>
+                    <div className="pl-2 min-w-0">
+                      {op.operator_name && <p className="text-xs text-slate-300 truncate">{op.operator_name}</p>}
+                      {op.activity && <p className="text-[10px] text-slate-500 truncate">{op.activity}</p>}
+                      {!op.operator_name && !op.activity && <p className="text-xs text-slate-600 capitalize">{op.status}</p>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {/* Totals */}
+              <div className="grid grid-cols-[72px_50px_60px_55px_1fr] px-3 py-2.5 border-t border-dark-600 bg-dark-750 gap-1">
+                <span className="text-xs font-semibold text-slate-300">Total</span>
+                <span />
+                <span className="text-xs text-right font-bold text-primary-400 font-mono">{totalHours.toFixed(1)}</span>
+                <span className="text-xs text-right font-bold text-amber-400 font-mono">{totalFuel.toFixed(0)}</span>
+                <span />
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {!selectedEquipId && (
+        <div className="flex flex-col items-center py-16 text-center">
+          <BookOpen className="w-10 h-10 text-slate-600 mb-2" />
+          <p className="text-slate-400 text-sm">Select an equipment to view its daily ledger</p>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Main FleetPage ────────────────────────────────────────────────────────────
 export default function FleetPage() {
   const { companyId } = useAuth()
@@ -2700,6 +3017,8 @@ export default function FleetPage() {
     { id: 'fleet',     label: 'Fleet',     icon: Truck },
     { id: 'fuel',      label: 'Fuel',      icon: Fuel },
     { id: 'incidents', label: 'Incidents', icon: AlertTriangle },
+    { id: 'history',   label: 'History',   icon: History },
+    { id: 'ledger',    label: 'Ledger',    icon: BookOpen },
   ]
 
   return (
@@ -2731,6 +3050,8 @@ export default function FleetPage() {
         {activeTab === 'fleet'     && <FleetTab     companyId={companyId} showAdd={showAdd} setShowAdd={setShowAdd} />}
         {activeTab === 'fuel'      && <FuelTab      companyId={companyId} />}
         {activeTab === 'incidents' && <IncidentsTab companyId={companyId} />}
+        {activeTab === 'history'   && <HistoryTab   companyId={companyId} />}
+        {activeTab === 'ledger'    && <LedgerTab    companyId={companyId} />}
       </div>
     </div>
   )

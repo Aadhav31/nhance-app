@@ -103,6 +103,8 @@ export const INDUSTRY_NAV = {
           roles: [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
         { key: 'active_deployments', label: 'Active Deployments', icon: 'FolderOpen',    module: MODULES.CLIENTS_PROJECTS,
           roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
+        { key: 'usage_billing',      label: 'Usage Billing',      icon: 'ReceiptText',   module: MODULES.CLIENTS_PROJECTS,
+          roles: [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
         { key: 'clients',        label: 'Clients',             icon: 'Building2',       module: MODULES.CLIENTS_PROJECTS,
           roles: [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
       ],
