@@ -99,9 +99,11 @@ export const INDUSTRY_NAV = {
     {
       section: 'Contracts',
       items: [
-        { key: 'hire_contracts', label: 'Hire Contracts',      icon: 'FileSignature',   module: MODULES.CLIENTS_PROJECTS,
+        { key: 'hire_contracts',     label: 'Hire Contracts',     icon: 'FileSignature',   module: MODULES.CLIENTS_PROJECTS,
           roles: [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
-        { key: 'active_deployments', label: 'Active Deployments', icon: 'FolderOpen',    module: MODULES.CLIENTS_PROJECTS,
+        { key: 'projects',           label: 'Projects',           icon: 'FolderOpen',     module: MODULES.CLIENTS_PROJECTS,
+          roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
+        { key: 'active_deployments', label: 'Active Deployments', icon: 'Activity',       module: MODULES.CLIENTS_PROJECTS,
           roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
         { key: 'usage_billing',      label: 'Usage Billing',      icon: 'ReceiptText',   module: MODULES.CLIENTS_PROJECTS,
           roles: [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
