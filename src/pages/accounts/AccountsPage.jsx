@@ -192,6 +192,20 @@ function CreateInvoiceModal({ companyId, session, invoiceCount, proformaCount, o
     enabled: !!companyId,
   })
 
+  // Hire contracts mapped to selected project — populates Work Order dropdown
+  const { data: hireContracts = [] } = useQuery({
+    queryKey: ['hire_contracts_wo', companyId, form.project_id],
+    queryFn: async () => {
+      if (!form.project_id) return []
+      const { data } = await supabase.from('hire_contracts')
+        .select('id, contract_number, equipment_name, site_location')
+        .eq('company_id', companyId).eq('project_id', form.project_id)
+        .order('contract_number')
+      return data || []
+    },
+    enabled: !!companyId && !!form.project_id,
+  })
+
   const updateLine = (id, key, val) => {
     setLines(prev => prev.map(l => {
       if (l._id !== id) return l
@@ -410,7 +424,8 @@ function CreateInvoiceModal({ companyId, session, invoiceCount, proformaCount, o
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs text-slate-400 mb-1 block">Link to Project</label>
-              <select className={inp()} value={form.project_id} onChange={e => setF('project_id', e.target.value)}>
+              <select className={inp()} value={form.project_id}
+                onChange={e => { setF('project_id', e.target.value); setF('work_order_number', '') }}>
                 <option value="">— Select project —</option>
                 {projectList.map(p => (
                   <option key={p.id} value={p.id}>{p.project_code} — {p.project_name}</option>
@@ -435,7 +450,20 @@ function CreateInvoiceModal({ companyId, session, invoiceCount, proformaCount, o
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs text-slate-400 mb-1 block">Work Order No.</label>
-              <input className={inp()} value={form.work_order_number} onChange={e => setF('work_order_number', e.target.value)} placeholder="e.g. WO/2026/001" />
+              {hireContracts.length > 0 ? (
+                <select className={inp()} value={form.work_order_number} onChange={e => setF('work_order_number', e.target.value)}>
+                  <option value="">— Select work order —</option>
+                  {hireContracts.map(c => (
+                    <option key={c.id} value={c.contract_number}>
+                      {c.contract_number}{c.equipment_name ? ` · ${c.equipment_name}` : ''}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input className={inp()} value={form.work_order_number}
+                  onChange={e => setF('work_order_number', e.target.value)}
+                  placeholder={form.project_id ? 'No contracts linked to this project' : 'Select a project to load work orders'} />
+              )}
             </div>
             <div>
               <label className="text-xs text-slate-400 mb-1 block">Work Order Date</label>
@@ -705,6 +733,20 @@ function EditInvoiceModal({ invoice, companyId, session, onClose, onSaved }) {
     enabled: !!companyId,
   })
 
+  // Hire contracts mapped to selected project — populates Work Order dropdown
+  const { data: hireContractsEdit = [] } = useQuery({
+    queryKey: ['hire_contracts_wo', companyId, form.project_id],
+    queryFn: async () => {
+      if (!form.project_id) return []
+      const { data } = await supabase.from('hire_contracts')
+        .select('id, contract_number, equipment_name, site_location')
+        .eq('company_id', companyId).eq('project_id', form.project_id)
+        .order('contract_number')
+      return data || []
+    },
+    enabled: !!companyId && !!form.project_id,
+  })
+
   // Load existing line items
   useEffect(() => {
     supabase.from('invoice_line_items')
@@ -886,7 +928,8 @@ function EditInvoiceModal({ invoice, companyId, session, onClose, onSaved }) {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-xs text-slate-400 mb-1 block">Link to Project</label>
-                <select className={inp()} value={form.project_id} onChange={e => setF('project_id', e.target.value)}>
+                <select className={inp()} value={form.project_id}
+                  onChange={e => { setF('project_id', e.target.value); setF('work_order_number', '') }}>
                   <option value="">— Select project —</option>
                   {projectList.map(p => (
                     <option key={p.id} value={p.id}>{p.project_code} — {p.project_name}</option>
@@ -911,7 +954,20 @@ function EditInvoiceModal({ invoice, companyId, session, onClose, onSaved }) {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-xs text-slate-400 mb-1 block">Work Order No.</label>
-                <input className={inp()} value={form.work_order_number} onChange={e => setF('work_order_number', e.target.value)} placeholder="e.g. WO/2026/001" />
+                {hireContractsEdit.length > 0 ? (
+                  <select className={inp()} value={form.work_order_number} onChange={e => setF('work_order_number', e.target.value)}>
+                    <option value="">— Select work order —</option>
+                    {hireContractsEdit.map(c => (
+                      <option key={c.id} value={c.contract_number}>
+                        {c.contract_number}{c.equipment_name ? ` · ${c.equipment_name}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input className={inp()} value={form.work_order_number}
+                    onChange={e => setF('work_order_number', e.target.value)}
+                    placeholder={form.project_id ? 'No contracts linked to this project' : 'Select a project to load work orders'} />
+                )}
               </div>
               <div>
                 <label className="text-xs text-slate-400 mb-1 block">Work Order Date</label>
@@ -1911,6 +1967,48 @@ function InvoicesTab({ companyId, session }) {
 
   const STATUS_FILTERS = ['all', 'draft', 'sent', 'partial', 'overdue', 'paid', 'cancelled', 'converted']
 
+  const handleClone = async (inv) => {
+    try {
+      const { data: items } = await supabase.from('invoice_line_items').select('*')
+        .eq('invoice_id', inv.id).order('sort_order')
+      const yr = new Date().getFullYear()
+      const taxCount  = invoices.filter(i => i.invoice_type !== 'proforma').length
+      const proCount  = invoices.filter(i => i.invoice_type === 'proforma').length
+      const newNum = inv.invoice_type === 'proforma'
+        ? `PI-${yr}-${String(proCount + 1).padStart(3, '0')}`
+        : `INV-${yr}-${String(taxCount + 1).padStart(3, '0')}`
+      const newId = crypto.randomUUID()
+      const { id: _id, invoice_number: _n, paid_amount: _p, balance_due: _b,
+              payment_link_url: _pl, converted_from_id: _cf,
+              created_at: _ca, updated_at: _ua, ...rest } = inv
+      const { error: ie } = await supabase.from('client_invoices').insert([{
+        ...rest,
+        id: newId,
+        invoice_number: newNum,
+        status: 'draft',
+        invoice_date: today(),
+        due_date: inv.due_date || '',
+        paid_amount: 0,
+        balance_due: inv.total_amount,
+        payment_link_url: null,
+        converted_from_id: null,
+        created_by: session.user.id,
+      }])
+      if (ie) throw ie
+      if (items && items.length > 0) {
+        await supabase.from('invoice_line_items').insert(
+          items.map(({ id: _lid, invoice_id: _iid, created_at: _lca, ...li }) => ({
+            ...li, invoice_id: newId,
+          }))
+        )
+      }
+      toast.success(`Cloned as ${newNum} (draft)`)
+      refresh()
+    } catch (e) {
+      toast.error('Clone failed: ' + e.message)
+    }
+  }
+
   const handleConvert = async (proforma) => {
     if (!window.confirm(
       `Convert ${proforma.invoice_number} to a Tax Invoice?\n\nA new Tax Invoice will be created with all the same details. The Proforma will be marked as Converted.`
@@ -2131,6 +2229,9 @@ function InvoicesTab({ companyId, session }) {
                               <Pencil className="w-3.5 h-3.5" /> Edit
                             </button>
                           )}
+                          <button onClick={() => handleClone(inv)} className="btn-ghost text-xs py-1.5 text-slate-300 hover:bg-slate-500/10">
+                            <Copy className="w-3.5 h-3.5" /> Clone
+                          </button>
                           {!['cancelled', 'paid'].includes(inv.status) && (
                             <button onClick={() => handleStatus(inv.id, 'cancelled')} className="btn-ghost text-xs py-1.5 text-red-400 hover:bg-red-500/10">
                               Cancel Invoice
