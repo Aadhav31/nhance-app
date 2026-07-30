@@ -215,7 +215,7 @@ export default function AvailabilityPage() {
           <div className="px-4 pb-4 pt-3 min-w-max">
 
             {/* Day header */}
-            <div className="flex" style={{ paddingLeft: '172px' }}>
+            <div className="flex gap-1" style={{ paddingLeft: '180px' }}>
               {dayNums.map(d => {
                 const date    = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), d)
                 const dow     = DOW[getDay(date)]
