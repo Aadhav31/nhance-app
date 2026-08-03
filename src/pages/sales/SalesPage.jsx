@@ -1558,8 +1558,8 @@ function PaymentsReceivedTab({ companyId, session }) {
 }
 
 // ── MAIN SALES PAGE ───────────────────────────────────────────────────────────
-export default function SalesPage() {
-  const { companyId, session } = useAuth()
+export default function SalesPage({ onNavigate }) {
+  const { companyId, session, industryType } = useAuth()
   const [activeTab, setActiveTab] = useState('clients')
 
   const tabs = [
@@ -1570,7 +1570,11 @@ export default function SalesPage() {
     { id: 'challans',  label: 'Delivery Challans',   icon: Truck },
     { id: 'credit',    label: 'Credit Notes',        icon: RefreshCcw },
     { id: 'payments',  label: 'Payments Received',   icon: ArrowDownCircle },
-  ]
+  ].filter(t => {
+    // equipment_rental has a dedicated Clients nav item — hide the Clients tab here to avoid duplication
+    if (industryType === 'equipment_rental' && t.id === 'clients') return false
+    return true
+  })
 
   return (
     <div className="flex flex-col h-full">
@@ -1601,7 +1605,24 @@ export default function SalesPage() {
       {/* Tab content */}
       <div className="flex-1 overflow-hidden">
         {activeTab === 'clients'  && <ClientsPage embedded />}
-        {activeTab === 'invoices' && <InvoicesTab companyId={companyId} session={session} />}
+        {activeTab === 'invoices' && (
+          onNavigate ? (
+            <div className="flex flex-col items-center justify-center h-full gap-5 px-6 text-center">
+              <div className="w-14 h-14 rounded-2xl bg-primary-500/15 border border-primary-700/40 flex items-center justify-center">
+                <FileText className="w-7 h-7 text-primary-400" />
+              </div>
+              <div>
+                <h3 className="text-slate-100 font-semibold mb-1.5">Invoices are managed in Accounts & Ledger</h3>
+                <p className="text-sm text-slate-400 max-w-sm">GST invoices, proforma invoices, QR verification, payment tracking, and work order billing are all in the Accounts module.</p>
+              </div>
+              <button onClick={() => onNavigate('accounts')} className="btn-primary px-6">
+                Go to Accounts & Ledger →
+              </button>
+            </div>
+          ) : (
+            <InvoicesTab companyId={companyId} session={session} />
+          )
+        )}
         {activeTab === 'quotes'   && <QuotesTab   companyId={companyId} session={session} />}
         {activeTab === 'orders'   && <SalesOrdersTab companyId={companyId} session={session} />}
         {activeTab === 'challans' && <DeliveryChallansTab companyId={companyId} session={session} />}

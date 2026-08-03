@@ -2626,7 +2626,7 @@ function EditExpenseModal({ exp, companyId, equipmentList, onClose, onSaved }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Expenses Tab
 // ─────────────────────────────────────────────────────────────────────────────
-function ExpensesTab({ companyId, session, equipmentList }) {
+function ExpensesTab({ companyId, session, equipmentList, onNavigate }) {
   const qc = useQueryClient()
   const { company } = useAuth()
   const [catFilter, setCatFilter] = useState('all')
@@ -2691,6 +2691,12 @@ function ExpensesTab({ companyId, session, equipmentList }) {
           Total: <span className="font-mono font-bold text-red-400">{fmt(totalFiltered)}</span>
         </span>
         <div className="flex-1" />
+        {onNavigate && (
+          <button onClick={() => onNavigate('expenses')}
+            className="text-xs text-primary-400 hover:text-primary-300 whitespace-nowrap transition-colors">
+            Full history →
+          </button>
+        )}
         <button onClick={() => setShowAdd(true)} className="btn-primary text-sm whitespace-nowrap">
           <Plus className="w-4 h-4" /> Add Expense
         </button>
@@ -4314,7 +4320,7 @@ const TABS = [
   { key: 'ledger',    label: 'Ledger',    icon: '📒' },
 ]
 
-export default function AccountsPage() {
+export default function AccountsPage({ onNavigate }) {
   const { companyId, session } = useAuth()
   const [activeTab, setActiveTab] = useState('dashboard')
   const [alertDismissed, setAlertDismissed] = useState(false)
@@ -4404,7 +4410,7 @@ export default function AccountsPage() {
       <div className="flex-1 flex flex-col overflow-hidden min-h-0">
         {activeTab === 'dashboard' && <DashboardTab companyId={companyId} onNavigate={setActiveTab} />}
         {activeTab === 'invoices'  && <InvoicesTab  companyId={companyId} session={session} />}
-        {activeTab === 'expenses'  && <ExpensesTab  companyId={companyId} session={session} equipmentList={equipmentList} />}
+        {activeTab === 'expenses'  && <ExpensesTab  companyId={companyId} session={session} equipmentList={equipmentList} onNavigate={onNavigate} />}
         {activeTab === 'fixed'     && <FixedExpensesTab companyId={companyId} />}
         {activeTab === 'ledger'    && <LedgerTab    companyId={companyId} />}
       </div>

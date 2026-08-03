@@ -298,10 +298,22 @@ function AppShell() {
         )
       case 'clients':      return wrap(ClientsPage,        MODULES.CLIENTS_PROJECTS)
       case 'projects':     return wrap(ProjectsPage,       MODULES.CLIENTS_PROJECTS)
-      case 'accounts':     return wrap(AccountsPage,       MODULES.ACCOUNTS)
+      case 'accounts':
+        if (hasModule && !hasModule(MODULES.ACCOUNTS)) return isOnline ? <ModuleNotActive page="accounts" /> : <OfflineScreen />
+        return (
+          <Suspense fallback={<LoadingScreen message="Loading accounts…" />}>
+            <AccountsPage onNavigate={handleNavigate} />
+          </Suspense>
+        )
       case 'planner':      return wrap(ExpensePlannerPage, MODULES.ACCOUNTS)
       case 'fieldexpense': return wrap(FieldExpensePage,   MODULES.OPERATIONS)
-      case 'sales':        return wrap(SalesPage,          MODULES.SALES)
+      case 'sales':
+        if (hasModule && !hasModule(MODULES.SALES)) return isOnline ? <ModuleNotActive page="sales" /> : <OfflineScreen />
+        return (
+          <Suspense fallback={<LoadingScreen message="Loading sales…" />}>
+            <SalesPage onNavigate={handleNavigate} />
+          </Suspense>
+        )
       case 'purchase':     return wrap(PurchasePage,       MODULES.PURCHASE)
       case 'reports':      return wrap(ReportsPage,        MODULES.REPORTS)
       case 'expenses':
