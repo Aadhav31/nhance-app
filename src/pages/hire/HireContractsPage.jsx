@@ -199,10 +199,13 @@ function ContractForm({ initial = {}, onSave, onClose, equipment, clients }) {
       <div>
         <label className={labelCls}>Equipment <span className="text-red-400">*</span></label>
         <select className={sel()} value={f.equipment_id} onChange={e => onEquipmentChange(e.target.value)}>
-          <option value="">— Select equipment —</option>
+          <option value="">
+            {equipment.length === 0 ? '— No equipment found. Add via Fleet page —' : '— Select equipment —'}
+          </option>
           {equipment.map(eq => (
             <option key={eq.id} value={eq.id}>
               {eq.name} {eq.equipment_number ? `· ${eq.equipment_number}` : ''}
+              {eq.status && eq.status !== 'active' ? ` (${eq.status})` : ''}
             </option>
           ))}
         </select>
@@ -212,9 +215,11 @@ function ContractForm({ initial = {}, onSave, onClose, equipment, clients }) {
       <div>
         <label className={labelCls}>Client <span className="text-red-400">*</span></label>
         <select className={sel()} value={f.client_id} onChange={e => onClientChange(e.target.value)}>
-          <option value="">— Select client —</option>
+          <option value="">
+            {clients.length === 0 ? '— No clients found. Add via Clients page —' : '— Select client —'}
+          </option>
           {clients.map(c => (
-            <option key={c.id} value={c.id}>{c.display_name || c.business_name}</option>
+            <option key={c.id} value={c.id}>{c.business_name || c.display_name || '(unnamed)'}</option>
           ))}
         </select>
       </div>
@@ -630,33 +635,41 @@ export default function HireContractsPage() {
   const { data: contracts = [], isLoading } = useQuery({
     queryKey: ['hire_contracts', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('hire_contracts')
+      const { data, error } = await supabase.from('hire_contracts')
         .select('*').eq('company_id', companyId)
         .order('created_at', { ascending: false })
+      if (error) throw error
       return data || []
     },
+    enabled: !!companyId,
   })
 
   const { data: equipment = [] } = useQuery({
-    queryKey: ['equipment_list', companyId],
+    queryKey: ['equipment_hire_list', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('equipment')
-        .select('id, name, equipment_number, equipment_type')
+      const { data, error } = await supabase.from('equipment')
+        .select('id, name, equipment_number, equipment_type, status')
         .eq('company_id', companyId)
         .order('name')
+      if (error) throw error
       return data || []
     },
+    enabled: !!companyId,
   })
 
   const { data: clients = [] } = useQuery({
-    queryKey: ['clients_list', companyId],
+    queryKey: ['clients_hire_list', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('clients')
+      // order by created_at — display_name is null for business clients and
+      // ordering by a fully-null column causes silent PostgREST failures
+      const { data, error } = await supabase.from('clients')
         .select('id, display_name, business_name')
         .eq('company_id', companyId)
-        .order('display_name')
+        .order('created_at', { ascending: false })
+      if (error) throw error
       return data || []
     },
+    enabled: !!companyId,
   })
 
   // ── Filtered list ─────────────────────────────────────────────────────────
