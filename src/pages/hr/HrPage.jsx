@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
+import PagePanel from '../../components/shared/PagePanel'
 import { useAuth } from '../../contexts/AuthContext'
 import { nextDocNumber } from '../../utils/docNumbers'
 import {
@@ -156,18 +157,9 @@ function SectionHeader({ label, icon: Icon }) {
 
 function Modal({ title, onClose, children, footer, wide }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-      <div className={`w-full ${wide ? 'max-w-2xl' : 'max-w-md'} bg-dark-800 rounded-2xl border border-dark-600 shadow-2xl flex flex-col max-h-[92vh]`}>
-        <div className="flex items-center justify-between px-4 py-3 border-b border-dark-700 shrink-0">
-          <h2 className="font-semibold text-slate-100">{title}</h2>
-          <button onClick={onClose} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-dark-700">
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-        <div className="overflow-y-auto flex-1 px-4 py-3 space-y-3">{children}</div>
-        {footer && <div className="flex gap-2 px-4 py-3 border-t border-dark-700 shrink-0">{footer}</div>}
-      </div>
-    </div>
+    <PagePanel title={title} onClose={onClose} footer={footer}>
+      {children}
+    </PagePanel>
   )
 }
 

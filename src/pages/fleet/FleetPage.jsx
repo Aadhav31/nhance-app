@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { VendorPicker } from '../../components/shared/EntityPicker'
+import PagePanel from '../../components/shared/PagePanel'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
@@ -174,16 +175,9 @@ function GPSField({ location, loading }) {
 
 function Modal({ title, onClose, children, footer, wide = false }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/60">
-      <div className={`w-full ${wide ? 'sm:max-w-2xl' : 'sm:max-w-lg'} bg-dark-800 rounded-t-2xl sm:rounded-xl border border-dark-600 flex flex-col max-h-[92vh]`}>
-        <div className="flex items-center justify-between px-4 py-3 border-b border-dark-700">
-          <h2 className="font-semibold text-slate-100 text-base">{title}</h2>
-          <button onClick={onClose} className="p-1 text-slate-400 hover:text-slate-100"><X className="w-5 h-5" /></button>
-        </div>
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">{children}</div>
-        {footer && <div className="flex gap-3 p-4 border-t border-dark-700">{footer}</div>}
-      </div>
-    </div>
+    <PagePanel title={title} onClose={onClose} footer={footer}>
+      {children}
+    </PagePanel>
   )
 }
 

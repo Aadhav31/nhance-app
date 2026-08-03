@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
+import PagePanel from '../../components/shared/PagePanel'
 import { useAuth } from '../../contexts/AuthContext'
 import { nextDocNumber } from '../../utils/docNumbers'
 import { UOM_LIST } from '../../utils/units'
@@ -40,19 +41,9 @@ function CategoryBadge({ cat }) {
 
 function Modal({ title, subtitle, onClose, children, footer, wide = false }) {
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 flex items-start justify-center p-4 overflow-y-auto">
-      <div className={`bg-dark-800 rounded-xl border border-dark-700 shadow-2xl w-full ${wide ? 'max-w-2xl' : 'max-w-lg'} my-4`}>
-        <div className="flex items-start justify-between px-6 py-4 border-b border-dark-700">
-          <div>
-            <h2 className="text-base font-bold text-slate-100">{title}</h2>
-            {subtitle && <p className="text-xs text-slate-500 mt-0.5">{subtitle}</p>}
-          </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-100 mt-0.5"><X className="w-5 h-5" /></button>
-        </div>
-        <div className="p-6 space-y-4">{children}</div>
-        {footer && <div className="flex gap-3 px-6 pb-6 pt-0">{footer}</div>}
-      </div>
-    </div>
+    <PagePanel title={title} subtitle={subtitle} onClose={onClose} footer={footer}>
+      {children}
+    </PagePanel>
   )
 }
 

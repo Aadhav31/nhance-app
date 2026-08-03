@@ -141,6 +141,15 @@ html .text-slate-400  { color: rgb(var(--t3)); }
   .table tr:last-child td { @apply border-b-0; }
   .table tbody tr { @apply hover:bg-dark-700/40 transition-colors duration-150 cursor-pointer; }
 
+  /* ── Page-panel slide animation ──────────────────────────────────────── */
+  @keyframes page-in {
+    from { transform: translateX(40px); opacity: 0; }
+    to   { transform: translateX(0);    opacity: 1; }
+  }
+  .animate-page-in {
+    animation: page-in 0.18s ease-out both;
+  }
+
   .modal-overlay {
     @apply fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4;
   }

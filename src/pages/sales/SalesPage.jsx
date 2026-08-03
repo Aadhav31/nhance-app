@@ -21,6 +21,7 @@ import {
   downloadDCPDF, downloadCNPDF, downloadPaymentReceivedPDF,
 } from '../../lib/docPDF'
 import { createVerification, voidVerification } from '../../lib/docVerify'
+import PagePanel from '../../components/shared/PagePanel'
 import {
   downloadInvoiceXLSX, downloadQuoteXLSX, downloadSOXLSX,
   downloadDCXLSX, downloadCNXLSX, downloadPaymentReceivedXLSX,
@@ -62,24 +63,6 @@ function StatusBadge({ status }) {
 }
 
 // ── Shared components ─────────────────────────────────────────────────────────
-function Modal({ title, subtitle, onClose, children, footer, wide = false }) {
-  return (
-    <div className="fixed inset-0 z-50 bg-black/70 flex items-start justify-center p-4 overflow-y-auto">
-      <div className={`bg-dark-800 rounded-xl border border-dark-700 shadow-2xl w-full ${wide ? 'max-w-4xl' : 'max-w-lg'} my-4`}>
-        <div className="flex items-start justify-between px-6 py-4 border-b border-dark-700">
-          <div>
-            <h2 className="text-base font-bold text-slate-100">{title}</h2>
-            {subtitle && <p className="text-xs text-slate-500 mt-0.5">{subtitle}</p>}
-          </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-100 shrink-0 mt-0.5"><X className="w-5 h-5" /></button>
-        </div>
-        <div className="p-6 space-y-5">{children}</div>
-        {footer && <div className="flex gap-3 px-6 pb-6 pt-0">{footer}</div>}
-      </div>
-    </div>
-  )
-}
-
 function SectionHead({ label }) {
   return <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">{label}</p>
 }
@@ -380,7 +363,7 @@ function CreateInvoiceModal({ companyId, session, onClose, onSaved, initialDoc =
   }
 
   return (
-    <Modal title={initialDoc ? `Edit Invoice · ${initialDoc.invoice_number}` : 'New Invoice'} onClose={onClose} wide
+    <PagePanel title={initialDoc ? `Edit Invoice · ${initialDoc.invoice_number}` : 'New Invoice'} onClose={onClose}
       footer={<>
         <button onClick={onClose} className="flex-1 btn-ghost">Cancel</button>
         {!initialDoc && <button onClick={() => save('draft')} disabled={saving} className="flex-1 btn-secondary">Save Draft</button>}
@@ -388,6 +371,7 @@ function CreateInvoiceModal({ companyId, session, onClose, onSaved, initialDoc =
           {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : initialDoc ? 'Update Invoice' : 'Save & Mark Sent'}
         </button>
       </>}>
+      <div className="space-y-5">
       <SectionHead label="Client Details" />
       <div className="grid grid-cols-2 gap-3">
         <div className="col-span-2"><Field label="Client / Company Name *"><ClientPicker companyId={companyId} value={form.client_name} onChange={n => setF('client_name', n)} onSelect={c => setForm(p => ({ ...p, client_name: c.name, client_gstin: c.gstin || p.client_gstin, client_address: c.address || p.client_address }))} className={inp()} /></Field></div>
@@ -410,7 +394,8 @@ function CreateInvoiceModal({ companyId, session, onClose, onSaved, initialDoc =
         <Field label="Notes"><textarea className={inp()} rows={2} value={form.notes} onChange={e => setF('notes', e.target.value)} /></Field>
         <Field label="Terms & Conditions"><textarea className={inp()} rows={2} value={form.terms} onChange={e => setF('terms', e.target.value)} /></Field>
       </div>
-    </Modal>
+      </div>
+    </PagePanel>
   )
 }
 
@@ -651,7 +636,7 @@ function CreateQuoteModal({ companyId, session, onClose, onSaved, initialDoc = n
   }
 
   return (
-    <Modal title={initialDoc ? `Edit Quote · ${initialDoc.quote_number}` : 'New Quote'} onClose={onClose} wide
+    <PagePanel title={initialDoc ? `Edit Quote · ${initialDoc.quote_number}` : 'New Quote'} onClose={onClose}
       footer={<>
         <button onClick={onClose} className="flex-1 btn-ghost">Cancel</button>
         {!initialDoc && <button onClick={() => save('draft')} disabled={saving} className="flex-1 btn-secondary">Save Draft</button>}
@@ -659,6 +644,7 @@ function CreateQuoteModal({ companyId, session, onClose, onSaved, initialDoc = n
           {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : initialDoc ? 'Update Quote' : 'Save & Send'}
         </button>
       </>}>
+      <div className="space-y-5">
       <SectionHead label="Client Details" />
       <div className="grid grid-cols-2 gap-3">
         <div className="col-span-2"><Field label="Client / Company Name *"><ClientPicker companyId={companyId} value={form.client_name} onChange={n => setF('client_name', n)} onSelect={c => setForm(p => ({ ...p, client_name: c.name, client_gstin: c.gstin || p.client_gstin }))} className={inp()} /></Field></div>
@@ -681,7 +667,8 @@ function CreateQuoteModal({ companyId, session, onClose, onSaved, initialDoc = n
         <Field label="Notes"><textarea className={inp()} rows={2} value={form.notes} onChange={e => setF('notes', e.target.value)} /></Field>
         <Field label="Terms & Conditions"><textarea className={inp()} rows={2} value={form.terms} onChange={e => setF('terms', e.target.value)} /></Field>
       </div>
-    </Modal>
+      </div>
+    </PagePanel>
   )
 }
 
@@ -975,8 +962,9 @@ function SalesOrdersTab({ companyId, session }) {
         </div>}
       </div>
       {showCreate && (
-        <Modal title={editing ? `Edit SO · ${editing.so_number}` : 'New Sales Order'} onClose={closeModal} wide
+        <PagePanel title={editing ? `Edit SO · ${editing.so_number}` : 'New Sales Order'} onClose={closeModal}
           footer={<><button onClick={closeModal} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : editing ? 'Update SO' : 'Create Sales Order'}</button></>}>
+          <div className="space-y-5">
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2"><Field label="Client Name *"><ClientPicker companyId={companyId} value={form.client_name} onChange={n => setF('client_name', n)} onSelect={c => setForm(p => ({ ...p, client_name: c.name, client_gstin: c.gstin || p.client_gstin }))} className={inp()} /></Field></div>
             <TaxTypeToggle isTax={form.is_tax_invoice !== false} onToggle={v => setF('is_tax_invoice', v)} label="Sales Order" />
@@ -995,7 +983,8 @@ function SalesOrdersTab({ companyId, session }) {
             onGstRate={r => { setF('cgst_rate', r.cgst); setF('sgst_rate', r.sgst); setF('igst_rate', r.igst) }} />
           <TaxSection form={form} setF={setF} subtotal={subtotal} />
           <Field label="Notes"><textarea className={inp()} rows={2} value={form.notes} onChange={e => setF('notes', e.target.value)} /></Field>
-        </Modal>
+          </div>
+        </PagePanel>
       )}
     </div>
   )
@@ -1147,8 +1136,9 @@ function DeliveryChallansTab({ companyId, session }) {
         </div>}
       </div>
       {showCreate && (
-        <Modal title={editing ? `Edit Challan · ${editing.dc_number}` : 'New Delivery Challan'} onClose={closeModal}
+        <PagePanel title={editing ? `Edit Challan · ${editing.dc_number}` : 'New Delivery Challan'} onClose={closeModal}
           footer={<><button onClick={closeModal} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : editing ? 'Update Challan' : 'Create & Dispatch'}</button></>}>
+          <div className="space-y-5">
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2"><Field label="Client Name *"><ClientPicker companyId={companyId} value={form.client_name} onChange={n => setF('client_name', n)} onSelect={c => setForm(p => ({ ...p, client_name: c.name, delivery_address: c.address || p.delivery_address }))} className={inp()} /></Field></div>
             <Field label="Delivery Address"><input className={inp()} value={form.delivery_address} onChange={e => setF('delivery_address', e.target.value)} /></Field>
@@ -1172,7 +1162,8 @@ function DeliveryChallansTab({ companyId, session }) {
             </div>
           </div>
           <Field label="Notes"><textarea className={inp()} rows={2} value={form.notes} onChange={e => setF('notes', e.target.value)} /></Field>
-        </Modal>
+          </div>
+        </PagePanel>
       )}
     </div>
   )
@@ -1319,8 +1310,9 @@ function CreditNotesTab({ companyId, session }) {
         </div>}
       </div>
       {(showCreate || editing) && (
-        <Modal title={editing ? `Edit Credit Note · ${editing.cn_number}` : 'New Credit Note'} onClose={closeModal} wide
+        <PagePanel title={editing ? `Edit Credit Note · ${editing.cn_number}` : 'New Credit Note'} onClose={closeModal}
           footer={<><button onClick={closeModal} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : editing ? 'Update Credit Note' : 'Issue Credit Note'}</button></>}>
+          <div className="space-y-5">
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2"><Field label="Client Name *"><ClientPicker companyId={companyId} value={form.client_name} onChange={n => setF('client_name', n)} onSelect={c => setForm(p => ({ ...p, client_name: c.name, client_gstin: c.gstin || p.client_gstin }))} className={inp()} /></Field></div>
             <TaxTypeToggle isTax={isTaxCN} onToggle={v => setF('is_tax_invoice', v)} label="Credit Note" />
@@ -1352,7 +1344,8 @@ function CreditNotesTab({ companyId, session }) {
               <div className="flex justify-between font-bold text-red-400 border-t border-dark-600 pt-1"><span>Credit Total</span><span>-{fmtINR(total)}</span></div>
             </div>
           </div>
-        </Modal>
+          </div>
+        </PagePanel>
       )}
     </div>
   )
@@ -1515,8 +1508,9 @@ function PaymentsReceivedTab({ companyId, session }) {
         </div>}
       </div>
       {(showCreate || editing) && (
-        <Modal title={editing ? `Edit Payment · ${editing.payment_number}` : 'Record Payment'} onClose={closeModal}
+        <PagePanel title={editing ? `Edit Payment · ${editing.payment_number}` : 'Record Payment'} onClose={closeModal}
           footer={<><button onClick={closeModal} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : editing ? 'Update Payment' : 'Record Payment'}</button></>}>
+          <div className="space-y-5">
           <Field label="Client Name *"><ClientPicker companyId={companyId} value={form.client_name} onChange={n => setF('client_name', n)} onSelect={c => setF('client_name', c.name)} placeholder="Who paid?" className={inp()} /></Field>
           {invoices.length > 0 && <Field label="Link to Invoice (optional)">
             <select className={inp()} value={invoiceId} onChange={e => {
@@ -1551,7 +1545,8 @@ function PaymentsReceivedTab({ companyId, session }) {
             <Field label="Reference / Cheque No."><input className={inp()} value={form.bank_reference} onChange={e => setF('bank_reference', e.target.value)} /></Field>
           </div>
           <Field label="Notes"><textarea className={inp()} rows={2} value={form.notes} onChange={e => setF('notes', e.target.value)} /></Field>
-        </Modal>
+          </div>
+        </PagePanel>
       )}
     </div>
   )

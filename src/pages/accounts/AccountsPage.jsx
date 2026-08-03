@@ -7,6 +7,7 @@ import { useAuth } from '../../contexts/AuthContext'
 import { generateInvoicePDF } from '../../lib/invoicePDF'
 import { downloadVoucherPDF, makeVoucherNumber } from '../../lib/voucherPDF'
 import { createVerification, voidVerification } from '../../lib/docVerify'
+import PagePanel from '../../components/shared/PagePanel'
 import {
   Receipt, Plus, X, Loader2, Trash2, Pencil, Eye,
   TrendingUp, TrendingDown, Clock, Search, Banknote,
@@ -69,25 +70,6 @@ const monthRange = (ym) => {
   const [y, m] = ym.split('-').map(Number)
   const last = new Date(y, m, 0).getDate()
   return { from: `${ym}-01`, to: `${ym}-${String(last).padStart(2, '0')}` }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Modal Wrapper
-// ─────────────────────────────────────────────────────────────────────────────
-function Modal({ title, onClose, children, wide = false }) {
-  return (
-    <div className="fixed inset-0 z-50 bg-black/70 flex items-start justify-center p-4 overflow-y-auto">
-      <div className={`bg-dark-800 rounded-xl border border-dark-700 shadow-2xl w-full ${wide ? 'max-w-4xl' : 'max-w-lg'} my-4`}>
-        <div className="flex items-center justify-between px-6 py-4 border-b border-dark-700">
-          <h2 className="text-base font-bold text-slate-100">{title}</h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-100 transition-colors">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-        <div className="p-6">{children}</div>
-      </div>
-    </div>
-  )
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -310,7 +292,16 @@ function CreateInvoiceModal({ companyId, session, invoiceCount, proformaCount, o
   }
 
   return (
-    <Modal title={`New ${form.invoice_type === 'proforma' ? 'Proforma Invoice' : 'Tax Invoice'} — ${invNum}`} onClose={onClose} wide>
+    <PagePanel title={`New ${form.invoice_type === 'proforma' ? 'Proforma Invoice' : 'Tax Invoice'} — ${invNum}`} onClose={onClose}
+      footer={<>
+        <button onClick={onClose} className="btn-ghost">Cancel</button>
+        <button onClick={() => handleSave('draft')} disabled={saving} className="btn-ghost">
+          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save Draft'}
+        </button>
+        <button onClick={() => handleSave('sent')} disabled={saving} className="btn-primary">
+          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save & Mark Sent'}
+        </button>
+      </>}>
       <div className="space-y-5">
         {/* Invoice Type Selector */}
         <div className="flex items-center gap-2 p-3 bg-dark-700 rounded-xl border border-dark-600">
@@ -622,17 +613,8 @@ function CreateInvoiceModal({ companyId, session, invoiceCount, proformaCount, o
           </div>
         </div>
 
-        <div className="flex gap-3 pt-2 border-t border-dark-700">
-          <button onClick={onClose} className="btn-ghost flex-1">Cancel</button>
-          <button onClick={() => handleSave('draft')} disabled={saving} className="btn-ghost flex-1">
-            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save Draft'}
-          </button>
-          <button onClick={() => handleSave('sent')} disabled={saving} className="btn-primary flex-1">
-            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save & Mark Sent'}
-          </button>
-        </div>
       </div>
-    </Modal>
+    </PagePanel>
   )
 }
 
@@ -844,7 +826,13 @@ function EditInvoiceModal({ invoice, companyId, session, onClose, onSaved }) {
   }
 
   return (
-    <Modal title={`Edit Invoice — ${invoice.invoice_number}`} onClose={onClose} wide>
+    <PagePanel title={`Edit Invoice — ${invoice.invoice_number}`} onClose={onClose}
+      footer={<>
+        <button onClick={onClose} className="btn-ghost">Cancel</button>
+        <button onClick={handleSave} disabled={saving} className="btn-primary">
+          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save Changes'}
+        </button>
+      </>}>
       {loadingLines ? (
         <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-primary-400" /></div>
       ) : (
@@ -1126,15 +1114,9 @@ function EditInvoiceModal({ invoice, companyId, session, onClose, onSaved }) {
             </div>
           </div>
 
-          <div className="flex gap-3 pt-2 border-t border-dark-700">
-            <button onClick={onClose} className="btn-ghost flex-1">Cancel</button>
-            <button onClick={handleSave} disabled={saving} className="btn-primary flex-1">
-              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save Changes'}
-            </button>
-          </div>
         </div>
       )}
-    </Modal>
+    </PagePanel>
   )
 }
 
@@ -1188,7 +1170,13 @@ function RecordPaymentModal({ invoice, companyId, session, onClose, onSaved }) {
   }
 
   return (
-    <Modal title={`Record Payment — ${invoice.invoice_number}`} onClose={onClose}>
+    <PagePanel title={`Record Payment — ${invoice.invoice_number}`} onClose={onClose}
+      footer={<>
+        <button onClick={onClose} className="btn-ghost">Cancel</button>
+        <button onClick={handleSave} disabled={saving} className="btn-primary">
+          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Record Payment'}
+        </button>
+      </>}>
       <div className="space-y-4">
         <div className="bg-dark-700 rounded-xl p-4 grid grid-cols-2 gap-3 text-sm">
           <div><p className="text-xs text-slate-500">Client</p><p className="text-slate-200 font-medium">{invoice.client_name}</p></div>
@@ -1220,14 +1208,8 @@ function RecordPaymentModal({ invoice, companyId, session, onClose, onSaved }) {
             <input className={inp()} value={form.notes} onChange={e => setF('notes', e.target.value)} placeholder="Optional" />
           </div>
         </div>
-        <div className="flex gap-3 pt-2">
-          <button onClick={onClose} className="btn-ghost flex-1">Cancel</button>
-          <button onClick={handleSave} disabled={saving} className="btn-primary flex-1">
-            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Record Payment'}
-          </button>
-        </div>
       </div>
-    </Modal>
+    </PagePanel>
   )
 }
 
@@ -1286,7 +1268,13 @@ function AddExpenseModal({ companyId, session, equipmentList, onClose, onSaved }
   }
 
   return (
-    <Modal title="Add Expense" onClose={onClose}>
+    <PagePanel title="Add Expense" onClose={onClose}
+      footer={<>
+        <button onClick={onClose} className="btn-ghost">Cancel</button>
+        <button onClick={handleSave} disabled={saving} className="btn-primary">
+          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save Expense'}
+        </button>
+      </>}>
       <div className="space-y-4">
         <div className="grid grid-cols-2 gap-3">
           <div>
@@ -1366,14 +1354,8 @@ function AddExpenseModal({ companyId, session, equipmentList, onClose, onSaved }
             <input className={inp()} value={form.notes} onChange={e => setF('notes', e.target.value)} placeholder="Optional" />
           </div>
         </div>
-        <div className="flex gap-3 pt-2">
-          <button onClick={onClose} className="btn-ghost flex-1">Cancel</button>
-          <button onClick={handleSave} disabled={saving} className="btn-primary flex-1">
-            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save Expense'}
-          </button>
-        </div>
       </div>
-    </Modal>
+    </PagePanel>
   )
 }
 
@@ -2409,7 +2391,21 @@ function ExpenseDetailModal({ exp, equipmentList, onClose, onEdit, onDelete }) {
   ) : null
 
   return (
-    <Modal title="Expense Details" onClose={onClose}>
+    <PagePanel title="Expense Details" onClose={onClose}
+      footer={<>
+        <button onClick={onClose} className="btn-ghost">Close</button>
+        {!isField && (
+          <>
+            <button onClick={onDelete}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-red-900/20 border border-red-800/40 text-red-400 hover:bg-red-900/40 text-sm font-semibold transition-colors">
+              <Trash2 className="w-4 h-4" /> Delete
+            </button>
+            <button onClick={onEdit} className="btn-primary flex items-center gap-1.5">
+              <Pencil className="w-4 h-4" /> Edit
+            </button>
+          </>
+        )}
+      </>}>
       <div className="space-y-4">
         {/* Header */}
         <div className={`rounded-xl p-4 flex items-center gap-4 ${isField ? 'bg-blue-900/20 border border-blue-700/30' : 'bg-dark-700'}`}>
@@ -2452,24 +2448,8 @@ function ExpenseDetailModal({ exp, equipmentList, onClose, onEdit, onDelete }) {
           </div>
         )}
 
-        {/* Actions */}
-        <div className="flex gap-3 pt-1">
-          <button onClick={onClose} className="btn-ghost flex-1">Close</button>
-          {!isField && (
-            <>
-              <button onClick={onDelete}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-red-900/20 border border-red-800/40 text-red-400 hover:bg-red-900/40 text-sm font-semibold transition-colors">
-                <Trash2 className="w-4 h-4" /> Delete
-              </button>
-              <button onClick={onEdit}
-                className="btn-primary flex-1 flex items-center gap-1.5">
-                <Pencil className="w-4 h-4" /> Edit
-              </button>
-            </>
-          )}
-        </div>
       </div>
-    </Modal>
+    </PagePanel>
   )
 }
 
@@ -2536,7 +2516,13 @@ function EditExpenseModal({ exp, companyId, equipmentList, onClose, onSaved }) {
   }
 
   return (
-    <Modal title="Edit Expense" onClose={onClose}>
+    <PagePanel title="Edit Expense" onClose={onClose}
+      footer={<>
+        <button onClick={onClose} className="btn-ghost">Cancel</button>
+        <button onClick={handleSave} disabled={saving} className="btn-primary">
+          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save Changes'}
+        </button>
+      </>}>
       <div className="space-y-4">
         <div className="grid grid-cols-2 gap-3">
           <div>
@@ -2612,14 +2598,8 @@ function EditExpenseModal({ exp, companyId, equipmentList, onClose, onSaved }) {
             <input className={inp()} value={form.notes} onChange={e => setF('notes', e.target.value)} placeholder="Optional" />
           </div>
         </div>
-        <div className="flex gap-3 pt-2">
-          <button onClick={onClose} className="btn-ghost flex-1">Cancel</button>
-          <button onClick={handleSave} disabled={saving} className="btn-primary flex-1">
-            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save Changes'}
-          </button>
-        </div>
       </div>
-    </Modal>
+    </PagePanel>
   )
 }
 
@@ -3710,13 +3690,17 @@ function FixedExpenseTemplateModal({ companyId, template, onClose, onSaved }) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 p-0 sm:p-4" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="w-full sm:max-w-md bg-dark-800 border border-dark-700 rounded-t-3xl sm:rounded-2xl overflow-hidden flex flex-col max-h-[90vh]">
-        <div className="shrink-0 px-5 py-4 border-b border-dark-700 flex items-center justify-between">
-          <p className="text-sm font-bold text-slate-100">{template ? 'Edit Fixed Expense' : 'Add Fixed Expense'}</p>
-          <button onClick={onClose} className="text-slate-500 hover:text-slate-300"><X className="w-5 h-5" /></button>
-        </div>
-        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+    <PagePanel
+      title={template ? 'Edit Fixed Expense' : 'Add Fixed Expense'}
+      onClose={onClose}
+      footer={<>
+        <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-dark-600 text-slate-400 text-sm font-semibold hover:bg-dark-700">Cancel</button>
+        <button onClick={handleSave} disabled={saving} className="flex-1 py-2.5 rounded-xl bg-primary-600 hover:bg-primary-500 disabled:opacity-50 text-white text-sm font-bold flex items-center justify-center gap-2">
+          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+          {template ? 'Save Changes' : 'Add'}
+        </button>
+      </>}>
+      <div className="space-y-4">
           {/* Category */}
           <div>
             <label className="text-xs text-slate-400 mb-2 block">Category *</label>
@@ -3820,16 +3804,8 @@ function FixedExpenseTemplateModal({ companyId, template, onClose, onSaved }) {
             <label className="text-xs text-slate-400 mb-1 block">Notes (optional)</label>
             <input className={inp()} value={form.description} onChange={e => set('description', e.target.value)} placeholder="Loan account, policy number, etc." />
           </div>
-        </div>
-        <div className="shrink-0 px-5 py-4 border-t border-dark-700 flex gap-3">
-          <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-dark-600 text-slate-400 text-sm font-semibold hover:bg-dark-700">Cancel</button>
-          <button onClick={handleSave} disabled={saving} className="flex-1 py-2.5 rounded-xl bg-primary-600 hover:bg-primary-500 disabled:opacity-50 text-white text-sm font-bold flex items-center justify-center gap-2">
-            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-            {template ? 'Save Changes' : 'Add'}
-          </button>
-        </div>
       </div>
-    </div>
+    </PagePanel>
   )
 }
 
@@ -3906,16 +3882,19 @@ function MarkPaidModal({ companyId, payment, onClose, onSaved }) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 p-0 sm:p-4" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="w-full sm:max-w-sm bg-dark-800 border border-dark-700 rounded-t-3xl sm:rounded-2xl overflow-hidden flex flex-col">
-        <div className="shrink-0 px-5 py-4 border-b border-dark-700 flex items-center justify-between">
-          <div>
-            <p className="text-sm font-bold text-slate-100">Mark as Paid</p>
-            <p className="text-xs text-slate-500">{fe?.name}</p>
-          </div>
-          <button onClick={onClose} className="text-slate-500 hover:text-slate-300"><X className="w-5 h-5" /></button>
-        </div>
-        <div className="px-5 py-4 space-y-3">
+    <PagePanel
+      title="Mark as Paid"
+      subtitle={fe?.name}
+      onClose={onClose}
+      footer={<>
+        <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-dark-600 text-slate-400 text-sm font-semibold hover:bg-dark-700">Cancel</button>
+        <button onClick={handlePay} disabled={saving}
+          className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-bold flex items-center justify-center gap-2">
+          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+          {saving ? 'Saving…' : 'Confirm Payment'}
+        </button>
+      </>}>
+      <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs text-slate-400 mb-1 block">Payment Date</label>
@@ -3947,17 +3926,8 @@ function MarkPaidModal({ companyId, payment, onClose, onSaved }) {
             <label className="text-xs text-slate-400 mb-1 block">Notes</label>
             <input className={inp()} value={form.notes} onChange={e => set('notes', e.target.value)} placeholder="Optional" />
           </div>
-        </div>
-        <div className="shrink-0 px-5 py-4 border-t border-dark-700 flex gap-3">
-          <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-dark-600 text-slate-400 text-sm font-semibold hover:bg-dark-700">Cancel</button>
-          <button onClick={handlePay} disabled={saving}
-            className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-bold flex items-center justify-center gap-2">
-            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-            {saving ? 'Saving…' : 'Confirm Payment'}
-          </button>
-        </div>
       </div>
-    </div>
+    </PagePanel>
   )
 }
 

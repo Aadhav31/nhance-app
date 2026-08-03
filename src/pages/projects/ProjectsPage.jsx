@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
+import PagePanel from '../../components/shared/PagePanel'
 import { useAuth } from '../../contexts/AuthContext'
 import { useDisplayMode } from '../../contexts/DisplayModeContext'
 import toast from 'react-hot-toast'
@@ -59,19 +60,9 @@ const third = 'grid grid-cols-3 gap-3'
 
 function Modal({ title, subtitle, onClose, children, footer, wide }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/60">
-      <div className={`w-full ${wide ? 'sm:max-w-3xl' : 'sm:max-w-lg'} bg-dark-800 rounded-t-2xl sm:rounded-xl border border-dark-600 flex flex-col max-h-[94vh]`}>
-        <div className="flex items-start justify-between px-5 py-4 border-b border-dark-700">
-          <div>
-            <h2 className="font-semibold text-slate-100 text-base">{title}</h2>
-            {subtitle && <p className="text-xs text-slate-500 mt-0.5">{subtitle}</p>}
-          </div>
-          <button onClick={onClose} className="p-1 text-slate-400 hover:text-slate-100"><X className="w-5 h-5" /></button>
-        </div>
-        <div className="flex-1 overflow-y-auto p-5 space-y-6">{children}</div>
-        {footer && <div className="flex gap-3 p-4 border-t border-dark-700">{footer}</div>}
-      </div>
-    </div>
+    <PagePanel title={title} subtitle={subtitle} onClose={onClose} footer={footer}>
+      {children}
+    </PagePanel>
   )
 }
 
