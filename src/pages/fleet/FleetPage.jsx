@@ -1353,7 +1353,7 @@ function IncidentModal({ equipment, companyId, onClose }) {
 }
 
 // ── Equipment Detail ──────────────────────────────────────────────────────────
-function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
+function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavigate }) {
   const [modal,         setModal]         = useState(null)
   const [showEdit,      setShowEdit]      = useState(false)
   const [equipment,     setEquipment]     = useState(equipmentProp)
@@ -1580,6 +1580,20 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
       const totalHours  = data?.reduce((s, r) => s + Number(r.working_hours || 0), 0) || 0
       return { totalHours: totalHours.toFixed(1), totalShifts: data?.length || 0 }
     },
+  })
+
+  // Operator shift log — last 20 shifts on this machine
+  const { data: shiftLog = [] } = useQuery({
+    queryKey: ['equipment_shift_log', equipment.id],
+    queryFn: async () => {
+      const { data } = await supabase.from('shifts')
+        .select('id, shift_date, shift_type, operator_name, working_hours, idle_hours, status')
+        .eq('equipment_id', equipment.id)
+        .order('shift_date', { ascending: false })
+        .limit(20)
+      return data || []
+    },
+    staleTime: 60_000,
   })
 
   // Fuel stats
@@ -2065,7 +2079,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
           {[
             { id: 'deployment',     label: 'Deployment'     },
             { id: 'maintenance',    label: 'Maintenance'    },
-            { id: 'operator_log',   label: 'Operator Log'   },
+            { id: 'operator_log',   label: 'Log'            },
             { id: 'shift_schedule', label: 'Shift Schedule' },
             { id: 'pl',             label: 'Equipment P&L'  },
             { id: 'remarks',        label: 'Remarks'        },
@@ -2520,54 +2534,120 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
           </div>
         )}
 
-        {/* ── OPERATOR LOG TAB ── */}
+        {/* ── LOG TAB ── */}
         {detailTab === 'operator_log' && (
-          <div className="space-y-4 pt-1">
-            {fuelStats && Number(fuelStats.totalLitres) > 0 && (
-              <div className="grid grid-cols-2 gap-3">
-                <div className="bg-dark-700 rounded-xl p-3.5">
-                  <p className="text-xs text-slate-400">Total Fuel Consumed</p>
-                  <p className="text-2xl font-bold text-yellow-400 mt-0.5">
-                    {fuelStats.totalLitres} <span className="text-sm font-normal text-slate-400">L</span>
-                  </p>
-                </div>
-                {fuelStats.totalAmount > 0 && (
-                  <div className="bg-dark-700 rounded-xl p-3.5">
-                    <p className="text-xs text-slate-400">Total Fuel Cost</p>
-                    <p className="text-2xl font-bold text-primary-300 mt-0.5">
-                      ₹{Number(fuelStats.totalAmount).toLocaleString('en-IN')}
-                    </p>
-                  </div>
+          <div className="space-y-5 pt-1">
+
+            {/* ── Operator Attendance Log ─────────────────────────────── */}
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Operator Shifts</p>
+                {onNavigate && (
+                  <button
+                    onClick={() => { onClose(); onNavigate('hr') }}
+                    className="flex items-center gap-1 text-[11px] text-primary-400 hover:text-primary-300 transition-colors"
+                  >
+                    View in HR &amp; Attendance <ChevronRight className="w-3 h-3" />
+                  </button>
                 )}
               </div>
-            )}
-            {recentFuel.length > 0 ? (
-              <div>
-                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Recent Fuel Entries</p>
-                <div className="space-y-2">
-                  {recentFuel.map(f => (
-                    <div key={f.id} className="bg-dark-700 rounded-xl px-4 py-3 text-xs flex items-center justify-between">
-                      <div>
-                        <span className="text-slate-200 font-semibold">{f.quantity_liters} L</span>
-                        {f.vendor_name && <span className="text-slate-400 ml-2">· {f.vendor_name}</span>}
-                        {f.delivered_by_name && <span className="text-slate-500 ml-2">By {f.delivered_by_name}</span>}
-                        {f.created_at && (
-                          <p className="text-slate-600 mt-0.5">{format(new Date(f.created_at), 'dd MMM yyyy')}</p>
-                        )}
+              {shiftLog.length === 0 ? (
+                <div className="bg-dark-700/50 rounded-xl border border-dashed border-dark-600 p-6 text-center">
+                  <User className="w-7 h-7 text-slate-600 mx-auto mb-2" />
+                  <p className="text-sm text-slate-500">No shift records yet</p>
+                </div>
+              ) : (
+                <div className="divide-y divide-dark-600 rounded-xl overflow-hidden border border-dark-700">
+                  {shiftLog.map(s => {
+                    const shiftLabel = s.shift_type === 'night' ? '🌙 Night'
+                      : s.shift_type === 'mid' ? '🌅 Mid' : '☀️ Day'
+                    const hrs = Number(s.working_hours || 0)
+                    const idleHrs = Number(s.idle_hours || 0)
+                    const statusDot = s.status === 'closed' ? 'bg-emerald-400' : s.status === 'open' ? 'bg-blue-400 animate-pulse' : 'bg-slate-500'
+                    return (
+                      <div key={s.id} className="px-4 py-3 bg-dark-700/40 flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${statusDot}`} />
+                            <span className="text-xs font-semibold text-slate-200 truncate">
+                              {s.operator_name || '—'}
+                            </span>
+                            <span className="text-[10px] text-slate-500">{shiftLabel}</span>
+                          </div>
+                          <p className="text-[10px] text-slate-500 mt-0.5 ml-3.5">
+                            {format(new Date(s.shift_date), 'dd MMM yyyy')}
+                          </p>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <p className="text-xs font-semibold text-slate-200">{hrs.toFixed(1)} hrs</p>
+                          {idleHrs > 0 && (
+                            <p className="text-[10px] text-amber-500">{idleHrs.toFixed(1)} idle</p>
+                          )}
+                        </div>
                       </div>
-                      {f.total_amount && (
-                        <span className="text-yellow-400 font-semibold">₹{Number(f.total_amount).toLocaleString('en-IN')}</span>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* ── Fuel Log ────────────────────────────────────────────── */}
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Fuel Entries</p>
+                {onNavigate && (
+                  <button
+                    onClick={() => { onClose(); onNavigate('operations') }}
+                    className="flex items-center gap-1 text-[11px] text-primary-400 hover:text-primary-300 transition-colors"
+                  >
+                    View in Site Operations <ChevronRight className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+              {fuelStats && Number(fuelStats.totalLitres) > 0 && (
+                <div className="grid grid-cols-2 gap-2 mb-3">
+                  <div className="bg-dark-700 rounded-xl px-3 py-2.5">
+                    <p className="text-[10px] text-slate-500">Total Consumed</p>
+                    <p className="text-lg font-bold text-yellow-400">{fuelStats.totalLitres} <span className="text-xs font-normal text-slate-400">L</span></p>
+                  </div>
+                  {fuelStats.totalAmount > 0 && (
+                    <div className="bg-dark-700 rounded-xl px-3 py-2.5">
+                      <p className="text-[10px] text-slate-500">Total Cost</p>
+                      <p className="text-lg font-bold text-primary-300">₹{Number(fuelStats.totalAmount).toLocaleString('en-IN')}</p>
+                    </div>
+                  )}
+                </div>
+              )}
+              {recentFuel.length === 0 ? (
+                <div className="bg-dark-700/50 rounded-xl border border-dashed border-dark-600 p-6 text-center">
+                  <Fuel className="w-7 h-7 text-slate-600 mx-auto mb-2" />
+                  <p className="text-sm text-slate-500">No fuel entries yet</p>
+                </div>
+              ) : (
+                <div className="divide-y divide-dark-600 rounded-xl overflow-hidden border border-dark-700">
+                  {recentFuel.map(f => (
+                    <div key={f.id} className="px-4 py-3 bg-dark-700/40 flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs font-semibold text-slate-200">{f.quantity_liters} L</span>
+                          {f.vendor_name && <span className="text-[10px] text-slate-500">· {f.vendor_name}</span>}
+                        </div>
+                        <p className="text-[10px] text-slate-500 mt-0.5">
+                          {f.delivered_by_name ? `By ${f.delivered_by_name} · ` : ''}
+                          {f.created_at ? format(new Date(f.created_at), 'dd MMM yyyy') : ''}
+                        </p>
+                      </div>
+                      {f.total_amount > 0 && (
+                        <span className="text-xs font-semibold text-yellow-400 shrink-0">
+                          ₹{Number(f.total_amount).toLocaleString('en-IN')}
+                        </span>
                       )}
                     </div>
                   ))}
                 </div>
-              </div>
-            ) : (
-              <div className="bg-dark-700/50 rounded-xl border border-dashed border-dark-600 p-8 text-center">
-                <Fuel className="w-8 h-8 text-slate-600 mx-auto mb-2" />
-                <p className="text-sm text-slate-500">No fuel entries yet</p>
-              </div>
-            )}
+              )}
+            </div>
+
           </div>
         )}
 
@@ -2964,7 +3044,7 @@ function FleetTab({ companyId, showAdd, setShowAdd }) {
       </div>
 
       {showAdd  && <EquipmentFormModal companyId={companyId} onClose={() => setShowAdd(false)} />}
-      {selected && <EquipmentDetail   equipment={selected}  companyId={companyId} onClose={() => setSelected(null)} />}
+      {selected && <EquipmentDetail   equipment={selected}  companyId={companyId} onClose={() => setSelected(null)} onNavigate={onNavigate} />}
     </div>
   )
 }
@@ -3440,7 +3520,7 @@ function LedgerTab({ companyId }) {
 }
 
 // ── Main FleetPage ────────────────────────────────────────────────────────────
-export default function FleetPage() {
+export default function FleetPage({ onNavigate }) {
   const { companyId } = useAuth()
   const [activeTab,  setActiveTab]  = useState('fleet')
   const [showAdd,    setShowAdd]    = useState(false)

@@ -286,7 +286,12 @@ function AppShell() {
             <DashboardPage onNavigate={handleNavigate} />
           </Suspense>
         )
-      case 'fleet':        return wrap(FleetPage,          MODULES.FLEET)
+      case 'fleet':
+        return hasModule(MODULES.FLEET) ? (
+          <Suspense fallback={<LoadingScreen message="Loading fleet…" />}>
+            <FleetPage onNavigate={handleNavigate} />
+          </Suspense>
+        ) : <ModuleNotActive page={page} />
       case 'operations':   return wrap(OperationsPage,     MODULES.OPERATIONS)
       case 'maintenance':  return wrap(MaintenancePage,    MODULES.MAINTENANCE)
       case 'inventory':
