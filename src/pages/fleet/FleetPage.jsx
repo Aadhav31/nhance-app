@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
+import { downloadTransferCertificate } from '../../lib/transferCertificatePDF'
 import { VendorPicker } from '../../components/shared/EntityPicker'
 import PagePanel from '../../components/shared/PagePanel'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -16,7 +17,7 @@ import {
   Save, Trash2, Edit2, FileText, Wrench, Shield, Phone, Mail,
   ChevronRight, AlertCircle, Clock, Activity, LayoutGrid, List,
   Upload, Download, Eye, FolderOpen, Bell,
-  Search, History, BookOpen
+  Search, History, BookOpen, PackageOpen, Tag, ArrowLeftRight
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format, differenceInDays } from 'date-fns'
@@ -1810,7 +1811,13 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
       const selectedRate = rateItems.find(r => r.id === deployRateItemId) || null
       const effectiveRate = selectedRate || (matchedRates.length === 1 ? matchedRates[0] : null)
 
-      // 2. Update equipment current deployment fields
+      // 2. Snapshot existing active deployment for Transfer Certificate
+      const { data: existingDep } = await supabase.from('equipment_deployments')
+        .select('id, project_id, projects:project_id(project_name)')
+        .eq('equipment_id', equipment.id).eq('status', 'active').maybeSingle()
+      const fromProjectName = existingDep?.projects?.project_name || null
+
+      // 3. Update equipment current deployment fields
       const { error } = await supabase.from('equipment').update({
         current_client_id:  deployClientId  || null,
         current_project_id: deployProjectId || null,
@@ -1819,10 +1826,23 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
       }).eq('id', equipment.id)
       if (error) throw error
 
-      // 3. Close any active deployment for this equipment
-      await supabase.from('equipment_deployments')
-        .update({ status: 'withdrawn', withdrawn_date: new Date().toISOString().slice(0, 10) })
-        .eq('equipment_id', equipment.id).eq('status', 'active')
+      // 4. Close any active deployment — save TC project snapshot on it
+      const toProjectName = projects.find(p => p.id === deployProjectId)?.project_name || deployProjectId
+      if (existingDep?.id) {
+        await supabase.from('equipment_deployments')
+          .update({
+            status:          'withdrawn',
+            withdrawn_date:  new Date().toISOString().slice(0, 10),
+            tc_from_project: fromProjectName,
+            tc_to_project:   toProjectName,
+            tc_generated_at: new Date().toISOString(),
+          })
+          .eq('id', existingDep.id)
+      } else {
+        await supabase.from('equipment_deployments')
+          .update({ status: 'withdrawn', withdrawn_date: new Date().toISOString().slice(0, 10) })
+          .eq('equipment_id', equipment.id).eq('status', 'active')
+      }
 
       // 4. Insert new deployment record with full rate details
       const legacyRate = effectiveRate
@@ -1865,7 +1885,31 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
       setEquipment(e => ({ ...e, current_client_id: deployClientId, current_project_id: deployProjectId, current_site_name: deploySiteName, fuel_by_client: deployFuelByClient }))
       qc.invalidateQueries(['equipment', companyId])
       qc.invalidateQueries(['project_detail', deployProjectId])
-      toast.success('Equipment deployed — rate card saved')
+
+      // Auto-offer TC download if this was a transfer (from one project to another)
+      if (fromProjectName && toProjectName) {
+        const tcData = {
+          tcNumber:      `TC-${new Date().getFullYear()}-${Date.now().toString().slice(-4)}`,
+          tcDate:        new Date().toISOString().slice(0, 10),
+          equipmentName: `${equipment.name}${equipment.equipment_number ? ` (${equipment.equipment_number})` : ''}`,
+          equipmentType: equipment.category || equipment.equipment_type || '',
+          registrationNo: equipment.registration_number || '',
+          meterReading:  deployHourMeter || equipment.current_meter_reading || '',
+          meterUnit:     equipment.meter_type === 'km' ? 'km' : 'hrs',
+          fromProject:   fromProjectName,
+          toProject:     toProjectName,
+          fuelLevel:     '',
+          condition:     'Good',
+          conditionNotes: '',
+          authorizedBy:  userProfile?.full_name || '',
+        }
+        toast.success('Equipment transferred — click to download TC', {
+          duration: 8000,
+          onClick: () => downloadTransferCertificate(company, tcData),
+        })
+      } else {
+        toast.success('Equipment deployed — rate card saved')
+      }
     } catch (err) { toast.error(err.message || 'Failed to deploy')
     } finally { setDeploySaving(false) }
   }
@@ -4755,10 +4799,366 @@ function IncidentsTab({ companyId }) {
   )
 }
 
+// ── Hired In Tab ──────────────────────────────────────────────────────────────
+function HiredInModal({ companyId, contract, projects, onClose, onSaved }) {
+  const { role } = useAuth()
+  const isAdmin  = ['admin', 'manager'].includes(role)
+  const qc       = useQueryClient()
+
+  const [form, setForm] = useState(contract ? {
+    vendor_name:           contract.vendor_name        || '',
+    vendor_contact:        contract.vendor_contact      || '',
+    vendor_address:        contract.vendor_address      || '',
+    machine_type:          contract.machine_type        || '',
+    make:                  contract.make               || '',
+    model:                 contract.model              || '',
+    year_of_manufacture:   contract.year_of_manufacture || '',
+    registration_number:   contract.registration_number || '',
+    capacity_description:  contract.capacity_description || '',
+    hire_rate:             contract.hire_rate           || '',
+    rate_type:             contract.rate_type           || 'monthly',
+    billing_period:        contract.billing_period      || 'monthly',
+    max_hours_per_day:     contract.max_hours_per_day   || '',
+    mob_date:              contract.mob_date            || '',
+    expected_demob_date:   contract.expected_demob_date || '',
+    current_project_id:    contract.current_project_id  || '',
+    operator_provided_by:  contract.operator_provided_by || 'own',
+    operator_name:         contract.operator_name       || '',
+    notes:                 contract.notes               || '',
+    status:                contract.status              || 'active',
+  } : {
+    vendor_name: '', vendor_contact: '', vendor_address: '',
+    machine_type: '', make: '', model: '', year_of_manufacture: '',
+    registration_number: '', capacity_description: '',
+    hire_rate: '', rate_type: 'monthly', billing_period: 'monthly',
+    max_hours_per_day: '',
+    mob_date: new Date().toISOString().slice(0, 10),
+    expected_demob_date: '',
+    current_project_id: '', operator_provided_by: 'own', operator_name: '',
+    notes: '', status: 'active',
+  })
+  const [saving, setSaving] = useState(false)
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+
+  const handleSave = async () => {
+    if (!form.vendor_name.trim() || !form.machine_type.trim()) {
+      toast.error('Vendor name and machine type are required'); return
+    }
+    setSaving(true)
+    try {
+      const proj = projects.find(p => p.id === form.current_project_id)
+      const payload = {
+        ...form,
+        company_id:           companyId,
+        hire_rate:            form.hire_rate ? Number(form.hire_rate) : null,
+        max_hours_per_day:    form.max_hours_per_day ? Number(form.max_hours_per_day) : null,
+        year_of_manufacture:  form.year_of_manufacture ? Number(form.year_of_manufacture) : null,
+        mob_date:             form.mob_date || null,
+        expected_demob_date:  form.expected_demob_date || null,
+        current_project_name: proj?.project_name || null,
+      }
+      if (contract?.id) {
+        await supabase.from('inward_hire_contracts').update(payload).eq('id', contract.id)
+      } else {
+        await supabase.from('inward_hire_contracts').insert(payload)
+      }
+      qc.invalidateQueries(['inward_hire', companyId])
+      toast.success(contract?.id ? 'Contract updated' : 'Contract added')
+      onSaved?.()
+      onClose()
+    } catch (err) { toast.error(err.message || 'Failed to save')
+    } finally { setSaving(false) }
+  }
+
+  const F = ({ label, children, required }) => (
+    <div>
+      <label className="block text-xs font-medium text-slate-400 mb-1">{label}{required && <span className="text-red-400 ml-0.5">*</span>}</label>
+      {children}
+    </div>
+  )
+  const inp = 'w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500 placeholder-slate-500'
+  const sel = inp + ' appearance-none'
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+      <div className="bg-dark-900 border border-dark-700 rounded-2xl w-full max-w-xl max-h-[90vh] flex flex-col">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-dark-700 shrink-0">
+          <h3 className="text-base font-semibold text-slate-100">{contract?.id ? 'Edit Hired-In Contract' : 'Add Hired-In Machine'}</h3>
+          <button onClick={onClose} className="text-slate-500 hover:text-slate-300"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="overflow-y-auto p-5 space-y-4 flex-1">
+          {/* Vendor */}
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Vendor Details</p>
+          <div className="grid grid-cols-2 gap-3">
+            <F label="Vendor Name" required><input className={inp} value={form.vendor_name} onChange={e => set('vendor_name', e.target.value)} placeholder="ABC Contractors" /></F>
+            <F label="Contact"><input className={inp} value={form.vendor_contact} onChange={e => set('vendor_contact', e.target.value)} placeholder="Phone / email" /></F>
+          </div>
+          <F label="Address"><input className={inp} value={form.vendor_address} onChange={e => set('vendor_address', e.target.value)} placeholder="Vendor address" /></F>
+
+          {/* Machine */}
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mt-2">Machine Details</p>
+          <div className="grid grid-cols-2 gap-3">
+            <F label="Machine Type" required><input className={inp} value={form.machine_type} onChange={e => set('machine_type', e.target.value)} placeholder="Excavator, Tipper…" /></F>
+            <F label="Make / Brand"><input className={inp} value={form.make} onChange={e => set('make', e.target.value)} placeholder="Volvo, TATA…" /></F>
+            <F label="Model"><input className={inp} value={form.model} onChange={e => set('model', e.target.value)} placeholder="EC210" /></F>
+            <F label="Year"><input className={inp} type="number" value={form.year_of_manufacture} onChange={e => set('year_of_manufacture', e.target.value)} placeholder="2020" /></F>
+            <F label="Reg / Serial No."><input className={inp} value={form.registration_number} onChange={e => set('registration_number', e.target.value)} placeholder="TN01AB1234" /></F>
+            <F label="Capacity / Description"><input className={inp} value={form.capacity_description} onChange={e => set('capacity_description', e.target.value)} placeholder="1.2 cu.m bucket, 10T" /></F>
+          </div>
+
+          {/* Hire Terms */}
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mt-2">Hire Terms</p>
+          <div className="grid grid-cols-3 gap-3">
+            <F label="Hire Rate (₹)"><input className={inp} type="number" value={form.hire_rate} onChange={e => set('hire_rate', e.target.value)} placeholder="0" /></F>
+            <F label="Rate Type">
+              <select className={sel} value={form.rate_type} onChange={e => set('rate_type', e.target.value)}>
+                <option value="hourly">Hourly</option>
+                <option value="daily">Daily</option>
+                <option value="monthly">Monthly</option>
+              </select>
+            </F>
+            <F label="Max hrs/day"><input className={inp} type="number" value={form.max_hours_per_day} onChange={e => set('max_hours_per_day', e.target.value)} placeholder="8" /></F>
+          </div>
+
+          {/* Dates */}
+          <div className="grid grid-cols-2 gap-3">
+            <F label="Mob Date"><input className={inp} type="date" value={form.mob_date} onChange={e => set('mob_date', e.target.value)} /></F>
+            <F label="Expected Demob"><input className={inp} type="date" value={form.expected_demob_date} onChange={e => set('expected_demob_date', e.target.value)} /></F>
+          </div>
+
+          {/* Assignment */}
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mt-2">Assignment</p>
+          <div className="grid grid-cols-2 gap-3">
+            <F label="Assigned Project">
+              <select className={sel} value={form.current_project_id} onChange={e => set('current_project_id', e.target.value)}>
+                <option value="">— None —</option>
+                {projects.map(p => <option key={p.id} value={p.id}>{p.project_name}</option>)}
+              </select>
+            </F>
+            <F label="Operator Provided By">
+              <select className={sel} value={form.operator_provided_by} onChange={e => set('operator_provided_by', e.target.value)}>
+                <option value="own">Own (our operator)</option>
+                <option value="vendor">Vendor (included)</option>
+              </select>
+            </F>
+            {form.operator_provided_by === 'vendor' && (
+              <F label="Vendor Operator Name"><input className={inp} value={form.operator_name} onChange={e => set('operator_name', e.target.value)} placeholder="Operator name" /></F>
+            )}
+          </div>
+
+          {contract?.id && isAdmin && (
+            <F label="Status">
+              <select className={sel} value={form.status} onChange={e => set('status', e.target.value)}>
+                <option value="active">Active</option>
+                <option value="returned">Returned</option>
+                <option value="cancelled">Cancelled</option>
+              </select>
+            </F>
+          )}
+
+          <F label="Notes"><textarea className={inp + ' resize-none'} rows={2} value={form.notes} onChange={e => set('notes', e.target.value)} placeholder="Any additional notes…" /></F>
+        </div>
+        <div className="flex gap-2 px-5 py-4 border-t border-dark-700 shrink-0">
+          <button onClick={onClose} className="flex-1 bg-dark-700 hover:bg-dark-600 text-slate-300 py-2 rounded-lg text-sm font-medium transition-colors">Cancel</button>
+          <button onClick={handleSave} disabled={saving} className="flex-1 bg-primary-600 hover:bg-primary-500 text-white py-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2 disabled:opacity-50">
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            {contract?.id ? 'Save Changes' : 'Add Contract'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function HiredInTab({ companyId }) {
+  const { role } = useAuth()
+  const isAdmin  = ['admin', 'manager'].includes(role)
+  const qc       = useQueryClient()
+  const [modal,       setModal]       = useState(null)   // null | {} (new) | contract (edit)
+  const [statusFilter, setStatusFilter] = useState('active')
+  const [search,       setSearch]       = useState('')
+
+  const { data: contracts = [], isLoading } = useQuery({
+    queryKey: ['inward_hire', companyId],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('inward_hire_contracts')
+        .select('*')
+        .eq('company_id', companyId)
+        .order('mob_date', { ascending: false })
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+
+  const { data: projects = [] } = useQuery({
+    queryKey: ['projects_list', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('projects').select('id, project_name, project_code').eq('company_id', companyId).order('project_name')
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+
+  const filtered = useMemo(() => {
+    let rows = contracts
+    if (statusFilter !== 'all') rows = rows.filter(c => c.status === statusFilter)
+    if (search.trim()) {
+      const q = search.toLowerCase()
+      rows = rows.filter(c =>
+        c.vendor_name?.toLowerCase().includes(q) ||
+        c.machine_type?.toLowerCase().includes(q) ||
+        c.registration_number?.toLowerCase().includes(q) ||
+        c.current_project_name?.toLowerCase().includes(q)
+      )
+    }
+    return rows
+  }, [contracts, statusFilter, search])
+
+  const rateLabel = (c) => {
+    if (!c.hire_rate) return null
+    const unit = c.rate_type === 'hourly' ? '/hr' : c.rate_type === 'daily' ? '/day' : '/mo'
+    return `₹${Number(c.hire_rate).toLocaleString('en-IN')}${unit}`
+  }
+
+  const ST = {
+    active:    'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
+    returned:  'bg-slate-500/15 text-slate-400 border-slate-600/30',
+    cancelled: 'bg-red-500/15 text-red-400 border-red-500/30',
+  }
+
+  const handleReturn = async (contract) => {
+    if (!window.confirm(`Mark "${contract.machine_type} (${contract.vendor_name})" as returned?`)) return
+    await supabase.from('inward_hire_contracts')
+      .update({ status: 'returned', actual_demob_date: new Date().toISOString().slice(0, 10) })
+      .eq('id', contract.id)
+    qc.invalidateQueries(['inward_hire', companyId])
+    toast.success('Marked as returned')
+  }
+
+  return (
+    <div className="p-4 space-y-3 overflow-y-auto h-full">
+      {/* Header */}
+      <div className="flex items-center justify-between gap-2">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+          <input value={search} onChange={e => setSearch(e.target.value)}
+            placeholder="Vendor, machine type, registration…"
+            className="w-full bg-dark-800 border border-dark-700 rounded-xl pl-9 pr-9 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-primary-500 placeholder-slate-500" />
+          {search && <button onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"><X className="w-4 h-4" /></button>}
+        </div>
+        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
+          className="bg-dark-800 border border-dark-700 rounded-xl px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-primary-500">
+          <option value="active">Active</option>
+          <option value="returned">Returned</option>
+          <option value="cancelled">Cancelled</option>
+          <option value="all">All</option>
+        </select>
+        {isAdmin && (
+          <button onClick={() => setModal({})}
+            className="flex items-center gap-1.5 bg-primary-600 hover:bg-primary-500 text-white px-3 py-2.5 rounded-xl text-sm font-medium transition-colors shrink-0">
+            <Plus className="w-4 h-4" /> Add
+          </button>
+        )}
+      </div>
+
+      {/* Stats bar */}
+      {contracts.length > 0 && (
+        <div className="grid grid-cols-3 gap-2">
+          {['active','returned','cancelled'].map(s => {
+            const cnt = contracts.filter(c => c.status === s).length
+            return (
+              <button key={s} onClick={() => setStatusFilter(s)}
+                className={`bg-dark-800 border rounded-xl p-2.5 text-center transition-colors ${statusFilter === s ? 'border-primary-500' : 'border-dark-700'}`}>
+                <div className="text-lg font-bold text-slate-100">{cnt}</div>
+                <div className="text-[10px] text-slate-500 capitalize">{s}</div>
+              </button>
+            )
+          })}
+        </div>
+      )}
+
+      {isLoading ? (
+        <div className="space-y-2">{[1,2,3].map(i => <div key={i} className="h-24 bg-dark-800 rounded-xl animate-pulse" />)}</div>
+      ) : filtered.length === 0 ? (
+        <div className="flex flex-col items-center py-16 text-center">
+          <PackageOpen className="w-10 h-10 text-slate-600 mb-2" />
+          <p className="text-slate-400 text-sm">No hired-in machines</p>
+          {isAdmin && <button onClick={() => setModal({})} className="mt-3 text-sm text-primary-400 hover:text-primary-300">+ Add first contract</button>}
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {filtered.map(c => {
+            const rl = rateLabel(c)
+            return (
+              <div key={c.id} className="bg-dark-800 border border-dark-700 rounded-xl p-3 space-y-2">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-semibold text-slate-100">{c.machine_type}</span>
+                      {c.make && <span className="text-xs text-slate-400">{c.make}{c.model ? ` ${c.model}` : ''}</span>}
+                      {c.registration_number && (
+                        <span className="text-xs font-mono text-primary-400 bg-primary-500/10 px-1.5 py-0.5 rounded">{c.registration_number}</span>
+                      )}
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded-full border capitalize ${ST[c.status] || ST.returned}`}>{c.status}</span>
+                    </div>
+                    <p className="text-xs text-slate-400 mt-0.5">{c.vendor_name}{c.vendor_contact ? ` · ${c.vendor_contact}` : ''}</p>
+                    {c.current_project_name && (
+                      <p className="text-xs text-emerald-400 mt-0.5 flex items-center gap-1">
+                        <MapPin className="w-3 h-3 shrink-0" />{c.current_project_name}
+                      </p>
+                    )}
+                  </div>
+                  <div className="text-right shrink-0">
+                    {rl && <p className="text-xs font-semibold text-emerald-400">{rl}</p>}
+                    {c.contract_ref && <p className="text-xs text-slate-500 font-mono mt-0.5">{c.contract_ref}</p>}
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-slate-500">
+                  {c.mob_date && <span>↓ Mob: {format(new Date(c.mob_date), 'd MMM yyyy')}</span>}
+                  {c.expected_demob_date && <span>↑ Exp Demob: {format(new Date(c.expected_demob_date), 'd MMM yyyy')}</span>}
+                  {c.capacity_description && <span>· {c.capacity_description}</span>}
+                  {c.max_hours_per_day && <span>· Max {c.max_hours_per_day}hr/day</span>}
+                  {c.operator_provided_by === 'vendor' && <span>· Op by vendor{c.operator_name ? `: ${c.operator_name}` : ''}</span>}
+                </div>
+                {isAdmin && (
+                  <div className="flex gap-2 pt-1">
+                    <button onClick={() => setModal(c)}
+                      className="flex items-center gap-1 text-xs text-slate-400 hover:text-slate-200 transition-colors">
+                      <Edit2 className="w-3 h-3" /> Edit
+                    </button>
+                    {c.status === 'active' && (
+                      <button onClick={() => handleReturn(c)}
+                        className="flex items-center gap-1 text-xs text-amber-400 hover:text-amber-300 transition-colors ml-2">
+                        <ArrowLeftRight className="w-3 h-3" /> Mark Returned
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {modal !== null && (
+        <HiredInModal
+          companyId={companyId}
+          contract={modal?.id ? modal : null}
+          projects={projects}
+          onClose={() => setModal(null)}
+          onSaved={() => {}}
+        />
+      )}
+    </div>
+  )
+}
+
 // ── History Tab ───────────────────────────────────────────────────────────────
 function HistoryTab({ companyId }) {
   const [search,       setSearch]       = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
+  const { company }                     = useAuth()
 
   const { data: deployments = [], isLoading } = useQuery({
     queryKey: ['all_deployments_hist', companyId],
@@ -4770,7 +5170,8 @@ function HistoryTab({ companyId }) {
           rate_per_hour, rate_per_day, rate_per_month,
           equipment_id, project_id, client_id,
           operator_name, hour_meter_at_deployment, work_order_ref,
-          equipment:equipment_id (id, name, equipment_number, category)
+          tc_pdf_url, tc_from_project, tc_to_project, tc_generated_at,
+          equipment:equipment_id (id, name, equipment_number, category, registration_number, meter_type)
         `)
         .eq('company_id', companyId)
         .order('deployed_date', { ascending: false })
@@ -4898,6 +5299,40 @@ function HistoryTab({ companyId }) {
                   {dep.hour_meter_at_deployment != null && <span>· {dep.hour_meter_at_deployment} hrs</span>}
                   {dep.work_order_ref && <span>· {dep.work_order_ref}</span>}
                 </div>
+                {/* TC transfer info + download */}
+                {dep.tc_from_project && dep.tc_to_project && (
+                  <div className="mt-2 flex items-center justify-between gap-2 bg-dark-700/60 rounded-lg px-2.5 py-1.5">
+                    <span className="text-xs text-slate-400 truncate">
+                      <span className="text-slate-500">TC:</span> {dep.tc_from_project}
+                      <span className="text-slate-600 mx-1">→</span>
+                      {dep.tc_to_project}
+                    </span>
+                    <button
+                      onClick={() => downloadTransferCertificate(company, {
+                        tcNumber:      `TC-${dep.withdrawn_date?.slice(0,4)}-${dep.id.slice(-4).toUpperCase()}`,
+                        tcDate:        dep.tc_generated_at
+                                         ? dep.tc_generated_at.slice(0, 10)
+                                         : dep.withdrawn_date || dep.deployed_date,
+                        equipmentName: dep.equipment?.name || '',
+                        equipmentType: dep.equipment?.category || '',
+                        registrationNo: dep.equipment?.registration_number || '',
+                        meterReading:  dep.hour_meter_at_deployment || '',
+                        meterUnit:     dep.equipment?.meter_type === 'km' ? 'km' : 'hrs',
+                        fromProject:   dep.tc_from_project,
+                        toProject:     dep.tc_to_project,
+                        fuelLevel:     '',
+                        condition:     'Good',
+                        conditionNotes: '',
+                        authorizedBy:  company?.name || '',
+                      })}
+                      className="flex-shrink-0 flex items-center gap-1 text-xs text-primary-400 hover:text-primary-300 transition-colors"
+                      title="Download Transfer Certificate"
+                    >
+                      <Download className="w-3 h-3" />
+                      TC
+                    </button>
+                  </div>
+                )}
               </div>
             )
           })}
@@ -5083,6 +5518,7 @@ export default function FleetPage({ onNavigate }) {
     { id: 'incidents', label: 'Incidents', icon: AlertTriangle },
     { id: 'history',   label: 'History',   icon: History },
     { id: 'ledger',    label: 'Ledger',    icon: BookOpen },
+    { id: 'hired_in',  label: 'Hired In',  icon: PackageOpen },
   ]
 
   return (
@@ -5116,6 +5552,7 @@ export default function FleetPage({ onNavigate }) {
         {activeTab === 'incidents' && <IncidentsTab companyId={companyId} />}
         {activeTab === 'history'   && <HistoryTab   companyId={companyId} />}
         {activeTab === 'ledger'    && <LedgerTab    companyId={companyId} />}
+        {activeTab === 'hired_in'  && <HiredInTab   companyId={companyId} />}
       </div>
     </div>
   )
