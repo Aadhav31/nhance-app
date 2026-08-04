@@ -1654,6 +1654,18 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
     },
   })
 
+  // All maintenance-type incidents (breakdown + maintenance) for the Maintenance tab
+  const { data: maintRecords = [], refetch: refetchMaint } = useQuery({
+    queryKey: ['maint_records', equipment.id],
+    queryFn: async () => {
+      const { data } = await supabase.from('shift_incidents').select('*')
+        .eq('equipment_id', equipment.id)
+        .in('incident_type', ['breakdown', 'unscheduled_maintenance', 'regular_maintenance'])
+        .order('created_at', { ascending: false })
+      return data || []
+    },
+  })
+
   const { data: recentFuel = [] } = useQuery({
     queryKey: ['fuel', equipment.id],
     queryFn: async () => {
@@ -2320,19 +2332,76 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
         {/* ── MAINTENANCE TAB ── */}
         {detailTab === 'maintenance' && (
           <div className="space-y-4 pt-1">
-            {openIncidents.length > 0 && (
-              <div className="bg-red-900/20 border border-red-700/30 rounded-xl p-4">
-                <p className="text-sm font-semibold text-red-400 mb-2">
-                  ⚠ {openIncidents.length} Open Incident{openIncidents.length > 1 ? 's' : ''}
-                </p>
-                {openIncidents.map(i => (
-                  <p key={i.id} className="text-xs text-slate-300">
-                    · {INCIDENT_OPTIONS.find(t => t.value === i.incident_type)?.label || i.incident_type}
-                    {i.description && ` — ${i.description.slice(0, 80)}`}
-                  </p>
-                ))}
+
+            {/* ── Maintenance Records ── */}
+            <div className="border border-dark-600 rounded-xl overflow-hidden">
+              <div className="bg-dark-700 px-4 py-2.5 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 text-slate-400" />
+                  <span className="text-xs font-semibold text-slate-300 uppercase tracking-wider">Maintenance Records</span>
+                </div>
+                <span className="text-xs text-slate-500">{maintRecords.length} record{maintRecords.length !== 1 ? 's' : ''}</span>
               </div>
-            )}
+
+              {maintRecords.length === 0 ? (
+                <div className="p-6 text-center">
+                  <CheckCircle className="w-8 h-8 text-slateald-600 mx-auto mb-2" />
+                  <p className="text-sm text-slate-500">No maintenance records yet</p>
+                  <p className="text-xs text-slate-600 mt-1">Breakdown and maintenance incidents will appear here</p>
+                </div>
+              ) : (
+                <div className="divide-y divide-dark-600">
+                  {maintRecords.map(rec => {
+                    const typeInfo = INCIDENT_OPTIONS.find(o => o.value === rec.incident_type)
+                    const isBreakdown = rec.incident_type === 'breakdown'
+                    const isUnscheduled = rec.incident_type === 'unscheduled_maintenance'
+                    const dotColor = isBreakdown ? 'bg-red-400' : isUnscheduled ? 'bg-orange-400' : 'bg-blue-400'
+                    const textColor = isBreakdown ? 'text-red-400' : isUnscheduled ? 'text-orange-400' : 'text-blue-400'
+                    const mainText = rec.breakdown_cause || rec.description || '—'
+                    return (
+                      <div key={rec.id} className="px-4 py-3 flex flex-col gap-1.5">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className={`w-2 h-2 rounded-full shrink-0 mt-0.5 ${dotColor}`} />
+                            <span className={`text-xs font-semibold ${textColor}`}>{typeInfo?.label || rec.incident_type}</span>
+                            {rec.resolved
+                              ? <span className="text-[10px] bg-emerald-500/15 text-emerald-600 px-1.5 py-0.5 rounded-full font-medium">Resolved</span>
+                              : <span className="text-[10px] bg-red-500/15 text-red-500 px-1.5 py-0.5 rounded-full font-medium">Open</span>
+                            }
+                          </div>
+                          <span className="text-[10px] text-slate-500 shrink-0">
+                            {format(new Date(rec.created_at), 'dd MMM yyyy')}
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-300 ml-4 leading-relaxed">{mainText}</p>
+                        {rec.rectification_needed && (
+                          <p className="text-xs text-slate-500 ml-4 italic">Fix: {rec.rectification_needed}</p>
+                        )}
+                        {rec.action_taken && (
+                          <p className="text-xs text-slate-500 ml-4 italic">Action: {rec.action_taken}</p>
+                        )}
+                        {isAdmin && !rec.resolved && (
+                          <button
+                            onClick={async () => {
+                              const { error } = await supabase.from('shift_incidents')
+                                .update({ resolved: true }).eq('id', rec.id)
+                              if (!error) {
+                                toast.success('Marked as resolved')
+                                refetchMaint()
+                                qc.invalidateQueries(['incidents', equipment.id])
+                              }
+                            }}
+                            className="ml-4 mt-0.5 self-start text-[11px] flex items-center gap-1 text-emerald-500 hover:text-emerald-400 transition-colors"
+                          >
+                            <CheckCircle className="w-3 h-3" /> Mark Resolved
+                          </button>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
 
             {(equipment.last_service_date || equipment.next_service_date || equipment.next_service_meter) ? (
               <div className="border border-dark-600 rounded-xl overflow-hidden">
