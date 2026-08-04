@@ -432,7 +432,7 @@ const INIT_FORM = {
   retention_pct: '', gst_rate: '18', payment_terms: '',
   hsd_supplied_by: 'company', hsd_consumption_norm: '', hsd_rate_per_liter: '',
   hsd_excess_bill_rate: '', hsd_shortage_credit: '',
-  shift_start_time: '', shift_end_time: '', shift_grace_mins: '30',
+  shift_start_time: '', shift_end_time: '', shift_grace_mins: '30', no_of_shifts: '1',
   our_pm_name: '', our_pm_phone: '', our_pm_email: '',
   our_supervisor_name: '', our_supervisor_phone: '',
   our_pnm_name: '', our_pnm_phone: '',
@@ -451,6 +451,7 @@ function AddEditModal({ project, clients, onClose, onSaved }) {
   const [form, setForm] = useState(() => isEdit
     ? {
         ...INIT_FORM, ...project,
+        no_of_shifts:     String(project.no_of_shifts || 1),
         client_id:        project.client_id        || '',
         mobilization_date: project.mobilization_date || '',
         start_date:        project.start_date        || '',
@@ -616,6 +617,7 @@ function AddEditModal({ project, clients, onClose, onSaved }) {
         shift_start_time: form.shift_start_time || null,
         shift_end_time:   form.shift_end_time   || null,
         shift_grace_mins: form.shift_grace_mins ? Number(form.shift_grace_mins) : 30,
+        no_of_shifts:     form.no_of_shifts ? Number(form.no_of_shifts) : 1,
         start_time:          form.start_time          || null,
         mob_attachment_url:  form.mob_attachment_url  || null,
         comm_attachment_url: form.comm_attachment_url || null,
@@ -1111,6 +1113,29 @@ function AddEditModal({ project, clients, onClose, onSaved }) {
           The Operator Portal will block shift start outside this window (±grace period).
           Leave blank to allow shifts at any time.
         </p>
+
+        {/* Number of shifts — controls operator slot count per equipment */}
+        <F label="Number of Shifts" hint="Sets how many operators can be assigned per equipment on this project.">
+          <div className="flex gap-2">
+            {[
+              { value: '1', label: '1 Shift', sub: 'Single shift per day' },
+              { value: '2', label: '2 Shifts', sub: 'Day + Night shifts' },
+            ].map(opt => (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => set('no_of_shifts', opt.value)}
+                className={`flex-1 flex flex-col items-center gap-0.5 px-3 py-2.5 rounded-lg border text-xs font-medium transition-colors
+                  ${form.no_of_shifts === opt.value
+                    ? 'border-primary-500 bg-primary-500/10 text-primary-300'
+                    : 'border-dark-500 bg-dark-700 text-slate-400 hover:border-dark-400'}`}>
+                <span>{opt.label}</span>
+                <span className="text-[10px] font-normal opacity-70">{opt.sub}</span>
+              </button>
+            ))}
+          </div>
+        </F>
+
         <div className={half}>
           <F label="Shift Start Time">
             <input type="time" className={inp()} value={form.shift_start_time}
@@ -1134,6 +1159,7 @@ function AddEditModal({ project, clients, onClose, onSaved }) {
               Operators can start between{' '}
               <strong>{form.shift_start_time}</strong> and <strong>{form.shift_end_time}</strong>
               {form.shift_grace_mins ? ` (±${form.shift_grace_mins} min grace)` : ''}
+              {' · '}<strong>{form.no_of_shifts || 1} shift{form.no_of_shifts === '2' ? 's' : ''}</strong> per day
             </p>
           </div>
         )}

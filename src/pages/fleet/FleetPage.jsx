@@ -1485,6 +1485,20 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
       return data
     },
   })
+
+  // Fetch project's no_of_shifts to drive operator slot count
+  const { data: projectNoOfShifts = 1 } = useQuery({
+    queryKey: ['project_no_of_shifts', equipmentProp.current_project_id],
+    queryFn: async () => {
+      const { data } = await supabase.from('projects')
+        .select('no_of_shifts')
+        .eq('id', equipmentProp.current_project_id)
+        .single()
+      return data?.no_of_shifts || 1
+    },
+    enabled: !!equipmentProp.current_project_id,
+    staleTime: 60_000,
+  })
   useEffect(() => {
     if (activeDeployment?.rate_item_id && !deployRateItemId) {
       setDeployRateItemId(activeDeployment.rate_item_id)
@@ -2194,10 +2208,10 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
 
             {/* ── Assigned Operators ── */}
             {(() => {
-              // slots: max 2 operators per equipment (day + night)
-              // if any existing assignment is 'double', that operator covers both shifts → max 1
+              // slots driven by project's no_of_shifts setting
+              // if any assignment is 'double', that single operator covers all shifts → cap at 1
               const hasDouble = assignments.some(a => a.shift_type === 'double')
-              const maxSlots = hasDouble ? 1 : 2
+              const maxSlots = hasDouble ? 1 : (projectNoOfShifts || 1)
               const slotsUsed = assignments.length
               const slotsLeft = maxSlots - slotsUsed
               // which shift types are already taken
