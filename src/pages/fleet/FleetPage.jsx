@@ -2872,7 +2872,7 @@ function EquipmentCard({ equipment, onClick }) {
 }
 
 // ── Fleet Tab ─────────────────────────────────────────────────────────────────
-function FleetTab({ companyId, showAdd, setShowAdd }) {
+function FleetTab({ companyId, showAdd, setShowAdd, onNavigate }) {
   const [selected,        setSelected]        = useState(null)
   const [search,          setSearch]          = useState('')
   const [filterStatus,    setFilterStatus]    = useState('all')
@@ -3559,7 +3559,7 @@ export default function FleetPage({ onNavigate }) {
         })}
       </div>
       <div className="flex-1 overflow-hidden">
-        {activeTab === 'fleet'     && <FleetTab     companyId={companyId} showAdd={showAdd} setShowAdd={setShowAdd} />}
+        {activeTab === 'fleet'     && <FleetTab     companyId={companyId} showAdd={showAdd} setShowAdd={setShowAdd} onNavigate={onNavigate} />}
         {activeTab === 'fuel'      && <FuelTab      companyId={companyId} />}
         {activeTab === 'incidents' && <IncidentsTab companyId={companyId} />}
         {activeTab === 'history'   && <HistoryTab   companyId={companyId} />}
