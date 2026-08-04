@@ -961,6 +961,7 @@ function LogOpsModal({ companyId, session, opsEquipment, existing, onClose, onSa
   const [operatorName,  setOperatorName]  = useState(existing?.operator_name   || '')
   const [activity,      setActivity]      = useState(existing?.activity         || '')
   const [notes,         setNotes]         = useState(existing?.notes            || '')
+  const [idleReason,    setIdleReason]    = useState(existing?.idle_reason      || '')
   const [saving,        setSaving]        = useState(false)
 
   const selEquip      = opsEquipment.find(e => e.id === equipmentId)
@@ -993,6 +994,7 @@ function LogOpsModal({ companyId, session, opsEquipment, existing, onClose, onSa
         operator_name:  operatorName.trim() || null,
         activity:       activity.trim()     || null,
         notes:          notes.trim()        || null,
+        idle_reason:    status === 'idle' && idleReason ? idleReason : null,
         created_by:     session.user.id,
       }
       if (isEdit) {
@@ -1063,6 +1065,22 @@ function LogOpsModal({ companyId, session, opsEquipment, existing, onClose, onSa
               ))}
             </div>
           </div>
+
+          {/* Idle reason — shown only when status = idle */}
+          {status === 'idle' && (
+            <div>
+              <p className="text-xs text-slate-400 mb-1">Idle Reason</p>
+              <select className={inp} value={idleReason} onChange={e => setIdleReason(e.target.value)}>
+                <option value="">Select reason…</option>
+                <option value="no_work_available">No work available</option>
+                <option value="operator_absent">Operator absent</option>
+                <option value="waiting_for_material">Waiting for material</option>
+                <option value="minor_repair">Minor repair / adjustment</option>
+                <option value="weather">Weather / site conditions</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+          )}
 
           {/* Hours + KM (adaptive) */}
           {equipmentId && (showHours || showKm) && (

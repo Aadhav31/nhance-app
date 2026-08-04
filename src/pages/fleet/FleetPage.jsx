@@ -3042,6 +3042,7 @@ function FleetTab({ companyId, showAdd, setShowAdd, onNavigate }) {
   const [filterOwnership, setFilterOwnership] = useState('all')
   const [viewMode,        setViewMode]        = useState('grid')    // 'grid' | 'site'
   const [alertDismissed,  setAlertDismissed]  = useState(false)
+  const [gateDismissed,   setGateDismissed]   = useState(false)
 
   const { data: equipment = [], isLoading } = useQuery({
     queryKey: ['equipment', companyId],
@@ -3066,6 +3067,26 @@ function FleetTab({ companyId, showAdd, setShowAdd, onNavigate }) {
       return data || []
     },
     enabled: !!companyId,
+  })
+
+  // Daily Log Gate — deployed machines with no ops record for today
+  const todayDateStr = new Date().toISOString().slice(0, 10)
+  const { data: unloggedToday = [] } = useQuery({
+    queryKey: ['unlogged_today', companyId, todayDateStr],
+    queryFn: async () => {
+      const deployed = equipment.filter(e => !!e.current_project_id)
+      if (deployed.length === 0) return []
+      const deployedIds = deployed.map(e => e.id)
+      const { data: loggedToday } = await supabase.from('daily_operations')
+        .select('equipment_id')
+        .eq('company_id', companyId)
+        .eq('ops_date', todayDateStr)
+        .in('equipment_id', deployedIds)
+      const loggedIds = new Set((loggedToday || []).map(o => o.equipment_id))
+      return deployed.filter(e => !loggedIds.has(e.id))
+    },
+    enabled: equipment.length > 0,
+    staleTime: 5 * 60 * 1000,
   })
 
   const filtered = equipment.filter(e =>
@@ -3124,6 +3145,35 @@ function FleetTab({ companyId, showAdd, setShowAdd, onNavigate }) {
               </div>
             </div>
             <button onClick={() => setAlertDismissed(true)} className="p-1 text-orange-500 hover:text-orange-300">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Daily Log Gate Banner ── */}
+      {!gateDismissed && unloggedToday.length > 0 && (
+        <div className="mx-4 mt-2 mb-1 bg-red-900/30 border border-red-700/40 rounded-xl px-3 py-2.5 shrink-0">
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex items-start gap-2 flex-1 min-w-0">
+              <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-semibold text-red-300">
+                  {unloggedToday.length} deployed machine{unloggedToday.length > 1 ? 's' : ''} not logged today
+                </p>
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {unloggedToday.map(e => (
+                    <button key={e.id}
+                      onClick={() => setSelected(e)}
+                      className="text-[10px] px-2 py-0.5 rounded-full bg-red-800/50 border border-red-700/50 text-red-300 hover:bg-red-700/60 transition-colors">
+                      {e.equipment_number ? `${e.equipment_number} · ` : ''}{e.name}
+                      {e.current_site_name ? ` @ ${e.current_site_name}` : ''} →
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <button onClick={() => setGateDismissed(true)} className="p-1 text-red-500 hover:text-red-300 shrink-0">
               <X className="w-3.5 h-3.5" />
             </button>
           </div>
@@ -3212,80 +3262,299 @@ function FleetTab({ companyId, showAdd, setShowAdd, onNavigate }) {
   )
 }
 
-// ── Fuel Tab ──────────────────────────────────────────────────────────────────
-function FuelTab({ companyId }) {
-  const { data: entries = [], isLoading } = useQuery({
-    queryKey: ['all_fuel', companyId],
+// ── Fuel Issue Modal ──────────────────────────────────────────────────────────
+function FuelIssueModal({ companyId, userProfile, onClose, onSaved }) {
+  const inp = 'w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500'
+  const [date,        setDate]        = useState(new Date().toISOString().slice(0, 10))
+  const [equipId,     setEquipId]     = useState('')
+  const [qty,         setQty]         = useState('')
+  const [source,      setSource]      = useState('company_bowser')
+  const [meter,       setMeter]       = useState('')
+  const [voucher,     setVoucher]     = useState('')
+  const [notes,       setNotes]       = useState('')
+  const [saving,      setSaving]      = useState(false)
+
+  const { data: allEquip = [] } = useQuery({
+    queryKey: ['equipment_for_fuel', companyId],
     queryFn: async () => {
-      const { data, error } = await supabase.from('shift_fuel_entries')
-        .select('*, equipment(name, category, current_project_id)').eq('company_id', companyId)
-        .order('created_at', { ascending: false }).limit(100)
-      if (error) throw error
+      const { data } = await supabase.from('equipment').select('id,name,equipment_number,category').eq('company_id', companyId).order('name')
       return data || []
     },
   })
 
-  const totalLitres = entries.reduce((s, e) => s + Number(e.quantity_liters || 0), 0)
-  const totalAmount = entries.reduce((s, e) => s + Number(e.total_amount   || 0), 0)
+  const handleSave = async () => {
+    if (!qty || !equipId) return toast.error('Select equipment and enter quantity')
+    setSaving(true)
+    try {
+      const eq = allEquip.find(e => e.id === equipId)
+      const { error } = await supabase.from('fuel_issues').insert({
+        company_id:      companyId,
+        issue_date:      date,
+        equipment_id:    equipId,
+        equipment_name:  eq ? `${eq.equipment_number ? eq.equipment_number + ' — ' : ''}${eq.name}` : null,
+        quantity_liters: parseFloat(qty),
+        fuel_source:     source,
+        meter_at_issue:  meter ? parseFloat(meter) : null,
+        voucher_number:  voucher.trim() || null,
+        notes:           notes.trim()   || null,
+        issued_by:       userProfile?.id   || null,
+        issued_by_name:  userProfile?.full_name || userProfile?.name || null,
+      })
+      if (error) throw error
+      toast.success('Fuel issue logged')
+      onSaved()
+    } catch (e) { toast.error(e.message) } finally { setSaving(false) }
+  }
+
+  const SOURCE_LABELS = {
+    company_bowser: '🚛 Company Bowser',
+    company_tank:   '🛢️ Company Tank',
+    vendor_supply:  '🏪 Vendor Supply',
+    petrol_pump:    '⛽ Petrol Pump',
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+      <div className="bg-dark-800 border border-dark-600 rounded-2xl w-full max-w-md flex flex-col shadow-2xl">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-dark-700">
+          <p className="text-sm font-bold text-slate-100">Issue Fuel from Stock</p>
+          <button onClick={onClose} className="text-slate-500 hover:text-slate-200"><X className="w-4 h-4" /></button>
+        </div>
+        <div className="px-5 py-4 space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <p className="text-xs text-slate-400 mb-1">Date *</p>
+              <input type="date" className={inp} value={date} onChange={e => setDate(e.target.value)} />
+            </div>
+            <div>
+              <p className="text-xs text-slate-400 mb-1">Qty (Litres) *</p>
+              <input type="number" className={inp} value={qty} onChange={e => setQty(e.target.value)} placeholder="0.0" min="0" step="0.5" />
+            </div>
+          </div>
+          <div>
+            <p className="text-xs text-slate-400 mb-1">Equipment *</p>
+            <select className={inp} value={equipId} onChange={e => setEquipId(e.target.value)}>
+              <option value="">Select equipment…</option>
+              {allEquip.map(e => <option key={e.id} value={e.id}>{e.equipment_number ? `${e.equipment_number} — ` : ''}{e.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <p className="text-xs text-slate-400 mb-1">Fuel Source</p>
+            <select className={inp} value={source} onChange={e => setSource(e.target.value)}>
+              {Object.entries(SOURCE_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </select>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <p className="text-xs text-slate-400 mb-1">Meter at Issue</p>
+              <input type="number" className={inp} value={meter} onChange={e => setMeter(e.target.value)} placeholder="hrs / km" min="0" />
+            </div>
+            <div>
+              <p className="text-xs text-slate-400 mb-1">Voucher No.</p>
+              <input className={inp} value={voucher} onChange={e => setVoucher(e.target.value)} placeholder="FV-001" />
+            </div>
+          </div>
+          <div>
+            <p className="text-xs text-slate-400 mb-1">Notes</p>
+            <input className={inp} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Any remarks…" />
+          </div>
+        </div>
+        <div className="px-5 py-4 border-t border-dark-700 flex gap-3">
+          <button onClick={onClose} className="flex-1 py-2 rounded-lg border border-dark-600 text-slate-400 text-sm hover:text-slate-200 transition-colors">Cancel</button>
+          <button onClick={handleSave} disabled={saving}
+            className="flex-1 py-2 rounded-lg bg-primary-600 hover:bg-primary-500 text-white text-sm font-medium disabled:opacity-40 transition-colors flex items-center justify-center gap-2">
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            {saving ? 'Saving…' : 'Log Issue'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Fuel Tab ──────────────────────────────────────────────────────────────────
+function FuelTab({ companyId }) {
+  const { userProfile } = useAuth()
+  const qc = useQueryClient()
+  const [subTab,         setSubTab]         = useState('issues')  // 'issues' | 'filled'
+  const [showIssueForm,  setShowIssueForm]  = useState(false)
+  const [filterMonth,    setFilterMonth]    = useState(format(new Date(), 'yyyy-MM'))
+
+  const monthStart = filterMonth + '-01'
+  const monthEnd   = (() => {
+    const [y, m] = filterMonth.split('-').map(Number)
+    return new Date(y, m, 0).toISOString().slice(0, 10)
+  })()
+
+  // Fuel Issues (company stock → machine)
+  const { data: issues = [], isLoading: issuesLoading } = useQuery({
+    queryKey: ['fuel_issues', companyId, filterMonth],
+    queryFn: async () => {
+      const { data } = await supabase.from('fuel_issues')
+        .select('*')
+        .eq('company_id', companyId)
+        .gte('issue_date', monthStart)
+        .lte('issue_date', monthEnd)
+        .order('issue_date', { ascending: false })
+      return data || []
+    },
+  })
+
+  // Operator-reported fuel fills (shift_fuel_entries)
+  const { data: fills = [], isLoading: fillsLoading } = useQuery({
+    queryKey: ['all_fuel', companyId, filterMonth],
+    queryFn: async () => {
+      const { data } = await supabase.from('shift_fuel_entries')
+        .select('*, equipment(name, category)')
+        .eq('company_id', companyId)
+        .gte('entry_time', monthStart + 'T00:00:00')
+        .lte('entry_time', monthEnd + 'T23:59:59')
+        .order('entry_time', { ascending: false })
+      return data || []
+    },
+  })
+
+  // Daily ops fuel consumed for the month
+  const { data: consumed = [] } = useQuery({
+    queryKey: ['fuel_consumed_month', companyId, filterMonth],
+    queryFn: async () => {
+      const { data } = await supabase.from('daily_operations')
+        .select('equipment_id, equipment_name, fuel_consumed')
+        .eq('company_id', companyId)
+        .gte('ops_date', monthStart)
+        .lte('ops_date', monthEnd)
+        .not('fuel_consumed', 'is', null)
+      return data || []
+    },
+  })
+
+  const totalIssued   = issues.reduce((s, i) => s + Number(i.quantity_liters || 0), 0)
+  const totalFilled   = fills.reduce((s, f) => s + Number(f.quantity_liters || 0), 0)
+  const totalConsumed = consumed.reduce((s, c) => s + Number(c.fuel_consumed || 0), 0)
+  const variance      = totalIssued - totalConsumed  // positive = unaccounted
+
+  const SOURCE_LABELS = { company_bowser: 'Bowser', company_tank: 'Tank', vendor_supply: 'Vendor', petrol_pump: 'Pump' }
+
+  const isLoading = subTab === 'issues' ? issuesLoading : fillsLoading
 
   return (
     <div className="flex flex-col h-full">
-      {entries.length > 0 && (
-        <div className="flex gap-3 px-4 py-2 shrink-0">
-          <div className="bg-dark-700 rounded-lg px-3 py-2 text-xs">
-            <p className="text-slate-400">Total Fuel</p>
-            <p className="font-bold text-yellow-400">{totalLitres.toFixed(0)} L</p>
-          </div>
-          {totalAmount > 0 && (
-            <div className="bg-dark-700 rounded-lg px-3 py-2 text-xs">
-              <p className="text-slate-400">Total Amount</p>
-              <p className="font-bold text-primary-400">₹{totalAmount.toLocaleString('en-IN')}</p>
-            </div>
-          )}
+      {/* KPI strip */}
+      <div className="flex gap-2 px-4 pt-3 pb-1 shrink-0 overflow-x-auto">
+        <div className="bg-dark-700 rounded-xl px-3 py-2 text-xs shrink-0">
+          <p className="text-slate-400">Issued</p>
+          <p className="font-bold text-yellow-400">{totalIssued.toFixed(0)} L</p>
         </div>
-      )}
+        <div className="bg-dark-700 rounded-xl px-3 py-2 text-xs shrink-0">
+          <p className="text-slate-400">Consumed</p>
+          <p className="font-bold text-blue-400">{totalConsumed.toFixed(0)} L</p>
+        </div>
+        <div className="bg-dark-700 rounded-xl px-3 py-2 text-xs shrink-0">
+          <p className="text-slate-400">Filled (ops)</p>
+          <p className="font-bold text-green-400">{totalFilled.toFixed(0)} L</p>
+        </div>
+        <div className={`rounded-xl px-3 py-2 text-xs shrink-0 ${variance > 5 ? 'bg-red-900/40' : 'bg-dark-700'}`}>
+          <p className="text-slate-400">Variance</p>
+          <p className={`font-bold ${variance > 5 ? 'text-red-400' : variance < -5 ? 'text-orange-400' : 'text-slate-300'}`}>
+            {variance >= 0 ? '+' : ''}{variance.toFixed(0)} L
+          </p>
+        </div>
+      </div>
+
+      {/* Sub-tab + month filter + action */}
+      <div className="flex items-center gap-2 px-4 py-2 shrink-0">
+        <div className="flex rounded-lg overflow-hidden border border-dark-600 shrink-0">
+          {[{ id: 'issues', label: 'Issued' }, { id: 'filled', label: 'Filled (ops)' }].map(t => (
+            <button key={t.id} onClick={() => setSubTab(t.id)}
+              className={`px-3 py-1.5 text-xs font-medium transition-colors
+                ${subTab === t.id ? 'bg-primary-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+        <input type="month" value={filterMonth} onChange={e => setFilterMonth(e.target.value)}
+          className="bg-dark-700 border border-dark-600 rounded-lg px-2 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-primary-500" />
+        {subTab === 'issues' && (
+          <button onClick={() => setShowIssueForm(true)}
+            className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary-600 hover:bg-primary-500 text-white text-xs font-medium transition-colors shrink-0">
+            <Plus className="w-3.5 h-3.5" /> Issue Fuel
+          </button>
+        )}
+      </div>
+
+      {/* List */}
       <div className="flex-1 overflow-y-auto px-4 pb-4">
         {isLoading ? (
           <div className="flex items-center justify-center py-16"><Loader2 className="w-6 h-6 text-primary-400 animate-spin" /></div>
-        ) : entries.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 gap-2">
-            <Fuel className="w-10 h-10 text-slate-600" />
-            <p className="text-slate-400">No fuel entries yet</p>
-            <p className="text-xs text-slate-500">Log fuel from an equipment's detail panel</p>
-          </div>
+        ) : subTab === 'issues' ? (
+          issues.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 gap-2">
+              <Fuel className="w-10 h-10 text-slate-600" />
+              <p className="text-slate-400">No fuel issues logged this month</p>
+              <button onClick={() => setShowIssueForm(true)} className="btn-primary text-xs mt-2 flex items-center gap-1"><Plus className="w-3.5 h-3.5" /> Issue Fuel</button>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {issues.map(i => (
+                <div key={i.id} className="bg-dark-800 border border-dark-700 rounded-xl p-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="font-semibold text-slate-100 text-sm">{i.equipment_name || '—'}</p>
+                      <p className="text-xs text-slate-500">{format(new Date(i.issue_date), 'dd MMM yyyy')} · {SOURCE_LABELS[i.fuel_source] || i.fuel_source}</p>
+                    </div>
+                    <p className="font-bold text-yellow-400 text-sm shrink-0">{i.quantity_liters} L</p>
+                  </div>
+                  <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-slate-500">
+                    {i.meter_at_issue   && <span>Meter: {i.meter_at_issue}</span>}
+                    {i.voucher_number   && <span>Voucher: {i.voucher_number}</span>}
+                    {i.issued_by_name   && <span>By: {i.issued_by_name}</span>}
+                    {i.notes           && <span>{i.notes}</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )
         ) : (
-          <div className="space-y-2">
-            {entries.map(e => (
-              <div key={e.id} className="bg-dark-800 border border-dark-700 rounded-xl p-3">
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <p className="font-semibold text-slate-100 text-sm">{e.equipment?.name}</p>
-                    <p className="text-xs text-slate-400">{e.equipment?.category}</p>
+          fills.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 gap-2">
+              <Fuel className="w-10 h-10 text-slate-600" />
+              <p className="text-slate-400">No operator fuel entries this month</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {fills.map(e => (
+                <div key={e.id} className="bg-dark-800 border border-dark-700 rounded-xl p-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="font-semibold text-slate-100 text-sm">{e.equipment?.name}</p>
+                      <p className="text-xs text-slate-400">{e.equipment?.category}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="font-bold text-green-400">{e.quantity_liters} L</p>
+                      {e.total_amount && <p className="text-xs text-slate-400">₹{Number(e.total_amount).toLocaleString('en-IN')}</p>}
+                    </div>
                   </div>
-                  <div className="text-right">
-                    <p className="font-bold text-yellow-400">{e.quantity_liters} L</p>
-                    {e.total_amount && <p className="text-xs text-slate-400">₹{Number(e.total_amount).toLocaleString('en-IN')}</p>}
+                  <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-slate-500">
+                    {e.meter_at_filling  && <span>Meter: {e.meter_at_filling} hrs</span>}
+                    {e.delivered_by_name && <span>By: {e.delivered_by_name}</span>}
+                    {e.rate_per_liter    && <span>₹{e.rate_per_liter}/L</span>}
                   </div>
+                  <p className="text-xs text-slate-600 mt-1">{format(new Date(e.entry_time || e.created_at), 'dd MMM yyyy, HH:mm')}</p>
                 </div>
-                <div className="mt-2 grid grid-cols-2 gap-x-4 text-xs text-slate-400">
-                  {e.meter_at_filling  && <span>Meter: {e.meter_at_filling} hrs</span>}
-                  {e.km_at_filling     && <span>KM: {e.km_at_filling}</span>}
-                  {e.delivered_by_name && <span>By: {e.delivered_by_name}</span>}
-                  {e.vendor_name       && <span>Vendor: {e.vendor_name}</span>}
-                  {e.invoice_number    && <span>Invoice: #{e.invoice_number}</span>}
-                  {e.rate_per_liter    && <span>Rate: ₹{e.rate_per_liter}/L</span>}
-                </div>
-                {e.location_address && (
-                  <p className="text-xs text-slate-500 mt-1 flex items-center gap-1">
-                    <MapPin className="w-3 h-3" />{e.location_address.slice(0, 60)}
-                  </p>
-                )}
-                <p className="text-xs text-slate-600 mt-1">{format(new Date(e.created_at), 'dd MMM yyyy, HH:mm')}</p>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )
         )}
       </div>
+
+      {showIssueForm && (
+        <FuelIssueModal
+          companyId={companyId}
+          userProfile={userProfile}
+          onClose={() => setShowIssueForm(false)}
+          onSaved={() => { setShowIssueForm(false); qc.invalidateQueries(['fuel_issues', companyId, filterMonth]) }}
+        />
+      )}
     </div>
   )
 }
