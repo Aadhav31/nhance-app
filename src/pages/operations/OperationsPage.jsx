@@ -8,7 +8,7 @@ import {
   Truck, Plus, Fuel, AlertTriangle, X, Loader2, CheckCircle,
   Gauge, User, Mic, MicOff, MapPin, Camera,
   Clock, Activity, PlayCircle, StopCircle, ChevronRight, Lock, Bell,
-  ExternalLink, ZoomIn, Edit2, Trash2,
+  ExternalLink, ZoomIn, Edit2, Trash2, PauseCircle, AlertOctagon,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format } from 'date-fns'
@@ -1179,9 +1179,116 @@ function IncidentModal({ equipment, shift, companyId, onClose }) {
   )
 }
 
+// ── Mark Status Modal (idle / breakdown) — supervisor/manager/admin only ──────
+function MarkStatusModal({ equipment, companyId, statusType, onClose }) {
+  const { userProfile } = useAuth()
+  const qc = useQueryClient()
+  const isBreakdown = statusType === 'breakdown'
+  const inp = 'w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500'
+
+  const [idleReason,   setIdleReason]   = useState('')
+  const [description,  setDescription]  = useState('')
+  const [saving,       setSaving]       = useState(false)
+
+  const IDLE_REASONS = [
+    { v: 'no_work_available',    l: 'No work available' },
+    { v: 'operator_absent',      l: 'Operator absent' },
+    { v: 'waiting_for_material', l: 'Waiting for material' },
+    { v: 'minor_repair',         l: 'Minor repair / adjustment' },
+    { v: 'weather',              l: 'Weather / site conditions' },
+    { v: 'other',                l: 'Other' },
+  ]
+
+  const handleSave = async () => {
+    if (isBreakdown && !description.trim()) return toast.error('Describe the breakdown')
+    setSaving(true)
+    try {
+      const today = new Date().toISOString().slice(0, 10)
+
+      // 1. Insert daily_operations record with the new status
+      const { error: opsErr } = await supabase.from('daily_operations').insert({
+        company_id:    companyId,
+        equipment_id:  equipment.id,
+        equipment_name: equipment.name,
+        ops_date:      today,
+        status:        statusType,
+        idle_reason:   !isBreakdown ? (idleReason || null) : null,
+        notes:         description.trim() || null,
+        logged_by:     userProfile?.id   || null,
+        logged_by_name: userProfile?.full_name || null,
+      })
+      if (opsErr) throw opsErr
+
+      // 2. For breakdown: also update equipment status + create incident
+      if (isBreakdown) {
+        await supabase.from('equipment').update({ status: 'breakdown' }).eq('id', equipment.id)
+        await supabase.from('shift_incidents').insert({
+          company_id:     companyId,
+          equipment_id:   equipment.id,
+          equipment_name: equipment.name,
+          incident_type:  'breakdown',
+          description:    description.trim(),
+          reported_by:    userProfile?.full_name || null,
+          status:         'open',
+        })
+      } else {
+        // Idle — update equipment status
+        await supabase.from('equipment').update({ status: 'idle' }).eq('id', equipment.id)
+      }
+
+      toast.success(isBreakdown ? 'Breakdown reported' : 'Machine marked idle')
+      qc.invalidateQueries({ queryKey: ['today_ops', companyId] })
+      qc.invalidateQueries({ queryKey: ['equipment', companyId] })
+      onClose()
+    } catch (e) { toast.error(e.message) } finally { setSaving(false) }
+  }
+
+  return (
+    <Modal
+      title={isBreakdown ? `🔴 Report Breakdown — ${equipment.name}` : `⏸ Mark Idle — ${equipment.name}`}
+      onClose={onClose}
+      footer={
+        <>
+          <button onClick={onClose} className="flex-1 btn-secondary">Cancel</button>
+          <button onClick={handleSave} disabled={saving}
+            className={`flex-1 btn-primary flex items-center justify-center gap-2 ${isBreakdown ? 'bg-red-600 hover:bg-red-500' : ''}`}>
+            {saving ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving…</> : (isBreakdown ? '🔴 Report Breakdown' : '⏸ Mark Idle')}
+          </button>
+        </>
+      }
+    >
+      {!isBreakdown && (
+        <Field label="Idle Reason">
+          <select className={inp} value={idleReason} onChange={e => setIdleReason(e.target.value)}>
+            <option value="">Select reason…</option>
+            {IDLE_REASONS.map(r => <option key={r.v} value={r.v}>{r.l}</option>)}
+          </select>
+        </Field>
+      )}
+      <Field label={isBreakdown ? 'Describe the breakdown *' : 'Notes'}>
+        <VoiceTextarea
+          value={description}
+          onChange={v => setDescription(v)}
+          placeholder={isBreakdown ? 'What broke down? Engine failure, hydraulic leak…' : 'Any additional remarks…'}
+          rows={3}
+        />
+      </Field>
+      {isBreakdown && (
+        <div className="bg-red-900/20 border border-red-700/30 rounded-xl p-3 text-xs text-red-300">
+          ⚠️ This will update the machine status to <strong>Breakdown</strong> and create an open incident for the maintenance team.
+        </div>
+      )}
+    </Modal>
+  )
+}
+
 // ── Equipment Operation Card ───────────────────────────────────────────────────
 function EquipmentOpCard({ equipment, companyId }) {
-  const [modal, setModal] = useState(null) // 'start' | 'end' | 'fuel' | 'incident'
+  const { role } = useAuth()
+  const [modal, setModal] = useState(null) // 'start' | 'end' | 'fuel' | 'incident' | 'idle' | 'breakdown'
+
+  // Only supervisors, managers and admins can change machine status
+  const canChangeStatus = ['admin', 'superadmin', 'manager', 'supervisor'].includes(role)
 
   const { data: activeShift } = useQuery({
     queryKey: ['active_shift', equipment.id],
@@ -1259,13 +1366,29 @@ function EquipmentOpCard({ equipment, companyId }) {
             className="flex items-center justify-center gap-1.5 py-2 rounded-lg bg-dark-700 border border-dark-600 hover:border-orange-500 text-slate-300 text-xs transition-colors">
             <AlertTriangle className="w-3.5 h-3.5 text-orange-400" /> Incident
           </button>
+
+          {/* Status change — supervisor / manager / admin only */}
+          {canChangeStatus && (
+            <>
+              <button onClick={() => setModal('idle')}
+                className="flex items-center justify-center gap-1.5 py-2 rounded-lg bg-dark-700 border border-dark-600 hover:border-slate-400 text-slate-400 text-xs transition-colors">
+                <PauseCircle className="w-3.5 h-3.5" /> Mark Idle
+              </button>
+              <button onClick={() => setModal('breakdown')}
+                className="flex items-center justify-center gap-1.5 py-2 rounded-lg bg-dark-700 border border-dark-600 hover:border-red-500 text-slate-400 hover:text-red-400 text-xs transition-colors">
+                <AlertOctagon className="w-3.5 h-3.5" /> Breakdown
+              </button>
+            </>
+          )}
         </div>
       </div>
 
-      {modal === 'start'    && <StartShiftModal equipment={equipment} companyId={companyId} onClose={() => setModal(null)} />}
-      {modal === 'end'      && <EndShiftModal   equipment={equipment} shift={activeShift}   companyId={companyId} onClose={() => setModal(null)} />}
-      {modal === 'fuel'     && <FuelModal       equipment={equipment} shift={activeShift}   companyId={companyId} onClose={() => setModal(null)} />}
-      {modal === 'incident' && <IncidentModal   equipment={equipment} shift={activeShift}   companyId={companyId} onClose={() => setModal(null)} />}
+      {modal === 'start'     && <StartShiftModal equipment={equipment} companyId={companyId} onClose={() => setModal(null)} />}
+      {modal === 'end'       && <EndShiftModal   equipment={equipment} shift={activeShift}   companyId={companyId} onClose={() => setModal(null)} />}
+      {modal === 'fuel'      && <FuelModal       equipment={equipment} shift={activeShift}   companyId={companyId} onClose={() => setModal(null)} />}
+      {modal === 'incident'  && <IncidentModal   equipment={equipment} shift={activeShift}   companyId={companyId} onClose={() => setModal(null)} />}
+      {modal === 'idle'      && <MarkStatusModal equipment={equipment} companyId={companyId} statusType="idle"      onClose={() => setModal(null)} />}
+      {modal === 'breakdown' && <MarkStatusModal equipment={equipment} companyId={companyId} statusType="breakdown" onClose={() => setModal(null)} />}
     </>
   )
 }
