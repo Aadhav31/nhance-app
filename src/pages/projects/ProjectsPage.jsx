@@ -1829,335 +1829,256 @@ function ProjectDocumentsSection({ project, companyId }) {
 
 function ProjectDetail({ project, companyId, docTotals, onClose, onEdit, onDelete }) {
   const { isAdvanced } = useDisplayMode()
+  const [detailTab, setDetailTab] = useState('contract')
 
   const { data: equipment = [] } = useQuery({
     queryKey: ['project_equipment', project.id],
     queryFn: async () => {
-      const { data } = await supabase
-        .from('equipment')
-        .select('id, name, category, make, model, status')
-        .eq('current_project_id', project.id)
+      const { data } = await supabase.from('equipment').select('id,name,category,make,model,status').eq('current_project_id', project.id)
       return data || []
     },
   })
-
   const { data: rateItems = [] } = useQuery({
     queryKey: ['rate_items_view', project.id],
     queryFn: async () => {
-      const { data } = await supabase
-        .from('project_rate_items')
-        .select('*')
-        .eq('project_id', project.id)
-        .order('sort_order')
+      const { data } = await supabase.from('project_rate_items').select('*').eq('project_id', project.id).order('sort_order')
       return data || []
     },
   })
-
-  // Deployment rate cards already linked to this project
   const { data: deployments = [] } = useQuery({
     queryKey: ['project_deployments', project.id],
     queryFn: async () => {
-      const { data } = await supabase
-        .from('equipment_deployments')
+      const { data } = await supabase.from('equipment_deployments')
         .select('id,deployed_date,withdrawn_date,billing_basis,rate_per_hour,rate_per_day,rate_per_month,rate_unit,item_name,equipment:equipment_id(id,name,equipment_number,category)')
-        .eq('project_id', project.id)
-        .order('deployed_date', { ascending: false })
+        .eq('project_id', project.id).order('deployed_date', { ascending: false })
       return data || []
     },
   })
-
-  // Formal commencement certificates issued from the Letters module
   const { data: commissionings = [] } = useQuery({
     queryKey: ['project_commissionings', project.id],
     queryFn: async () => {
-      const { data } = await supabase
-        .from('equipment_commissionings')
-        .select('id,commissioned_date,withdrawn_date,site_location,client_name,operator_name,ref_number,doc_ref,equipment:equipment_id(id,name,equipment_number,category)')
-        .eq('project_id', project.id)
-        .order('commissioned_date', { ascending: false })
+      const { data } = await supabase.from('equipment_commissionings')
+        .select('id,commissioned_date,operator_name,ref_number,equipment:equipment_id(id,name,equipment_number,category)')
+        .eq('project_id', project.id).order('commissioned_date', { ascending: false })
       return data || []
     },
   })
+  const { data: projectInvoices = [] } = useQuery({
+    queryKey: ['project_invoices', project.id],
+    queryFn: async () => {
+      const { data } = await supabase.from('client_invoices')
+        .select('id,invoice_number,invoice_date,total_amount,paid_amount,balance_due,status,invoice_type')
+        .eq('project_id', project.id).order('invoice_date', { ascending: false })
+      return data || []
+    },
+    enabled: !!project.id,
+  })
+  const { data: projectPayments = [] } = useQuery({
+    queryKey: ['project_payments_rcvd', project.id],
+    queryFn: async () => {
+      const { data } = await supabase.from('payments_received')
+        .select('id,amount,payment_date,payment_method,reference')
+        .eq('project_id', project.id).order('payment_date', { ascending: false })
+      return data || []
+    },
+    enabled: !!project.id,
+  })
+
+  const totalRaised   = projectInvoices.reduce((s, i) => s + (Number(i.total_amount) || 0), 0)
+  const totalReceived = projectPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0)
+  const balance       = totalRaised - totalReceived
+  const contractVal   = Number(project.contract_value) || 0
+  const yetToBill     = Math.max(0, contractVal - totalRaised)
 
   const clientName = project.clients?.display_name || project.clients?.business_name
   const mapsHref = project.site_lat && project.site_lng
     ? `https://maps.google.com/?q=${project.site_lat},${project.site_lng}`
     : project.maps_link || null
 
-  // Our team — build from new JSONB arrays with legacy fallback
-  const supervisorList = (project.our_supervisors?.length > 0)
+  const supervisorList = project.our_supervisors?.length > 0
     ? project.our_supervisors
     : project.our_supervisor_name ? [{ name: project.our_supervisor_name, phone: project.our_supervisor_phone }] : []
-  const pnmList = (project.our_pnm_contacts?.length > 0)
+  const pnmList = project.our_pnm_contacts?.length > 0
     ? project.our_pnm_contacts
     : project.our_pnm_name ? [{ name: project.our_pnm_name, phone: project.our_pnm_phone }] : []
-
   const ourTeam = [
     ...(project.our_pm_name ? [{ name: project.our_pm_name, phone: project.our_pm_phone, email: project.our_pm_email, role: 'Our Project Manager' }] : []),
     ...supervisorList.map((s, i) => ({ ...s, role: supervisorList.length > 1 ? `Site Supervisor ${i+1}` : 'Site Supervisor' })),
     ...pnmList.map((p, i) => ({ ...p, role: pnmList.length > 1 ? `P&M In-charge ${i+1}` : 'P&M In-charge' })),
   ]
-
   const clientTeam = [
     { name: project.client_pm_name,       phone: project.client_pm_phone,       email: project.client_pm_email, role: 'Client PM' },
     { name: project.client_pnm_name,      phone: project.client_pnm_phone,      role: 'Client P&M' },
     { name: project.client_accounts_name, phone: project.client_accounts_phone, role: 'Client Accounts' },
   ].filter(c => c.name)
 
-  const [detailTab, setDetailTab] = useState('overview')
+  const invStatusCls = s => ({ draft:'bg-slate-500/15 text-slate-400', sent:'bg-blue-500/15 text-blue-300', partial:'bg-yellow-500/15 text-yellow-300', paid:'bg-emerald-500/15 text-emerald-300', overdue:'bg-red-500/15 text-red-300' })[s] || 'bg-slate-500/15 text-slate-400'
+  const fmtAmt = n => n != null ? `₹${Number(n).toLocaleString('en-IN')}` : '—'
 
   const DTABS = [
-    { id: 'overview',  label: 'Overview' },
-    { id: 'contract',  label: 'Contract' },
-    { id: 'team',      label: 'Team' },
-    { id: 'equipment', label: `Equipment (${equipment.length})` },
-    { id: 'documents', label: 'Documents' },
+    { id: 'contract',  label: 'Contract & Terms' },
+    { id: 'contacts',  label: 'Contact Details' },
+    { id: 'equipment', label: `Equipment Engaged (${equipment.length})` },
+    { id: 'workdocs',  label: 'Work Orders & Docs' },
+    { id: 'invoices',  label: `Invoices Raised (${projectInvoices.length})` },
+    { id: 'pl',        label: 'Project P&L' },
+    { id: 'remarks',   label: 'Remarks' },
   ]
 
   return (
-    <Modal title={project.project_name} subtitle={project.project_code} onClose={onClose} wide
-      footer={<>
+    <PagePanel
+      title={project.project_name}
+      subtitle={project.project_code}
+      onClose={onClose}
+      maxWidth="max-w-none"
+      actions={<>
         {onDelete && (
           <button onClick={onDelete}
-            className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-red-400 border border-red-500/30 hover:bg-red-500/10 transition-colors shrink-0">
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-red-400 border border-red-500/30 hover:bg-red-500/10 transition-colors">
             <Trash2 className="w-3.5 h-3.5"/> Delete
           </button>
         )}
-        <button onClick={onClose} className="btn-ghost flex-1">Close</button>
-        <button onClick={onEdit} className="btn-primary flex-1 flex items-center justify-center gap-2">
+        <button onClick={onEdit}
+          className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold bg-primary-600 hover:bg-primary-500 text-white transition-colors">
           <Edit2 className="w-3.5 h-3.5"/> Edit Project
         </button>
       </>}
     >
-      {/* ── Header: badges + quick stats ── */}
-      <div className="flex flex-wrap gap-2 -mt-2 mb-1">
-        <StatusBadge status={project.status}/>
-        {project.nature_of_job && <JobBadge type={project.nature_of_job}/>}
-        {project.division && (
-          <span className="text-xs bg-dark-700 text-slate-400 px-2 py-0.5 rounded-full">{project.division}</span>
-        )}
-        {clientName && (
-          <span className="text-xs bg-dark-700 text-slate-400 px-2 py-0.5 rounded-full flex items-center gap-1">
-            <Building2 className="w-3 h-3"/>{clientName}
-          </span>
-        )}
-      </div>
+      <div className="space-y-6 pb-8">
 
-      <div className={`grid gap-3 ${isAdvanced ? 'grid-cols-3' : 'grid-cols-2'}`}>
-        <div className="bg-dark-700/50 rounded-lg p-3 text-center">
-          <p className="text-[11px] text-slate-500 mb-0.5">
-            {docTotals?.total > 0 ? 'Total Doc Value' : 'Contract Value'}
-          </p>
-          <p className={`text-sm font-semibold ${docTotals?.total > 0 ? 'text-emerald-400' : 'text-slate-100'}`}>
-            {fmt(docTotals?.total > 0 ? docTotals.total : project.contract_value)}
-          </p>
-          {docTotals?.total > 0 && (
-            <p className="text-[10px] text-slate-600 mt-0.5">
-              {Object.entries(docTotals.byType).map(([k, v]) =>
-                `${DOC_TYPES.find(d => d.value === k)?.label?.split('/')[0] || k}: ${fmt(v)}`
-              ).join(' · ')}
-            </p>
-          )}
-        </div>
-        <div className="bg-dark-700/50 rounded-lg p-3 text-center">
-          <p className="text-[11px] text-slate-500 mb-0.5">Equipment on Site</p>
-          <p className="text-sm font-semibold text-slate-100">
-            {equipment.length} unit{equipment.length !== 1 ? 's' : ''}
-          </p>
-        </div>
-        {isAdvanced && (
-          <div className="bg-dark-700/50 rounded-lg p-3 text-center">
-            <p className="text-[11px] text-slate-500 mb-0.5">GST Rate</p>
-            <p className="text-sm font-semibold text-slate-100">{project.gst_rate ? `${project.gst_rate}%` : '18%'}</p>
+      {/* ══ PROJECT OVERVIEW HEADER ══════════════════════════════════════ */}
+      <div className="grid grid-cols-3 gap-5">
+        {/* Left 2/3 — project meta */}
+        <div className="col-span-2 bg-dark-800/50 border border-dark-600/70 rounded-2xl p-6">
+          <div className="flex flex-wrap gap-2 mb-5">
+            <StatusBadge status={project.status}/>
+            {project.nature_of_job && <JobBadge type={project.nature_of_job}/>}
+            {project.division && (
+              <span className="text-xs bg-dark-700 text-slate-400 px-2.5 py-0.5 rounded-full">{project.division}</span>
+            )}
+            {clientName && (
+              <span className="text-xs bg-dark-700 text-slate-400 px-2.5 py-0.5 rounded-full flex items-center gap-1.5">
+                <Building2 className="w-3 h-3"/>{clientName}
+              </span>
+            )}
           </div>
-        )}
-      </div>
-
-      {/* ── Tab bar ── */}
-      <div className="flex gap-1 border-b border-dark-600 -mx-1 px-1">
-        {DTABS.map(t => (
-          <button key={t.id} onClick={() => setDetailTab(t.id)}
-            className={`px-3 py-2 text-xs font-medium rounded-t-md transition-colors whitespace-nowrap
-              ${detailTab === t.id
-                ? 'text-primary-300 border-b-2 border-primary-400 -mb-px bg-dark-700/30'
-                : 'text-slate-500 hover:text-slate-300'}`}>
-            {t.label}
-          </button>
-        ))}
-      </div>
-
-      {/* ════════════════ OVERVIEW ════════════════ */}
-      {detailTab === 'overview' && (
-        <div className="space-y-4">
-          {isAdvanced ? (
-            <div className={half}>
-              <div>
-                <Sec icon={MapPin} label="Site & Location"/>
-                <div className="mt-2">
-                  <Row label="Site Name" value={project.site_name}/>
-                  <Row label="Address"   value={project.address}/>
-                  <Row label="City"      value={project.city}/>
-                  <Row label="State"     value={project.state}/>
-                  <Row label="Pincode"   value={project.pincode}/>
-                  {project.site_lat && project.site_lng && (
-                    <p className="text-[11px] text-slate-500 font-mono mt-1.5">
-                      📍 {project.site_lat}, {project.site_lng}
-                    </p>
-                  )}
+          <div className="grid grid-cols-2 gap-x-10">
+            {project.site_name && <Row label="Site Name" value={project.site_name}/>}
+            {(project.city || project.state) && (
+              <div className="flex items-center justify-between py-2 border-b border-dark-700/50">
+                <span className="text-xs text-slate-500">Location</span>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs text-slate-200">{[project.city, project.state].filter(Boolean).join(', ')}</span>
                   {mapsHref && (
-                    <a href={mapsHref} target="_blank" rel="noopener noreferrer"
-                      className="flex items-center gap-1.5 text-xs text-primary-400 hover:text-primary-300 pt-2">
-                      <ExternalLink className="w-3 h-3"/> Open in Maps
-                    </a>
-                  )}
-                </div>
-              </div>
-              <div>
-                <Sec icon={Calendar} label="Timeline"/>
-                <div className="mt-2">
-                  <Row label="Mobilization" value={fmtDate(project.mobilization_date)}/>
-                  {project.mob_attachment_url && (
-                    <div className="flex justify-between py-1.5 border-b border-dark-700/50">
-                      <span className="text-xs text-slate-500">Mob. Document</span>
-                      <button onClick={async () => {
-                        const { data } = await supabase.storage.from(BUCKET).createSignedUrl(project.mob_attachment_url, 120)
-                        if (data?.signedUrl) window.open(data.signedUrl, '_blank')
-                        else toast.error('Could not open document')
-                      }} className="text-xs text-primary-400 hover:text-primary-300 flex items-center gap-1">
-                        <Eye className="w-3 h-3"/> View
-                      </button>
-                    </div>
-                  )}
-                  <Row label="Commencement"
-                    value={[fmtDate(project.start_date), project.start_time ? project.start_time.slice(0,5) : null].filter(Boolean).join(' · ')}/>
-                  {project.comm_attachment_url && (
-                    <div className="flex justify-between py-1.5 border-b border-dark-700/50">
-                      <span className="text-xs text-slate-500">Comm. Document</span>
-                      <button onClick={async () => {
-                        const { data } = await supabase.storage.from(BUCKET).createSignedUrl(project.comm_attachment_url, 120)
-                        if (data?.signedUrl) window.open(data.signedUrl, '_blank')
-                        else toast.error('Could not open document')
-                      }} className="text-xs text-primary-400 hover:text-primary-300 flex items-center gap-1">
-                        <Eye className="w-3 h-3"/> View
-                      </button>
-                    </div>
-                  )}
-                  <Row label="Expected End" value={fmtDate(project.expected_end_date)}/>
-                  <Row label="Actual End"   value={fmtDate(project.actual_end_date)}/>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-1">
-              {(project.city || project.state) && (
-                <div className="flex items-center gap-2 text-sm text-slate-300">
-                  <MapPin className="w-3.5 h-3.5 text-slate-500"/>
-                  {[project.city, project.state].filter(Boolean).join(', ')}
-                  {mapsHref && (
-                    <a href={mapsHref} target="_blank" rel="noopener noreferrer"
-                      className="text-primary-400 hover:text-primary-300">
+                    <a href={mapsHref} target="_blank" rel="noopener noreferrer" className="text-primary-400 hover:text-primary-300">
                       <ExternalLink className="w-3 h-3"/>
                     </a>
                   )}
                 </div>
-              )}
-              {project.start_date && (
-                <div className="flex items-center gap-2 text-sm text-slate-300">
-                  <Calendar className="w-3.5 h-3.5 text-slate-500"/>
-                  Started {fmtDate(project.start_date)}{project.expected_end_date ? ` → ${fmtDate(project.expected_end_date)}` : ''}
-                </div>
-              )}
-            </div>
-          )}
+              </div>
+            )}
+            <Row label="Mobilization"  value={fmtDate(project.mobilization_date)}/>
+            <Row label="Commencement"  value={[fmtDate(project.start_date), project.start_time?.slice(0,5)].filter(Boolean).join(' · ')}/>
+            <Row label="Expected End"  value={fmtDate(project.expected_end_date)}/>
+            {project.actual_end_date && <Row label="Actual End" value={fmtDate(project.actual_end_date)}/>}
+            <Row label="Contract Value" value={fmt(project.contract_value)}/>
+            <Row label="GST Rate"       value={project.gst_rate ? `${project.gst_rate}%` : '18%'}/>
+          </div>
+        </div>
 
-          {isAdvanced && project.notes && (
-            <div>
-              <Sec icon={FileText} label="Notes"/>
-              <p className="text-xs text-slate-300 mt-2 leading-relaxed whitespace-pre-wrap">{project.notes}</p>
+        {/* Right 1/3 — financial KPIs */}
+        <div className="space-y-3">
+          {[
+            { label: 'Total Invoiced',  value: fmt(totalRaised),   sub: `${projectInvoices.length} invoice${projectInvoices.length !== 1 ? 's' : ''}`, borderCls: 'border-indigo-500/25', bgCls: 'bg-indigo-500/5',  vc: 'text-indigo-300' },
+            { label: 'Total Received',  value: fmt(totalReceived),  sub: `${projectPayments.length} payment${projectPayments.length !== 1 ? 's' : ''}`, borderCls: 'border-emerald-500/25', bgCls: 'bg-emerald-500/5', vc: 'text-emerald-300' },
+            { label: 'Outstanding',     value: fmt(balance),        sub: 'Balance due',  borderCls: balance > 0 ? 'border-orange-500/25' : 'border-dark-600/60', bgCls: balance > 0 ? 'bg-orange-500/5' : 'bg-dark-800/40', vc: balance > 0 ? 'text-orange-300' : 'text-slate-300' },
+          ].map(k => (
+            <div key={k.label} className={`border rounded-xl p-4 ${k.borderCls} ${k.bgCls}`}>
+              <p className="text-[11px] text-slate-500 uppercase tracking-wide">{k.label}</p>
+              <p className={`text-xl font-bold mt-1 ${k.vc}`}>{k.value}</p>
+              <p className="text-[10px] text-slate-600 mt-0.5">{k.sub}</p>
+            </div>
+          ))}
+          {contractVal > 0 && (
+            <div className="border border-yellow-500/20 bg-yellow-500/5 rounded-xl p-4">
+              <p className="text-[11px] text-yellow-400/70 uppercase tracking-wide">Yet to Bill</p>
+              <p className="text-xl font-bold text-yellow-300 mt-1">{fmt(yetToBill)}</p>
+              <p className="text-[10px] text-yellow-400/40 mt-0.5">of {fmt(contractVal)} contract value</p>
             </div>
           )}
         </div>
-      )}
+      </div>
 
-      {/* ════════════════ CONTRACT ════════════════ */}
+      {/* ══ TAB BAR ══════════════════════════════════════════════════════ */}
+      <div className="border-b border-dark-600">
+        <div className="flex overflow-x-auto">
+          {DTABS.map(t => (
+            <button key={t.id} onClick={() => setDetailTab(t.id)}
+              className={`px-5 py-3 text-xs font-medium whitespace-nowrap border-b-2 transition-colors
+                ${detailTab === t.id
+                  ? 'border-primary-400 text-primary-300 bg-primary-500/5'
+                  : 'border-transparent text-slate-500 hover:text-slate-300'}`}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* ══ CONTRACT & TERMS ══════════════════════════════════════════════ */}
       {detailTab === 'contract' && (
-        <div className="space-y-4">
-          {isAdvanced && (
-            <div>
-              <Sec icon={FileText} label="Contract Terms"/>
-              <div className="mt-2 grid grid-cols-2 gap-x-6">
-                <div>
-                  <Row label="Billing Cycle" value={project.billing_cycle}/>
-                  <Row label="Payment Terms" value={project.payment_terms}/>
-                  <Row label="Mob. Advance"  value={fmt(project.mobilization_advance)}/>
-                </div>
-                <div>
-                  <Row label="Retention" value={project.retention_pct ? `${project.retention_pct}%` : null}/>
-                  <Row label="GST Rate"  value={project.gst_rate ? `${project.gst_rate}%` : null}/>
-                </div>
+        <div className="space-y-5">
+          <div className="grid grid-cols-2 gap-5">
+            <div className="bg-dark-800/40 border border-dark-600/60 rounded-xl p-5">
+              <Sec icon={FileText} label="Billing & Payment"/>
+              <div className="mt-4">
+                <Row label="Billing Cycle"  value={project.billing_cycle}/>
+                <Row label="Payment Terms"  value={project.payment_terms}/>
+                <Row label="Mob. Advance"   value={fmt(project.mobilization_advance)}/>
+                <Row label="Retention"      value={project.retention_pct ? `${project.retention_pct}%` : null}/>
+                <Row label="GST Rate"       value={project.gst_rate ? `${project.gst_rate}%` : '18%'}/>
               </div>
             </div>
-          )}
+            {(project.shift_start_time || project.no_of_shifts) && (
+              <div className="bg-dark-800/40 border border-dark-600/60 rounded-xl p-5">
+                <Sec icon={Clock} label="Operator Shift Window"/>
+                <div className="mt-4 space-y-3">
+                  {(project.shift_start_time || project.shift_end_time) && (
+                    <p className="text-sm text-slate-200 font-mono">
+                      {project.shift_start_time?.slice(0,5) || '—'} → {project.shift_end_time?.slice(0,5) || '—'}
+                      {project.shift_grace_mins && <span className="text-xs text-slate-500 font-sans ml-3">±{project.shift_grace_mins} min grace</span>}
+                    </p>
+                  )}
+                  <div><span className="text-xs text-slate-500">Shifts / day: </span><span className="text-xs font-semibold text-slate-200">{project.no_of_shifts === 2 ? '2 (Day + Night)' : '1 (Single)'}</span></div>
+                </div>
+              </div>
+            )}
+          </div>
 
-          {isAdvanced && rateItems.length > 0 && (
-            <div>
+          {rateItems.length > 0 && (
+            <div className="bg-dark-800/40 border border-dark-600/60 rounded-xl p-5">
               <Sec icon={IndianRupee} label="Rate Card"/>
-              <div className="mt-2 overflow-x-auto">
+              <div className="mt-4 overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead>
                     <tr className="text-slate-500 border-b border-dark-700">
-                      <th className="text-left py-1.5 font-medium pr-4">
-                        {project.nature_of_job === 'hire' ? 'Equipment'
-                          : project.nature_of_job === 'rate_contract' ? 'Work Item'
-                          : project.nature_of_job === 'lump_sum' ? 'Milestone' : 'Scope'}
-                      </th>
-                      {project.nature_of_job === 'hire' && <>
-                        <th className="text-left py-1.5 font-medium pr-3">Basis</th>
-                        <th className="text-right py-1.5 font-medium pr-3">Rate</th>
-                        <th className="text-right py-1.5 font-medium pr-3">Max hrs</th>
-                        <th className="text-right py-1.5 font-medium">OT %</th>
-                      </>}
-                      {project.nature_of_job === 'rate_contract' && <>
-                        <th className="text-left py-1.5 font-medium pr-4">Unit</th>
-                        <th className="text-right py-1.5 font-medium">Rate (₹)</th>
-                      </>}
-                      {project.nature_of_job === 'lump_sum' && <>
-                        <th className="text-right py-1.5 font-medium pr-4">Value (₹)</th>
-                        <th className="text-right py-1.5 font-medium">Due Date</th>
-                      </>}
-                      {project.nature_of_job === 'amc' && (
-                        <th className="text-right py-1.5 font-medium">Monthly (₹)</th>
-                      )}
+                      <th className="text-left py-2 font-medium pr-4">{project.nature_of_job === 'hire' ? 'Equipment' : project.nature_of_job === 'rate_contract' ? 'Work Item' : project.nature_of_job === 'lump_sum' ? 'Milestone' : 'Scope'}</th>
+                      {project.nature_of_job === 'hire' && <><th className="text-left py-2 font-medium pr-3">Basis</th><th className="text-right py-2 font-medium pr-3">Rate</th><th className="text-right py-2 font-medium pr-3">Max hrs</th><th className="text-right py-2 font-medium">OT %</th></>}
+                      {project.nature_of_job === 'rate_contract' && <><th className="text-left py-2 font-medium pr-4">Unit</th><th className="text-right py-2 font-medium">Rate (₹)</th></>}
+                      {project.nature_of_job === 'lump_sum' && <><th className="text-right py-2 font-medium pr-4">Value (₹)</th><th className="text-right py-2 font-medium">Due Date</th></>}
+                      {project.nature_of_job === 'amc' && <th className="text-right py-2 font-medium">Monthly (₹)</th>}
                     </tr>
                   </thead>
                   <tbody>
                     {rateItems.map(r => {
                       const basis = r.billing_basis || 'daily'
-                      const rateVal = basis === 'daily' ? r.rate_per_day
-                        : basis === 'monthly' ? r.rate_per_month
-                        : r.rate_per_hour
+                      const rateVal = basis === 'daily' ? r.rate_per_day : basis === 'monthly' ? r.rate_per_month : r.rate_per_hour
                       return (
-                        <tr key={r.id} className="border-b border-dark-700/40">
-                          <td className="py-1.5 pr-4 text-slate-200">{r.item_name}</td>
-                          {project.nature_of_job === 'hire' && <>
-                            <td className="py-1.5 pr-3 text-slate-400 capitalize">{basis.replace('_',' ')}</td>
-                            <td className="py-1.5 pr-3 text-right text-slate-300">{rateVal ? fmt(rateVal) : '—'}</td>
-                            <td className="py-1.5 pr-3 text-right text-slate-400">{r.max_hours_per_day ? `${r.max_hours_per_day} hrs` : '—'}</td>
-                            <td className="py-1.5 text-right text-slate-400">
-                              {basis === 'short_term_hourly' ? `Fixed ${r.short_term_fixed_hours||6}h` : r.ot_percentage ? `${r.ot_percentage}%` : '—'}
-                            </td>
-                          </>}
-                          {project.nature_of_job === 'rate_contract' && <>
-                            <td className="py-1.5 pr-4 text-slate-400">{r.unit || '—'}</td>
-                            <td className="py-1.5 text-right text-slate-300">{r.rate ? fmt(r.rate) : '—'}</td>
-                          </>}
-                          {project.nature_of_job === 'lump_sum' && <>
-                            <td className="py-1.5 pr-4 text-right text-slate-300">{r.rate ? fmt(r.rate) : '—'}</td>
-                            <td className="py-1.5 text-right text-slate-400">{fmtDate(r.milestone_date)}</td>
-                          </>}
-                          {project.nature_of_job === 'amc' && (
-                            <td className="py-1.5 text-right text-slate-300">{r.rate ? fmt(r.rate) : '—'}</td>
-                          )}
+                        <tr key={r.id} className="border-b border-dark-700/40 hover:bg-dark-700/20">
+                          <td className="py-2.5 pr-4 text-slate-200 font-medium">{r.item_name}</td>
+                          {project.nature_of_job === 'hire' && <><td className="py-2.5 pr-3 text-slate-400 capitalize">{basis.replace('_',' ')}</td><td className="py-2.5 pr-3 text-right text-slate-300">{rateVal ? fmt(rateVal) : '—'}</td><td className="py-2.5 pr-3 text-right text-slate-400">{r.max_hours_per_day ? `${r.max_hours_per_day}h` : '—'}</td><td className="py-2.5 text-right text-slate-400">{basis === 'short_term_hourly' ? `Fixed ${r.short_term_fixed_hours||6}h` : r.ot_percentage ? `${r.ot_percentage}%` : '—'}</td></>}
+                          {project.nature_of_job === 'rate_contract' && <><td className="py-2.5 pr-4 text-slate-400">{r.unit || '—'}</td><td className="py-2.5 text-right text-slate-300">{r.rate ? fmt(r.rate) : '—'}</td></>}
+                          {project.nature_of_job === 'lump_sum' && <><td className="py-2.5 pr-4 text-right text-slate-300">{r.rate ? fmt(r.rate) : '—'}</td><td className="py-2.5 text-right text-slate-400">{fmtDate(r.milestone_date)}</td></>}
+                          {project.nature_of_job === 'amc' && <td className="py-2.5 text-right text-slate-300">{r.rate ? fmt(r.rate) : '—'}</td>}
                         </tr>
                       )
                     })}
@@ -2167,103 +2088,57 @@ function ProjectDetail({ project, companyId, docTotals, onClose, onEdit, onDelet
             </div>
           )}
 
-          {isAdvanced && project.hsd_supplied_by === 'client' && (
-            <div>
+          {project.hsd_supplied_by === 'client' && (
+            <div className="bg-dark-800/40 border border-dark-600/60 rounded-xl p-5">
               <Sec icon={Droplet} label="HSD Terms (Client-supplied)"/>
-              <div className="mt-2 grid grid-cols-2 gap-x-6">
-                <div>
-                  <Row label="Consumption Norm" value={project.hsd_consumption_norm ? `${project.hsd_consumption_norm} L/hr` : null}/>
-                  <Row label="HSD Rate"         value={project.hsd_rate_per_liter    ? `₹${project.hsd_rate_per_liter}/L`   : null}/>
-                </div>
-                <div>
-                  <Row label="Excess Billing"  value={project.hsd_excess_bill_rate  ? `₹${project.hsd_excess_bill_rate}/L` : null}/>
-                  <Row label="Shortage Credit" value={project.hsd_shortage_credit   ? `₹${project.hsd_shortage_credit}/L`  : null}/>
-                </div>
+              <div className="mt-4 grid grid-cols-2 gap-x-10">
+                <Row label="Consumption Norm" value={project.hsd_consumption_norm ? `${project.hsd_consumption_norm} L/hr` : null}/>
+                <Row label="HSD Rate"         value={project.hsd_rate_per_liter    ? `₹${project.hsd_rate_per_liter}/L`   : null}/>
+                <Row label="Excess Billing"   value={project.hsd_excess_bill_rate  ? `₹${project.hsd_excess_bill_rate}/L` : null}/>
+                <Row label="Shortage Credit"  value={project.hsd_shortage_credit   ? `₹${project.hsd_shortage_credit}/L`  : null}/>
               </div>
             </div>
-          )}
-
-          {!isAdvanced && (
-            <p className="text-xs text-slate-500 italic text-center py-6">
-              Contract details are only available in Advanced mode projects.
-            </p>
           )}
         </div>
       )}
 
-      {/* ════════════════ TEAM ════════════════ */}
-      {detailTab === 'team' && (
-        <div className="space-y-4">
-          {(project.shift_start_time || project.shift_end_time || project.no_of_shifts) && (
-            <div>
-              <Sec icon={Clock} label="Operator Shift Window"/>
-              <div className="mt-2 space-y-2">
-                {(project.shift_start_time || project.shift_end_time) && (
-                  <div className="flex items-center gap-3">
-                    <span className="text-sm text-slate-200 font-mono">
-                      {project.shift_start_time?.slice(0,5) || '—'} → {project.shift_end_time?.slice(0,5) || '—'}
-                    </span>
-                    {project.shift_grace_mins && (
-                      <span className="text-xs text-slate-500">±{project.shift_grace_mins} min grace</span>
-                    )}
-                  </div>
-                )}
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-slate-500">Shifts per day:</span>
-                  <span className="text-xs font-semibold text-slate-200">
-                    {project.no_of_shifts === 2 ? '2 (Day + Night)' : '1 (Single)'}
-                  </span>
-                </div>
-              </div>
-            </div>
-          )}
-
+      {/* ══ CONTACT DETAILS ═══════════════════════════════════════════════ */}
+      {detailTab === 'contacts' && (
+        <div className="space-y-5">
           {ourTeam.length > 0 && (
-            <div>
+            <div className="bg-dark-800/40 border border-dark-600/60 rounded-xl p-5">
               <Sec icon={Users} label="Our Team on Site"/>
-              <div className="mt-2 grid grid-cols-3 gap-2">
-                {ourTeam.map(c => <ContactCard key={c.role} {...c}/>)}
-              </div>
+              <div className="mt-4 grid grid-cols-3 gap-3">{ourTeam.map(c => <ContactCard key={c.role} {...c}/>)}</div>
             </div>
           )}
-
-          {isAdvanced && clientTeam.length > 0 && (
-            <div>
+          {clientTeam.length > 0 && (
+            <div className="bg-dark-800/40 border border-dark-600/60 rounded-xl p-5">
               <Sec icon={Users} label="Client Team"/>
-              <div className="mt-2 grid grid-cols-3 gap-2">
-                {clientTeam.map(c => <ContactCard key={c.role} {...c}/>)}
-              </div>
+              <div className="mt-4 grid grid-cols-3 gap-3">{clientTeam.map(c => <ContactCard key={c.role} {...c}/>)}</div>
             </div>
           )}
-
           {ourTeam.length === 0 && clientTeam.length === 0 && (
-            <p className="text-xs text-slate-500 italic text-center py-6">No team contacts configured for this project.</p>
+            <div className="text-center py-20 text-slate-500">No team contacts configured for this project.</div>
           )}
         </div>
       )}
 
-      {/* ════════════════ EQUIPMENT ════════════════ */}
+      {/* ══ EQUIPMENT ENGAGED ═════════════════════════════════════════════ */}
       {detailTab === 'equipment' && (
-        <div className="space-y-4">
-          <div>
-            <Sec icon={Cpu} label={`On Site (${equipment.length})`}/>
+        <div className="space-y-5">
+          <div className="bg-dark-800/40 border border-dark-600/60 rounded-xl p-5">
+            <Sec icon={Cpu} label={`Currently on Site (${equipment.length})`}/>
             {equipment.length === 0 ? (
-              <p className="text-xs text-slate-500 mt-2 italic">No equipment deployed here yet. Deploy from the Fleet module.</p>
+              <p className="text-sm text-slate-500 mt-4 text-center py-8">No equipment deployed on this project yet.</p>
             ) : (
-              <div className="mt-2 space-y-1">
+              <div className="mt-4 grid grid-cols-2 gap-3">
                 {equipment.map(e => (
-                  <div key={e.id} className="flex items-center justify-between bg-dark-700/50 rounded-lg px-3 py-2">
+                  <div key={e.id} className="flex items-center justify-between bg-dark-700/40 rounded-xl px-4 py-3">
                     <div>
-                      <p className="text-xs font-medium text-slate-200">{e.name}</p>
-                      <p className="text-[11px] text-slate-500">{e.category}{(e.make || e.model) ? ` · ${[e.make, e.model].filter(Boolean).join(' ')}` : ''}</p>
+                      <p className="text-sm font-medium text-slate-200">{e.name}</p>
+                      <p className="text-xs text-slate-500">{e.category}{(e.make || e.model) ? ` · ${[e.make,e.model].filter(Boolean).join(' ')}` : ''}</p>
                     </div>
-                    <span className={`text-[11px] px-2 py-0.5 rounded-full ${
-                      e.status==='working' ? 'bg-emerald-500/15 text-emerald-300'
-                        : e.status==='idle' ? 'bg-yellow-500/15 text-yellow-300'
-                        : 'bg-slate-500/15 text-slate-400'
-                    }`}>
-                      {e.status || 'deployed'}
-                    </span>
+                    <span className={`text-xs px-2.5 py-0.5 rounded-full font-medium ${e.status==='working'?'bg-emerald-500/15 text-emerald-300':e.status==='idle'?'bg-yellow-500/15 text-yellow-300':'bg-slate-500/15 text-slate-400'}`}>{e.status||'deployed'}</span>
                   </div>
                 ))}
               </div>
@@ -2271,81 +2146,51 @@ function ProjectDetail({ project, companyId, docTotals, onClose, onEdit, onDelet
           </div>
 
           {(deployments.length > 0 || commissionings.length > 0) && (
-            <div>
+            <div className="bg-dark-800/40 border border-dark-600/60 rounded-xl p-5">
               <Sec icon={Cpu} label={`Deployment History (${deployments.length})`}/>
-              <div className="mt-2 space-y-2">
+              <div className="mt-4 space-y-3">
                 {deployments.map(d => {
                   const isActive = !d.withdrawn_date
-                  const fmtD = dt => dt ? new Date(dt).toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' }) : null
+                  const fmtD = dt => dt ? new Date(dt).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}) : null
                   const basis = d.billing_basis || d.rate_unit || ''
-                  const rate  = basis === 'hourly' ? d.rate_per_hour
-                              : basis === 'monthly' ? d.rate_per_month
-                              : d.rate_per_day
-                  const rateLabel = rate ? `₹${Number(rate).toLocaleString('en-IN')}/${basis === 'hourly' ? 'hr' : basis === 'monthly' ? 'mo' : 'day'}` : null
+                  const rate  = basis==='hourly'?d.rate_per_hour:basis==='monthly'?d.rate_per_month:d.rate_per_day
+                  const rateLabel = rate ? `₹${Number(rate).toLocaleString('en-IN')}/${basis==='hourly'?'hr':basis==='monthly'?'mo':'day'}` : null
                   const cert = commissionings.find(c => c.equipment?.id === d.equipment?.id)
                   return (
-                    <div key={d.id} className="bg-dark-700/50 border border-dark-600 rounded-lg px-3 py-2.5">
+                    <div key={d.id} className="bg-dark-700/40 border border-dark-600 rounded-xl px-4 py-3.5">
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
-                          <p className="text-xs font-semibold text-slate-100">
-                            {d.equipment?.name || d.item_name || '—'}
-                            {d.equipment?.equipment_number && (
-                              <span className="text-primary-400 font-mono ml-1.5 text-[10px]">{d.equipment.equipment_number}</span>
-                            )}
-                          </p>
-                          {d.equipment?.category && <p className="text-[10px] text-slate-500">{d.equipment.category}</p>}
+                          <p className="text-sm font-semibold text-slate-100">{d.equipment?.name || d.item_name || '—'}{d.equipment?.equipment_number && <span className="text-primary-400 font-mono ml-2 text-xs">{d.equipment.equipment_number}</span>}</p>
+                          {d.equipment?.category && <p className="text-xs text-slate-500 mt-0.5">{d.equipment.category}</p>}
                         </div>
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          {cert && (
-                            <span className="text-[9px] px-1.5 py-0.5 bg-emerald-900/30 text-emerald-400 border border-emerald-700/30 rounded-full">
-                              Certificate Issued
-                            </span>
-                          )}
-                          <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${isActive ? 'bg-emerald-500/15 text-emerald-300' : 'bg-slate-500/15 text-slate-400'}`}>
-                            {isActive ? 'Active' : 'Withdrawn'}
-                          </span>
+                        <div className="flex items-center gap-2 shrink-0">
+                          {cert && <span className="text-[10px] px-2 py-0.5 bg-emerald-900/30 text-emerald-400 border border-emerald-700/30 rounded-full">Certificate Issued</span>}
+                          <span className={`text-xs px-2.5 py-0.5 rounded-full font-medium ${isActive?'bg-emerald-500/15 text-emerald-300':'bg-slate-500/15 text-slate-400'}`}>{isActive?'Active':'Withdrawn'}</span>
                         </div>
                       </div>
-                      <div className="mt-1.5 grid grid-cols-2 gap-x-4 gap-y-0.5">
-                        {fmtD(d.deployed_date) && (
-                          <p className="text-[10px] text-slate-500">Deployed: <span className="text-slate-300">{fmtD(d.deployed_date)}</span></p>
-                        )}
-                        {fmtD(d.withdrawn_date) && (
-                          <p className="text-[10px] text-slate-500">Withdrawn: <span className="text-slate-300">{fmtD(d.withdrawn_date)}</span></p>
-                        )}
-                        {rateLabel && <p className="text-[10px] text-slate-500">Rate: <span className="text-slate-300">{rateLabel}</span></p>}
-                        {cert?.commissioned_date && (
-                          <p className="text-[10px] text-slate-500">Commenced: <span className="text-emerald-300">{fmtD(cert.commissioned_date)}</span></p>
-                        )}
-                        {cert?.operator_name && (
-                          <p className="text-[10px] text-slate-500">Operator: <span className="text-slate-300">{cert.operator_name}</span></p>
-                        )}
-                        {cert?.ref_number && (
-                          <p className="text-[10px] text-slate-500">Cert. Ref: <span className="text-primary-400 font-mono">{cert.ref_number}</span></p>
-                        )}
+                      <div className="mt-2.5 grid grid-cols-3 gap-x-4 gap-y-0.5">
+                        {fmtD(d.deployed_date) && <p className="text-xs text-slate-500">Deployed: <span className="text-slate-300">{fmtD(d.deployed_date)}</span></p>}
+                        {fmtD(d.withdrawn_date) && <p className="text-xs text-slate-500">Withdrawn: <span className="text-slate-300">{fmtD(d.withdrawn_date)}</span></p>}
+                        {rateLabel && <p className="text-xs text-slate-500">Rate: <span className="text-slate-300">{rateLabel}</span></p>}
+                        {cert?.commissioned_date && <p className="text-xs text-slate-500">Commenced: <span className="text-emerald-300">{fmtD(cert.commissioned_date)}</span></p>}
+                        {cert?.operator_name && <p className="text-xs text-slate-500">Operator: <span className="text-slate-300">{cert.operator_name}</span></p>}
+                        {cert?.ref_number && <p className="text-xs text-slate-500">Cert. Ref: <span className="text-primary-400 font-mono">{cert.ref_number}</span></p>}
                       </div>
                     </div>
                   )
                 })}
-
                 {commissionings.filter(c => !deployments.some(d => d.equipment?.id === c.equipment?.id)).map(c => {
-                  const fmtD = dt => dt ? new Date(dt).toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' }) : '—'
+                  const fmtD = dt => dt ? new Date(dt).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}) : '—'
                   return (
-                    <div key={c.id} className="bg-dark-700/50 border border-emerald-700/30 rounded-lg px-3 py-2.5">
+                    <div key={c.id} className="bg-dark-700/40 border border-emerald-700/30 rounded-xl px-4 py-3.5">
                       <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <p className="text-xs font-semibold text-slate-100">
-                            {c.equipment?.name || '—'}
-                            {c.equipment?.equipment_number && <span className="text-primary-400 font-mono ml-1.5 text-[10px]">{c.equipment.equipment_number}</span>}
-                          </p>
-                          {c.equipment?.category && <p className="text-[10px] text-slate-500">{c.equipment.category}</p>}
-                        </div>
-                        <span className="text-[9px] px-1.5 py-0.5 bg-emerald-900/30 text-emerald-400 border border-emerald-700/30 rounded-full shrink-0">Certificate Only</span>
+                        <div><p className="text-sm font-semibold text-slate-100">{c.equipment?.name||'—'}{c.equipment?.equipment_number&&<span className="text-primary-400 font-mono ml-2 text-xs">{c.equipment.equipment_number}</span>}</p>{c.equipment?.category&&<p className="text-xs text-slate-500 mt-0.5">{c.equipment.category}</p>}</div>
+                        <span className="text-[10px] px-2 py-0.5 bg-emerald-900/30 text-emerald-400 border border-emerald-700/30 rounded-full shrink-0">Certificate Only</span>
                       </div>
-                      <div className="mt-1.5 grid grid-cols-2 gap-x-4 gap-y-0.5">
-                        <p className="text-[10px] text-slate-500">Commenced: <span className="text-emerald-300">{fmtD(c.commissioned_date)}</span></p>
-                        {c.operator_name && <p className="text-[10px] text-slate-500">Operator: <span className="text-slate-300">{c.operator_name}</span></p>}
-                        {c.ref_number    && <p className="text-[10px] text-slate-500">Cert. Ref: <span className="text-primary-400 font-mono">{c.ref_number}</span></p>}
+                      <div className="mt-2.5 grid grid-cols-3 gap-x-4 gap-y-0.5">
+                        <p className="text-xs text-slate-500">Commenced: <span className="text-emerald-300">{fmtD(c.commissioned_date)}</span></p>
+                        {c.operator_name&&<p className="text-xs text-slate-500">Operator: <span className="text-slate-300">{c.operator_name}</span></p>}
+                        {c.ref_number&&<p className="text-xs text-slate-500">Cert. Ref: <span className="text-primary-400 font-mono">{c.ref_number}</span></p>}
                       </div>
                     </div>
                   )
@@ -2356,11 +2201,103 @@ function ProjectDetail({ project, companyId, docTotals, onClose, onEdit, onDelet
         </div>
       )}
 
-      {/* ════════════════ DOCUMENTS ════════════════ */}
-      {detailTab === 'documents' && (
-        <ProjectDocumentsSection project={project} companyId={companyId} />
+      {/* ══ WORK ORDERS & DOCS ════════════════════════════════════════════ */}
+      {detailTab === 'workdocs' && (
+        <div className="bg-dark-800/40 border border-dark-600/60 rounded-xl p-5">
+          <ProjectDocumentsSection project={project} companyId={companyId} />
+        </div>
       )}
-    </Modal>
+
+      {/* ══ INVOICES RAISED ═══════════════════════════════════════════════ */}
+      {detailTab === 'invoices' && (
+        <div className="space-y-3">
+          {projectInvoices.length === 0 ? (
+            <div className="text-center py-20 text-slate-500">No invoices raised for this project yet.</div>
+          ) : (
+            projectInvoices.map(inv => (
+              <div key={inv.id} className="flex items-center justify-between bg-dark-800/40 border border-dark-600/60 rounded-xl px-5 py-4 gap-4">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2.5">
+                    <p className="text-sm font-semibold text-primary-400 font-mono">{inv.invoice_number}</p>
+                    {inv.invoice_type && <span className="text-[10px] px-2 py-0.5 bg-dark-600 text-slate-400 rounded-full capitalize">{inv.invoice_type.replace('_',' ')}</span>}
+                  </div>
+                  <p className="text-xs text-slate-500 mt-0.5">{fmtDate(inv.invoice_date)}</p>
+                </div>
+                <div className="flex items-center gap-6 shrink-0">
+                  <div className="text-right"><p className="text-xs text-slate-500">Invoiced</p><p className="text-sm font-semibold text-slate-100">{fmtAmt(inv.total_amount)}</p></div>
+                  <div className="text-right"><p className="text-xs text-slate-500">Paid</p><p className="text-sm font-semibold text-emerald-400">{fmtAmt(inv.paid_amount)}</p></div>
+                  <div className="text-right"><p className="text-xs text-slate-500">Balance</p><p className={`text-sm font-semibold ${Number(inv.balance_due)>0?'text-orange-300':'text-slate-400'}`}>{fmtAmt(inv.balance_due)}</p></div>
+                  <span className={`text-xs px-2.5 py-1 rounded-full font-medium capitalize ${invStatusCls(inv.status)}`}>{inv.status}</span>
+                </div>
+              </div>
+            ))
+          )}
+          {projectInvoices.length > 0 && (
+            <div className="flex items-center justify-between bg-dark-700/30 border border-dark-600/40 rounded-xl px-5 py-3.5">
+              <span className="text-xs font-semibold text-slate-400">Totals</span>
+              <div className="flex items-center gap-8">
+                <div className="text-right"><p className="text-xs text-slate-500">Total Invoiced</p><p className="text-sm font-bold text-slate-100">{fmt(totalRaised)}</p></div>
+                <div className="text-right"><p className="text-xs text-slate-500">Total Received</p><p className="text-sm font-bold text-emerald-400">{fmt(totalReceived)}</p></div>
+                <div className="text-right"><p className="text-xs text-slate-500">Outstanding</p><p className={`text-sm font-bold ${balance>0?'text-orange-300':'text-slate-400'}`}>{fmt(balance)}</p></div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ══ PROJECT P&L ═══════════════════════════════════════════════════ */}
+      {detailTab === 'pl' && (
+        <div className="grid grid-cols-2 gap-5">
+          <div className="bg-dark-800/40 border border-emerald-500/20 rounded-xl p-5">
+            <Sec icon={IndianRupee} label="Revenue Summary"/>
+            <div className="mt-4">
+              <Row label="Contract Value"  value={fmt(project.contract_value)}/>
+              <Row label="Total Invoiced"  value={fmt(totalRaised)}/>
+              <Row label="Total Received"  value={fmt(totalReceived)}/>
+              <Row label="Outstanding"     value={fmt(balance)}/>
+              {contractVal > 0 && <Row label="Yet to Bill"    value={fmt(yetToBill)}/>}
+            </div>
+          </div>
+          <div className="bg-dark-800/40 border border-orange-500/20 rounded-xl p-5">
+            <Sec icon={IndianRupee} label="Invoice Breakdown by Status"/>
+            {projectInvoices.length === 0 ? (
+              <p className="text-xs text-slate-500 mt-4">No invoices yet.</p>
+            ) : (
+              <div className="mt-4 space-y-2">
+                {['draft','sent','partial','paid','overdue'].map(s => {
+                  const grp = projectInvoices.filter(i => i.status === s)
+                  if (!grp.length) return null
+                  const tot = grp.reduce((a, i) => a + (Number(i.total_amount)||0), 0)
+                  return (
+                    <div key={s} className="flex items-center justify-between py-1.5 border-b border-dark-700/40">
+                      <span className={`text-xs px-2.5 py-0.5 rounded-full capitalize ${invStatusCls(s)}`}>{s}</span>
+                      <div className="flex items-center gap-4 text-xs">
+                        <span className="text-slate-500">{grp.length} invoice{grp.length!==1?'s':''}</span>
+                        <span className="text-slate-200 font-medium">{fmt(tot)}</span>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ══ REMARKS ═══════════════════════════════════════════════════════ */}
+      {detailTab === 'remarks' && (
+        <div className="bg-dark-800/40 border border-dark-600/60 rounded-xl p-6">
+          <Sec icon={FileText} label="Notes & Remarks"/>
+          {project.notes ? (
+            <p className="text-sm text-slate-300 mt-4 leading-relaxed whitespace-pre-wrap">{project.notes}</p>
+          ) : (
+            <p className="text-sm text-slate-500 mt-4 italic">No notes added for this project.</p>
+          )}
+        </div>
+      )}
+
+      </div>
+    </PagePanel>
   )
 }
 
