@@ -1047,7 +1047,9 @@ function AttachmentFormModal({ equipment, companyId, initialValues, availableAtt
 function FuelModal({ equipment, companyId, onClose }) {
   const qc = useQueryClient()
   const { location, loading: gpsLoading } = useGPS()
+  const todayDate = new Date().toISOString().split('T')[0]
   const [form, setForm] = useState({
+    entry_date: todayDate,
     quantity_liters: '', rate_per_liter: '',
     meter_at_filling: String(equipment.current_meter_reading || ''), km_at_filling: '',
     delivered_by_name: '', vendor_name: '', invoice_number: '', notes: '',
@@ -1063,6 +1065,11 @@ function FuelModal({ equipment, companyId, onClose }) {
     try {
       const qty  = Number(form.quantity_liters)
       const rate = form.rate_per_liter ? Number(form.rate_per_liter) : null
+      // Build created_at from selected date + current wall-clock time
+      const now = new Date()
+      const entryTs = new Date(
+        `${form.entry_date}T${now.toTimeString().slice(0, 8)}`
+      ).toISOString()
       const { error } = await supabase.from('shift_fuel_entries').insert({
         company_id:       companyId,
         equipment_id:     equipment.id,
@@ -1080,6 +1087,7 @@ function FuelModal({ equipment, companyId, onClose }) {
         location_address: location?.address      || null,
         fuel_photo_url:   fuelPhotoUrl           || null,
         notes:            form.notes             || null,
+        created_at:       entryTs,
       })
       if (error) throw error
       toast.success(`${qty}L fuel logged`)
@@ -1100,6 +1108,13 @@ function FuelModal({ equipment, companyId, onClose }) {
         </button>
       </>
     }>
+      <Field label="Entry Date">
+        <input type="date" className={inp()} value={form.entry_date} max={todayDate}
+          onChange={e => set('entry_date', e.target.value)} />
+        {form.entry_date !== todayDate && (
+          <p className="text-xs text-amber-500 mt-1">⚠ Backdated entry — {new Date(form.entry_date).toLocaleDateString('en-IN', { day:'numeric', month:'short', year:'numeric' })}</p>
+        )}
+      </Field>
       <div className="grid grid-cols-2 gap-3">
         <Field label="Quantity (Litres)" required>
           <input type="number" className={inp()} value={form.quantity_liters} onChange={e => set('quantity_liters', e.target.value)} placeholder="e.g. 150" step="0.1" />
@@ -1163,8 +1178,10 @@ const INCIDENT_OPTIONS = [
 function IncidentModal({ equipment, companyId, onClose }) {
   const qc = useQueryClient()
   const { location, loading: gpsLoading } = useGPS()
+  const todayDate = new Date().toISOString().split('T')[0]
   const [incidentType, setIncidentType] = useState('')
   const [form, setForm] = useState({
+    incident_date: todayDate,
     description: '', action_taken: '', breakdown_cause: '',
     rectification_needed: '', damage_cause: '', what_needs_to_be_done: '', severity: 'medium',
   })
@@ -1176,6 +1193,10 @@ function IncidentModal({ equipment, companyId, onClose }) {
     if (!form.description.trim()) { toast.error('Description is required'); return }
     setSaving(true)
     try {
+      const now = new Date()
+      const entryTs = new Date(
+        `${form.incident_date}T${now.toTimeString().slice(0, 8)}`
+      ).toISOString()
       const { error } = await supabase.from('shift_incidents').insert({
         company_id:     companyId,
         equipment_id:   equipment.id,
@@ -1192,6 +1213,7 @@ function IncidentModal({ equipment, companyId, onClose }) {
         location_lng:   location?.lng || null,
         location_address: location?.address || null,
         resolved: false,
+        created_at:     entryTs,
       })
       if (error) throw error
       if (incidentType === 'breakdown') {
@@ -1226,6 +1248,13 @@ function IncidentModal({ equipment, companyId, onClose }) {
         </button>
       </>
     }>
+      <Field label="Incident Date">
+        <input type="date" className={inp()} value={form.incident_date} max={todayDate}
+          onChange={e => set('incident_date', e.target.value)} />
+        {form.incident_date !== todayDate && (
+          <p className="text-xs text-amber-500 mt-1">⚠ Backdated entry — {new Date(form.incident_date).toLocaleDateString('en-IN', { day:'numeric', month:'short', year:'numeric' })}</p>
+        )}
+      </Field>
       <Field label="Incident Type" required>
         <select className={inp()} value={incidentType} onChange={e => setIncidentType(e.target.value)}>
           <option value="">Select what happened…</option>
