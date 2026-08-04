@@ -2029,11 +2029,11 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
                   <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Assigned Operators</p>
                   <div className="space-y-1.5">
                     {assignments.map(a => {
-                      const shiftEmoji = { day: '☀️', night: '🌙', double: '🔄' }[a.shift_type] || '☀️'
+                      const shiftEmoji = { day: '☀️', night: '🌙', general: '🔄' }[a.shift_type] || '☀️'
                       return (
                         <div key={a.id} className="flex items-center gap-1.5 text-xs text-slate-300">
                           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
-                          <span className="truncate flex-1">{a.operator_name}</span>
+                          <span className="truncate flex-1">{a.employee_name}</span>
                           <span className="shrink-0 text-[10px]">{shiftEmoji}</span>
                         </div>
                       )
