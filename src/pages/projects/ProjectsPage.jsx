@@ -1904,6 +1904,16 @@ function ProjectDetail({ project, companyId, docTotals, onClose, onEdit, onDelet
     { name: project.client_accounts_name, phone: project.client_accounts_phone, role: 'Client Accounts' },
   ].filter(c => c.name)
 
+  const [detailTab, setDetailTab] = useState('overview')
+
+  const DTABS = [
+    { id: 'overview',  label: 'Overview' },
+    { id: 'contract',  label: 'Contract' },
+    { id: 'team',      label: 'Team' },
+    { id: 'equipment', label: `Equipment (${equipment.length})` },
+    { id: 'documents', label: 'Documents' },
+  ]
+
   return (
     <Modal title={project.project_name} subtitle={project.project_code} onClose={onClose} wide
       footer={<>
@@ -1919,8 +1929,8 @@ function ProjectDetail({ project, companyId, docTotals, onClose, onEdit, onDelet
         </button>
       </>}
     >
-      {/* Badges */}
-      <div className="flex flex-wrap gap-2 -mt-2">
+      {/* ── Header: badges + quick stats ── */}
+      <div className="flex flex-wrap gap-2 -mt-2 mb-1">
         <StatusBadge status={project.status}/>
         {project.nature_of_job && <JobBadge type={project.nature_of_job}/>}
         {project.division && (
@@ -1933,9 +1943,7 @@ function ProjectDetail({ project, companyId, docTotals, onClose, onEdit, onDelet
         )}
       </div>
 
-      {/* Quick stats */}
       <div className={`grid gap-3 ${isAdvanced ? 'grid-cols-3' : 'grid-cols-2'}`}>
-        {/* Document value (live) or fallback to static contract_value */}
         <div className="bg-dark-700/50 rounded-lg p-3 text-center">
           <p className="text-[11px] text-slate-500 mb-0.5">
             {docTotals?.total > 0 ? 'Total Doc Value' : 'Contract Value'}
@@ -1965,354 +1973,393 @@ function ProjectDetail({ project, companyId, docTotals, onClose, onEdit, onDelet
         )}
       </div>
 
-      {/* Site & Timeline */}
-      {isAdvanced ? (
-        <div className={half}>
-          <div>
-            <Sec icon={MapPin} label="Site & Location"/>
-            <div className="mt-2">
-              <Row label="Site Name" value={project.site_name}/>
-              <Row label="Address"   value={project.address}/>
-              <Row label="City"      value={project.city}/>
-              <Row label="State"     value={project.state}/>
-              <Row label="Pincode"   value={project.pincode}/>
-              {project.site_lat && project.site_lng && (
-                <p className="text-[11px] text-slate-500 font-mono mt-1.5">
-                  📍 {project.site_lat}, {project.site_lng}
-                </p>
-              )}
-              {mapsHref && (
-                <a href={mapsHref} target="_blank" rel="noopener noreferrer"
-                  className="flex items-center gap-1.5 text-xs text-primary-400 hover:text-primary-300 pt-2">
-                  <ExternalLink className="w-3 h-3"/> Open in Maps
-                </a>
-              )}
-            </div>
-          </div>
-          <div>
-            <Sec icon={Calendar} label="Timeline"/>
-            <div className="mt-2">
-              <Row label="Mobilization" value={fmtDate(project.mobilization_date)}/>
-              {project.mob_attachment_url && (
-                <div className="flex justify-between py-1.5 border-b border-dark-700/50">
-                  <span className="text-xs text-slate-500">Mob. Document</span>
-                  <button onClick={async () => {
-                    const { data } = await supabase.storage.from(BUCKET).createSignedUrl(project.mob_attachment_url, 120)
-                    if (data?.signedUrl) window.open(data.signedUrl, '_blank')
-                    else toast.error('Could not open document')
-                  }} className="text-xs text-primary-400 hover:text-primary-300 flex items-center gap-1">
-                    <Eye className="w-3 h-3"/> View
-                  </button>
-                </div>
-              )}
-              <Row label="Commencement"
-                value={[fmtDate(project.start_date), project.start_time ? project.start_time.slice(0,5) : null].filter(Boolean).join(' · ')}/>
-              {project.comm_attachment_url && (
-                <div className="flex justify-between py-1.5 border-b border-dark-700/50">
-                  <span className="text-xs text-slate-500">Comm. Document</span>
-                  <button onClick={async () => {
-                    const { data } = await supabase.storage.from(BUCKET).createSignedUrl(project.comm_attachment_url, 120)
-                    if (data?.signedUrl) window.open(data.signedUrl, '_blank')
-                    else toast.error('Could not open document')
-                  }} className="text-xs text-primary-400 hover:text-primary-300 flex items-center gap-1">
-                    <Eye className="w-3 h-3"/> View
-                  </button>
-                </div>
-              )}
-              <Row label="Expected End" value={fmtDate(project.expected_end_date)}/>
-              <Row label="Actual End"   value={fmtDate(project.actual_end_date)}/>
-            </div>
-          </div>
-        </div>
-      ) : (
-        <div className="space-y-1">
-          {(project.city || project.state) && (
-            <div className="flex items-center gap-2 text-sm text-slate-300">
-              <MapPin className="w-3.5 h-3.5 text-slate-500"/>
-              {[project.city, project.state].filter(Boolean).join(', ')}
-              {mapsHref && (
-                <a href={mapsHref} target="_blank" rel="noopener noreferrer"
-                  className="text-primary-400 hover:text-primary-300">
-                  <ExternalLink className="w-3 h-3"/>
-                </a>
-              )}
-            </div>
-          )}
-          {project.start_date && (
-            <div className="flex items-center gap-2 text-sm text-slate-300">
-              <Calendar className="w-3.5 h-3.5 text-slate-500"/>
-              Started {fmtDate(project.start_date)}{project.expected_end_date ? ` → ${fmtDate(project.expected_end_date)}` : ''}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Contract — Advanced */}
-      {isAdvanced && (
-        <div>
-          <Sec icon={FileText} label="Contract Terms"/>
-          <div className="mt-2 grid grid-cols-2 gap-x-6">
-            <div>
-              <Row label="Billing Cycle" value={project.billing_cycle}/>
-              <Row label="Payment Terms" value={project.payment_terms}/>
-              <Row label="Mob. Advance"  value={fmt(project.mobilization_advance)}/>
-            </div>
-            <div>
-              <Row label="Retention" value={project.retention_pct ? `${project.retention_pct}%` : null}/>
-              <Row label="GST Rate"  value={project.gst_rate ? `${project.gst_rate}%` : null}/>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Rate Card — Advanced */}
-      {isAdvanced && rateItems.length > 0 && (
-        <div>
-          <Sec icon={IndianRupee} label="Rate Card"/>
-          <div className="mt-2 overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="text-slate-500 border-b border-dark-700">
-                  <th className="text-left py-1.5 font-medium pr-4">
-                    {project.nature_of_job === 'hire' ? 'Equipment'
-                      : project.nature_of_job === 'rate_contract' ? 'Work Item'
-                      : project.nature_of_job === 'lump_sum' ? 'Milestone' : 'Scope'}
-                  </th>
-                  {project.nature_of_job === 'hire' && <>
-                    <th className="text-left py-1.5 font-medium pr-3">Basis</th>
-                    <th className="text-right py-1.5 font-medium pr-3">Rate</th>
-                    <th className="text-right py-1.5 font-medium pr-3">Max hrs</th>
-                    <th className="text-right py-1.5 font-medium">OT %</th>
-                  </>}
-                  {project.nature_of_job === 'rate_contract' && <>
-                    <th className="text-left py-1.5 font-medium pr-4">Unit</th>
-                    <th className="text-right py-1.5 font-medium">Rate (₹)</th>
-                  </>}
-                  {project.nature_of_job === 'lump_sum' && <>
-                    <th className="text-right py-1.5 font-medium pr-4">Value (₹)</th>
-                    <th className="text-right py-1.5 font-medium">Due Date</th>
-                  </>}
-                  {project.nature_of_job === 'amc' && (
-                    <th className="text-right py-1.5 font-medium">Monthly (₹)</th>
-                  )}
-                </tr>
-              </thead>
-              <tbody>
-                {rateItems.map(r => {
-                  const basis = r.billing_basis || 'daily'
-                  const rateVal = basis === 'daily' ? r.rate_per_day
-                    : basis === 'monthly' ? r.rate_per_month
-                    : r.rate_per_hour
-                  return (
-                    <tr key={r.id} className="border-b border-dark-700/40">
-                      <td className="py-1.5 pr-4 text-slate-200">{r.item_name}</td>
-                      {project.nature_of_job === 'hire' && <>
-                        <td className="py-1.5 pr-3 text-slate-400 capitalize">{basis.replace('_',' ')}</td>
-                        <td className="py-1.5 pr-3 text-right text-slate-300">{rateVal ? fmt(rateVal) : '—'}</td>
-                        <td className="py-1.5 pr-3 text-right text-slate-400">{r.max_hours_per_day ? `${r.max_hours_per_day} hrs` : '—'}</td>
-                        <td className="py-1.5 text-right text-slate-400">
-                          {basis === 'short_term_hourly' ? `Fixed ${r.short_term_fixed_hours||6}h` : r.ot_percentage ? `${r.ot_percentage}%` : '—'}
-                        </td>
-                      </>}
-                      {project.nature_of_job === 'rate_contract' && <>
-                        <td className="py-1.5 pr-4 text-slate-400">{r.unit || '—'}</td>
-                        <td className="py-1.5 text-right text-slate-300">{r.rate ? fmt(r.rate) : '—'}</td>
-                      </>}
-                      {project.nature_of_job === 'lump_sum' && <>
-                        <td className="py-1.5 pr-4 text-right text-slate-300">{r.rate ? fmt(r.rate) : '—'}</td>
-                        <td className="py-1.5 text-right text-slate-400">{fmtDate(r.milestone_date)}</td>
-                      </>}
-                      {project.nature_of_job === 'amc' && (
-                        <td className="py-1.5 text-right text-slate-300">{r.rate ? fmt(r.rate) : '—'}</td>
-                      )}
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* HSD — Advanced */}
-      {isAdvanced && project.hsd_supplied_by === 'client' && (
-        <div>
-          <Sec icon={Droplet} label="HSD Terms (Client-supplied)"/>
-          <div className="mt-2 grid grid-cols-2 gap-x-6">
-            <div>
-              <Row label="Consumption Norm" value={project.hsd_consumption_norm ? `${project.hsd_consumption_norm} L/hr` : null}/>
-              <Row label="HSD Rate"         value={project.hsd_rate_per_liter    ? `₹${project.hsd_rate_per_liter}/L`   : null}/>
-            </div>
-            <div>
-              <Row label="Excess Billing"  value={project.hsd_excess_bill_rate  ? `₹${project.hsd_excess_bill_rate}/L` : null}/>
-              <Row label="Shortage Credit" value={project.hsd_shortage_credit   ? `₹${project.hsd_shortage_credit}/L`  : null}/>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Shift Window */}
-      {(project.shift_start_time || project.shift_end_time) && (
-        <div>
-          <Sec icon={Clock} label="Operator Shift Window"/>
-          <div className="mt-2 flex items-center gap-3">
-            <span className="text-sm text-slate-200 font-mono">
-              {project.shift_start_time?.slice(0,5) || '—'} → {project.shift_end_time?.slice(0,5) || '—'}
-            </span>
-            {project.shift_grace_mins && (
-              <span className="text-xs text-slate-500">±{project.shift_grace_mins} min grace</span>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Our Team */}
-      {ourTeam.length > 0 && (
-        <div>
-          <Sec icon={Users} label="Our Team on Site"/>
-          <div className="mt-2 grid grid-cols-3 gap-2">
-            {ourTeam.map(c => <ContactCard key={c.role} {...c}/>)}
-          </div>
-        </div>
-      )}
-
-      {/* Client Team — Advanced */}
-      {isAdvanced && clientTeam.length > 0 && (
-        <div>
-          <Sec icon={Users} label="Client Team"/>
-          <div className="mt-2 grid grid-cols-3 gap-2">
-            {clientTeam.map(c => <ContactCard key={c.role} {...c}/>)}
-          </div>
-        </div>
-      )}
-
-      {/* Equipment on Site */}
-      <div>
-        <Sec icon={Cpu} label={`Equipment on Site (${equipment.length})`}/>
-        {equipment.length === 0 ? (
-          <p className="text-xs text-slate-500 mt-2 italic">No equipment deployed here yet. Deploy from the Fleet module.</p>
-        ) : (
-          <div className="mt-2 space-y-1">
-            {equipment.map(e => (
-              <div key={e.id} className="flex items-center justify-between bg-dark-700/50 rounded-lg px-3 py-2">
-                <div>
-                  <p className="text-xs font-medium text-slate-200">{e.name}</p>
-                  <p className="text-[11px] text-slate-500">{e.category}{(e.make || e.model) ? ` · ${[e.make, e.model].filter(Boolean).join(' ')}` : ''}</p>
-                </div>
-                <span className={`text-[11px] px-2 py-0.5 rounded-full ${
-                  e.status==='working' ? 'bg-emerald-500/15 text-emerald-300'
-                    : e.status==='idle' ? 'bg-yellow-500/15 text-yellow-300'
-                    : 'bg-slate-500/15 text-slate-400'
-                }`}>
-                  {e.status || 'deployed'}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
+      {/* ── Tab bar ── */}
+      <div className="flex gap-1 border-b border-dark-600 -mx-1 px-1">
+        {DTABS.map(t => (
+          <button key={t.id} onClick={() => setDetailTab(t.id)}
+            className={`px-3 py-2 text-xs font-medium rounded-t-md transition-colors whitespace-nowrap
+              ${detailTab === t.id
+                ? 'text-primary-300 border-b-2 border-primary-400 -mb-px bg-dark-700/30'
+                : 'text-slate-500 hover:text-slate-300'}`}>
+            {t.label}
+          </button>
+        ))}
       </div>
 
-      {/* Equipment Deployment History */}
-      {(deployments.length > 0 || commissionings.length > 0) && (
-        <div>
-          <Sec icon={Cpu} label={`Deployment History (${deployments.length})`}/>
-          <div className="mt-2 space-y-2">
-
-            {/* ── Rate-card deployments (always shown) ── */}
-            {deployments.map(d => {
-              const isActive = !d.withdrawn_date
-              const fmtD = dt => dt ? new Date(dt).toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' }) : null
-              const basis = d.billing_basis || d.rate_unit || ''
-              const rate  = basis === 'hourly' ? d.rate_per_hour
-                          : basis === 'monthly' ? d.rate_per_month
-                          : d.rate_per_day
-              const rateLabel = rate ? `₹${Number(rate).toLocaleString('en-IN')}/${basis === 'hourly' ? 'hr' : basis === 'monthly' ? 'mo' : 'day'}` : null
-
-              // Find matching commencement certificate for this equipment
-              const cert = commissionings.find(c => c.equipment?.id === d.equipment?.id)
-
-              return (
-                <div key={d.id} className="bg-dark-700/50 border border-dark-600 rounded-lg px-3 py-2.5">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="text-xs font-semibold text-slate-100">
-                        {d.equipment?.name || d.item_name || '—'}
-                        {d.equipment?.equipment_number && (
-                          <span className="text-primary-400 font-mono ml-1.5 text-[10px]">{d.equipment.equipment_number}</span>
-                        )}
-                      </p>
-                      {d.equipment?.category && <p className="text-[10px] text-slate-500">{d.equipment.category}</p>}
+      {/* ════════════════ OVERVIEW ════════════════ */}
+      {detailTab === 'overview' && (
+        <div className="space-y-4">
+          {isAdvanced ? (
+            <div className={half}>
+              <div>
+                <Sec icon={MapPin} label="Site & Location"/>
+                <div className="mt-2">
+                  <Row label="Site Name" value={project.site_name}/>
+                  <Row label="Address"   value={project.address}/>
+                  <Row label="City"      value={project.city}/>
+                  <Row label="State"     value={project.state}/>
+                  <Row label="Pincode"   value={project.pincode}/>
+                  {project.site_lat && project.site_lng && (
+                    <p className="text-[11px] text-slate-500 font-mono mt-1.5">
+                      📍 {project.site_lat}, {project.site_lng}
+                    </p>
+                  )}
+                  {mapsHref && (
+                    <a href={mapsHref} target="_blank" rel="noopener noreferrer"
+                      className="flex items-center gap-1.5 text-xs text-primary-400 hover:text-primary-300 pt-2">
+                      <ExternalLink className="w-3 h-3"/> Open in Maps
+                    </a>
+                  )}
+                </div>
+              </div>
+              <div>
+                <Sec icon={Calendar} label="Timeline"/>
+                <div className="mt-2">
+                  <Row label="Mobilization" value={fmtDate(project.mobilization_date)}/>
+                  {project.mob_attachment_url && (
+                    <div className="flex justify-between py-1.5 border-b border-dark-700/50">
+                      <span className="text-xs text-slate-500">Mob. Document</span>
+                      <button onClick={async () => {
+                        const { data } = await supabase.storage.from(BUCKET).createSignedUrl(project.mob_attachment_url, 120)
+                        if (data?.signedUrl) window.open(data.signedUrl, '_blank')
+                        else toast.error('Could not open document')
+                      }} className="text-xs text-primary-400 hover:text-primary-300 flex items-center gap-1">
+                        <Eye className="w-3 h-3"/> View
+                      </button>
                     </div>
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      {cert && (
-                        <span className="text-[9px] px-1.5 py-0.5 bg-emerald-900/30 text-emerald-400 border border-emerald-700/30 rounded-full">
-                          Certificate Issued
-                        </span>
+                  )}
+                  <Row label="Commencement"
+                    value={[fmtDate(project.start_date), project.start_time ? project.start_time.slice(0,5) : null].filter(Boolean).join(' · ')}/>
+                  {project.comm_attachment_url && (
+                    <div className="flex justify-between py-1.5 border-b border-dark-700/50">
+                      <span className="text-xs text-slate-500">Comm. Document</span>
+                      <button onClick={async () => {
+                        const { data } = await supabase.storage.from(BUCKET).createSignedUrl(project.comm_attachment_url, 120)
+                        if (data?.signedUrl) window.open(data.signedUrl, '_blank')
+                        else toast.error('Could not open document')
+                      }} className="text-xs text-primary-400 hover:text-primary-300 flex items-center gap-1">
+                        <Eye className="w-3 h-3"/> View
+                      </button>
+                    </div>
+                  )}
+                  <Row label="Expected End" value={fmtDate(project.expected_end_date)}/>
+                  <Row label="Actual End"   value={fmtDate(project.actual_end_date)}/>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-1">
+              {(project.city || project.state) && (
+                <div className="flex items-center gap-2 text-sm text-slate-300">
+                  <MapPin className="w-3.5 h-3.5 text-slate-500"/>
+                  {[project.city, project.state].filter(Boolean).join(', ')}
+                  {mapsHref && (
+                    <a href={mapsHref} target="_blank" rel="noopener noreferrer"
+                      className="text-primary-400 hover:text-primary-300">
+                      <ExternalLink className="w-3 h-3"/>
+                    </a>
+                  )}
+                </div>
+              )}
+              {project.start_date && (
+                <div className="flex items-center gap-2 text-sm text-slate-300">
+                  <Calendar className="w-3.5 h-3.5 text-slate-500"/>
+                  Started {fmtDate(project.start_date)}{project.expected_end_date ? ` → ${fmtDate(project.expected_end_date)}` : ''}
+                </div>
+              )}
+            </div>
+          )}
+
+          {isAdvanced && project.notes && (
+            <div>
+              <Sec icon={FileText} label="Notes"/>
+              <p className="text-xs text-slate-300 mt-2 leading-relaxed whitespace-pre-wrap">{project.notes}</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ════════════════ CONTRACT ════════════════ */}
+      {detailTab === 'contract' && (
+        <div className="space-y-4">
+          {isAdvanced && (
+            <div>
+              <Sec icon={FileText} label="Contract Terms"/>
+              <div className="mt-2 grid grid-cols-2 gap-x-6">
+                <div>
+                  <Row label="Billing Cycle" value={project.billing_cycle}/>
+                  <Row label="Payment Terms" value={project.payment_terms}/>
+                  <Row label="Mob. Advance"  value={fmt(project.mobilization_advance)}/>
+                </div>
+                <div>
+                  <Row label="Retention" value={project.retention_pct ? `${project.retention_pct}%` : null}/>
+                  <Row label="GST Rate"  value={project.gst_rate ? `${project.gst_rate}%` : null}/>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {isAdvanced && rateItems.length > 0 && (
+            <div>
+              <Sec icon={IndianRupee} label="Rate Card"/>
+              <div className="mt-2 overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-slate-500 border-b border-dark-700">
+                      <th className="text-left py-1.5 font-medium pr-4">
+                        {project.nature_of_job === 'hire' ? 'Equipment'
+                          : project.nature_of_job === 'rate_contract' ? 'Work Item'
+                          : project.nature_of_job === 'lump_sum' ? 'Milestone' : 'Scope'}
+                      </th>
+                      {project.nature_of_job === 'hire' && <>
+                        <th className="text-left py-1.5 font-medium pr-3">Basis</th>
+                        <th className="text-right py-1.5 font-medium pr-3">Rate</th>
+                        <th className="text-right py-1.5 font-medium pr-3">Max hrs</th>
+                        <th className="text-right py-1.5 font-medium">OT %</th>
+                      </>}
+                      {project.nature_of_job === 'rate_contract' && <>
+                        <th className="text-left py-1.5 font-medium pr-4">Unit</th>
+                        <th className="text-right py-1.5 font-medium">Rate (₹)</th>
+                      </>}
+                      {project.nature_of_job === 'lump_sum' && <>
+                        <th className="text-right py-1.5 font-medium pr-4">Value (₹)</th>
+                        <th className="text-right py-1.5 font-medium">Due Date</th>
+                      </>}
+                      {project.nature_of_job === 'amc' && (
+                        <th className="text-right py-1.5 font-medium">Monthly (₹)</th>
                       )}
-                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${isActive ? 'bg-emerald-500/15 text-emerald-300' : 'bg-slate-500/15 text-slate-400'}`}>
-                        {isActive ? 'Active' : 'Withdrawn'}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="mt-1.5 grid grid-cols-2 gap-x-4 gap-y-0.5">
-                    {fmtD(d.deployed_date) && (
-                      <p className="text-[10px] text-slate-500">Deployed: <span className="text-slate-300">{fmtD(d.deployed_date)}</span></p>
-                    )}
-                    {fmtD(d.withdrawn_date) && (
-                      <p className="text-[10px] text-slate-500">Withdrawn: <span className="text-slate-300">{fmtD(d.withdrawn_date)}</span></p>
-                    )}
-                    {rateLabel && <p className="text-[10px] text-slate-500">Rate: <span className="text-slate-300">{rateLabel}</span></p>}
-                    {cert?.commissioned_date && (
-                      <p className="text-[10px] text-slate-500">Commenced: <span className="text-emerald-300">{fmtD(cert.commissioned_date)}</span></p>
-                    )}
-                    {cert?.operator_name && (
-                      <p className="text-[10px] text-slate-500">Operator: <span className="text-slate-300">{cert.operator_name}</span></p>
-                    )}
-                    {cert?.ref_number && (
-                      <p className="text-[10px] text-slate-500">Cert. Ref: <span className="text-primary-400 font-mono">{cert.ref_number}</span></p>
-                    )}
-                  </div>
-                </div>
-              )
-            })}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rateItems.map(r => {
+                      const basis = r.billing_basis || 'daily'
+                      const rateVal = basis === 'daily' ? r.rate_per_day
+                        : basis === 'monthly' ? r.rate_per_month
+                        : r.rate_per_hour
+                      return (
+                        <tr key={r.id} className="border-b border-dark-700/40">
+                          <td className="py-1.5 pr-4 text-slate-200">{r.item_name}</td>
+                          {project.nature_of_job === 'hire' && <>
+                            <td className="py-1.5 pr-3 text-slate-400 capitalize">{basis.replace('_',' ')}</td>
+                            <td className="py-1.5 pr-3 text-right text-slate-300">{rateVal ? fmt(rateVal) : '—'}</td>
+                            <td className="py-1.5 pr-3 text-right text-slate-400">{r.max_hours_per_day ? `${r.max_hours_per_day} hrs` : '—'}</td>
+                            <td className="py-1.5 text-right text-slate-400">
+                              {basis === 'short_term_hourly' ? `Fixed ${r.short_term_fixed_hours||6}h` : r.ot_percentage ? `${r.ot_percentage}%` : '—'}
+                            </td>
+                          </>}
+                          {project.nature_of_job === 'rate_contract' && <>
+                            <td className="py-1.5 pr-4 text-slate-400">{r.unit || '—'}</td>
+                            <td className="py-1.5 text-right text-slate-300">{r.rate ? fmt(r.rate) : '—'}</td>
+                          </>}
+                          {project.nature_of_job === 'lump_sum' && <>
+                            <td className="py-1.5 pr-4 text-right text-slate-300">{r.rate ? fmt(r.rate) : '—'}</td>
+                            <td className="py-1.5 text-right text-slate-400">{fmtDate(r.milestone_date)}</td>
+                          </>}
+                          {project.nature_of_job === 'amc' && (
+                            <td className="py-1.5 text-right text-slate-300">{r.rate ? fmt(r.rate) : '—'}</td>
+                          )}
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
 
-            {/* ── Commissionings not matched to a rate card ── */}
-            {commissionings.filter(c => !deployments.some(d => d.equipment?.id === c.equipment?.id)).map(c => {
-              const fmtD = dt => dt ? new Date(dt).toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' }) : '—'
-              return (
-                <div key={c.id} className="bg-dark-700/50 border border-emerald-700/30 rounded-lg px-3 py-2.5">
-                  <div className="flex items-start justify-between gap-2">
+          {isAdvanced && project.hsd_supplied_by === 'client' && (
+            <div>
+              <Sec icon={Droplet} label="HSD Terms (Client-supplied)"/>
+              <div className="mt-2 grid grid-cols-2 gap-x-6">
+                <div>
+                  <Row label="Consumption Norm" value={project.hsd_consumption_norm ? `${project.hsd_consumption_norm} L/hr` : null}/>
+                  <Row label="HSD Rate"         value={project.hsd_rate_per_liter    ? `₹${project.hsd_rate_per_liter}/L`   : null}/>
+                </div>
+                <div>
+                  <Row label="Excess Billing"  value={project.hsd_excess_bill_rate  ? `₹${project.hsd_excess_bill_rate}/L` : null}/>
+                  <Row label="Shortage Credit" value={project.hsd_shortage_credit   ? `₹${project.hsd_shortage_credit}/L`  : null}/>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {!isAdvanced && (
+            <p className="text-xs text-slate-500 italic text-center py-6">
+              Contract details are only available in Advanced mode projects.
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* ════════════════ TEAM ════════════════ */}
+      {detailTab === 'team' && (
+        <div className="space-y-4">
+          {(project.shift_start_time || project.shift_end_time || project.no_of_shifts) && (
+            <div>
+              <Sec icon={Clock} label="Operator Shift Window"/>
+              <div className="mt-2 space-y-2">
+                {(project.shift_start_time || project.shift_end_time) && (
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm text-slate-200 font-mono">
+                      {project.shift_start_time?.slice(0,5) || '—'} → {project.shift_end_time?.slice(0,5) || '—'}
+                    </span>
+                    {project.shift_grace_mins && (
+                      <span className="text-xs text-slate-500">±{project.shift_grace_mins} min grace</span>
+                    )}
+                  </div>
+                )}
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-500">Shifts per day:</span>
+                  <span className="text-xs font-semibold text-slate-200">
+                    {project.no_of_shifts === 2 ? '2 (Day + Night)' : '1 (Single)'}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {ourTeam.length > 0 && (
+            <div>
+              <Sec icon={Users} label="Our Team on Site"/>
+              <div className="mt-2 grid grid-cols-3 gap-2">
+                {ourTeam.map(c => <ContactCard key={c.role} {...c}/>)}
+              </div>
+            </div>
+          )}
+
+          {isAdvanced && clientTeam.length > 0 && (
+            <div>
+              <Sec icon={Users} label="Client Team"/>
+              <div className="mt-2 grid grid-cols-3 gap-2">
+                {clientTeam.map(c => <ContactCard key={c.role} {...c}/>)}
+              </div>
+            </div>
+          )}
+
+          {ourTeam.length === 0 && clientTeam.length === 0 && (
+            <p className="text-xs text-slate-500 italic text-center py-6">No team contacts configured for this project.</p>
+          )}
+        </div>
+      )}
+
+      {/* ════════════════ EQUIPMENT ════════════════ */}
+      {detailTab === 'equipment' && (
+        <div className="space-y-4">
+          <div>
+            <Sec icon={Cpu} label={`On Site (${equipment.length})`}/>
+            {equipment.length === 0 ? (
+              <p className="text-xs text-slate-500 mt-2 italic">No equipment deployed here yet. Deploy from the Fleet module.</p>
+            ) : (
+              <div className="mt-2 space-y-1">
+                {equipment.map(e => (
+                  <div key={e.id} className="flex items-center justify-between bg-dark-700/50 rounded-lg px-3 py-2">
                     <div>
-                      <p className="text-xs font-semibold text-slate-100">
-                        {c.equipment?.name || '—'}
-                        {c.equipment?.equipment_number && <span className="text-primary-400 font-mono ml-1.5 text-[10px]">{c.equipment.equipment_number}</span>}
-                      </p>
-                      {c.equipment?.category && <p className="text-[10px] text-slate-500">{c.equipment.category}</p>}
+                      <p className="text-xs font-medium text-slate-200">{e.name}</p>
+                      <p className="text-[11px] text-slate-500">{e.category}{(e.make || e.model) ? ` · ${[e.make, e.model].filter(Boolean).join(' ')}` : ''}</p>
                     </div>
-                    <span className="text-[9px] px-1.5 py-0.5 bg-emerald-900/30 text-emerald-400 border border-emerald-700/30 rounded-full shrink-0">Certificate Only</span>
+                    <span className={`text-[11px] px-2 py-0.5 rounded-full ${
+                      e.status==='working' ? 'bg-emerald-500/15 text-emerald-300'
+                        : e.status==='idle' ? 'bg-yellow-500/15 text-yellow-300'
+                        : 'bg-slate-500/15 text-slate-400'
+                    }`}>
+                      {e.status || 'deployed'}
+                    </span>
                   </div>
-                  <div className="mt-1.5 grid grid-cols-2 gap-x-4 gap-y-0.5">
-                    <p className="text-[10px] text-slate-500">Commenced: <span className="text-emerald-300">{fmtD(c.commissioned_date)}</span></p>
-                    {c.operator_name && <p className="text-[10px] text-slate-500">Operator: <span className="text-slate-300">{c.operator_name}</span></p>}
-                    {c.ref_number    && <p className="text-[10px] text-slate-500">Cert. Ref: <span className="text-primary-400 font-mono">{c.ref_number}</span></p>}
-                  </div>
-                </div>
-              )
-            })}
-
+                ))}
+              </div>
+            )}
           </div>
+
+          {(deployments.length > 0 || commissionings.length > 0) && (
+            <div>
+              <Sec icon={Cpu} label={`Deployment History (${deployments.length})`}/>
+              <div className="mt-2 space-y-2">
+                {deployments.map(d => {
+                  const isActive = !d.withdrawn_date
+                  const fmtD = dt => dt ? new Date(dt).toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' }) : null
+                  const basis = d.billing_basis || d.rate_unit || ''
+                  const rate  = basis === 'hourly' ? d.rate_per_hour
+                              : basis === 'monthly' ? d.rate_per_month
+                              : d.rate_per_day
+                  const rateLabel = rate ? `₹${Number(rate).toLocaleString('en-IN')}/${basis === 'hourly' ? 'hr' : basis === 'monthly' ? 'mo' : 'day'}` : null
+                  const cert = commissionings.find(c => c.equipment?.id === d.equipment?.id)
+                  return (
+                    <div key={d.id} className="bg-dark-700/50 border border-dark-600 rounded-lg px-3 py-2.5">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="text-xs font-semibold text-slate-100">
+                            {d.equipment?.name || d.item_name || '—'}
+                            {d.equipment?.equipment_number && (
+                              <span className="text-primary-400 font-mono ml-1.5 text-[10px]">{d.equipment.equipment_number}</span>
+                            )}
+                          </p>
+                          {d.equipment?.category && <p className="text-[10px] text-slate-500">{d.equipment.category}</p>}
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {cert && (
+                            <span className="text-[9px] px-1.5 py-0.5 bg-emerald-900/30 text-emerald-400 border border-emerald-700/30 rounded-full">
+                              Certificate Issued
+                            </span>
+                          )}
+                          <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${isActive ? 'bg-emerald-500/15 text-emerald-300' : 'bg-slate-500/15 text-slate-400'}`}>
+                            {isActive ? 'Active' : 'Withdrawn'}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="mt-1.5 grid grid-cols-2 gap-x-4 gap-y-0.5">
+                        {fmtD(d.deployed_date) && (
+                          <p className="text-[10px] text-slate-500">Deployed: <span className="text-slate-300">{fmtD(d.deployed_date)}</span></p>
+                        )}
+                        {fmtD(d.withdrawn_date) && (
+                          <p className="text-[10px] text-slate-500">Withdrawn: <span className="text-slate-300">{fmtD(d.withdrawn_date)}</span></p>
+                        )}
+                        {rateLabel && <p className="text-[10px] text-slate-500">Rate: <span className="text-slate-300">{rateLabel}</span></p>}
+                        {cert?.commissioned_date && (
+                          <p className="text-[10px] text-slate-500">Commenced: <span className="text-emerald-300">{fmtD(cert.commissioned_date)}</span></p>
+                        )}
+                        {cert?.operator_name && (
+                          <p className="text-[10px] text-slate-500">Operator: <span className="text-slate-300">{cert.operator_name}</span></p>
+                        )}
+                        {cert?.ref_number && (
+                          <p className="text-[10px] text-slate-500">Cert. Ref: <span className="text-primary-400 font-mono">{cert.ref_number}</span></p>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+
+                {commissionings.filter(c => !deployments.some(d => d.equipment?.id === c.equipment?.id)).map(c => {
+                  const fmtD = dt => dt ? new Date(dt).toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' }) : '—'
+                  return (
+                    <div key={c.id} className="bg-dark-700/50 border border-emerald-700/30 rounded-lg px-3 py-2.5">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <p className="text-xs font-semibold text-slate-100">
+                            {c.equipment?.name || '—'}
+                            {c.equipment?.equipment_number && <span className="text-primary-400 font-mono ml-1.5 text-[10px]">{c.equipment.equipment_number}</span>}
+                          </p>
+                          {c.equipment?.category && <p className="text-[10px] text-slate-500">{c.equipment.category}</p>}
+                        </div>
+                        <span className="text-[9px] px-1.5 py-0.5 bg-emerald-900/30 text-emerald-400 border border-emerald-700/30 rounded-full shrink-0">Certificate Only</span>
+                      </div>
+                      <div className="mt-1.5 grid grid-cols-2 gap-x-4 gap-y-0.5">
+                        <p className="text-[10px] text-slate-500">Commenced: <span className="text-emerald-300">{fmtD(c.commissioned_date)}</span></p>
+                        {c.operator_name && <p className="text-[10px] text-slate-500">Operator: <span className="text-slate-300">{c.operator_name}</span></p>}
+                        {c.ref_number    && <p className="text-[10px] text-slate-500">Cert. Ref: <span className="text-primary-400 font-mono">{c.ref_number}</span></p>}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
-      {isAdvanced && project.notes && (
-        <div>
-          <Sec icon={FileText} label="Notes"/>
-          <p className="text-xs text-slate-300 mt-2 leading-relaxed">{project.notes}</p>
-        </div>
+      {/* ════════════════ DOCUMENTS ════════════════ */}
+      {detailTab === 'documents' && (
+        <ProjectDocumentsSection project={project} companyId={companyId} />
       )}
-
-      {/* ── Documents ── */}
-      <ProjectDocumentsSection project={project} companyId={companyId} />
     </Modal>
   )
 }
