@@ -4805,7 +4805,54 @@ function HiredInModal({ companyId, contract, projects, onClose, onSaved }) {
   const isAdmin  = ['admin', 'manager'].includes(role)
   const qc       = useQueryClient()
 
+  // Load registered vendors for auto-fill
+  const { data: vendors = [] } = useQuery({
+    queryKey: ['vendors-hired-in', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('vendors')
+        .select('id, name, contact_name, contact_phone, contact_email, address')
+        .eq('company_id', companyId).order('name')
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+  const [selectedVendorId, setSelectedVendorId] = useState(contract?.vendor_id || '')
+  const [vendorSearch, setVendorSearch] = useState('')
+  const [showVendorDrop, setShowVendorDrop] = useState(false)
+
+  const filteredVendors = useMemo(() => {
+    if (!vendorSearch.trim()) return vendors
+    const q = vendorSearch.toLowerCase()
+    return vendors.filter(v => v.name.toLowerCase().includes(q))
+  }, [vendors, vendorSearch])
+
+  const handleVendorSelect = (v) => {
+    setSelectedVendorId(v.id)
+    setVendorSearch(v.name)
+    setShowVendorDrop(false)
+    const contact = [v.contact_name, v.contact_phone, v.contact_email].filter(Boolean).join(' · ')
+    setForm(f => ({
+      ...f,
+      vendor_id:      v.id,
+      vendor_name:    v.name,
+      vendor_contact: contact,
+      vendor_address: v.address || '',
+    }))
+  }
+
+  const clearVendor = () => {
+    setSelectedVendorId('')
+    setVendorSearch('')
+    setForm(f => ({ ...f, vendor_id: null, vendor_name: '', vendor_contact: '', vendor_address: '' }))
+  }
+
+  // Pre-fill search box if editing an existing contract with a vendor name
+  useState(() => {
+    if (contract?.vendor_name) setVendorSearch(contract.vendor_name)
+  })
+
   const [form, setForm] = useState(contract ? {
+    vendor_id:             contract.vendor_id          || null,
     vendor_name:           contract.vendor_name        || '',
     vendor_contact:        contract.vendor_contact      || '',
     vendor_address:        contract.vendor_address      || '',
@@ -4827,7 +4874,7 @@ function HiredInModal({ companyId, contract, projects, onClose, onSaved }) {
     notes:                 contract.notes               || '',
     status:                contract.status              || 'active',
   } : {
-    vendor_name: '', vendor_contact: '', vendor_address: '',
+    vendor_id: null, vendor_name: '', vendor_contact: '', vendor_address: '',
     machine_type: '', make: '', model: '', year_of_manufacture: '',
     registration_number: '', capacity_description: '',
     hire_rate: '', rate_type: 'monthly', billing_period: 'monthly',
@@ -4888,12 +4935,66 @@ function HiredInModal({ companyId, contract, projects, onClose, onSaved }) {
         </div>
         <div className="overflow-y-auto p-5 space-y-4 flex-1">
           {/* Vendor */}
-          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Vendor Details</p>
-          <div className="grid grid-cols-2 gap-3">
-            <F label="Vendor Name" required><input className={inp} value={form.vendor_name} onChange={e => set('vendor_name', e.target.value)} placeholder="ABC Contractors" /></F>
-            <F label="Contact"><input className={inp} value={form.vendor_contact} onChange={e => set('vendor_contact', e.target.value)} placeholder="Phone / email" /></F>
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Vendor Details</p>
+            {selectedVendorId && (
+              <button onClick={clearVendor} className="text-xs text-slate-500 hover:text-red-400 transition-colors flex items-center gap-1">
+                <X className="w-3 h-3" /> Clear vendor
+              </button>
+            )}
           </div>
-          <F label="Address"><input className={inp} value={form.vendor_address} onChange={e => set('vendor_address', e.target.value)} placeholder="Vendor address" /></F>
+
+          {/* Vendor search / picker */}
+          <F label="Select from Vendor Directory" required>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 pointer-events-none" />
+              <input
+                className={inp + ' pl-9'}
+                value={vendorSearch}
+                onChange={e => { setVendorSearch(e.target.value); setShowVendorDrop(true); setSelectedVendorId('') }}
+                onFocus={() => setShowVendorDrop(true)}
+                onBlur={() => setTimeout(() => setShowVendorDrop(false), 150)}
+                placeholder="Search vendor name…"
+              />
+              {showVendorDrop && filteredVendors.length > 0 && (
+                <div className="absolute z-10 top-full mt-1 w-full bg-dark-800 border border-dark-600 rounded-xl shadow-xl max-h-48 overflow-y-auto">
+                  {filteredVendors.map(v => (
+                    <button key={v.id} onMouseDown={() => handleVendorSelect(v)}
+                      className="w-full text-left px-3 py-2 hover:bg-dark-700 transition-colors">
+                      <p className="text-sm text-slate-100">{v.name}</p>
+                      {(v.contact_phone || v.contact_email) && (
+                        <p className="text-xs text-slate-500">{v.contact_phone || v.contact_email}</p>
+                      )}
+                    </button>
+                  ))}
+                  {filteredVendors.length === 0 && (
+                    <p className="text-xs text-slate-500 px-3 py-2">No vendors found — fill details manually below</p>
+                  )}
+                </div>
+              )}
+            </div>
+          </F>
+
+          {/* Auto-filled or manual fields */}
+          <div className={`grid grid-cols-2 gap-3 ${selectedVendorId ? 'opacity-80' : ''}`}>
+            <F label="Vendor Name" required>
+              <input className={inp} value={form.vendor_name} onChange={e => set('vendor_name', e.target.value)}
+                placeholder="Or type manually" readOnly={!!selectedVendorId} />
+            </F>
+            <F label="Contact">
+              <input className={inp} value={form.vendor_contact} onChange={e => set('vendor_contact', e.target.value)}
+                placeholder="Phone · email" readOnly={!!selectedVendorId} />
+            </F>
+          </div>
+          {selectedVendorId && (
+            <p className="text-xs text-primary-400 -mt-2 flex items-center gap-1">
+              <CheckCircle className="w-3 h-3" /> Auto-filled from vendor directory — edit fields above if needed
+            </p>
+          )}
+          <F label="Address">
+            <input className={inp} value={form.vendor_address} onChange={e => set('vendor_address', e.target.value)}
+              placeholder="Vendor address" readOnly={!!selectedVendorId} />
+          </F>
 
           {/* Machine */}
           <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mt-2">Machine Details</p>
