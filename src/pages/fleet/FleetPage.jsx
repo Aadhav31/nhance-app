@@ -1972,19 +1972,26 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
             <div className="bg-dark-700 rounded-xl p-3 flex-1">
               <p className="text-xs font-semibold text-slate-300 uppercase tracking-wider mb-3">Equipment Availability</p>
 
-              {/* Primary status */}
-              <div className="flex items-center gap-2 mb-2">
-                <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${availStatus.dot}`} />
-                <span className="text-sm font-semibold text-slate-100">{availStatus.label}</span>
+              {/* Status row — Engaged first, then Active/Idle alongside */}
+              <div className="flex items-center gap-3 mb-2 flex-wrap">
+                {availStatus.secondary ? (
+                  <>
+                    <div className="flex items-center gap-1.5">
+                      <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${availStatus.secondaryDot}`} />
+                      <span className="text-sm font-semibold text-slate-100">{availStatus.secondary}</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${availStatus.dot}`} />
+                      <span className="text-sm font-semibold text-slate-100">{availStatus.label}</span>
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex items-center gap-1.5">
+                    <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${availStatus.dot}`} />
+                    <span className="text-sm font-semibold text-slate-100">{availStatus.label}</span>
+                  </div>
+                )}
               </div>
-
-              {/* Secondary badge (Engaged) shown alongside Active / Idle */}
-              {availStatus.secondary && (
-                <div className="flex items-center gap-1.5 mb-2 ml-0.5">
-                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${availStatus.secondaryDot}`} />
-                  <span className="text-xs text-blue-400 font-medium">{availStatus.secondary}</span>
-                </div>
-              )}
 
               {equipment.current_project_id ? (
                 <div className="bg-emerald-900/20 border border-emerald-700/30 rounded-lg px-2.5 py-2 mt-2">
