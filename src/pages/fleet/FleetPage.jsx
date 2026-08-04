@@ -2192,42 +2192,105 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
               </div>
             )}
 
-            {/* ── Assigned Operators (read-only) ── */}
-            <div className="border border-dark-600 rounded-xl overflow-hidden">
-              <div className="bg-dark-700 px-4 py-2.5 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Users className="w-4 h-4 text-slate-400" />
-                  <span className="text-xs font-semibold text-slate-300 uppercase tracking-wider">Assigned Operators</span>
-                </div>
-                {onNavigate && (
-                  <button onClick={() => { onClose(); onNavigate('hr') }}
-                    className="flex items-center gap-1 text-[11px] text-primary-400 hover:text-primary-300 transition-colors">
-                    Manage in HR <ChevronRight className="w-3 h-3" />
-                  </button>
-                )}
-              </div>
-              {assignments.length === 0 ? (
-                <div className="px-4 py-5 text-center">
-                  <p className="text-xs text-slate-500">No operators assigned</p>
-                  <p className="text-[10px] text-slate-600 mt-1">Assign operators from HR &amp; Payroll → Operators</p>
-                </div>
-              ) : (
-                <div className="divide-y divide-dark-600">
-                  {assignments.map(a => {
-                    const shiftLabel = { day: '☀️ Day', night: '🌙 Night', double: '🔄 Double' }[a.shift_type] || '☀️ Day'
+            {/* ── Assigned Operators ── */}
+            {(() => {
+              // slots: max 2 operators per equipment (day + night)
+              // if any existing assignment is 'double', that operator covers both shifts → max 1
+              const hasDouble = assignments.some(a => a.shift_type === 'double')
+              const maxSlots = hasDouble ? 1 : 2
+              const slotsUsed = assignments.length
+              const slotsLeft = maxSlots - slotsUsed
+              // which shift types are already taken
+              const takenShifts = new Set(assignments.map(a => a.shift_type))
+              // smart default for next slot
+              const nextShift = takenShifts.has('day') ? 'night' : 'day'
+
+              return (
+                <div className="border border-dark-600 rounded-xl overflow-hidden">
+                  <div className="bg-dark-700 px-4 py-2.5 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Users className="w-4 h-4 text-slate-400" />
+                      <span className="text-xs font-semibold text-slate-300 uppercase tracking-wider">Assigned Operators</span>
+                    </div>
+                    <span className="text-[10px] text-slate-500">
+                      {slotsUsed}/{maxSlots} slot{maxSlots > 1 ? 's' : ''} filled
+                    </span>
+                  </div>
+
+                  {/* existing assignments */}
+                  {assignments.length === 0 ? (
+                    <div className="px-4 py-4 text-center">
+                      <p className="text-xs text-slate-500">No operators assigned yet</p>
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-dark-600">
+                      {assignments.map(a => {
+                        const shiftLabel = { day: '☀️ Day', night: '🌙 Night', double: '🔄 Double' }[a.shift_type] || '☀️ Day'
+                        return (
+                          <div key={a.id} className="px-4 py-2.5 flex items-center justify-between">
+                            <div>
+                              <span className="text-xs font-medium text-slate-200">{a.operator_name}</span>
+                              {a.user_id && <span className="text-[10px] text-primary-400 ml-1.5">📱</span>}
+                              <span className="text-[10px] text-slate-500 ml-2">{shiftLabel}</span>
+                            </div>
+                            <button onClick={() => handleRemoveOperator(a.id, a.operator_name)}
+                              className="p-1 text-slate-600 hover:text-red-400 transition-colors">
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+
+                  {/* inline assign form — shown when slots available */}
+                  {slotsLeft > 0 && (() => {
+                    const assignedNames = new Set(assignments.map(a => a.operator_name))
+                    const available = hrOperators.filter(e => !assignedNames.has(e.name))
                     return (
-                      <div key={a.id} className="px-4 py-2.5 flex items-center justify-between">
-                        <div>
-                          <span className="text-xs font-medium text-slate-200">{a.operator_name}</span>
-                          {a.user_id && <span className="text-[10px] text-primary-400 ml-1.5">📱 Portal</span>}
-                        </div>
-                        <span className="text-[10px] text-slate-500">{shiftLabel}</span>
+                      <div className="border-t border-dark-600 p-3 space-y-2 bg-dark-750">
+                        {hrOperators.length === 0 ? (
+                          <p className="text-[10px] text-amber-400/80">
+                            No operators in HR. Add employees with Operator/Driver designation first.
+                          </p>
+                        ) : (
+                          <>
+                            <select
+                              className="w-full bg-dark-700 border border-dark-600 rounded-lg px-2.5 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-primary-500"
+                              value={newOperator}
+                              onChange={e => setNewOperator(e.target.value)}>
+                              <option value="">Select operator…</option>
+                              {available.map(e => (
+                                <option key={e.id} value={e.id}>
+                                  {e.name}{e.user_id ? ' 📱' : ''}
+                                </option>
+                              ))}
+                            </select>
+                            <div className="flex gap-2">
+                              <select
+                                className="flex-1 bg-dark-700 border border-dark-600 rounded-lg px-2.5 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-primary-500"
+                                value={newShiftType}
+                                onChange={e => setNewShiftType(e.target.value)}>
+                                <option value="day">☀️ Day Shift</option>
+                                <option value="night">🌙 Night Shift</option>
+                                <option value="double">🔄 Double Shift</option>
+                              </select>
+                              <button
+                                onClick={handleAddOperator}
+                                disabled={operatorSaving || !newOperator}
+                                className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-primary-600 hover:bg-primary-500 text-white text-xs font-medium disabled:opacity-40 transition-colors shrink-0">
+                                {operatorSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                                Assign
+                              </button>
+                            </div>
+                          </>
+                        )}
                       </div>
                     )
-                  })}
+                  })()}
                 </div>
-              )}
-            </div>
+              )
+            })()}
 
             {/* ── Redirect hint ── */}
             {onNavigate && equipment.current_project_id && (
