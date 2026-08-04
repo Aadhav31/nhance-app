@@ -1325,10 +1325,12 @@ function IncidentModal({ equipment, companyId, onClose }) {
 
 // ── Equipment Detail ──────────────────────────────────────────────────────────
 function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
-  const [modal,     setModal]     = useState(null)
-  const [showEdit,  setShowEdit]  = useState(false)
-  const [equipment, setEquipment] = useState(equipmentProp)
-  const [detailTab, setDetailTab] = useState('deployment')
+  const [modal,         setModal]         = useState(null)
+  const [showEdit,      setShowEdit]      = useState(false)
+  const [equipment,     setEquipment]     = useState(equipmentProp)
+  const [detailTab,     setDetailTab]     = useState('deployment')
+  const [remarksText,   setRemarksText]   = useState(equipmentProp.notes || '')
+  const [savingRemarks, setSavingRemarks] = useState(false)
   const qc   = useQueryClient()
   const { role } = useAuth()
   const isAdmin  = ['admin', 'superadmin', 'manager'].includes(role)
@@ -2472,12 +2474,43 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
         {detailTab === 'remarks' && (
           <div className="space-y-4 pt-1">
             <DocumentsSection equipment={equipment} companyId={companyId} isAdmin={isAdmin} />
-            {equipment.notes && (
-              <div className="bg-dark-700 rounded-xl p-4">
-                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Notes</p>
-                <p className="text-sm text-slate-300">{equipment.notes}</p>
+
+            {/* ── Text Remarks ── */}
+            <div className="bg-dark-700 rounded-xl p-4 space-y-3">
+              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Remarks</p>
+              <VoiceTextarea
+                value={remarksText}
+                onChange={setRemarksText}
+                placeholder="Add remarks, site notes, observations…"
+                rows={5}
+              />
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-slate-500">{remarksText.length} characters</span>
+                <button
+                  disabled={savingRemarks || remarksText === (equipment.notes || '')}
+                  onClick={async () => {
+                    setSavingRemarks(true)
+                    try {
+                      const { error } = await supabase
+                        .from('equipment_registry')
+                        .update({ notes: remarksText || null })
+                        .eq('id', equipment.id)
+                      if (error) throw error
+                      setEquipment(prev => ({ ...prev, notes: remarksText || null }))
+                      qc.invalidateQueries(['equipment', companyId])
+                      toast.success('Remarks saved')
+                    } catch (err) {
+                      toast.error('Failed to save: ' + err.message)
+                    } finally {
+                      setSavingRemarks(false)
+                    }
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary-600 hover:bg-primary-700 text-white text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  {savingRemarks ? 'Saving…' : 'Save Remarks'}
+                </button>
               </div>
-            )}
+            </div>
           </div>
         )}
 
