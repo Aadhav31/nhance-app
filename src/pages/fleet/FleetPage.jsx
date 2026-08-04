@@ -1328,6 +1328,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
   const [modal,     setModal]     = useState(null)
   const [showEdit,  setShowEdit]  = useState(false)
   const [equipment, setEquipment] = useState(equipmentProp)
+  const [detailTab, setDetailTab] = useState('deployment')
   const qc   = useQueryClient()
   const { role } = useAuth()
   const isAdmin  = ['admin', 'superadmin', 'manager'].includes(role)
@@ -1580,6 +1581,17 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
     },
   })
 
+  // Insurance doc — same queryKey as DocumentsSection so React Query deduplicates
+  const { data: allEquipDocs = [] } = useQuery({
+    queryKey: ['equipment_docs', equipment.id],
+    queryFn: async () => {
+      const { data } = await supabase.from('equipment_documents')
+        .select('*').eq('equipment_id', equipment.id).order('doc_type')
+      return data || []
+    },
+  })
+  const insuranceDoc = allEquipDocs.find(d => d.doc_type === 'insurance')
+
   // Matched rate items (fuzzy match equipment category to item names)
   const matchedRates = rateItems.filter(r => {
     const itemName = (r.item_name || '').toLowerCase()
@@ -1708,571 +1720,767 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
 
   return (
     <>
-      <Modal title={equipment.name} onClose={onClose} wide>
-        {/* ── Header ── */}
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex-1 min-w-0">
-            {/* Sub-line: number · make · model · year */}
-            {(equipment.equipment_number || equipment.make || equipment.model || equipment.year_of_manufacture) && (
-              <p className="text-xs text-slate-500 mb-2">
-                {[equipment.equipment_number, equipment.make, equipment.model, equipment.year_of_manufacture].filter(Boolean).join(' · ')}
-              </p>
-            )}
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className={`text-xs font-semibold px-2.5 py-1 rounded-full border ${st.bg} ${st.text} ${st.border}`}>{st.label}</span>
-              <span className="text-xs text-slate-400">{equipment.category}</span>
-              {equipment.registration_number && <span className="text-xs text-primary-500 font-mono bg-dark-700 px-2 py-0.5 rounded">{equipment.registration_number}</span>}
-              <span className={`text-xs px-2 py-0.5 rounded-full border ${
-                equipment.ownership_type === 'hired' ? 'bg-yellow-500/10 text-yellow-400 border-yellow-500/30'
-                : equipment.ownership_type === 'client_supplied' ? 'bg-purple-500/10 text-purple-400 border-purple-500/30'
-                : 'bg-slate-500/10 text-slate-400 border-slate-500/30'
-              }`}>{ownerTypeLabel}</span>
-            </div>
-          </div>
-          {isAdmin && (
-            <div className="flex items-center gap-2 shrink-0">
-              <button onClick={() => setShowEdit(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-dark-500 bg-dark-700 hover:border-primary-500 text-xs text-slate-300 transition-colors">
-                <Edit2 className="w-3.5 h-3.5" /> Edit
-              </button>
-              {!confirmDelete ? (
-                <button onClick={() => setConfirmDelete(true)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-dark-500 bg-dark-700 hover:border-red-500 hover:text-red-400 text-xs text-slate-300 transition-colors">
-                  <Trash2 className="w-3.5 h-3.5" /> Delete
-                </button>
-              ) : (
-                <div className="flex flex-col items-end gap-1.5">
-                  <p className="text-xs text-red-400 text-right">Deletes all shifts, fuel &amp; documents</p>
-                  <div className="flex items-center gap-1.5">
-                    <button onClick={handleDelete} disabled={deleting}
-                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-xs text-white font-medium transition-colors">
-                      {deleting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />} Delete
-                    </button>
-                    <button onClick={() => setConfirmDelete(false)}
-                      className="px-2.5 py-1.5 rounded-lg border border-dark-500 bg-dark-700 text-xs text-slate-300 hover:text-slate-100 transition-colors">
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
+      <Modal title={`${equipment.name}${equipment.equipment_number ? ` · ${equipment.equipment_number}` : ''}`} onClose={onClose} wide>
 
-        {/* ── Meter Reading ── */}
-        <div className="grid grid-cols-2 gap-3">
-          {(mt === 'hours' || mt === 'both') && (
-            <div className="bg-dark-700 rounded-lg p-3">
-              <p className="text-xs text-slate-400">Hour Meter</p>
-              <p className="text-xl font-bold text-slate-100">{Number(equipment.current_meter_reading || 0).toFixed(1)} <span className="text-sm font-normal text-slate-400">hrs</span></p>
-            </div>
-          )}
-          {(mt === 'kilometers' || mt === 'both') && (
-            <div className="bg-dark-700 rounded-lg p-3">
-              <p className="text-xs text-slate-400">Odometer</p>
-              <p className="text-xl font-bold text-slate-100">{Number(equipment.current_meter_reading || 0).toLocaleString()} <span className="text-sm font-normal text-slate-400">km</span></p>
-            </div>
-          )}
-          {stats && (
-            <>
-              <div className="bg-dark-700 rounded-lg p-3">
-                <p className="text-xs text-slate-400">Total Hours Worked</p>
-                <p className="text-xl font-bold text-primary-300">{stats.totalHours} <span className="text-sm font-normal text-slate-400">hrs</span></p>
-              </div>
-              <div className="bg-dark-700 rounded-lg p-3">
-                <p className="text-xs text-slate-400">Total Shifts</p>
-                <p className="text-xl font-bold text-slate-100">{stats.totalShifts}</p>
-              </div>
-            </>
-          )}
-        </div>
+        {/* ══ TOP: Two-column summary panel ══════════════════════════════════════ */}
+        <div className="grid grid-cols-1 lg:grid-cols-[1fr_210px] gap-4">
 
-        {/* ── Quick Actions ── */}
-        <div className="grid grid-cols-2 gap-2">
-          <button onClick={() => setModal('fuel')}
-            className="flex items-center justify-center gap-2 py-2.5 rounded-xl bg-dark-700 border border-dark-600 hover:border-yellow-500 text-slate-200 text-sm transition-colors">
-            <Fuel className="w-4 h-4 text-yellow-400" /> Log Fuel
-          </button>
-          <button onClick={() => setModal('incident')}
-            className="flex items-center justify-center gap-2 py-2.5 rounded-xl bg-dark-700 border border-dark-600 hover:border-orange-500 text-slate-200 text-sm transition-colors">
-            <AlertTriangle className="w-4 h-4 text-orange-400" /> Report Incident
-          </button>
-        </div>
-
-        {/* ── Ownership / Vendor Info ── */}
-        {equipment.ownership_type !== 'own' && (
-          <>
-            <SectionHeader icon={Building2} label="Ownership Details" />
-            <div className="bg-dark-700 rounded-lg p-3 space-y-1 text-xs">
-              {equipment.owner_name && (
-                <div className="flex items-center gap-2">
-                  <User className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                  <span className="text-slate-200">{equipment.owner_name}</span>
-                  {equipment.ownership_type === 'hired' && <span className="text-slate-500">(Owner/Vendor)</span>}
-                </div>
-              )}
-              {equipment.owner_contact && (
-                <div className="flex items-center gap-2">
-                  <Phone className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                  <span className="text-slate-300">{equipment.owner_contact}</span>
-                </div>
-              )}
-              {equipment.ownership_type === 'hired' && (equipment.hire_start_date || equipment.hire_end_date) && (
-                <div className="flex items-center gap-2">
-                  <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                  <span className="text-slate-300">
-                    Hire: {equipment.hire_start_date ? format(new Date(equipment.hire_start_date), 'dd MMM yyyy') : '—'}
-                    {' → '}{equipment.hire_end_date ? format(new Date(equipment.hire_end_date), 'dd MMM yyyy') : '—'}
-                  </span>
-                </div>
-              )}
-            </div>
-          </>
-        )}
-
-        {/* ── Service Schedule ── */}
-        {(equipment.last_service_date || equipment.next_service_date || equipment.next_service_meter) && (
-          <>
-            <SectionHeader icon={Wrench} label="Service Schedule" />
-            <div className="bg-dark-700 rounded-lg p-3 space-y-2 text-xs">
-              {equipment.last_service_date && (
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Last service</span>
-                  <span className="text-slate-200 font-medium">
-                    {format(new Date(equipment.last_service_date), 'dd MMM yyyy')}
-                    {equipment.last_service_meter ? ` · ${equipment.last_service_meter} hrs` : ''}
-                  </span>
-                </div>
-              )}
-              {equipment.service_interval_hrs && (
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Service interval</span>
-                  <span className="text-slate-300">Every {equipment.service_interval_hrs} hrs</span>
-                </div>
-              )}
-              {equipment.next_service_meter && (
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Next service due at</span>
-                  <span className={`font-medium ${serviceHrsRemaining !== null && serviceHrsRemaining < 50 ? 'text-orange-400' : 'text-emerald-400'}`}>
-                    {equipment.next_service_meter} hrs
-                    {serviceHrsRemaining !== null && ` (${serviceHrsRemaining > 0 ? `${serviceHrsRemaining.toFixed(0)} hrs away` : `Overdue by ${Math.abs(serviceHrsRemaining).toFixed(0)} hrs`})`}
-                  </span>
-                </div>
-              )}
-              {equipment.next_service_date && (
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Next service date</span>
-                  <span className="text-slate-200">{format(new Date(equipment.next_service_date), 'dd MMM yyyy')}</span>
-                </div>
-              )}
-            </div>
-          </>
-        )}
-
-        {/* ── Current Deployment ── */}
-        {equipment.current_project_id && (
-          <>
-            <SectionHeader icon={Building2} label="Current Deployment" />
-            <div className="bg-emerald-900/20 border border-emerald-700/30 rounded-lg p-3 space-y-2">
-              <div className="flex items-start gap-2">
-                <Activity className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
-                <div>
-                  <p className="text-sm font-medium text-emerald-300">
-                    {deployedProject?.project_name || equipment.current_site_name || 'Deployed Project'}
-                    {deployedProject?.project_code && <span className="text-xs text-emerald-500 ml-2">{deployedProject.project_code}</span>}
-                  </p>
-                  {equipment.current_site_name && <p className="text-xs text-slate-400 mt-0.5">{equipment.current_site_name}</p>}
-                </div>
-              </div>
-              {projectContacts.length > 0 && (
-                <div className="border-t border-emerald-700/20 pt-2 space-y-1.5">
-                  <p className="text-xs text-slate-500 uppercase tracking-wider font-medium">Project Contacts</p>
-                  {projectContacts.map((c, i) => (
-                    <div key={i} className="flex items-center justify-between text-xs">
-                      <div>
-                        <span className="text-slate-200 font-medium">{c.name}</span>
-                        <span className="text-slate-500 ml-2">· {c.role}</span>
-                      </div>
-                      <div className="flex items-center gap-3 text-slate-400">
-                        {c.phone && <span className="flex items-center gap-1"><Phone className="w-3 h-3" />{c.phone}</span>}
-                        {c.email && <span className="flex items-center gap-1"><Mail className="w-3 h-3" />{c.email}</span>}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </>
-        )}
-
-        {/* ── Fuel Stats ── */}
-        {fuelStats && (Number(fuelStats.totalLitres) > 0) && (
-          <div className="bg-dark-700 rounded-lg px-3 py-2.5 flex gap-4 text-xs">
-            <div>
-              <p className="text-slate-400">Total Fuel Consumed</p>
-              <p className="font-bold text-yellow-400">{fuelStats.totalLitres} L</p>
-            </div>
-            {fuelStats.totalAmount > 0 && (
+          {/* LEFT — Equipment Details */}
+          <div className="bg-dark-700 rounded-xl p-4 space-y-4">
+            {/* Status row + admin actions */}
+            <div className="flex items-start justify-between gap-3">
               <div>
-                <p className="text-slate-400">Total Fuel Cost</p>
-                <p className="font-bold text-primary-300">₹{Number(fuelStats.totalAmount).toLocaleString('en-IN')}</p>
+                <p className="text-xs text-slate-500 mb-1.5">
+                  {[equipment.make, equipment.model, equipment.year_of_manufacture].filter(Boolean).join(' · ')}
+                </p>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border ${st.bg} ${st.text} ${st.border}`}>{st.label}</span>
+                  <span className="text-xs text-slate-400">{equipment.category}</span>
+                  {equipment.registration_number && (
+                    <span className="text-xs text-primary-500 font-mono bg-dark-800 px-2 py-0.5 rounded">{equipment.registration_number}</span>
+                  )}
+                  <span className={`text-xs px-2 py-0.5 rounded-full border ${
+                    equipment.ownership_type === 'hired'           ? 'bg-yellow-500/10 text-yellow-400 border-yellow-500/30'
+                    : equipment.ownership_type === 'client_supplied' ? 'bg-purple-500/10 text-purple-400 border-purple-500/30'
+                    : 'bg-slate-500/10 text-slate-400 border-slate-500/30'
+                  }`}>{ownerTypeLabel}</span>
+                </div>
               </div>
-            )}
-          </div>
-        )}
-
-        {/* ── Open Incidents ── */}
-        {openIncidents.length > 0 && (
-          <div className="bg-red-900/20 border border-red-700/30 rounded-lg p-3">
-            <p className="text-xs font-semibold text-red-400 mb-1.5">⚠ {openIncidents.length} Open Incident{openIncidents.length > 1 ? 's' : ''}</p>
-            {openIncidents.map(i => (
-              <p key={i.id} className="text-xs text-slate-300">
-                · {INCIDENT_OPTIONS.find(t => t.value === i.incident_type)?.label || i.incident_type}
-                {i.description && ` — ${i.description.slice(0, 60)}`}
-              </p>
-            ))}
-          </div>
-        )}
-
-        {/* ── Documents ── */}
-        <AttachmentsSection equipment={equipment} companyId={companyId} isAdmin={isAdmin} />
-        <DocumentsSection   equipment={equipment} companyId={companyId} isAdmin={isAdmin} />
-
-        {/* ── Recent Fuel ── */}
-        {recentFuel.length > 0 && (
-          <div>
-            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Recent Fuel Entries</p>
-            <div className="space-y-1.5">
-              {recentFuel.map(f => (
-                <div key={f.id} className="bg-dark-700 rounded-lg px-3 py-2 text-xs flex items-center justify-between">
-                  <div>
-                    <span className="text-slate-200 font-medium">{f.quantity_liters}L</span>
-                    {f.vendor_name && <span className="text-slate-400 ml-2">· {f.vendor_name}</span>}
-                    {f.delivered_by_name && <span className="text-slate-500 ml-2">By {f.delivered_by_name}</span>}
-                  </div>
-                  {f.total_amount && <span className="text-yellow-400 font-medium">₹{Number(f.total_amount).toLocaleString('en-IN')}</span>}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* ── Admin: Operations Setup ── */}
-        {isAdmin && (
-          <div className="border border-dark-600 rounded-xl overflow-hidden">
-            <div className="bg-dark-700 px-3 py-2 flex items-center gap-2">
-              <Shield className="w-4 h-4 text-primary-400" />
-              <span className="text-xs font-semibold text-slate-300 uppercase tracking-wider">Operations Setup</span>
-            </div>
-
-            {/* Deploy to Project */}
-            <div className="p-3 space-y-2 border-b border-dark-600">
-              <p className="text-xs font-medium text-slate-400 flex items-center gap-1.5"><Building2 className="w-3.5 h-3.5" /> Deploy to Client / Project</p>
-              {equipment.current_site_name && (
-                <div className="bg-emerald-900/20 border border-emerald-700/30 rounded-lg px-2.5 py-1.5 text-xs text-emerald-300">
-                  ✓ Currently: {equipment.current_site_name}
-                </div>
-              )}
-              <select className={inp('text-xs')} value={deployClientId}
-                onChange={e => { setDeployClientId(e.target.value); setDeployProjectId('') }}>
-                <option value="">Select client…</option>
-                {clients.map(c => <option key={c.id} value={c.id}>{c.display_name || c.business_name}</option>)}
-              </select>
-              {deployClientId && (
-                <select className={inp('text-xs')} value={deployProjectId} onChange={e => setDeployProjectId(e.target.value)}>
-                  <option value="">Select project…</option>
-                  {projects.map(p => <option key={p.id} value={p.id}>{p.project_code ? `${p.project_code} — ` : ''}{p.name}</option>)}
-                </select>
-              )}
-              <input className={inp('text-xs')} value={deploySiteName} onChange={e => setDeploySiteName(e.target.value)}
-                placeholder="Site name (optional, e.g. Phase 2 — North Block)" />
-
-              {/* Rate card selector */}
-              {deployProjectId && rateItems.length > 0 && (
-                <div className="bg-dark-750 border border-dark-500 rounded-lg p-2.5 space-y-2">
-                  <p className="text-xs text-slate-400 font-medium">
-                    Select applicable rate item for this equipment:
-                  </p>
-                  <select
-                    className="w-full bg-dark-700 border border-dark-500 rounded-lg px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-primary-500"
-                    value={deployRateItemId}
-                    onChange={e => setDeployRateItemId(e.target.value)}
-                  >
-                    <option value="">— None / Enter manually later —</option>
-                    {(matchedRates.length > 0 ? matchedRates : rateItems).map(r => (
-                      <option key={r.id} value={r.id}>
-                        {r.item_name}
-                        {r.billing_basis === 'monthly' ? ` — ₹${r.rate_per_month}/mo` : r.billing_basis === 'hourly' ? ` — ₹${r.rate_per_hour}/hr` : ` — ₹${r.rate_per_day}/day`}
-                        {matchedRates.includes(r) ? ' ✓' : ''}
-                      </option>
-                    ))}
-                  </select>
-                  {deployRateItemId && (() => {
-                    const r = rateItems.find(x => x.id === deployRateItemId)
-                    if (!r) return null
-                    return (
-                      <div className="text-[10px] text-slate-400 space-y-0.5">
-                        <p>Billing: <span className="text-slate-200 capitalize">{r.billing_basis}</span>
-                          {r.billing_basis==='daily' && r.max_hours_per_day && ` · Max ${r.max_hours_per_day} hrs/day`}
-                          {r.billing_basis==='monthly' && r.max_hours_per_month && ` · Max ${r.max_hours_per_month} hrs/mo`}
-                        </p>
-                        {r.ot_percentage && <p>OT: <span className="text-primary-300">{r.ot_percentage}% of pro-rata rate</span></p>}
-                      </div>
-                    )
-                  })()}
-                </div>
-              )}
-              {deployProjectId && (
-                <label className="flex items-center gap-2 cursor-pointer select-none">
-                  <div className={`w-8 h-4 rounded-full transition-colors relative ${deployFuelByClient ? 'bg-primary-500' : 'bg-dark-600'}`}
-                    onClick={() => setDeployFuelByClient(v => !v)}>
-                    <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full shadow transition-transform ${deployFuelByClient ? 'translate-x-4' : 'translate-x-0.5'}`} />
-                  </div>
-                  <span className="text-xs text-slate-300">Fuel supplied by client</span>
-                  {deployFuelByClient && <span className="text-[10px] text-amber-400 bg-amber-900/20 border border-amber-700/30 rounded px-1.5 py-0.5">Fuel costs excluded from our P&L</span>}
-                </label>
-              )}
-
-              {/* ── Deployment Record ── */}
-              {deployProjectId && (
-                <div className="bg-dark-750 border border-dark-500 rounded-lg p-2.5 space-y-2.5">
-                  <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Deployment Record</p>
-
-                  {/* Hour meter reading */}
-                  <div>
-                    <label className="text-[10px] text-slate-500 uppercase tracking-wider">Hour Meter at Deployment</label>
-                    <input type="number" min="0" step="0.1"
-                      className={inp('text-xs mt-1')}
-                      value={deployHourMeter}
-                      onChange={e => setDeployHourMeter(e.target.value)}
-                      placeholder={`Current: ${equipment.current_meter_reading || 0} hrs`} />
-                  </div>
-
-                  {/* Operator at deployment */}
-                  <div>
-                    <label className="text-[10px] text-slate-500 uppercase tracking-wider">Operator at Deployment</label>
-                    <select className={inp('text-xs mt-1')} value={deployOperatorName} onChange={e => setDeployOperatorName(e.target.value)}>
-                      <option value="">Select operator…</option>
-                      {hrOperators.map(e => <option key={e.id} value={e.name}>{e.name}</option>)}
-                    </select>
-                  </div>
-
-                  {/* Site in-charge */}
-                  <div>
-                    <label className="text-[10px] text-slate-500 uppercase tracking-wider">Site In-charge</label>
-                    <input className={inp('text-xs mt-1')} value={deploySiteIncharge}
-                      onChange={e => setDeploySiteIncharge(e.target.value)}
-                      placeholder="Name of person responsible at site" />
-                  </div>
-
-                  {/* Work order / hire contract ref */}
-                  <div>
-                    <label className="text-[10px] text-slate-500 uppercase tracking-wider">Work Order / PO / Contract Ref</label>
-                    <input className={inp('text-xs mt-1')} value={deployWorkOrderRef}
-                      onChange={e => setDeployWorkOrderRef(e.target.value)}
-                      placeholder="e.g. WO-2026-042 or HC-001" />
-                  </div>
-
-                  {/* Machine photo */}
-                  <div>
-                    <label className="text-[10px] text-slate-500 uppercase tracking-wider">Machine Photo</label>
-                    <CameraButton
-                      companyId={companyId}
-                      label={`deploy_machine_${equipment.id}`}
-                      photoUrl={deployMachinePhotoUrl}
-                      onCapture={setDeployMachinePhotoUrl}
-                      location={deployGpsLoc}
-                    />
-                  </div>
-
-                  {/* Hour meter photo */}
-                  <div>
-                    <label className="text-[10px] text-slate-500 uppercase tracking-wider">Hour Meter Photo <span className="normal-case text-slate-600">(optional)</span></label>
-                    <CameraButton
-                      companyId={companyId}
-                      label={`deploy_meter_${equipment.id}`}
-                      photoUrl={deployMeterPhotoUrl}
-                      onCapture={setDeployMeterPhotoUrl}
-                      location={deployGpsLoc}
-                    />
-                  </div>
-
-                  {/* GPS */}
-                  <GPSField location={deployGpsLoc} loading={deployGpsLoading} />
-                </div>
-              )}
-
-              <button onClick={handleDeploy} disabled={deploySaving || !deployProjectId}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary-600 hover:bg-primary-500 text-white text-xs font-medium disabled:opacity-40 transition-colors">
-                {deploySaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-                {deploySaving ? 'Saving…' : 'Save Deployment'}
-              </button>
-            </div>
-
-            {/* Operators — linked from HR module */}
-            <div className="p-3 space-y-2">
-              <p className="text-xs font-medium text-slate-400 flex items-center gap-1.5">
-                <Users className="w-3.5 h-3.5" /> Assigned Operators
-                <span className="text-slate-600 font-normal ml-1">· from HR module</span>
-              </p>
-              <p className="text-[10px] text-slate-600">📱 = has portal login &nbsp; ⭐ = primary (locked to this equipment in Operator Portal)</p>
-              {assignments.length === 0 ? (
-                <p className="text-xs text-slate-500 italic">No operators assigned yet</p>
-              ) : (
-                <div className="space-y-1.5">
-                  {assignments.map(a => {
-                    const hr = hrOperators.find(e => e.name === a.operator_name)
-                    const shiftLabel = { day: '☀️ Day', night: '🌙 Night', double: '🔄 Double' }[a.shift_type] || '☀️ Day'
-                    return (
-                      <div key={a.id} className="flex items-center justify-between rounded-lg px-2.5 py-1.5 bg-dark-700">
-                        <div className="flex-1 min-w-0">
-                          <span className="text-xs text-slate-200">{a.operator_name}</span>
-                          {hr && <span className="text-[10px] text-slate-500 ml-2">{hr.employee_number}</span>}
-                          {(hr?.user_id || a.user_id) && <span className="text-[10px] text-slate-400 ml-1">📱</span>}
-                          <span className="text-[10px] text-slate-500 ml-2">{shiftLabel}</span>
-                        </div>
-                        <button onClick={() => handleRemoveOperator(a.id, a.operator_name)}
-                          className="p-1 text-slate-500 hover:text-red-400 transition-colors shrink-0">
-                          <Trash2 className="w-3.5 h-3.5" />
+              {isAdmin && (
+                <div className="flex items-center gap-2 shrink-0">
+                  <button onClick={() => setShowEdit(true)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-dark-500 bg-dark-600 hover:border-primary-500 text-xs text-slate-300 transition-colors">
+                    <Edit2 className="w-3.5 h-3.5" /> Edit
+                  </button>
+                  {!confirmDelete ? (
+                    <button onClick={() => setConfirmDelete(true)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-dark-500 bg-dark-600 hover:border-red-500 hover:text-red-400 text-xs text-slate-300 transition-colors">
+                      <Trash2 className="w-3.5 h-3.5" /> Delete
+                    </button>
+                  ) : (
+                    <div className="flex flex-col items-end gap-1.5">
+                      <p className="text-xs text-red-400 text-right">Deletes all shifts, fuel &amp; docs</p>
+                      <div className="flex items-center gap-1.5">
+                        <button onClick={handleDelete} disabled={deleting}
+                          className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-xs text-white font-medium transition-colors">
+                          {deleting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />} Delete
+                        </button>
+                        <button onClick={() => setConfirmDelete(false)}
+                          className="px-2.5 py-1.5 rounded-lg border border-dark-500 bg-dark-700 text-xs text-slate-300 hover:text-slate-100 transition-colors">
+                          Cancel
                         </button>
                       </div>
-                    )
-                  })}
+                    </div>
+                  )}
                 </div>
               )}
-              {/* Select from HR employees + preset shift type */}
-              {(() => {
-                const assignedNames = new Set(assignments.map(a => a.operator_name))
-                const available = hrOperators.filter(e => !assignedNames.has(e.name))
-                if (hrOperators.length === 0) return (
-                  <p className="text-xs text-amber-400/80 bg-amber-900/20 border border-amber-700/30 rounded-lg px-2.5 py-2">
-                    No operators found in HR module. Add employees with the Operator/Driver designation first.
-                  </p>
-                )
-                return (
-                  <div className="space-y-1.5">
-                    <select
-                      className="w-full bg-dark-700 border border-dark-600 rounded-lg px-2.5 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-primary-500"
-                      value={newOperator}
-                      onChange={e => setNewOperator(e.target.value)}>
-                      <option value="">Select operator from HR…</option>
-                      {available.map(e => (
-                        <option key={e.id} value={e.id}>
-                          {e.name} — {e.designation}{e.user_id ? ' 📱' : ''}
-                        </option>
-                      ))}
-                    </select>
-                    {newOperator && !hrOperators.find(e => e.id === newOperator)?.user_id && (
-                      <p className="text-[10px] text-amber-400">⚠️ No portal login — operator won't appear in Operator Portal until an account is created via HR → Employee Logins</p>
-                    )}
-                    <div className="flex gap-2">
-                      <select
-                        className="flex-1 bg-dark-700 border border-dark-600 rounded-lg px-2.5 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-primary-500"
-                        value={newShiftType}
-                        onChange={e => setNewShiftType(e.target.value)}>
-                        <option value="day">☀️ Day Shift</option>
-                        <option value="night">🌙 Night Shift</option>
-                        <option value="double">🔄 Double Shift</option>
-                      </select>
-                      <button onClick={handleAddOperator} disabled={operatorSaving || !newOperator}
-                        className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-dark-600 border border-dark-500 hover:border-primary-500 text-xs text-slate-300 disabled:opacity-40 transition-colors shrink-0">
-                        {operatorSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />} Assign
-                      </button>
-                    </div>
-                  </div>
-                )
-              })()}
             </div>
 
-            {/* ── Shift Schedule ── */}
-            <div className="p-3 space-y-3 border-t border-dark-600">
-              <p className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
-                <Clock className="w-3.5 h-3.5 text-primary-400" /> Shift Schedule
-              </p>
-
-              {/* Shift count selector */}
-              <div className="flex gap-2">
-                {[1, 2, 3].map(n => (
-                  <button key={n} type="button" onClick={() => setShiftCount(n)}
-                    className={`flex-1 py-2 rounded-lg border text-xs font-medium transition-all
-                      ${shiftCount === n
-                        ? 'border-primary-500 bg-primary-500/10 text-primary-300'
-                        : 'border-dark-600 bg-dark-700 text-slate-500 hover:text-slate-300'}`}>
-                    {n === 1 ? '☀️ Single' : n === 2 ? '☀️🌙 Double' : '☀️🌙🌒 Triple'}
-                  </button>
-                ))}
-              </div>
-
-              {/* Per-shift timing */}
-              <div className="space-y-2">
-                {Array.from({ length: shiftCount }, (_, i) => i).map(i => (
-                  <div key={i} className="bg-dark-700 rounded-xl p-2.5 space-y-2">
-                    <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">
-                      Shift {i + 1}
-                    </p>
-                    <div className="grid grid-cols-3 gap-2">
-                      <div>
-                        <p className="text-[10px] text-slate-500 mb-1">Name</p>
-                        <input
-                          className="w-full bg-dark-600 border border-dark-500 rounded-lg px-2 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-primary-500"
-                          value={shiftRows[i].label}
-                          onChange={e => setShiftRow(i, 'label', e.target.value)}
-                          placeholder={['Day', 'Night', 'Mid'][i]} />
-                      </div>
-                      <div>
-                        <p className="text-[10px] text-slate-500 mb-1">Start</p>
-                        <input type="time"
-                          className="w-full bg-dark-600 border border-dark-500 rounded-lg px-2 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-primary-500"
-                          value={shiftRows[i].start}
-                          onChange={e => setShiftRow(i, 'start', e.target.value)} />
-                      </div>
-                      <div>
-                        <p className="text-[10px] text-slate-500 mb-1">End</p>
-                        <input type="time"
-                          className="w-full bg-dark-600 border border-dark-500 rounded-lg px-2 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-primary-500"
-                          value={shiftRows[i].end}
-                          onChange={e => setShiftRow(i, 'end', e.target.value)} />
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Alert settings */}
-              <div className="bg-dark-700 rounded-xl px-3 py-2.5 space-y-2">
-                <label className="flex items-center gap-2.5 cursor-pointer">
-                  <input type="checkbox" checked={alertEnabled} onChange={e => setAlertEnabled(e.target.checked)}
-                    className="w-4 h-4 rounded accent-primary-500" />
-                  <div>
-                    <p className="text-xs font-medium text-slate-200">Alert on late start / overdue end</p>
-                    <p className="text-[10px] text-slate-500">Notify when shift hasn't started or ended on time</p>
-                  </div>
-                </label>
-                {alertEnabled && (
-                  <div className="flex items-center gap-2 text-xs text-slate-400 pl-6">
-                    <span>Alert after</span>
-                    <input type="number" min="5" max="120" step="5"
-                      className="w-14 bg-dark-600 border border-dark-500 rounded-lg px-2 py-1 text-xs text-center text-slate-100 focus:outline-none focus:border-primary-500"
-                      value={graceMinutes} onChange={e => setGraceMinutes(e.target.value)} />
-                    <span>minutes past scheduled time</span>
+            {/* Info grid */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              {/* Hour Meter — spans full width */}
+              <div className="col-span-2 sm:col-span-3 bg-dark-800 rounded-xl p-3.5 flex items-end justify-between">
+                <div>
+                  <p className="text-xs text-slate-500 mb-0.5">
+                    {mt === 'kilometers' ? 'Odometer' : 'Hour Meter'}
+                    <span className="text-slate-600 ml-2">· updates after every shift</span>
+                  </p>
+                  <p className="text-3xl font-bold text-primary-300">
+                    {Number(equipment.current_meter_reading || 0).toFixed(1)}
+                    <span className="text-base font-normal text-slate-400 ml-1">{mt === 'kilometers' ? 'km' : 'hrs'}</span>
+                  </p>
+                </div>
+                {stats && (
+                  <div className="text-right">
+                    <p className="text-xs text-slate-500">Total worked</p>
+                    <p className="text-sm font-semibold text-slate-200">{stats.totalHours} hrs</p>
+                    <p className="text-xs text-slate-500">{stats.totalShifts} shifts</p>
                   </div>
                 )}
               </div>
 
-              {shiftCount === 1 && (
-                <p className="text-[10px] text-slate-500 italic">
-                  Single shift — no fixed time enforced. Operators can start anytime.
-                </p>
+              {/* Active Project */}
+              <div className="bg-dark-800 rounded-xl p-3">
+                <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-1">Active Project</p>
+                {equipment.current_project_id ? (
+                  <div>
+                    <p className="text-xs font-semibold text-emerald-300 leading-tight">
+                      {deployedProject?.project_name || equipment.current_site_name || 'Deployed'}
+                    </p>
+                    {deployedProject?.project_code && (
+                      <p className="text-[10px] text-emerald-500 mt-0.5">{deployedProject.project_code}</p>
+                    )}
+                    {equipment.current_site_name && (
+                      <p className="text-[10px] text-slate-500 mt-0.5">📍 {equipment.current_site_name}</p>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-500 italic">Not deployed</p>
+                )}
+              </div>
+
+              {/* Insurance */}
+              <div className="bg-dark-800 rounded-xl p-3">
+                <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-1">Insurance</p>
+                {insuranceDoc ? (
+                  <div>
+                    {insuranceDoc.reference_number && (
+                      <p className="text-xs text-primary-400 font-mono truncate">{insuranceDoc.reference_number}</p>
+                    )}
+                    {insuranceDoc.expiry_date && (() => {
+                      const days = differenceInDays(new Date(insuranceDoc.expiry_date), new Date())
+                      return (
+                        <p className={`text-xs font-medium mt-0.5 ${days < 0 ? 'text-red-400' : days < 30 ? 'text-orange-400' : 'text-emerald-400'}`}>
+                          {days < 0 ? '⚠ Expired' : `Exp: ${format(new Date(insuranceDoc.expiry_date), 'dd MMM yyyy')}`}
+                        </p>
+                      )
+                    })()}
+                    {!insuranceDoc.reference_number && !insuranceDoc.expiry_date && (
+                      <p className="text-xs text-slate-300">Policy uploaded</p>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-500 italic">No policy</p>
+                )}
+              </div>
+
+              {/* Next Service */}
+              <div className="bg-dark-800 rounded-xl p-3">
+                <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-1">Next Service</p>
+                {serviceHrsRemaining !== null ? (
+                  <div>
+                    <p className={`text-sm font-bold ${serviceHrsRemaining < 50 ? 'text-orange-400' : 'text-emerald-400'}`}>
+                      {serviceHrsRemaining > 0 ? `${serviceHrsRemaining.toFixed(0)} hrs` : 'Overdue'}
+                    </p>
+                    <p className="text-[10px] text-slate-500">
+                      {serviceHrsRemaining < 0 ? `by ${Math.abs(serviceHrsRemaining).toFixed(0)} hrs` : 'remaining'}
+                    </p>
+                  </div>
+                ) : equipment.next_service_date ? (
+                  <p className="text-xs text-slate-300">{format(new Date(equipment.next_service_date), 'dd MMM yyyy')}</p>
+                ) : (
+                  <p className="text-xs text-slate-500 italic">Not set</p>
+                )}
+              </div>
+            </div>
+
+            {/* Physical Attachments */}
+            <AttachmentsSection equipment={equipment} companyId={companyId} isAdmin={isAdmin} />
+          </div>
+
+          {/* RIGHT — Stacked: Site Operations + Equipment Availability */}
+          <div className="flex flex-col gap-3">
+
+            {/* Site Operations */}
+            <div className="bg-dark-700 rounded-xl p-3 flex-1">
+              <p className="text-xs font-semibold text-slate-300 uppercase tracking-wider mb-3">Site Operations</p>
+              <div className="space-y-2">
+                <button onClick={() => setModal('fuel')}
+                  className="w-full flex items-center gap-2.5 py-2.5 px-3 rounded-xl bg-dark-800 border border-dark-600 hover:border-yellow-500 text-slate-200 text-xs font-medium transition-colors">
+                  <Fuel className="w-4 h-4 text-yellow-400 shrink-0" /> Log Fuel
+                </button>
+                <button onClick={() => setModal('incident')}
+                  className="w-full flex items-center gap-2.5 py-2.5 px-3 rounded-xl bg-dark-800 border border-dark-600 hover:border-orange-500 text-slate-200 text-xs font-medium transition-colors">
+                  <AlertTriangle className="w-4 h-4 text-orange-400 shrink-0" /> Report Incident
+                </button>
+              </div>
+
+              {openIncidents.length > 0 && (
+                <div className="mt-3 pt-3 border-t border-dark-600">
+                  <p className="text-xs text-red-400 font-semibold">⚠ {openIncidents.length} Open Incident{openIncidents.length > 1 ? 's' : ''}</p>
+                  {openIncidents.slice(0, 2).map(i => (
+                    <p key={i.id} className="text-[10px] text-slate-400 mt-1 truncate">
+                      · {INCIDENT_OPTIONS.find(t => t.value === i.incident_type)?.label || i.incident_type}
+                    </p>
+                  ))}
+                </div>
               )}
 
-              <button onClick={handleSaveSchedule} disabled={scheduleSaving}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary-600 hover:bg-primary-500 text-white text-xs font-medium disabled:opacity-40 transition-colors">
-                {scheduleSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-                {scheduleSaving ? 'Saving…' : shiftSchedule ? 'Update Schedule' : 'Save Schedule'}
-              </button>
+              {assignments.length > 0 && (
+                <div className="mt-3 pt-3 border-t border-dark-600">
+                  <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Assigned Operators</p>
+                  <div className="space-y-1.5">
+                    {assignments.map(a => {
+                      const shiftEmoji = { day: '☀️', night: '🌙', double: '🔄' }[a.shift_type] || '☀️'
+                      return (
+                        <div key={a.id} className="flex items-center gap-1.5 text-xs text-slate-300">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
+                          <span className="truncate flex-1">{a.operator_name}</span>
+                          <span className="shrink-0 text-[10px]">{shiftEmoji}</span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Equipment Availability */}
+            <div className="bg-dark-700 rounded-xl p-3 flex-1">
+              <p className="text-xs font-semibold text-slate-300 uppercase tracking-wider mb-3">Equipment Availability</p>
+              <div className="flex items-center gap-2 mb-3">
+                <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+                  equipment.status === 'active'      ? 'bg-emerald-400' :
+                  equipment.status === 'breakdown'   ? 'bg-red-400' :
+                  equipment.status === 'maintenance' ? 'bg-orange-400' : 'bg-slate-400'
+                }`} />
+                <span className="text-sm font-semibold text-slate-100">{st.label}</span>
+              </div>
+
+              {equipment.current_project_id ? (
+                <div className="bg-emerald-900/20 border border-emerald-700/30 rounded-lg px-2.5 py-2">
+                  <p className="text-[10px] text-emerald-500 uppercase tracking-wider mb-0.5">On Deployment</p>
+                  <p className="text-xs text-emerald-300 font-medium leading-tight truncate">
+                    {deployedProject?.project_name || equipment.current_site_name || 'Active Project'}
+                  </p>
+                </div>
+              ) : (
+                <div className="bg-dark-800 rounded-lg px-2.5 py-2">
+                  <p className="text-xs text-slate-400">Available for deployment</p>
+                </div>
+              )}
+
+              {fuelStats && Number(fuelStats.totalLitres) > 0 && (
+                <div className="mt-3 pt-3 border-t border-dark-600">
+                  <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-1">Fuel Consumed</p>
+                  <p className="text-sm font-bold text-yellow-400">{fuelStats.totalLitres} L</p>
+                  {fuelStats.totalAmount > 0 && (
+                    <p className="text-xs text-slate-400">₹{Number(fuelStats.totalAmount).toLocaleString('en-IN')}</p>
+                  )}
+                </div>
+              )}
             </div>
           </div>
+        </div>
+
+        {/* ══ Tab Bar ═══════════════════════════════════════════════════════════ */}
+        <div className="flex border-b border-dark-600 overflow-x-auto -mb-1">
+          {[
+            { id: 'deployment',     label: 'Deployment'     },
+            { id: 'maintenance',    label: 'Maintenance'    },
+            { id: 'operator_log',   label: 'Operator Log'   },
+            { id: 'shift_schedule', label: 'Shift Schedule' },
+            { id: 'pl',             label: 'Equipment P&L'  },
+            { id: 'remarks',        label: 'Remarks'        },
+          ].map(t => (
+            <button key={t.id} onClick={() => setDetailTab(t.id)}
+              className={`shrink-0 px-4 py-2.5 text-xs font-medium border-b-2 transition-colors whitespace-nowrap ${
+                detailTab === t.id
+                  ? 'border-primary-500 text-primary-300'
+                  : 'border-transparent text-slate-500 hover:text-slate-300'
+              }`}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {/* ══ Tab Content ═══════════════════════════════════════════════════════ */}
+
+        {/* ── DEPLOYMENT TAB ── */}
+        {detailTab === 'deployment' && (
+          <div className="space-y-4 pt-1">
+            {/* Current deployment summary — all roles */}
+            {equipment.current_project_id && (
+              <div className="bg-emerald-900/20 border border-emerald-700/30 rounded-xl p-4 space-y-2">
+                <div className="flex items-start gap-2">
+                  <Activity className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-semibold text-emerald-300">
+                      {deployedProject?.project_name || equipment.current_site_name || 'Deployed Project'}
+                      {deployedProject?.project_code && (
+                        <span className="text-xs text-emerald-500 ml-2">{deployedProject.project_code}</span>
+                      )}
+                    </p>
+                    {equipment.current_site_name && (
+                      <p className="text-xs text-slate-400 mt-0.5">📍 {equipment.current_site_name}</p>
+                    )}
+                  </div>
+                </div>
+                {projectContacts.length > 0 && (
+                  <div className="border-t border-emerald-700/20 pt-2 space-y-1.5">
+                    <p className="text-xs text-slate-500 uppercase tracking-wider font-medium">Project Contacts</p>
+                    {projectContacts.map((c, i) => (
+                      <div key={i} className="flex items-center justify-between text-xs">
+                        <div>
+                          <span className="text-slate-200 font-medium">{c.name}</span>
+                          <span className="text-slate-500 ml-2">· {c.role}</span>
+                        </div>
+                        <div className="flex items-center gap-3 text-slate-400">
+                          {c.phone && <span className="flex items-center gap-1"><Phone className="w-3 h-3" />{c.phone}</span>}
+                          {c.email && <span className="flex items-center gap-1"><Mail className="w-3 h-3" />{c.email}</span>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Admin: deploy form + operators */}
+            {isAdmin && (
+              <div className="border border-dark-600 rounded-xl overflow-hidden">
+                <div className="bg-dark-700 px-4 py-2.5 flex items-center gap-2">
+                  <Shield className="w-4 h-4 text-primary-400" />
+                  <span className="text-xs font-semibold text-slate-300 uppercase tracking-wider">Operations Setup</span>
+                </div>
+
+                {/* Deploy form */}
+                <div className="p-4 space-y-2.5 border-b border-dark-600">
+                  <p className="text-xs font-medium text-slate-400 flex items-center gap-1.5">
+                    <Building2 className="w-3.5 h-3.5" /> Deploy to Client / Project
+                  </p>
+                  {equipment.current_site_name && (
+                    <div className="bg-emerald-900/20 border border-emerald-700/30 rounded-lg px-2.5 py-1.5 text-xs text-emerald-300">
+                      ✓ Currently: {equipment.current_site_name}
+                    </div>
+                  )}
+                  <select className={inp('text-xs')} value={deployClientId}
+                    onChange={e => { setDeployClientId(e.target.value); setDeployProjectId('') }}>
+                    <option value="">Select client…</option>
+                    {clients.map(c => <option key={c.id} value={c.id}>{c.display_name || c.business_name}</option>)}
+                  </select>
+                  {deployClientId && (
+                    <select className={inp('text-xs')} value={deployProjectId} onChange={e => setDeployProjectId(e.target.value)}>
+                      <option value="">Select project…</option>
+                      {projects.map(p => <option key={p.id} value={p.id}>{p.project_code ? `${p.project_code} — ` : ''}{p.project_name}</option>)}
+                    </select>
+                  )}
+                  <input className={inp('text-xs')} value={deploySiteName} onChange={e => setDeploySiteName(e.target.value)}
+                    placeholder="Site name (optional, e.g. Phase 2 — North Block)" />
+
+                  {deployProjectId && rateItems.length > 0 && (
+                    <div className="bg-dark-750 border border-dark-500 rounded-lg p-2.5 space-y-2">
+                      <p className="text-xs text-slate-400 font-medium">Select applicable rate item:</p>
+                      <select
+                        className="w-full bg-dark-700 border border-dark-500 rounded-lg px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-primary-500"
+                        value={deployRateItemId}
+                        onChange={e => setDeployRateItemId(e.target.value)}>
+                        <option value="">— None / Enter manually later —</option>
+                        {(matchedRates.length > 0 ? matchedRates : rateItems).map(r => (
+                          <option key={r.id} value={r.id}>
+                            {r.item_name}
+                            {r.billing_basis === 'monthly' ? ` — ₹${r.rate_per_month}/mo` : r.billing_basis === 'hourly' ? ` — ₹${r.rate_per_hour}/hr` : ` — ₹${r.rate_per_day}/day`}
+                            {matchedRates.includes(r) ? ' ✓' : ''}
+                          </option>
+                        ))}
+                      </select>
+                      {deployRateItemId && (() => {
+                        const r = rateItems.find(x => x.id === deployRateItemId)
+                        if (!r) return null
+                        return (
+                          <div className="text-[10px] text-slate-400 space-y-0.5">
+                            <p>Billing: <span className="text-slate-200 capitalize">{r.billing_basis}</span>
+                              {r.billing_basis === 'daily'   && r.max_hours_per_day   && ` · Max ${r.max_hours_per_day} hrs/day`}
+                              {r.billing_basis === 'monthly' && r.max_hours_per_month && ` · Max ${r.max_hours_per_month} hrs/mo`}
+                            </p>
+                            {r.ot_percentage && <p>OT: <span className="text-primary-300">{r.ot_percentage}% of pro-rata rate</span></p>}
+                          </div>
+                        )
+                      })()}
+                    </div>
+                  )}
+
+                  {deployProjectId && (
+                    <label className="flex items-center gap-2 cursor-pointer select-none">
+                      <div className={`w-8 h-4 rounded-full transition-colors relative ${deployFuelByClient ? 'bg-primary-500' : 'bg-dark-600'}`}
+                        onClick={() => setDeployFuelByClient(v => !v)}>
+                        <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full shadow transition-transform ${deployFuelByClient ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                      </div>
+                      <span className="text-xs text-slate-300">Fuel supplied by client</span>
+                      {deployFuelByClient && (
+                        <span className="text-[10px] text-amber-400 bg-amber-900/20 border border-amber-700/30 rounded px-1.5 py-0.5">
+                          Fuel costs excluded from our P&amp;L
+                        </span>
+                      )}
+                    </label>
+                  )}
+
+                  {deployProjectId && (
+                    <div className="bg-dark-750 border border-dark-500 rounded-lg p-3 space-y-2.5">
+                      <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Deployment Record</p>
+                      <div>
+                        <label className="text-[10px] text-slate-500 uppercase tracking-wider">Hour Meter at Deployment</label>
+                        <input type="number" min="0" step="0.1" className={inp('text-xs mt-1')}
+                          value={deployHourMeter} onChange={e => setDeployHourMeter(e.target.value)}
+                          placeholder={`Current: ${equipment.current_meter_reading || 0} hrs`} />
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-slate-500 uppercase tracking-wider">Operator at Deployment</label>
+                        <select className={inp('text-xs mt-1')} value={deployOperatorName} onChange={e => setDeployOperatorName(e.target.value)}>
+                          <option value="">Select operator…</option>
+                          {hrOperators.map(e => <option key={e.id} value={e.name}>{e.name}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-slate-500 uppercase tracking-wider">Site In-charge</label>
+                        <input className={inp('text-xs mt-1')} value={deploySiteIncharge}
+                          onChange={e => setDeploySiteIncharge(e.target.value)}
+                          placeholder="Name of person responsible at site" />
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-slate-500 uppercase tracking-wider">Work Order / PO / Contract Ref</label>
+                        <input className={inp('text-xs mt-1')} value={deployWorkOrderRef}
+                          onChange={e => setDeployWorkOrderRef(e.target.value)}
+                          placeholder="e.g. WO-2026-042 or HC-001" />
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-slate-500 uppercase tracking-wider">Machine Photo</label>
+                        <CameraButton companyId={companyId} label={`deploy_machine_${equipment.id}`}
+                          photoUrl={deployMachinePhotoUrl} onCapture={setDeployMachinePhotoUrl} location={deployGpsLoc} />
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-slate-500 uppercase tracking-wider">
+                          Hour Meter Photo <span className="normal-case text-slate-600">(optional)</span>
+                        </label>
+                        <CameraButton companyId={companyId} label={`deploy_meter_${equipment.id}`}
+                          photoUrl={deployMeterPhotoUrl} onCapture={setDeployMeterPhotoUrl} location={deployGpsLoc} />
+                      </div>
+                      <GPSField location={deployGpsLoc} loading={deployGpsLoading} />
+                    </div>
+                  )}
+
+                  <button onClick={handleDeploy} disabled={deploySaving || !deployProjectId}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary-600 hover:bg-primary-500 text-white text-xs font-medium disabled:opacity-40 transition-colors">
+                    {deploySaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                    {deploySaving ? 'Saving…' : 'Save Deployment'}
+                  </button>
+                </div>
+
+                {/* Operators */}
+                <div className="p-4 space-y-2">
+                  <p className="text-xs font-medium text-slate-400 flex items-center gap-1.5">
+                    <Users className="w-3.5 h-3.5" /> Assigned Operators
+                    <span className="text-slate-600 font-normal ml-1">· from HR module</span>
+                  </p>
+                  <p className="text-[10px] text-slate-600">📱 = has portal login</p>
+                  {assignments.length === 0 ? (
+                    <p className="text-xs text-slate-500 italic">No operators assigned yet</p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {assignments.map(a => {
+                        const hr = hrOperators.find(e => e.name === a.operator_name)
+                        const shiftLabel = { day: '☀️ Day', night: '🌙 Night', double: '🔄 Double' }[a.shift_type] || '☀️ Day'
+                        return (
+                          <div key={a.id} className="flex items-center justify-between rounded-lg px-2.5 py-1.5 bg-dark-700">
+                            <div className="flex-1 min-w-0">
+                              <span className="text-xs text-slate-200">{a.operator_name}</span>
+                              {hr && <span className="text-[10px] text-slate-500 ml-2">{hr.employee_number}</span>}
+                              {(hr?.user_id || a.user_id) && <span className="text-[10px] text-slate-400 ml-1">📱</span>}
+                              <span className="text-[10px] text-slate-500 ml-2">{shiftLabel}</span>
+                            </div>
+                            <button onClick={() => handleRemoveOperator(a.id, a.operator_name)}
+                              className="p-1 text-slate-500 hover:text-red-400 transition-colors shrink-0">
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                  {(() => {
+                    const assignedNames = new Set(assignments.map(a => a.operator_name))
+                    const available = hrOperators.filter(e => !assignedNames.has(e.name))
+                    if (hrOperators.length === 0) return (
+                      <p className="text-xs text-amber-400/80 bg-amber-900/20 border border-amber-700/30 rounded-lg px-2.5 py-2">
+                        No operators in HR module. Add employees with Operator/Driver designation first.
+                      </p>
+                    )
+                    return (
+                      <div className="space-y-1.5">
+                        <select
+                          className="w-full bg-dark-700 border border-dark-600 rounded-lg px-2.5 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-primary-500"
+                          value={newOperator}
+                          onChange={e => setNewOperator(e.target.value)}>
+                          <option value="">Select operator from HR…</option>
+                          {available.map(e => (
+                            <option key={e.id} value={e.id}>{e.name} — {e.designation}{e.user_id ? ' 📱' : ''}</option>
+                          ))}
+                        </select>
+                        {newOperator && !hrOperators.find(e => e.id === newOperator)?.user_id && (
+                          <p className="text-[10px] text-amber-400">⚠️ No portal login — operator won't appear in Operator Portal until account created in HR → Employee Logins</p>
+                        )}
+                        <div className="flex gap-2">
+                          <select
+                            className="flex-1 bg-dark-700 border border-dark-600 rounded-lg px-2.5 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-primary-500"
+                            value={newShiftType}
+                            onChange={e => setNewShiftType(e.target.value)}>
+                            <option value="day">☀️ Day Shift</option>
+                            <option value="night">🌙 Night Shift</option>
+                            <option value="double">🔄 Double Shift</option>
+                          </select>
+                          <button onClick={handleAddOperator} disabled={operatorSaving || !newOperator}
+                            className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-dark-600 border border-dark-500 hover:border-primary-500 text-xs text-slate-300 disabled:opacity-40 transition-colors shrink-0">
+                            {operatorSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />} Assign
+                          </button>
+                        </div>
+                      </div>
+                    )
+                  })()}
+                </div>
+              </div>
+            )}
+          </div>
         )}
+
+        {/* ── MAINTENANCE TAB ── */}
+        {detailTab === 'maintenance' && (
+          <div className="space-y-4 pt-1">
+            {openIncidents.length > 0 && (
+              <div className="bg-red-900/20 border border-red-700/30 rounded-xl p-4">
+                <p className="text-sm font-semibold text-red-400 mb-2">
+                  ⚠ {openIncidents.length} Open Incident{openIncidents.length > 1 ? 's' : ''}
+                </p>
+                {openIncidents.map(i => (
+                  <p key={i.id} className="text-xs text-slate-300">
+                    · {INCIDENT_OPTIONS.find(t => t.value === i.incident_type)?.label || i.incident_type}
+                    {i.description && ` — ${i.description.slice(0, 80)}`}
+                  </p>
+                ))}
+              </div>
+            )}
+
+            {(equipment.last_service_date || equipment.next_service_date || equipment.next_service_meter) ? (
+              <div className="border border-dark-600 rounded-xl overflow-hidden">
+                <div className="bg-dark-700 px-4 py-2.5 flex items-center gap-2">
+                  <Wrench className="w-4 h-4 text-slate-400" />
+                  <span className="text-xs font-semibold text-slate-300 uppercase tracking-wider">Service Schedule</span>
+                </div>
+                <div className="p-4 space-y-2 text-xs">
+                  {equipment.last_service_date && (
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Last service</span>
+                      <span className="text-slate-200 font-medium">
+                        {format(new Date(equipment.last_service_date), 'dd MMM yyyy')}
+                        {equipment.last_service_meter ? ` · ${equipment.last_service_meter} hrs` : ''}
+                      </span>
+                    </div>
+                  )}
+                  {equipment.service_interval_hrs && (
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Service interval</span>
+                      <span className="text-slate-300">Every {equipment.service_interval_hrs} hrs</span>
+                    </div>
+                  )}
+                  {equipment.next_service_meter && (
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Next service due at</span>
+                      <span className={`font-medium ${serviceHrsRemaining !== null && serviceHrsRemaining < 50 ? 'text-orange-400' : 'text-emerald-400'}`}>
+                        {equipment.next_service_meter} hrs
+                        {serviceHrsRemaining !== null && ` (${serviceHrsRemaining > 0 ? `${serviceHrsRemaining.toFixed(0)} hrs away` : `Overdue by ${Math.abs(serviceHrsRemaining).toFixed(0)} hrs`})`}
+                      </span>
+                    </div>
+                  )}
+                  {equipment.next_service_date && (
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Next service date</span>
+                      <span className="text-slate-200">{format(new Date(equipment.next_service_date), 'dd MMM yyyy')}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="bg-dark-700/50 rounded-xl border border-dashed border-dark-600 p-6 text-center">
+                <Wrench className="w-8 h-8 text-slate-600 mx-auto mb-2" />
+                <p className="text-sm text-slate-500">No service schedule set</p>
+                <p className="text-xs text-slate-600 mt-1">Edit the equipment to add service interval and dates</p>
+              </div>
+            )}
+
+            {equipment.ownership_type !== 'own' && (
+              <div className="border border-dark-600 rounded-xl overflow-hidden">
+                <div className="bg-dark-700 px-4 py-2.5 flex items-center gap-2">
+                  <Building2 className="w-4 h-4 text-slate-400" />
+                  <span className="text-xs font-semibold text-slate-300 uppercase tracking-wider">Ownership Details</span>
+                </div>
+                <div className="p-4 space-y-1.5 text-xs">
+                  {equipment.owner_name && (
+                    <div className="flex items-center gap-2">
+                      <User className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                      <span className="text-slate-200">{equipment.owner_name}</span>
+                      {equipment.ownership_type === 'hired' && <span className="text-slate-500">(Owner/Vendor)</span>}
+                    </div>
+                  )}
+                  {equipment.owner_contact && (
+                    <div className="flex items-center gap-2">
+                      <Phone className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                      <span className="text-slate-300">{equipment.owner_contact}</span>
+                    </div>
+                  )}
+                  {equipment.ownership_type === 'hired' && (equipment.hire_start_date || equipment.hire_end_date) && (
+                    <div className="flex items-center gap-2">
+                      <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                      <span className="text-slate-300">
+                        Hire: {equipment.hire_start_date ? format(new Date(equipment.hire_start_date), 'dd MMM yyyy') : '—'}
+                        {' → '}{equipment.hire_end_date ? format(new Date(equipment.hire_end_date), 'dd MMM yyyy') : '—'}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── OPERATOR LOG TAB ── */}
+        {detailTab === 'operator_log' && (
+          <div className="space-y-4 pt-1">
+            {fuelStats && Number(fuelStats.totalLitres) > 0 && (
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-dark-700 rounded-xl p-3.5">
+                  <p className="text-xs text-slate-400">Total Fuel Consumed</p>
+                  <p className="text-2xl font-bold text-yellow-400 mt-0.5">
+                    {fuelStats.totalLitres} <span className="text-sm font-normal text-slate-400">L</span>
+                  </p>
+                </div>
+                {fuelStats.totalAmount > 0 && (
+                  <div className="bg-dark-700 rounded-xl p-3.5">
+                    <p className="text-xs text-slate-400">Total Fuel Cost</p>
+                    <p className="text-2xl font-bold text-primary-300 mt-0.5">
+                      ₹{Number(fuelStats.totalAmount).toLocaleString('en-IN')}
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+            {recentFuel.length > 0 ? (
+              <div>
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Recent Fuel Entries</p>
+                <div className="space-y-2">
+                  {recentFuel.map(f => (
+                    <div key={f.id} className="bg-dark-700 rounded-xl px-4 py-3 text-xs flex items-center justify-between">
+                      <div>
+                        <span className="text-slate-200 font-semibold">{f.quantity_liters} L</span>
+                        {f.vendor_name && <span className="text-slate-400 ml-2">· {f.vendor_name}</span>}
+                        {f.delivered_by_name && <span className="text-slate-500 ml-2">By {f.delivered_by_name}</span>}
+                        {f.created_at && (
+                          <p className="text-slate-600 mt-0.5">{format(new Date(f.created_at), 'dd MMM yyyy')}</p>
+                        )}
+                      </div>
+                      {f.total_amount && (
+                        <span className="text-yellow-400 font-semibold">₹{Number(f.total_amount).toLocaleString('en-IN')}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="bg-dark-700/50 rounded-xl border border-dashed border-dark-600 p-8 text-center">
+                <Fuel className="w-8 h-8 text-slate-600 mx-auto mb-2" />
+                <p className="text-sm text-slate-500">No fuel entries yet</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── SHIFT SCHEDULE TAB ── */}
+        {detailTab === 'shift_schedule' && (
+          <div className="space-y-4 pt-1">
+            {isAdmin ? (
+              <>
+                <div className="flex gap-2">
+                  {[1, 2, 3].map(n => (
+                    <button key={n} type="button" onClick={() => setShiftCount(n)}
+                      className={`flex-1 py-2.5 rounded-xl border text-xs font-medium transition-all ${
+                        shiftCount === n
+                          ? 'border-primary-500 bg-primary-500/10 text-primary-300'
+                          : 'border-dark-600 bg-dark-700 text-slate-500 hover:text-slate-300'
+                      }`}>
+                      {n === 1 ? '☀️ Single' : n === 2 ? '☀️🌙 Double' : '☀️🌙🌒 Triple'}
+                    </button>
+                  ))}
+                </div>
+                <div className="space-y-2">
+                  {Array.from({ length: shiftCount }, (_, i) => i).map(i => (
+                    <div key={i} className="bg-dark-700 rounded-xl p-3 space-y-2">
+                      <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Shift {i + 1}</p>
+                      <div className="grid grid-cols-3 gap-2">
+                        <div>
+                          <p className="text-[10px] text-slate-500 mb-1">Name</p>
+                          <input
+                            className="w-full bg-dark-600 border border-dark-500 rounded-lg px-2 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-primary-500"
+                            value={shiftRows[i].label}
+                            onChange={e => setShiftRow(i, 'label', e.target.value)}
+                            placeholder={['Day', 'Night', 'Mid'][i]} />
+                        </div>
+                        <div>
+                          <p className="text-[10px] text-slate-500 mb-1">Start</p>
+                          <input type="time"
+                            className="w-full bg-dark-600 border border-dark-500 rounded-lg px-2 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-primary-500"
+                            value={shiftRows[i].start}
+                            onChange={e => setShiftRow(i, 'start', e.target.value)} />
+                        </div>
+                        <div>
+                          <p className="text-[10px] text-slate-500 mb-1">End</p>
+                          <input type="time"
+                            className="w-full bg-dark-600 border border-dark-500 rounded-lg px-2 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-primary-500"
+                            value={shiftRows[i].end}
+                            onChange={e => setShiftRow(i, 'end', e.target.value)} />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="bg-dark-700 rounded-xl px-4 py-3 space-y-2">
+                  <label className="flex items-center gap-2.5 cursor-pointer">
+                    <input type="checkbox" checked={alertEnabled} onChange={e => setAlertEnabled(e.target.checked)}
+                      className="w-4 h-4 rounded accent-primary-500" />
+                    <div>
+                      <p className="text-xs font-medium text-slate-200">Alert on late start / overdue end</p>
+                      <p className="text-[10px] text-slate-500">Notify when shift hasn't started or ended on time</p>
+                    </div>
+                  </label>
+                  {alertEnabled && (
+                    <div className="flex items-center gap-2 text-xs text-slate-400 pl-6">
+                      <span>Alert after</span>
+                      <input type="number" min="5" max="120" step="5"
+                        className="w-14 bg-dark-600 border border-dark-500 rounded-lg px-2 py-1 text-xs text-center text-slate-100 focus:outline-none focus:border-primary-500"
+                        value={graceMinutes} onChange={e => setGraceMinutes(e.target.value)} />
+                      <span>minutes past scheduled time</span>
+                    </div>
+                  )}
+                </div>
+                {shiftCount === 1 && (
+                  <p className="text-[10px] text-slate-500 italic">Single shift — no fixed time enforced. Operators can start anytime.</p>
+                )}
+                <button onClick={handleSaveSchedule} disabled={scheduleSaving}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary-600 hover:bg-primary-500 text-white text-xs font-medium disabled:opacity-40 transition-colors">
+                  {scheduleSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                  {scheduleSaving ? 'Saving…' : shiftSchedule ? 'Update Schedule' : 'Save Schedule'}
+                </button>
+              </>
+            ) : (
+              <div className="bg-dark-700/50 rounded-xl border border-dashed border-dark-600 p-8 text-center">
+                <Clock className="w-8 h-8 text-slate-600 mx-auto mb-2" />
+                <p className="text-sm text-slate-500">Admin access required to edit shift schedule</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── EQUIPMENT P&L TAB ── */}
+        {detailTab === 'pl' && (
+          <div className="pt-1 bg-dark-700/50 rounded-xl border border-dark-600 p-8 text-center">
+            <Activity className="w-10 h-10 text-primary-400 mx-auto mb-3" />
+            <p className="text-sm font-semibold text-slate-300 mb-1">Equipment P&amp;L</p>
+            <p className="text-xs text-slate-500">
+              Revenue vs. expenses tracking for {equipment.name} is available in the Fleet module's P&amp;L section.
+            </p>
+          </div>
+        )}
+
+        {/* ── REMARKS TAB ── */}
+        {detailTab === 'remarks' && (
+          <div className="space-y-4 pt-1">
+            <DocumentsSection equipment={equipment} companyId={companyId} isAdmin={isAdmin} />
+            {equipment.notes && (
+              <div className="bg-dark-700 rounded-xl p-4">
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Notes</p>
+                <p className="text-sm text-slate-300">{equipment.notes}</p>
+              </div>
+            )}
+          </div>
+        )}
+
       </Modal>
 
       {showEdit && (
