@@ -175,7 +175,7 @@ function GPSField({ location, loading }) {
 
 function Modal({ title, onClose, children, footer, wide = false }) {
   return (
-    <PagePanel title={title} onClose={onClose} footer={footer}>
+    <PagePanel title={title} onClose={onClose} footer={footer} maxWidth={wide ? 'max-w-none' : 'max-w-4xl'}>
       {children}
     </PagePanel>
   )
@@ -1723,7 +1723,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
       <Modal title={`${equipment.name}${equipment.equipment_number ? ` · ${equipment.equipment_number}` : ''}`} onClose={onClose} wide>
 
         {/* ══ TOP: Two-column summary panel ══════════════════════════════════════ */}
-        <div className="grid grid-cols-1 lg:grid-cols-[1fr_210px] gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-[1fr_260px] gap-4">
 
           {/* LEFT — Equipment Details */}
           <div className="bg-dark-700 rounded-xl p-4 space-y-4">
