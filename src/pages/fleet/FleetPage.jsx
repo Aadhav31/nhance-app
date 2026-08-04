@@ -1654,14 +1654,14 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
     },
   })
 
-  // All maintenance-type incidents (breakdown + maintenance) for the Maintenance tab
+  // Maintenance records from the dedicated maintenance_records table
   const { data: maintRecords = [], refetch: refetchMaint } = useQuery({
     queryKey: ['maint_records', equipment.id],
     queryFn: async () => {
-      const { data } = await supabase.from('shift_incidents').select('*')
+      const { data } = await supabase.from('maintenance_records')
+        .select('*, projects(project_name, project_code)')
         .eq('equipment_id', equipment.id)
-        .in('incident_type', ['breakdown', 'unscheduled_maintenance', 'regular_maintenance'])
-        .order('created_at', { ascending: false })
+        .order('service_date', { ascending: false })
       return data || []
     },
   })
@@ -2345,55 +2345,90 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
 
               {maintRecords.length === 0 ? (
                 <div className="p-6 text-center">
-                  <CheckCircle className="w-8 h-8 text-slateald-600 mx-auto mb-2" />
+                  <Wrench className="w-8 h-8 text-slate-600 mx-auto mb-2" />
                   <p className="text-sm text-slate-500">No maintenance records yet</p>
-                  <p className="text-xs text-slate-600 mt-1">Breakdown and maintenance incidents will appear here</p>
+                  <p className="text-xs text-slate-600 mt-1">Records added from the Maintenance page will appear here</p>
                 </div>
               ) : (
                 <div className="divide-y divide-dark-600">
                   {maintRecords.map(rec => {
-                    const typeInfo = INCIDENT_OPTIONS.find(o => o.value === rec.incident_type)
-                    const isBreakdown = rec.incident_type === 'breakdown'
-                    const isUnscheduled = rec.incident_type === 'unscheduled_maintenance'
-                    const dotColor = isBreakdown ? 'bg-red-400' : isUnscheduled ? 'bg-orange-400' : 'bg-blue-400'
-                    const textColor = isBreakdown ? 'text-red-400' : isUnscheduled ? 'text-orange-400' : 'text-blue-400'
-                    const mainText = rec.breakdown_cause || rec.description || '—'
+                    const MTYPE = {
+                      preventive:  { label: 'Preventive Maintenance', dot: 'bg-blue-400',   text: 'text-blue-400'   },
+                      breakdown:   { label: 'Breakdown Repair',        dot: 'bg-red-400',    text: 'text-red-400'    },
+                      accidental:  { label: 'Accidental Damage',       dot: 'bg-red-400',    text: 'text-red-400'    },
+                      overhaul:    { label: 'Overhaul',                dot: 'bg-orange-400', text: 'text-orange-400' },
+                      inspection:  { label: 'Inspection',              dot: 'bg-teal-400',   text: 'text-teal-400'   },
+                      other:       { label: 'Other',                   dot: 'bg-slate-400',  text: 'text-slate-400'  },
+                    }
+                    const mt = MTYPE[rec.maintenance_type] || MTYPE.other
+                    const statusPill = rec.status === 'completed'
+                      ? <span className="text-[10px] bg-emerald-500/15 text-emerald-600 px-1.5 py-0.5 rounded-full font-medium">Completed</span>
+                      : rec.status === 'in_progress'
+                      ? <span className="text-[10px] bg-blue-500/15 text-blue-500 px-1.5 py-0.5 rounded-full font-medium">In Progress</span>
+                      : <span className="text-[10px] bg-amber-500/15 text-amber-600 px-1.5 py-0.5 rounded-full font-medium">Open</span>
                     return (
-                      <div key={rec.id} className="px-4 py-3 flex flex-col gap-1.5">
+                      <div key={rec.id} className="px-4 py-3 space-y-2">
+                        {/* Header row */}
                         <div className="flex items-start justify-between gap-3">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <span className={`w-2 h-2 rounded-full shrink-0 mt-0.5 ${dotColor}`} />
-                            <span className={`text-xs font-semibold ${textColor}`}>{typeInfo?.label || rec.incident_type}</span>
-                            {rec.resolved
-                              ? <span className="text-[10px] bg-emerald-500/15 text-emerald-600 px-1.5 py-0.5 rounded-full font-medium">Resolved</span>
-                              : <span className="text-[10px] bg-red-500/15 text-red-500 px-1.5 py-0.5 rounded-full font-medium">Open</span>
-                            }
+                          <div className="flex items-center gap-2 flex-wrap min-w-0">
+                            <span className={`w-2 h-2 rounded-full shrink-0 ${mt.dot}`} />
+                            <span className={`text-xs font-semibold ${mt.text}`}>{mt.label}</span>
+                            {statusPill}
+                            {rec.priority === 'high' && (
+                              <span className="text-[10px] bg-red-500/10 text-red-400 px-1.5 py-0.5 rounded-full font-medium">High Priority</span>
+                            )}
                           </div>
                           <span className="text-[10px] text-slate-500 shrink-0">
-                            {format(new Date(rec.created_at), 'dd MMM yyyy')}
+                            {format(new Date(rec.service_date), 'dd MMM yyyy')}
                           </span>
                         </div>
-                        <p className="text-xs text-slate-300 ml-4 leading-relaxed">{mainText}</p>
-                        {rec.rectification_needed && (
-                          <p className="text-xs text-slate-500 ml-4 italic">Fix: {rec.rectification_needed}</p>
+
+                        {/* Description */}
+                        <p className="text-xs text-slate-300 ml-4 leading-relaxed">{rec.description}</p>
+
+                        {/* Technician */}
+                        {rec.technician_name && (
+                          <p className="text-xs text-slate-500 ml-4">
+                            🔧 {rec.technician_name}
+                            {rec.done_by === 'vendor' ? ' (Vendor)' : rec.done_by === 'inhouse' ? ' (In-house)' : ''}
+                          </p>
                         )}
-                        {rec.action_taken && (
-                          <p className="text-xs text-slate-500 ml-4 italic">Action: {rec.action_taken}</p>
+
+                        {/* Cost / downtime row */}
+                        {(rec.labour_cost > 0 || rec.total_cost > 0 || rec.downtime_hours > 0) && (
+                          <div className="ml-4 flex gap-4 text-xs">
+                            {rec.labour_cost > 0 && (
+                              <span className="text-slate-400">Labour <span className="text-slate-200 font-medium">₹{Number(rec.labour_cost).toLocaleString('en-IN')}</span></span>
+                            )}
+                            {rec.total_cost > 0 && (
+                              <span className="text-slate-400">Total <span className="text-primary-400 font-semibold">₹{Number(rec.total_cost).toLocaleString('en-IN')}</span></span>
+                            )}
+                            {rec.downtime_hours > 0 && (
+                              <span className="text-slate-400">Downtime <span className="text-orange-400 font-medium">{rec.downtime_hours}h</span></span>
+                            )}
+                          </div>
                         )}
-                        {isAdmin && !rec.resolved && (
+
+                        {/* Project */}
+                        {rec.projects?.project_name && (
+                          <p className="text-[10px] text-slate-500 ml-4">📍 {rec.projects.project_name}</p>
+                        )}
+
+                        {/* Mark Complete — admin only, open/in-progress records */}
+                        {isAdmin && rec.status !== 'completed' && (
                           <button
                             onClick={async () => {
-                              const { error } = await supabase.from('shift_incidents')
-                                .update({ resolved: true }).eq('id', rec.id)
+                              const { error } = await supabase.from('maintenance_records')
+                                .update({ status: 'completed', completed_date: new Date().toISOString().split('T')[0] })
+                                .eq('id', rec.id)
                               if (!error) {
-                                toast.success('Marked as resolved')
+                                toast.success('Marked as completed')
                                 refetchMaint()
-                                qc.invalidateQueries(['incidents', equipment.id])
-                              }
+                              } else toast.error(error.message)
                             }}
-                            className="ml-4 mt-0.5 self-start text-[11px] flex items-center gap-1 text-emerald-500 hover:text-emerald-400 transition-colors"
+                            className="ml-4 self-start text-[11px] flex items-center gap-1 text-emerald-500 hover:text-emerald-400 transition-colors"
                           >
-                            <CheckCircle className="w-3 h-3" /> Mark Resolved
+                            <CheckCircle className="w-3 h-3" /> Mark Complete
                           </button>
                         )}
                       </div>
