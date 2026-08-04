@@ -284,7 +284,7 @@ function StartShiftModal({ equipment, companyId, onClose }) {
     queryKey: ['equipment_assignments', equipment.id],
     queryFn: async () => {
       const { data } = await supabase.from('equipment_assignments')
-        .select('*').eq('equipment_id', equipment.id).eq('is_active', true).order('operator_name')
+        .select('*').eq('equipment_id', equipment.id).order('employee_name')
       return data || []
     },
   })
