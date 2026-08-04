@@ -1433,6 +1433,12 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
   const [graceMinutes,   setGraceMinutes]   = useState(30)
   const [scheduleSaving, setScheduleSaving] = useState(false)
 
+  // ── Maintenance module state ──────────────────────────────────────────────────
+  const [maintSubTab, setMaintSubTab] = useState('job_cards')
+  const [jcFilter,    setJcFilter]    = useState('all')
+  const [jcModal,     setJcModal]     = useState(null)  // null | {} (new) | job_card (edit)
+  const [pmModal,     setPmModal]     = useState(null)  // null | {} (new) | pm_schedule (edit)
+
   // ── Utilization calendar state ────────────────────────────────────────────────
   const [calMonth, setCalMonth] = useState(() => { const d = new Date(); d.setDate(1); return d })
   const [calSelectedDay, setCalSelectedDay] = useState(null) // 'YYYY-MM-DD' or null
@@ -1697,6 +1703,31 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
         .order('service_date', { ascending: false })
       return data || []
     },
+  })
+
+  const { data: pmSchedules = [], refetch: refetchPM } = useQuery({
+    queryKey: ['pm_schedules', equipment.id],
+    queryFn: async () => {
+      const { data } = await supabase.from('pm_schedules')
+        .select('*')
+        .eq('equipment_id', equipment.id)
+        .eq('is_active', true)
+        .order('interval_hours')
+      return data || []
+    },
+    enabled: detailTab === 'maintenance',
+  })
+
+  const { data: jobCards = [], refetch: refetchJC } = useQuery({
+    queryKey: ['job_cards', equipment.id],
+    queryFn: async () => {
+      const { data } = await supabase.from('job_cards')
+        .select('*, job_card_parts(*)')
+        .eq('equipment_id', equipment.id)
+        .order('opened_date', { ascending: false })
+      return data || []
+    },
+    enabled: detailTab === 'maintenance',
   })
 
   const { data: recentFuel = [] } = useQuery({
@@ -2374,190 +2405,376 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
 
         {/* ── MAINTENANCE TAB ── */}
         {detailTab === 'maintenance' && (
-          <div className="space-y-4 pt-1">
+          <div className="space-y-3 pt-1">
 
-            {/* ── Maintenance Records ── */}
-            <div className="border border-dark-600 rounded-xl overflow-hidden">
-              <div className="bg-dark-700 px-4 py-2.5 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <AlertTriangle className="w-4 h-4 text-slate-400" />
-                  <span className="text-xs font-semibold text-slate-300 uppercase tracking-wider">Maintenance Records</span>
-                </div>
-                <span className="text-xs text-slate-500">{maintRecords.length} record{maintRecords.length !== 1 ? 's' : ''}</span>
-              </div>
-
-              {maintRecords.length === 0 ? (
-                <div className="p-6 text-center">
-                  <Wrench className="w-8 h-8 text-slate-600 mx-auto mb-2" />
-                  <p className="text-sm text-slate-500">No maintenance records yet</p>
-                  <p className="text-xs text-slate-600 mt-1">Records added from the Maintenance page will appear here</p>
-                </div>
-              ) : (
-                <div className="divide-y divide-dark-600">
-                  {maintRecords.map(rec => {
-                    const MTYPE = {
-                      preventive:  { label: 'Preventive Maintenance', dot: 'bg-blue-400',   text: 'text-blue-400'   },
-                      breakdown:   { label: 'Breakdown Repair',        dot: 'bg-red-400',    text: 'text-red-400'    },
-                      accidental:  { label: 'Accidental Damage',       dot: 'bg-red-400',    text: 'text-red-400'    },
-                      overhaul:    { label: 'Overhaul',                dot: 'bg-orange-400', text: 'text-orange-400' },
-                      inspection:  { label: 'Inspection',              dot: 'bg-teal-400',   text: 'text-teal-400'   },
-                      other:       { label: 'Other',                   dot: 'bg-slate-400',  text: 'text-slate-400'  },
-                    }
-                    const mt = MTYPE[rec.maintenance_type] || MTYPE.other
-                    const statusPill = rec.status === 'completed'
-                      ? <span className="text-[10px] bg-emerald-500/15 text-emerald-600 px-1.5 py-0.5 rounded-full font-medium">Completed</span>
-                      : rec.status === 'in_progress'
-                      ? <span className="text-[10px] bg-blue-500/15 text-blue-500 px-1.5 py-0.5 rounded-full font-medium">In Progress</span>
-                      : <span className="text-[10px] bg-amber-500/15 text-amber-600 px-1.5 py-0.5 rounded-full font-medium">Open</span>
-                    return (
-                      <div key={rec.id} className="px-4 py-3 space-y-2">
-                        {/* Header row */}
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="flex items-center gap-2 flex-wrap min-w-0">
-                            <span className={`w-2 h-2 rounded-full shrink-0 ${mt.dot}`} />
-                            <span className={`text-xs font-semibold ${mt.text}`}>{mt.label}</span>
-                            {statusPill}
-                            {rec.priority === 'high' && (
-                              <span className="text-[10px] bg-red-500/10 text-red-400 px-1.5 py-0.5 rounded-full font-medium">High Priority</span>
-                            )}
-                          </div>
-                          <span className="text-[10px] text-slate-500 shrink-0">
-                            {format(new Date(rec.service_date), 'dd MMM yyyy')}
-                          </span>
-                        </div>
-
-                        {/* Description */}
-                        <p className="text-xs text-slate-300 ml-4 leading-relaxed">{rec.description}</p>
-
-                        {/* Technician */}
-                        {rec.technician_name && (
-                          <p className="text-xs text-slate-500 ml-4">
-                            🔧 {rec.technician_name}
-                            {rec.done_by === 'vendor' ? ' (Vendor)' : rec.done_by === 'inhouse' ? ' (In-house)' : ''}
-                          </p>
-                        )}
-
-                        {/* Cost / downtime row */}
-                        {(rec.labour_cost > 0 || rec.total_cost > 0 || rec.downtime_hours > 0) && (
-                          <div className="ml-4 flex gap-4 text-xs">
-                            {rec.labour_cost > 0 && (
-                              <span className="text-slate-400">Labour <span className="text-slate-200 font-medium">₹{Number(rec.labour_cost).toLocaleString('en-IN')}</span></span>
-                            )}
-                            {rec.total_cost > 0 && (
-                              <span className="text-slate-400">Total <span className="text-primary-400 font-semibold">₹{Number(rec.total_cost).toLocaleString('en-IN')}</span></span>
-                            )}
-                            {rec.downtime_hours > 0 && (
-                              <span className="text-slate-400">Downtime <span className="text-orange-400 font-medium">{rec.downtime_hours}h</span></span>
-                            )}
-                          </div>
-                        )}
-
-                        {/* Project */}
-                        {rec.projects?.project_name && (
-                          <p className="text-[10px] text-slate-500 ml-4">📍 {rec.projects.project_name}</p>
-                        )}
-
-                        {/* Mark Complete — admin only, open/in-progress records */}
-                        {isAdmin && rec.status !== 'completed' && (
-                          <button
-                            onClick={async () => {
-                              const { error } = await supabase.from('maintenance_records')
-                                .update({ status: 'completed', completed_date: new Date().toISOString().split('T')[0] })
-                                .eq('id', rec.id)
-                              if (!error) {
-                                toast.success('Marked as completed')
-                                refetchMaint()
-                              } else toast.error(error.message)
-                            }}
-                            className="ml-4 self-start text-[11px] flex items-center gap-1 text-emerald-500 hover:text-emerald-400 transition-colors"
-                          >
-                            <CheckCircle className="w-3 h-3" /> Mark Complete
-                          </button>
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
+            {/* Sub-tab bar */}
+            <div className="flex gap-0 border-b border-dark-600">
+              {[
+                { id: 'job_cards',    label: 'Job Cards'    },
+                { id: 'pm_schedules', label: 'PM Schedules' },
+                { id: 'history',      label: 'History'      },
+              ].map(t => {
+                const badge = t.id === 'job_cards' ? jobCards.filter(jc => jc.status !== 'closed').length : 0
+                return (
+                  <button key={t.id} onClick={() => setMaintSubTab(t.id)}
+                    className={`px-4 py-2.5 text-xs font-medium border-b-2 -mb-px transition-colors ${
+                      maintSubTab === t.id
+                        ? 'border-primary-500 text-primary-300'
+                        : 'border-transparent text-slate-500 hover:text-slate-300'
+                    }`}>
+                    {t.label}
+                    {badge > 0 && (
+                      <span className="ml-1.5 bg-primary-500/20 text-primary-400 text-[10px] px-1.5 py-0.5 rounded-full">
+                        {badge}
+                      </span>
+                    )}
+                  </button>
+                )
+              })}
             </div>
 
-            {(equipment.last_service_date || equipment.next_service_date || equipment.next_service_meter) ? (
-              <div className="border border-dark-600 rounded-xl overflow-hidden">
-                <div className="bg-dark-700 px-4 py-2.5 flex items-center gap-2">
-                  <Wrench className="w-4 h-4 text-slate-400" />
-                  <span className="text-xs font-semibold text-slate-300 uppercase tracking-wider">Service Schedule</span>
-                </div>
-                <div className="p-4 space-y-2 text-xs">
-                  {equipment.last_service_date && (
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">Last service</span>
-                      <span className="text-slate-200 font-medium">
-                        {format(new Date(equipment.last_service_date), 'dd MMM yyyy')}
-                        {equipment.last_service_meter ? ` · ${equipment.last_service_meter} hrs` : ''}
-                      </span>
-                    </div>
-                  )}
-                  {equipment.service_interval_hrs && (
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">Service interval</span>
-                      <span className="text-slate-300">Every {equipment.service_interval_hrs} hrs</span>
-                    </div>
-                  )}
-                  {equipment.next_service_meter && (
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">Next service due at</span>
-                      <span className={`font-medium ${serviceHrsRemaining !== null && serviceHrsRemaining < 50 ? 'text-orange-400' : 'text-emerald-400'}`}>
-                        {equipment.next_service_meter} hrs
-                        {serviceHrsRemaining !== null && ` (${serviceHrsRemaining > 0 ? `${serviceHrsRemaining.toFixed(0)} hrs away` : `Overdue by ${Math.abs(serviceHrsRemaining).toFixed(0)} hrs`})`}
-                      </span>
-                    </div>
-                  )}
-                  {equipment.next_service_date && (
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">Next service date</span>
-                      <span className="text-slate-200">{format(new Date(equipment.next_service_date), 'dd MMM yyyy')}</span>
-                    </div>
+            {/* ════ JOB CARDS ════ */}
+            {maintSubTab === 'job_cards' && (
+              <div className="space-y-3 pt-1">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div className="flex gap-1 flex-wrap">
+                    {['all', 'open', 'in_progress', 'closed'].map(s => (
+                      <button key={s} onClick={() => setJcFilter(s)}
+                        className={`px-2.5 py-1 text-[11px] rounded-lg font-medium transition-colors ${
+                          jcFilter === s
+                            ? 'bg-primary-600 text-white'
+                            : 'bg-dark-700 text-slate-400 hover:text-slate-200'
+                        }`}>
+                        {s === 'all' ? 'All' : s === 'in_progress' ? 'In Progress' : s.charAt(0).toUpperCase() + s.slice(1)}
+                        {s !== 'all' && (
+                          <span className="ml-1 opacity-60">({jobCards.filter(j => j.status === s).length})</span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                  {isAdmin && (
+                    <button onClick={() => setJcModal({})}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-600 hover:bg-primary-700 text-white text-xs font-medium rounded-lg transition-colors">
+                      <Plus className="w-3.5 h-3.5" /> New Job Card
+                    </button>
                   )}
                 </div>
-              </div>
-            ) : (
-              <div className="bg-dark-700/50 rounded-xl border border-dashed border-dark-600 p-6 text-center">
-                <Wrench className="w-8 h-8 text-slate-600 mx-auto mb-2" />
-                <p className="text-sm text-slate-500">No service schedule set</p>
-                <p className="text-xs text-slate-600 mt-1">Edit the equipment to add service interval and dates</p>
+
+                {(() => {
+                  const filtered = jcFilter === 'all' ? jobCards : jobCards.filter(j => j.status === jcFilter)
+                  if (filtered.length === 0) return (
+                    <div className="text-center py-10">
+                      <Wrench className="w-8 h-8 text-slate-600 mx-auto mb-2" />
+                      <p className="text-sm text-slate-500">{jcFilter === 'all' ? 'No job cards yet' : `No ${jcFilter.replace('_',' ')} job cards`}</p>
+                    </div>
+                  )
+                  return (
+                    <div className="space-y-2">
+                      {filtered.map(jc => {
+                        const SC = {
+                          open:        { label: 'Open',        cls: 'bg-amber-500/15 text-amber-400'     },
+                          in_progress: { label: 'In Progress', cls: 'bg-blue-500/15 text-blue-400'       },
+                          closed:      { label: 'Closed',      cls: 'bg-emerald-500/15 text-emerald-400' },
+                        }[jc.status] || { label: jc.status, cls: 'bg-slate-700 text-slate-400' }
+                        const TC = {
+                          pm_service:  { label: 'PM Service',  dot: 'bg-blue-400'   },
+                          breakdown:   { label: 'Breakdown',   dot: 'bg-red-400'    },
+                          unscheduled: { label: 'Unscheduled', dot: 'bg-orange-400' },
+                          inspection:  { label: 'Inspection',  dot: 'bg-teal-400'   },
+                        }[jc.jc_type] || { label: jc.jc_type, dot: 'bg-slate-400' }
+                        const parts = jc.job_card_parts || []
+                        return (
+                          <div key={jc.id} className="border border-dark-600 rounded-xl overflow-hidden">
+                            <div className="px-4 py-3 space-y-2">
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="text-xs font-mono text-primary-400 font-semibold">{jc.jc_number}</span>
+                                  <span className="flex items-center gap-1 text-[10px] text-slate-400">
+                                    <span className={`w-1.5 h-1.5 rounded-full ${TC.dot}`} />
+                                    {TC.label}
+                                  </span>
+                                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${SC.cls}`}>{SC.label}</span>
+                                </div>
+                                <div className="flex items-center gap-2 shrink-0">
+                                  <span className="text-[10px] text-slate-500">{format(new Date(jc.opened_date), 'dd MMM yyyy')}</span>
+                                  {isAdmin && (
+                                    <button onClick={() => setJcModal(jc)} className="text-slate-500 hover:text-primary-400 transition-colors">
+                                      <Edit2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                              {jc.complaint && <p className="text-xs text-slate-300 leading-relaxed">{jc.complaint}</p>}
+                              {jc.diagnosis && <p className="text-xs text-slate-400 italic">{jc.diagnosis}</p>}
+                              <div className="flex gap-4 text-xs flex-wrap">
+                                {jc.technician_name && <span className="text-slate-500">🔧 {jc.technician_name}{jc.done_by ? ` (${jc.done_by})` : ''}</span>}
+                                {jc.total_cost > 0 && <span className="text-slate-400">Total <span className="text-primary-400 font-semibold">₹{Number(jc.total_cost).toLocaleString('en-IN')}</span></span>}
+                                {jc.downtime_hours > 0 && <span className="text-slate-400">Downtime <span className="text-orange-400 font-medium">{jc.downtime_hours}h</span></span>}
+                              </div>
+                              {parts.length > 0 && (
+                                <div className="bg-dark-700/50 rounded-lg p-2 space-y-1">
+                                  <p className="text-[10px] text-slate-500 uppercase tracking-wider font-medium">Parts Used ({parts.length})</p>
+                                  {parts.map(p => (
+                                    <div key={p.id} className="flex justify-between text-[11px]">
+                                      <span className="text-slate-300">{p.part_name}{p.part_number ? ` · ${p.part_number}` : ''}</span>
+                                      <span className="text-slate-500">×{p.quantity}{p.total_cost > 0 ? ` · ₹${Number(p.total_cost).toLocaleString('en-IN')}` : ''}</span>
+                                    </div>
+                                  ))}
+                                  {jc.parts_cost > 0 && (
+                                    <div className="flex justify-between text-[11px] pt-1 border-t border-dark-600 font-medium">
+                                      <span className="text-slate-400">Parts total</span>
+                                      <span className="text-slate-200">₹{Number(jc.parts_cost).toLocaleString('en-IN')}</span>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )
+                })()}
+
+                {jcModal !== null && (
+                  <JobCardModal
+                    equipment={equipment}
+                    companyId={companyId}
+                    initialValues={jcModal}
+                    onClose={() => setJcModal(null)}
+                    onSaved={() => { refetchJC(); setJcModal(null) }}
+                  />
+                )}
               </div>
             )}
 
-            {equipment.ownership_type !== 'own' && (
-              <div className="border border-dark-600 rounded-xl overflow-hidden">
-                <div className="bg-dark-700 px-4 py-2.5 flex items-center gap-2">
-                  <Building2 className="w-4 h-4 text-slate-400" />
-                  <span className="text-xs font-semibold text-slate-300 uppercase tracking-wider">Ownership Details</span>
-                </div>
-                <div className="p-4 space-y-1.5 text-xs">
-                  {equipment.owner_name && (
-                    <div className="flex items-center gap-2">
-                      <User className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                      <span className="text-slate-200">{equipment.owner_name}</span>
-                      {equipment.ownership_type === 'hired' && <span className="text-slate-500">(Owner/Vendor)</span>}
-                    </div>
-                  )}
-                  {equipment.owner_contact && (
-                    <div className="flex items-center gap-2">
-                      <Phone className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                      <span className="text-slate-300">{equipment.owner_contact}</span>
-                    </div>
-                  )}
-                  {equipment.ownership_type === 'hired' && (equipment.hire_start_date || equipment.hire_end_date) && (
-                    <div className="flex items-center gap-2">
-                      <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                      <span className="text-slate-300">
-                        Hire: {equipment.hire_start_date ? format(new Date(equipment.hire_start_date), 'dd MMM yyyy') : '—'}
-                        {' → '}{equipment.hire_end_date ? format(new Date(equipment.hire_end_date), 'dd MMM yyyy') : '—'}
-                      </span>
-                    </div>
+            {/* ════ PM SCHEDULES ════ */}
+            {maintSubTab === 'pm_schedules' && (
+              <div className="space-y-3 pt-1">
+                <div className="flex justify-end">
+                  {isAdmin && (
+                    <button onClick={() => setPmModal({})}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-600 hover:bg-primary-700 text-white text-xs font-medium rounded-lg transition-colors">
+                      <Plus className="w-3.5 h-3.5" /> Add PM Schedule
+                    </button>
                   )}
                 </div>
+
+                {pmSchedules.length === 0 ? (
+                  <div className="text-center py-10">
+                    <BookOpen className="w-8 h-8 text-slate-600 mx-auto mb-2" />
+                    <p className="text-sm text-slate-500">No PM schedules defined</p>
+                    <p className="text-xs text-slate-600 mt-1">Add intervals like 250hr or 500hr service with task checklists</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {pmSchedules.map(pm => {
+                      const meter     = Number(equipment.current_meter_reading || 0)
+                      const due       = Number(pm.next_due_meter || 0)
+                      const remaining = pm.next_due_meter ? due - meter : null
+                      const overdue   = remaining !== null && remaining <= 0
+                      const nearDue   = remaining !== null && remaining > 0 && remaining <= 50
+                      const tasks     = Array.isArray(pm.tasks) ? pm.tasks : []
+                      return (
+                        <div key={pm.id} className={`border rounded-xl overflow-hidden ${overdue ? 'border-red-600/50' : nearDue ? 'border-orange-500/50' : 'border-dark-600'}`}>
+                          <div className={`px-4 py-2.5 flex items-center justify-between ${overdue ? 'bg-red-900/20' : nearDue ? 'bg-orange-900/15' : 'bg-dark-700'}`}>
+                            <div className="flex items-center gap-2">
+                              <Wrench className={`w-4 h-4 ${overdue ? 'text-red-400' : nearDue ? 'text-orange-400' : 'text-slate-400'}`} />
+                              <span className="text-xs font-semibold text-slate-200">{pm.schedule_name}</span>
+                              <span className="text-[10px] text-slate-500">Every {pm.interval_hours}hrs</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              {overdue  && <span className="text-[10px] bg-red-500/20 text-red-400 px-2 py-0.5 rounded-full font-medium">Overdue {Math.abs(remaining).toFixed(0)}hrs</span>}
+                              {nearDue  && <span className="text-[10px] bg-orange-500/20 text-orange-400 px-2 py-0.5 rounded-full font-medium">Due in {remaining.toFixed(0)}hrs</span>}
+                              {isAdmin && (
+                                <button onClick={() => setPmModal(pm)} className="text-slate-500 hover:text-primary-400 transition-colors">
+                                  <Edit2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                          <div className="px-4 py-3 space-y-2 text-xs">
+                            <div className="flex gap-6 flex-wrap">
+                              {pm.last_done_meter != null && (
+                                <div>
+                                  <p className="text-slate-500">Last done at</p>
+                                  <p className="text-slate-200 font-medium">
+                                    {pm.last_done_meter} hrs
+                                    {pm.last_done_date ? ` · ${format(new Date(pm.last_done_date), 'dd MMM yyyy')}` : ''}
+                                  </p>
+                                </div>
+                              )}
+                              {pm.next_due_meter != null && (
+                                <div>
+                                  <p className="text-slate-500">Next due at</p>
+                                  <p className={`font-medium ${overdue ? 'text-red-400' : nearDue ? 'text-orange-400' : 'text-emerald-400'}`}>
+                                    {pm.next_due_meter} hrs
+                                    {remaining !== null && ` (${overdue ? `overdue ${Math.abs(remaining).toFixed(0)}hrs` : `${remaining.toFixed(0)}hrs away`})`}
+                                  </p>
+                                </div>
+                              )}
+                            </div>
+                            {tasks.length > 0 && (
+                              <div className="space-y-1 pt-2 border-t border-dark-600">
+                                <p className="text-[10px] text-slate-500 uppercase tracking-wider font-medium">Checklist ({tasks.length})</p>
+                                {tasks.map((t, i) => (
+                                  <div key={i} className="flex items-start gap-2">
+                                    <span className="text-slate-600 mt-0.5 shrink-0">□</span>
+                                    <span className="text-slate-300">{typeof t === 'string' ? t : t.task}</span>
+                                    {t.required && <span className="text-[9px] bg-red-500/10 text-red-400 px-1 rounded shrink-0">req</span>}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                            {isAdmin && (overdue || nearDue) && (
+                              <button
+                                onClick={() => { setMaintSubTab('job_cards'); setJcModal({ jc_type: 'pm_service', pm_schedule_id: pm.id }) }}
+                                className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-600/80 hover:bg-primary-600 text-white text-[11px] font-medium rounded-lg transition-colors"
+                              >
+                                <Plus className="w-3 h-3" /> Raise Job Card for this PM
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+
+                {pmModal !== null && (
+                  <PMScheduleModal
+                    equipment={equipment}
+                    companyId={companyId}
+                    initialValues={pmModal}
+                    onClose={() => setPmModal(null)}
+                    onSaved={() => { refetchPM(); setPmModal(null) }}
+                  />
+                )}
+              </div>
+            )}
+
+            {/* ════ HISTORY ════ */}
+            {maintSubTab === 'history' && (
+              <div className="space-y-4 pt-1">
+                <div className="border border-dark-600 rounded-xl overflow-hidden">
+                  <div className="bg-dark-700 px-4 py-2.5 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <AlertTriangle className="w-4 h-4 text-slate-400" />
+                      <span className="text-xs font-semibold text-slate-300 uppercase tracking-wider">Maintenance Records</span>
+                    </div>
+                    <span className="text-xs text-slate-500">{maintRecords.length} record{maintRecords.length !== 1 ? 's' : ''}</span>
+                  </div>
+
+                  {maintRecords.length === 0 ? (
+                    <div className="p-6 text-center">
+                      <Wrench className="w-8 h-8 text-slate-600 mx-auto mb-2" />
+                      <p className="text-sm text-slate-500">No maintenance records yet</p>
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-dark-600">
+                      {maintRecords.map(rec => {
+                        const MTYPE = {
+                          preventive:  { label: 'Preventive Maintenance', dot: 'bg-blue-400',   text: 'text-blue-400'   },
+                          breakdown:   { label: 'Breakdown Repair',       dot: 'bg-red-400',    text: 'text-red-400'    },
+                          accidental:  { label: 'Accidental Damage',      dot: 'bg-red-400',    text: 'text-red-400'    },
+                          overhaul:    { label: 'Overhaul',               dot: 'bg-orange-400', text: 'text-orange-400' },
+                          inspection:  { label: 'Inspection',             dot: 'bg-teal-400',   text: 'text-teal-400'   },
+                          other:       { label: 'Other',                  dot: 'bg-slate-400',  text: 'text-slate-400'  },
+                        }
+                        const mt = MTYPE[rec.maintenance_type] || MTYPE.other
+                        const statusPill = rec.status === 'completed'
+                          ? <span className="text-[10px] bg-emerald-500/15 text-emerald-600 px-1.5 py-0.5 rounded-full font-medium">Completed</span>
+                          : rec.status === 'in_progress'
+                          ? <span className="text-[10px] bg-blue-500/15 text-blue-500 px-1.5 py-0.5 rounded-full font-medium">In Progress</span>
+                          : <span className="text-[10px] bg-amber-500/15 text-amber-600 px-1.5 py-0.5 rounded-full font-medium">Open</span>
+                        return (
+                          <div key={rec.id} className="px-4 py-3 space-y-2">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="flex items-center gap-2 flex-wrap min-w-0">
+                                <span className={`w-2 h-2 rounded-full shrink-0 ${mt.dot}`} />
+                                <span className={`text-xs font-semibold ${mt.text}`}>{mt.label}</span>
+                                {statusPill}
+                                {rec.priority === 'high' && (
+                                  <span className="text-[10px] bg-red-500/10 text-red-400 px-1.5 py-0.5 rounded-full font-medium">High Priority</span>
+                                )}
+                              </div>
+                              <span className="text-[10px] text-slate-500 shrink-0">
+                                {format(new Date(rec.service_date), 'dd MMM yyyy')}
+                              </span>
+                            </div>
+                            <p className="text-xs text-slate-300 ml-4 leading-relaxed">{rec.description}</p>
+                            {rec.technician_name && (
+                              <p className="text-xs text-slate-500 ml-4">
+                                🔧 {rec.technician_name}
+                                {rec.done_by === 'vendor' ? ' (Vendor)' : rec.done_by === 'inhouse' ? ' (In-house)' : ''}
+                              </p>
+                            )}
+                            {(rec.labour_cost > 0 || rec.total_cost > 0 || rec.downtime_hours > 0) && (
+                              <div className="ml-4 flex gap-4 text-xs">
+                                {rec.labour_cost > 0 && <span className="text-slate-400">Labour <span className="text-slate-200 font-medium">₹{Number(rec.labour_cost).toLocaleString('en-IN')}</span></span>}
+                                {rec.total_cost > 0 && <span className="text-slate-400">Total <span className="text-primary-400 font-semibold">₹{Number(rec.total_cost).toLocaleString('en-IN')}</span></span>}
+                                {rec.downtime_hours > 0 && <span className="text-slate-400">Downtime <span className="text-orange-400 font-medium">{rec.downtime_hours}h</span></span>}
+                              </div>
+                            )}
+                            {rec.projects?.project_name && (
+                              <p className="text-[10px] text-slate-500 ml-4">📍 {rec.projects.project_name}</p>
+                            )}
+                            {isAdmin && rec.status !== 'completed' && (
+                              <button
+                                onClick={async () => {
+                                  const { error } = await supabase.from('maintenance_records')
+                                    .update({ status: 'completed', completed_date: new Date().toISOString().split('T')[0] })
+                                    .eq('id', rec.id)
+                                  if (!error) { toast.success('Marked as completed'); refetchMaint() }
+                                  else toast.error(error.message)
+                                }}
+                                className="ml-4 self-start text-[11px] flex items-center gap-1 text-emerald-500 hover:text-emerald-400 transition-colors"
+                              >
+                                <CheckCircle className="w-3 h-3" /> Mark Complete
+                              </button>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Legacy service schedule from equipment fields */}
+                {(equipment.last_service_date || equipment.next_service_date || equipment.next_service_meter) && (
+                  <div className="border border-dark-600 rounded-xl overflow-hidden">
+                    <div className="bg-dark-700 px-4 py-2.5 flex items-center gap-2">
+                      <Wrench className="w-4 h-4 text-slate-400" />
+                      <span className="text-xs font-semibold text-slate-300 uppercase tracking-wider">Legacy Service Schedule</span>
+                    </div>
+                    <div className="p-4 space-y-2 text-xs">
+                      {equipment.last_service_date && (
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">Last service</span>
+                          <span className="text-slate-200 font-medium">
+                            {format(new Date(equipment.last_service_date), 'dd MMM yyyy')}
+                            {equipment.last_service_meter ? ` · ${equipment.last_service_meter} hrs` : ''}
+                          </span>
+                        </div>
+                      )}
+                      {equipment.next_service_meter && (
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">Next service due at</span>
+                          <span className={`font-medium ${serviceHrsRemaining !== null && serviceHrsRemaining < 50 ? 'text-orange-400' : 'text-emerald-400'}`}>
+                            {equipment.next_service_meter} hrs
+                            {serviceHrsRemaining !== null && ` (${serviceHrsRemaining > 0 ? `${serviceHrsRemaining.toFixed(0)} hrs away` : `Overdue by ${Math.abs(serviceHrsRemaining).toFixed(0)} hrs`})`}
+                          </span>
+                        </div>
+                      )}
+                      {equipment.next_service_date && (
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">Next service date</span>
+                          <span className="text-slate-200">{format(new Date(equipment.next_service_date), 'dd MMM yyyy')}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -3842,6 +4059,434 @@ function FuelTab({ companyId }) {
           onSaved={() => { setReplenishTankId(null); refetchTanks() }}
         />
       )}
+    </div>
+  )
+}
+
+// ── Job Card Modal ────────────────────────────────────────────────────────────
+function JobCardModal({ equipment, companyId, initialValues, onClose, onSaved }) {
+  const inp  = 'w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500'
+  const area = `${inp} resize-none`
+  const isEdit = !!initialValues?.id
+
+  const [jcType,       setJcType]       = useState(initialValues?.jc_type       || 'breakdown')
+  const [status,       setStatus]       = useState(initialValues?.status         || 'open')
+  const [complaint,    setComplaint]    = useState(initialValues?.complaint       || '')
+  const [diagnosis,    setDiagnosis]    = useState(initialValues?.diagnosis      || '')
+  const [workDone,     setWorkDone]     = useState(initialValues?.work_done      || '')
+  const [techName,     setTechName]     = useState(initialValues?.technician_name || '')
+  const [doneBy,       setDoneBy]       = useState(initialValues?.done_by        || 'inhouse')
+  const [vendorName,   setVendorName]   = useState(initialValues?.vendor_name    || '')
+  const [openedDate,   setOpenedDate]   = useState(initialValues?.opened_date    || today())
+  const [closedDate,   setClosedDate]   = useState(initialValues?.closed_date    || '')
+  const [meterAtOpen,  setMeterAtOpen]  = useState(initialValues?.meter_at_open  || equipment.current_meter_reading || '')
+  const [laborHours,   setLaborHours]   = useState(initialValues?.labor_hours    || '')
+  const [laborCost,    setLaborCost]    = useState(initialValues?.labor_cost     || '')
+  const [downtime,     setDowntime]     = useState(initialValues?.downtime_hours || '')
+  const [notes,        setNotes]        = useState(initialValues?.notes          || '')
+
+  // Parts
+  const [parts, setParts] = useState(initialValues?.job_card_parts || [])
+  const [newPart, setNewPart] = useState({ part_name: '', part_number: '', quantity: '1', unit_cost: '' })
+
+  const [saving, setSaving] = useState(false)
+
+  const addPart = () => {
+    if (!newPart.part_name.trim()) return
+    setParts(prev => [...prev, { ...newPart, _new: true, id: crypto.randomUUID() }])
+    setNewPart({ part_name: '', part_number: '', quantity: '1', unit_cost: '' })
+  }
+  const removePart = (id) => setParts(prev => prev.filter(p => p.id !== id))
+
+  const handleSave = async () => {
+    if (!complaint.trim() && !workDone.trim()) {
+      toast.error('Enter complaint or work done description')
+      return
+    }
+    setSaving(true)
+    try {
+      const payload = {
+        company_id:      companyId,
+        equipment_id:    equipment.id,
+        equipment_name:  equipment.equipment_name || equipment.name || '',
+        jc_type:         jcType,
+        status,
+        complaint:       complaint || null,
+        diagnosis:       diagnosis || null,
+        work_done:       workDone  || null,
+        technician_name: techName  || null,
+        done_by:         doneBy    || null,
+        vendor_name:     doneBy === 'vendor' ? (vendorName || null) : null,
+        opened_date:     openedDate,
+        closed_date:     closedDate || null,
+        meter_at_open:   meterAtOpen ? Number(meterAtOpen) : null,
+        labor_hours:     laborHours  ? Number(laborHours)  : null,
+        labor_cost:      laborCost   ? Number(laborCost)   : null,
+        downtime_hours:  downtime    ? Number(downtime)    : null,
+        notes:           notes       || null,
+        pm_schedule_id:  initialValues?.pm_schedule_id || null,
+        jc_number:       isEdit ? undefined : '',   // trigger generates it
+      }
+
+      let jcId = initialValues?.id
+      if (isEdit) {
+        const { error } = await supabase.from('job_cards').update(payload).eq('id', jcId)
+        if (error) throw error
+      } else {
+        const { data, error } = await supabase.from('job_cards').insert(payload).select('id').single()
+        if (error) throw error
+        jcId = data.id
+      }
+
+      // Sync parts: delete old and re-insert new for simplicity (small lists)
+      const newParts = parts.filter(p => p._new || !p.job_card_id)
+      const keepIds  = parts.filter(p => !p._new && p.job_card_id).map(p => p.id)
+
+      if (isEdit) {
+        // Delete removed parts
+        await supabase.from('job_card_parts')
+          .delete()
+          .eq('job_card_id', jcId)
+          .not('id', 'in', `(${keepIds.length ? keepIds.join(',') : "''"})`)
+      }
+
+      const partsToInsert = newParts.map(p => ({
+        job_card_id: jcId,
+        company_id:  companyId,
+        part_name:   p.part_name,
+        part_number: p.part_number || null,
+        quantity:    Number(p.quantity) || 1,
+        unit_cost:   p.unit_cost ? Number(p.unit_cost) : null,
+      }))
+      if (partsToInsert.length > 0) {
+        const { error } = await supabase.from('job_card_parts').insert(partsToInsert)
+        if (error) throw error
+      }
+
+      toast.success(isEdit ? 'Job card updated' : 'Job card created')
+      onSaved?.()
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+      <div className="bg-dark-800 border border-dark-600 rounded-2xl w-full max-w-lg max-h-[92vh] flex flex-col overflow-hidden">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-dark-600 shrink-0">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-100">{isEdit ? 'Edit Job Card' : 'New Job Card'}</h2>
+            <p className="text-xs text-slate-400 mt-0.5">{equipment.equipment_name || equipment.name}</p>
+          </div>
+          <button onClick={onClose} className="text-slate-500 hover:text-slate-300 transition-colors"><X className="w-5 h-5" /></button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto p-5 space-y-4">
+          {/* Type + Status */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">Type</label>
+              <select value={jcType} onChange={e => setJcType(e.target.value)} className={inp}>
+                <option value="breakdown">Breakdown</option>
+                <option value="pm_service">PM Service</option>
+                <option value="unscheduled">Unscheduled</option>
+                <option value="inspection">Inspection</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">Status</label>
+              <select value={status} onChange={e => setStatus(e.target.value)} className={inp}>
+                <option value="open">Open</option>
+                <option value="in_progress">In Progress</option>
+                <option value="closed">Closed</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Dates + Meter */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">Opened Date</label>
+              <input type="date" value={openedDate} onChange={e => setOpenedDate(e.target.value)} className={inp} />
+            </div>
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">Meter at Open (hrs)</label>
+              <input type="number" value={meterAtOpen} onChange={e => setMeterAtOpen(e.target.value)} placeholder={equipment.current_meter_reading || '0'} className={inp} />
+            </div>
+          </div>
+
+          {/* Complaint */}
+          <div>
+            <label className="block text-xs text-slate-400 mb-1">Complaint / Problem Reported</label>
+            <textarea rows={2} value={complaint} onChange={e => setComplaint(e.target.value)} placeholder="What did the operator report?" className={area} />
+          </div>
+
+          {/* Diagnosis */}
+          <div>
+            <label className="block text-xs text-slate-400 mb-1">Diagnosis</label>
+            <textarea rows={2} value={diagnosis} onChange={e => setDiagnosis(e.target.value)} placeholder="Workshop finding..." className={area} />
+          </div>
+
+          {/* Work Done */}
+          <div>
+            <label className="block text-xs text-slate-400 mb-1">Work Done</label>
+            <textarea rows={2} value={workDone} onChange={e => setWorkDone(e.target.value)} placeholder="Describe work carried out..." className={area} />
+          </div>
+
+          {/* Technician */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">Technician</label>
+              <input type="text" value={techName} onChange={e => setTechName(e.target.value)} placeholder="Technician name" className={inp} />
+            </div>
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">Done By</label>
+              <select value={doneBy} onChange={e => setDoneBy(e.target.value)} className={inp}>
+                <option value="inhouse">In-house</option>
+                <option value="vendor">Vendor</option>
+                <option value="oem">OEM</option>
+              </select>
+            </div>
+          </div>
+          {doneBy === 'vendor' && (
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">Vendor Name</label>
+              <input type="text" value={vendorName} onChange={e => setVendorName(e.target.value)} placeholder="Service vendor name" className={inp} />
+            </div>
+          )}
+
+          {/* Labor + Downtime */}
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">Labor Hours</label>
+              <input type="number" value={laborHours} onChange={e => setLaborHours(e.target.value)} placeholder="0" className={inp} />
+            </div>
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">Labor Cost (₹)</label>
+              <input type="number" value={laborCost} onChange={e => setLaborCost(e.target.value)} placeholder="0" className={inp} />
+            </div>
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">Downtime (hrs)</label>
+              <input type="number" value={downtime} onChange={e => setDowntime(e.target.value)} placeholder="0" className={inp} />
+            </div>
+          </div>
+
+          {/* Closed Date */}
+          {status === 'closed' && (
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">Closed Date</label>
+              <input type="date" value={closedDate} onChange={e => setClosedDate(e.target.value)} className={inp} />
+            </div>
+          )}
+
+          {/* Parts */}
+          <div>
+            <p className="text-xs font-semibold text-slate-300 mb-2">Parts Used</p>
+            {parts.length > 0 && (
+              <div className="space-y-1 mb-2">
+                {parts.map(p => (
+                  <div key={p.id} className="flex items-center gap-2 bg-dark-700/50 rounded-lg px-3 py-2 text-xs">
+                    <span className="flex-1 text-slate-200">{p.part_name}{p.part_number ? ` · ${p.part_number}` : ''}</span>
+                    <span className="text-slate-500">×{p.quantity}</span>
+                    {p.unit_cost > 0 && <span className="text-slate-400">₹{(Number(p.unit_cost) * Number(p.quantity)).toLocaleString('en-IN')}</span>}
+                    <button onClick={() => removePart(p.id)} className="text-red-400 hover:text-red-300 transition-colors">
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="grid grid-cols-12 gap-2">
+              <input type="text" value={newPart.part_name} onChange={e => setNewPart(p => ({ ...p, part_name: e.target.value }))} placeholder="Part name" className={`${inp} col-span-5`} />
+              <input type="text" value={newPart.part_number} onChange={e => setNewPart(p => ({ ...p, part_number: e.target.value }))} placeholder="P/N" className={`${inp} col-span-2`} />
+              <input type="number" value={newPart.quantity} onChange={e => setNewPart(p => ({ ...p, quantity: e.target.value }))} placeholder="Qty" className={`${inp} col-span-2`} />
+              <input type="number" value={newPart.unit_cost} onChange={e => setNewPart(p => ({ ...p, unit_cost: e.target.value }))} placeholder="₹/unit" className={`${inp} col-span-2`} />
+              <button onClick={addPart} className="col-span-1 flex items-center justify-center bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-colors">
+                <Plus className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+
+          {/* Notes */}
+          <div>
+            <label className="block text-xs text-slate-400 mb-1">Notes</label>
+            <textarea rows={2} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Additional notes..." className={area} />
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="flex gap-3 px-5 py-4 border-t border-dark-600 shrink-0">
+          <button onClick={onClose} className="flex-1 py-2 border border-dark-500 text-slate-300 text-sm rounded-xl hover:border-slate-400 transition-colors">Cancel</button>
+          <button onClick={handleSave} disabled={saving}
+            className="flex-1 py-2 bg-primary-600 hover:bg-primary-700 disabled:opacity-50 text-white text-sm font-medium rounded-xl transition-colors flex items-center justify-center gap-2">
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            {isEdit ? 'Update' : 'Create'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── PM Schedule Modal ─────────────────────────────────────────────────────────
+function PMScheduleModal({ equipment, companyId, initialValues, onClose, onSaved }) {
+  const inp  = 'w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500'
+  const isEdit = !!initialValues?.id
+
+  const [name,         setName]         = useState(initialValues?.schedule_name   || '')
+  const [interval,     setInterval]     = useState(initialValues?.interval_hours  || '')
+  const [lastMeter,    setLastMeter]    = useState(initialValues?.last_done_meter || '')
+  const [lastDate,     setLastDate]     = useState(initialValues?.last_done_date  || '')
+  const [nextMeter,    setNextMeter]    = useState(initialValues?.next_due_meter  || '')
+  const [notes,        setNotes]        = useState(initialValues?.notes           || '')
+  const [tasks,        setTasks]        = useState(() => {
+    const t = initialValues?.tasks
+    if (!t) return []
+    if (Array.isArray(t)) return t.map(item => typeof item === 'string' ? { task: item, category: '', required: false } : item)
+    return []
+  })
+  const [newTask,      setNewTask]      = useState('')
+  const [newRequired,  setNewRequired]  = useState(false)
+  const [saving,       setSaving]       = useState(false)
+
+  // Auto-compute next_due_meter when lastMeter or interval changes
+  useEffect(() => {
+    if (lastMeter && interval) {
+      setNextMeter((Number(lastMeter) + Number(interval)).toString())
+    }
+  }, [lastMeter, interval])
+
+  const addTask = () => {
+    if (!newTask.trim()) return
+    setTasks(prev => [...prev, { task: newTask.trim(), category: '', required: newRequired }])
+    setNewTask(''); setNewRequired(false)
+  }
+  const removeTask = (i) => setTasks(prev => prev.filter((_, idx) => idx !== i))
+  const toggleRequired = (i) => setTasks(prev => prev.map((t, idx) => idx === i ? { ...t, required: !t.required } : t))
+
+  const handleSave = async () => {
+    if (!name.trim()) { toast.error('Schedule name is required'); return }
+    if (!interval)    { toast.error('Interval hours is required'); return }
+    setSaving(true)
+    try {
+      const payload = {
+        company_id:       companyId,
+        equipment_id:     equipment.id,
+        equipment_name:   equipment.equipment_name || equipment.name || '',
+        schedule_name:    name.trim(),
+        interval_hours:   Number(interval),
+        last_done_meter:  lastMeter ? Number(lastMeter) : null,
+        last_done_date:   lastDate  || null,
+        next_due_meter:   nextMeter ? Number(nextMeter) : null,
+        tasks:            tasks,
+        notes:            notes || null,
+        is_active:        true,
+      }
+      if (isEdit) {
+        const { error } = await supabase.from('pm_schedules').update(payload).eq('id', initialValues.id)
+        if (error) throw error
+      } else {
+        const { error } = await supabase.from('pm_schedules').insert(payload)
+        if (error) throw error
+      }
+      toast.success(isEdit ? 'PM schedule updated' : 'PM schedule added')
+      onSaved?.()
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+      <div className="bg-dark-800 border border-dark-600 rounded-2xl w-full max-w-lg max-h-[92vh] flex flex-col overflow-hidden">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-dark-600 shrink-0">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-100">{isEdit ? 'Edit PM Schedule' : 'Add PM Schedule'}</h2>
+            <p className="text-xs text-slate-400 mt-0.5">{equipment.equipment_name || equipment.name}</p>
+          </div>
+          <button onClick={onClose} className="text-slate-500 hover:text-slate-300 transition-colors"><X className="w-5 h-5" /></button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto p-5 space-y-4">
+          {/* Name + Interval */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">Schedule Name <span className="text-red-400">*</span></label>
+              <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. 250hr Service" className={inp} />
+            </div>
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">Interval (hrs) <span className="text-red-400">*</span></label>
+              <input type="number" value={interval} onChange={e => setInterval(e.target.value)} placeholder="250" className={inp} />
+            </div>
+          </div>
+
+          {/* Last done */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">Last Done at (hrs)</label>
+              <input type="number" value={lastMeter} onChange={e => setLastMeter(e.target.value)} placeholder="Current meter reading" className={inp} />
+            </div>
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">Last Done Date</label>
+              <input type="date" value={lastDate} onChange={e => setLastDate(e.target.value)} className={inp} />
+            </div>
+          </div>
+
+          {/* Next due */}
+          <div>
+            <label className="block text-xs text-slate-400 mb-1">Next Due at (hrs) <span className="text-slate-600">— auto-computed</span></label>
+            <input type="number" value={nextMeter} onChange={e => setNextMeter(e.target.value)} placeholder="last_done + interval" className={inp} />
+          </div>
+
+          {/* Task checklist */}
+          <div>
+            <p className="text-xs font-semibold text-slate-300 mb-2">Task Checklist</p>
+            {tasks.length > 0 && (
+              <div className="space-y-1 mb-2">
+                {tasks.map((t, i) => (
+                  <div key={i} className="flex items-center gap-2 bg-dark-700/50 rounded-lg px-3 py-2 text-xs">
+                    <span className="flex-1 text-slate-200">{t.task}</span>
+                    <button onClick={() => toggleRequired(i)} className={`text-[10px] px-1.5 rounded transition-colors ${t.required ? 'bg-red-500/20 text-red-400' : 'bg-dark-600 text-slate-500 hover:text-slate-300'}`}>req</button>
+                    <button onClick={() => removeTask(i)} className="text-red-400 hover:text-red-300 transition-colors"><X className="w-3.5 h-3.5" /></button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="flex gap-2">
+              <input type="text" value={newTask} onChange={e => setNewTask(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && addTask()}
+                placeholder="Add task (e.g. Check engine oil, Replace filter...)" className={`${inp} flex-1`} />
+              <button onClick={addTask} className="px-3 bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-colors flex items-center">
+                <Plus className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+
+          {/* Notes */}
+          <div>
+            <label className="block text-xs text-slate-400 mb-1">Notes</label>
+            <textarea rows={2} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Additional notes..." className={`${inp} resize-none`} />
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="flex gap-3 px-5 py-4 border-t border-dark-600 shrink-0">
+          <button onClick={onClose} className="flex-1 py-2 border border-dark-500 text-slate-300 text-sm rounded-xl hover:border-slate-400 transition-colors">Cancel</button>
+          <button onClick={handleSave} disabled={saving}
+            className="flex-1 py-2 bg-primary-600 hover:bg-primary-700 disabled:opacity-50 text-white text-sm font-medium rounded-xl transition-colors flex items-center justify-center gap-2">
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            {isEdit ? 'Update' : 'Save'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
