@@ -3269,10 +3269,18 @@ function FuelIssueModal({ companyId, userProfile, onClose, onSaved }) {
   const [equipId,     setEquipId]     = useState('')
   const [qty,         setQty]         = useState('')
   const [source,      setSource]      = useState('company_bowser')
+  const [tankId,      setTankId]      = useState('')
+  const [vendorId,    setVendorId]    = useState('')
+  const [poId,        setPoId]        = useState('')
   const [meter,       setMeter]       = useState('')
   const [voucher,     setVoucher]     = useState('')
+  const [deliveredBy, setDeliveredBy] = useState('')
+  const [inchargeId,  setInchargeId]  = useState(userProfile?.id || '')
   const [notes,       setNotes]       = useState('')
   const [saving,      setSaving]      = useState(false)
+
+  const isCompanySource = source === 'company_bowser' || source === 'company_tank'
+  const isVendorSource  = source === 'vendor_supply'
 
   const { data: allEquip = [] } = useQuery({
     queryKey: ['equipment_for_fuel', companyId],
@@ -3282,23 +3290,77 @@ function FuelIssueModal({ companyId, userProfile, onClose, onSaved }) {
     },
   })
 
+  const { data: tanks = [] } = useQuery({
+    queryKey: ['fuel_tanks', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('fuel_tanks').select('id,name,tank_type,location,current_stock,capacity_liters').eq('company_id', companyId).eq('is_active', true).order('name')
+      return data || []
+    },
+    enabled: isCompanySource,
+  })
+
+  const { data: fuelVendors = [] } = useQuery({
+    queryKey: ['fuel_vendors', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('vendors').select('id,name,contact_name,contact_phone').eq('company_id', companyId).eq('vendor_type', 'fuel').eq('is_active', true).order('name')
+      return data || []
+    },
+    enabled: isVendorSource,
+  })
+
+  const { data: vendorPOs = [] } = useQuery({
+    queryKey: ['vendor_pos_fuel', vendorId],
+    queryFn: async () => {
+      const { data } = await supabase.from('purchase_orders').select('id,po_number,po_date,total_amount').eq('company_id', companyId).eq('vendor_id', vendorId).in('status', ['approved', 'partial', 'open']).order('po_date', { ascending: false }).limit(20)
+      return data || []
+    },
+    enabled: isVendorSource && !!vendorId,
+  })
+
+  const { data: staff = [] } = useQuery({
+    queryKey: ['staff_for_incharge', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('user_profiles').select('id,full_name,role').eq('company_id', companyId).in('role', ['admin', 'manager', 'accounts']).order('full_name')
+      return data || []
+    },
+  })
+
+  const selectedTank   = tanks.find(t => t.id === tankId)
+  const selectedVendor = fuelVendors.find(v => v.id === vendorId)
+  const selectedPO     = vendorPOs.find(p => p.id === poId)
+  const selectedStaff  = staff.find(s => s.id === inchargeId)
+  const qtyNum         = parseFloat(qty) || 0
+  const tankShortfall  = selectedTank ? qtyNum > selectedTank.current_stock : false
+
   const handleSave = async () => {
-    if (!qty || !equipId) return toast.error('Select equipment and enter quantity')
+    if (!qty || !equipId)   return toast.error('Select equipment and enter quantity')
+    if (isCompanySource && !tankId) return toast.error('Select which tank/bowser the fuel is from')
+    if (isVendorSource  && !vendorId) return toast.error('Select the fuel vendor')
+    if (!inchargeId)        return toast.error('Select a company incharge who is authorising this issue')
     setSaving(true)
     try {
       const eq = allEquip.find(e => e.id === equipId)
       const { error } = await supabase.from('fuel_issues').insert({
-        company_id:      companyId,
-        issue_date:      date,
-        equipment_id:    equipId,
-        equipment_name:  eq ? `${eq.equipment_number ? eq.equipment_number + ' — ' : ''}${eq.name}` : null,
-        quantity_liters: parseFloat(qty),
-        fuel_source:     source,
-        meter_at_issue:  meter ? parseFloat(meter) : null,
-        voucher_number:  voucher.trim() || null,
-        notes:           notes.trim()   || null,
-        issued_by:       userProfile?.id   || null,
-        issued_by_name:  userProfile?.full_name || userProfile?.name || null,
+        company_id:          companyId,
+        issue_date:          date,
+        equipment_id:        equipId,
+        equipment_name:      eq ? `${eq.equipment_number ? eq.equipment_number + ' — ' : ''}${eq.name}` : null,
+        quantity_liters:     qtyNum,
+        fuel_source:         source,
+        tank_id:             isCompanySource && tankId   ? tankId   : null,
+        tank_name:           isCompanySource && selectedTank ? selectedTank.name : null,
+        vendor_id:           isVendorSource  && vendorId ? vendorId : null,
+        vendor_name:         isVendorSource  && selectedVendor ? selectedVendor.name : null,
+        purchase_order_id:   isVendorSource  && poId     ? poId     : null,
+        po_number:           isVendorSource  && selectedPO ? selectedPO.po_number : null,
+        meter_at_issue:      meter   ? parseFloat(meter)  : null,
+        voucher_number:      voucher.trim()      || null,
+        delivered_by:        deliveredBy.trim()  || null,
+        incharge_id:         inchargeId           || null,
+        incharge_name:       selectedStaff?.full_name || null,
+        notes:               notes.trim()         || null,
+        issued_by:           userProfile?.id       || null,
+        issued_by_name:      userProfile?.full_name || userProfile?.name || null,
       })
       if (error) throw error
       toast.success('Fuel issue logged')
@@ -3306,21 +3368,16 @@ function FuelIssueModal({ companyId, userProfile, onClose, onSaved }) {
     } catch (e) { toast.error(e.message) } finally { setSaving(false) }
   }
 
-  const SOURCE_LABELS = {
-    company_bowser: '🚛 Company Bowser',
-    company_tank:   '🛢️ Company Tank',
-    vendor_supply:  '🏪 Vendor Supply',
-    petrol_pump:    '⛽ Petrol Pump',
-  }
-
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-      <div className="bg-dark-800 border border-dark-600 rounded-2xl w-full max-w-md flex flex-col shadow-2xl">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-dark-700">
+      <div className="bg-dark-800 border border-dark-600 rounded-2xl w-full max-w-lg max-h-[92vh] flex flex-col shadow-2xl">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-dark-700 shrink-0">
           <p className="text-sm font-bold text-slate-100">Issue Fuel from Stock</p>
           <button onClick={onClose} className="text-slate-500 hover:text-slate-200"><X className="w-4 h-4" /></button>
         </div>
-        <div className="px-5 py-4 space-y-3">
+
+        <div className="overflow-y-auto flex-1 px-5 py-4 space-y-3">
+          {/* Date + Qty */}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <p className="text-xs text-slate-400 mb-1">Date *</p>
@@ -3331,6 +3388,8 @@ function FuelIssueModal({ companyId, userProfile, onClose, onSaved }) {
               <input type="number" className={inp} value={qty} onChange={e => setQty(e.target.value)} placeholder="0.0" min="0" step="0.5" />
             </div>
           </div>
+
+          {/* Equipment */}
           <div>
             <p className="text-xs text-slate-400 mb-1">Equipment *</p>
             <select className={inp} value={equipId} onChange={e => setEquipId(e.target.value)}>
@@ -3338,12 +3397,89 @@ function FuelIssueModal({ companyId, userProfile, onClose, onSaved }) {
               {allEquip.map(e => <option key={e.id} value={e.id}>{e.equipment_number ? `${e.equipment_number} — ` : ''}{e.name}</option>)}
             </select>
           </div>
+
+          {/* Source */}
           <div>
-            <p className="text-xs text-slate-400 mb-1">Fuel Source</p>
-            <select className={inp} value={source} onChange={e => setSource(e.target.value)}>
-              {Object.entries(SOURCE_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-            </select>
+            <p className="text-xs text-slate-400 mb-1">Fuel Source *</p>
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                { v: 'company_bowser', l: '🚛 Company Bowser' },
+                { v: 'company_tank',   l: '🛢️ Company Tank'   },
+                { v: 'vendor_supply',  l: '🏪 Vendor Supply'  },
+                { v: 'petrol_pump',    l: '⛽ Petrol Pump'    },
+              ].map(({ v, l }) => (
+                <button key={v} type="button" onClick={() => { setSource(v); setTankId(''); setVendorId(''); setPoId('') }}
+                  className={`py-2 px-3 rounded-lg border text-xs font-medium text-left transition-all ${source === v ? 'border-primary-500 bg-primary-500/10 text-primary-300' : 'border-dark-600 text-slate-400 hover:text-slate-200'}`}>
+                  {l}
+                </button>
+              ))}
+            </div>
           </div>
+
+          {/* Company Tank/Bowser — tank picker */}
+          {isCompanySource && (
+            <div>
+              <p className="text-xs text-slate-400 mb-1">From Tank / Bowser *</p>
+              {tanks.length === 0 ? (
+                <div className="bg-amber-900/20 border border-amber-700/30 rounded-xl p-3 text-xs text-amber-300">
+                  ⚠️ No fuel tanks set up. Add a tank in the Fuel → Tanks tab first.
+                </div>
+              ) : (
+                <>
+                  <select className={inp} value={tankId} onChange={e => setTankId(e.target.value)}>
+                    <option value="">Select tank…</option>
+                    {tanks.map(t => (
+                      <option key={t.id} value={t.id}>
+                        {t.name}{t.location ? ` @ ${t.location}` : ''} — {t.current_stock?.toFixed(0)} L available
+                      </option>
+                    ))}
+                  </select>
+                  {selectedTank && (
+                    <div className={`mt-1.5 flex items-center gap-2 text-xs px-2 py-1 rounded-lg ${tankShortfall ? 'bg-red-900/30 text-red-400' : 'bg-green-900/20 text-green-400'}`}>
+                      <span>{tankShortfall ? '⚠️' : '✓'}</span>
+                      <span>
+                        {tankShortfall
+                          ? `Stock low — only ${selectedTank.current_stock?.toFixed(0)} L available, issuing ${qtyNum.toFixed(0)} L`
+                          : `${selectedTank.current_stock?.toFixed(0)} L available → ${(selectedTank.current_stock - qtyNum).toFixed(0)} L remaining after issue`}
+                      </span>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
+          {/* Vendor Supply — vendor + PO */}
+          {isVendorSource && (
+            <>
+              <div>
+                <p className="text-xs text-slate-400 mb-1">Fuel Vendor *</p>
+                {fuelVendors.length === 0 ? (
+                  <div className="bg-amber-900/20 border border-amber-700/30 rounded-xl p-3 text-xs text-amber-300">
+                    ⚠️ No fuel vendors found. Add a vendor with type "Fuel" in Purchase → Vendors first.
+                  </div>
+                ) : (
+                  <select className={inp} value={vendorId} onChange={e => { setVendorId(e.target.value); setPoId('') }}>
+                    <option value="">Select vendor…</option>
+                    {fuelVendors.map(v => <option key={v.id} value={v.id}>{v.name}{v.contact_name ? ` — ${v.contact_name}` : ''}</option>)}
+                  </select>
+                )}
+              </div>
+              {vendorId && (
+                <div>
+                  <p className="text-xs text-slate-400 mb-1">Purchase Order (optional)</p>
+                  <select className={inp} value={poId} onChange={e => setPoId(e.target.value)}>
+                    <option value="">No PO / Ad-hoc supply</option>
+                    {vendorPOs.map(p => (
+                      <option key={p.id} value={p.id}>{p.po_number} — {format(new Date(p.po_date), 'dd MMM yyyy')} — ₹{Number(p.total_amount || 0).toLocaleString('en-IN')}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </>
+          )}
+
+          {/* Meter + Voucher */}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <p className="text-xs text-slate-400 mb-1">Meter at Issue</p>
@@ -3354,12 +3490,32 @@ function FuelIssueModal({ companyId, userProfile, onClose, onSaved }) {
               <input className={inp} value={voucher} onChange={e => setVoucher(e.target.value)} placeholder="FV-001" />
             </div>
           </div>
+
+          {/* Delivery person + Company Incharge */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <p className="text-xs text-slate-400 mb-1">
+                {isVendorSource ? 'Delivered By (vendor)' : 'Issued By (name)'}
+              </p>
+              <input className={inp} value={deliveredBy} onChange={e => setDeliveredBy(e.target.value)}
+                placeholder={isVendorSource ? 'Driver / delivery person' : 'Who filled the fuel'} />
+            </div>
+            <div>
+              <p className="text-xs text-slate-400 mb-1">Company Incharge *</p>
+              <select className={inp} value={inchargeId} onChange={e => setInchargeId(e.target.value)}>
+                <option value="">Select incharge…</option>
+                {staff.map(s => <option key={s.id} value={s.id}>{s.full_name} ({s.role})</option>)}
+              </select>
+            </div>
+          </div>
+
           <div>
             <p className="text-xs text-slate-400 mb-1">Notes</p>
             <input className={inp} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Any remarks…" />
           </div>
         </div>
-        <div className="px-5 py-4 border-t border-dark-700 flex gap-3">
+
+        <div className="px-5 py-4 border-t border-dark-700 flex gap-3 shrink-0">
           <button onClick={onClose} className="flex-1 py-2 rounded-lg border border-dark-600 text-slate-400 text-sm hover:text-slate-200 transition-colors">Cancel</button>
           <button onClick={handleSave} disabled={saving}
             className="flex-1 py-2 rounded-lg bg-primary-600 hover:bg-primary-500 text-white text-sm font-medium disabled:opacity-40 transition-colors flex items-center justify-center gap-2">
@@ -3376,9 +3532,13 @@ function FuelIssueModal({ companyId, userProfile, onClose, onSaved }) {
 function FuelTab({ companyId }) {
   const { userProfile } = useAuth()
   const qc = useQueryClient()
-  const [subTab,         setSubTab]         = useState('issues')  // 'issues' | 'filled'
-  const [showIssueForm,  setShowIssueForm]  = useState(false)
-  const [filterMonth,    setFilterMonth]    = useState(format(new Date(), 'yyyy-MM'))
+  const [subTab,          setSubTab]          = useState('issues')  // 'issues' | 'filled' | 'tanks'
+  const [showIssueForm,   setShowIssueForm]   = useState(false)
+  const [showAddTank,     setShowAddTank]     = useState(false)
+  const [replenishTankId, setReplenishTankId] = useState(null) // tank id to replenish, or null
+  const [filterMonth,     setFilterMonth]     = useState(format(new Date(), 'yyyy-MM'))
+
+  const canIssueFuel = ['admin', 'manager'].includes(userProfile?.role)
 
   const monthStart = filterMonth + '-01'
   const monthEnd   = (() => {
@@ -3428,14 +3588,35 @@ function FuelTab({ companyId }) {
     },
   })
 
+  // Fuel Tanks — always loaded (needed for Tanks sub-tab)
+  const { data: tanks = [], isLoading: tanksLoading } = useQuery({
+    queryKey: ['fuel_tanks', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('fuel_tanks')
+        .select('id,name,tank_type,location,capacity_liters,current_stock,is_active,notes')
+        .eq('company_id', companyId)
+        .order('name')
+      return data || []
+    },
+  })
+
   const totalIssued   = issues.reduce((s, i) => s + Number(i.quantity_liters || 0), 0)
   const totalFilled   = fills.reduce((s, f) => s + Number(f.quantity_liters || 0), 0)
   const totalConsumed = consumed.reduce((s, c) => s + Number(c.fuel_consumed || 0), 0)
   const variance      = totalIssued - totalConsumed  // positive = unaccounted
+  const totalTankStock = tanks.filter(t => t.is_active).reduce((s, t) => s + Number(t.current_stock || 0), 0)
 
-  const SOURCE_LABELS = { company_bowser: 'Bowser', company_tank: 'Tank', vendor_supply: 'Vendor', petrol_pump: 'Pump' }
+  const SOURCE_LABELS = {
+    company_bowser: '🚛 Bowser',
+    company_tank:   '🛢️ Tank',
+    vendor_supply:  '🏪 Vendor',
+    petrol_pump:    '⛽ Pump',
+  }
+  const TANK_TYPE_LABELS = { bowser: 'Bowser', fixed_tank: 'Fixed Tank', drum: 'Drum' }
 
-  const isLoading = subTab === 'issues' ? issuesLoading : fillsLoading
+  const isListLoading = subTab === 'issues' ? issuesLoading : subTab === 'filled' ? fillsLoading : tanksLoading
+
+  const refetchTanks = () => qc.invalidateQueries({ queryKey: ['fuel_tanks', companyId] })
 
   return (
     <div className="flex flex-col h-full">
@@ -3459,12 +3640,20 @@ function FuelTab({ companyId }) {
             {variance >= 0 ? '+' : ''}{variance.toFixed(0)} L
           </p>
         </div>
+        <div className="bg-dark-700 rounded-xl px-3 py-2 text-xs shrink-0">
+          <p className="text-slate-400">Tank Stock</p>
+          <p className="font-bold text-cyan-400">{totalTankStock.toFixed(0)} L</p>
+        </div>
       </div>
 
       {/* Sub-tab + month filter + action */}
       <div className="flex items-center gap-2 px-4 py-2 shrink-0">
         <div className="flex rounded-lg overflow-hidden border border-dark-600 shrink-0">
-          {[{ id: 'issues', label: 'Issued' }, { id: 'filled', label: 'Filled (ops)' }].map(t => (
+          {[
+            { id: 'issues', label: 'Issued' },
+            { id: 'filled', label: 'Filled (ops)' },
+            { id: 'tanks',  label: '🛢️ Tanks' },
+          ].map(t => (
             <button key={t.id} onClick={() => setSubTab(t.id)}
               className={`px-3 py-1.5 text-xs font-medium transition-colors
                 ${subTab === t.id ? 'bg-primary-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}>
@@ -3472,49 +3661,69 @@ function FuelTab({ companyId }) {
             </button>
           ))}
         </div>
-        <input type="month" value={filterMonth} onChange={e => setFilterMonth(e.target.value)}
-          className="bg-dark-700 border border-dark-600 rounded-lg px-2 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-primary-500" />
-        {subTab === 'issues' && (
+        {subTab !== 'tanks' && (
+          <input type="month" value={filterMonth} onChange={e => setFilterMonth(e.target.value)}
+            className="bg-dark-700 border border-dark-600 rounded-lg px-2 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-primary-500" />
+        )}
+        {subTab === 'issues' && canIssueFuel && (
           <button onClick={() => setShowIssueForm(true)}
             className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary-600 hover:bg-primary-500 text-white text-xs font-medium transition-colors shrink-0">
             <Plus className="w-3.5 h-3.5" /> Issue Fuel
+          </button>
+        )}
+        {subTab === 'tanks' && canIssueFuel && (
+          <button onClick={() => setShowAddTank(true)}
+            className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary-600 hover:bg-primary-500 text-white text-xs font-medium transition-colors shrink-0">
+            <Plus className="w-3.5 h-3.5" /> Add Tank
           </button>
         )}
       </div>
 
       {/* List */}
       <div className="flex-1 overflow-y-auto px-4 pb-4">
-        {isLoading ? (
+        {isListLoading ? (
           <div className="flex items-center justify-center py-16"><Loader2 className="w-6 h-6 text-primary-400 animate-spin" /></div>
         ) : subTab === 'issues' ? (
           issues.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 gap-2">
               <Fuel className="w-10 h-10 text-slate-600" />
               <p className="text-slate-400">No fuel issues logged this month</p>
-              <button onClick={() => setShowIssueForm(true)} className="btn-primary text-xs mt-2 flex items-center gap-1"><Plus className="w-3.5 h-3.5" /> Issue Fuel</button>
+              {canIssueFuel && (
+                <button onClick={() => setShowIssueForm(true)} className="btn-primary text-xs mt-2 flex items-center gap-1">
+                  <Plus className="w-3.5 h-3.5" /> Issue Fuel
+                </button>
+              )}
             </div>
           ) : (
             <div className="space-y-2">
               {issues.map(i => (
                 <div key={i.id} className="bg-dark-800 border border-dark-700 rounded-xl p-3">
                   <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <p className="font-semibold text-slate-100 text-sm">{i.equipment_name || '—'}</p>
-                      <p className="text-xs text-slate-500">{format(new Date(i.issue_date), 'dd MMM yyyy')} · {SOURCE_LABELS[i.fuel_source] || i.fuel_source}</p>
+                    <div className="min-w-0">
+                      <p className="font-semibold text-slate-100 text-sm truncate">{i.equipment_name || '—'}</p>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className="text-xs text-slate-500">{format(new Date(i.issue_date), 'dd MMM yyyy')}</span>
+                        <span className="text-xs bg-dark-600 text-slate-400 rounded px-1.5 py-0.5">{SOURCE_LABELS[i.fuel_source] || i.fuel_source}</span>
+                        {(i.tank_name || i.vendor_name) && (
+                          <span className="text-xs text-slate-500 truncate">{i.tank_name || i.vendor_name}</span>
+                        )}
+                      </div>
                     </div>
                     <p className="font-bold text-yellow-400 text-sm shrink-0">{i.quantity_liters} L</p>
                   </div>
                   <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-slate-500">
+                    {i.po_number        && <span>PO: {i.po_number}</span>}
                     {i.meter_at_issue   && <span>Meter: {i.meter_at_issue}</span>}
                     {i.voucher_number   && <span>Voucher: {i.voucher_number}</span>}
-                    {i.issued_by_name   && <span>By: {i.issued_by_name}</span>}
-                    {i.notes           && <span>{i.notes}</span>}
+                    {i.delivered_by     && <span>Delivered by: {i.delivered_by}</span>}
+                    {i.incharge_name    && <span className="text-primary-400">Incharge: {i.incharge_name}</span>}
+                    {i.notes            && <span className="italic">{i.notes}</span>}
                   </div>
                 </div>
               ))}
             </div>
           )
-        ) : (
+        ) : subTab === 'filled' ? (
           fills.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 gap-2">
               <Fuel className="w-10 h-10 text-slate-600" />
@@ -3544,6 +3753,62 @@ function FuelTab({ companyId }) {
               ))}
             </div>
           )
+        ) : (
+          /* Tanks sub-tab */
+          tanks.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 gap-2">
+              <Fuel className="w-10 h-10 text-slate-600" />
+              <p className="text-slate-400">No tanks added yet</p>
+              {canIssueFuel && (
+                <button onClick={() => setShowAddTank(true)} className="btn-primary text-xs mt-2 flex items-center gap-1">
+                  <Plus className="w-3.5 h-3.5" /> Add Tank / Bowser
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {tanks.map(tank => {
+                const pct = tank.capacity_liters ? Math.min(100, (tank.current_stock / tank.capacity_liters) * 100) : null
+                const isLow = pct !== null && pct < 20
+                return (
+                  <div key={tank.id} className={`bg-dark-800 border rounded-xl p-4 ${isLow ? 'border-red-700/60' : 'border-dark-700'}`}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="font-semibold text-slate-100 text-sm">{tank.name}</p>
+                          <span className="text-xs bg-dark-600 text-slate-400 rounded px-1.5 py-0.5">{TANK_TYPE_LABELS[tank.tank_type] || tank.tank_type}</span>
+                          {!tank.is_active && <span className="text-xs bg-red-900/40 text-red-400 rounded px-1.5 py-0.5">Inactive</span>}
+                        </div>
+                        {tank.location && <p className="text-xs text-slate-500 mt-0.5">📍 {tank.location}</p>}
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p className={`text-lg font-bold ${isLow ? 'text-red-400' : 'text-cyan-400'}`}>{Number(tank.current_stock || 0).toFixed(0)} L</p>
+                        {tank.capacity_liters && <p className="text-xs text-slate-500">of {tank.capacity_liters} L cap.</p>}
+                      </div>
+                    </div>
+                    {pct !== null && (
+                      <div className="mt-3">
+                        <div className="w-full h-2 bg-dark-600 rounded-full overflow-hidden">
+                          <div className={`h-full rounded-full transition-all ${isLow ? 'bg-red-500' : pct < 50 ? 'bg-amber-500' : 'bg-cyan-500'}`}
+                            style={{ width: `${pct}%` }} />
+                        </div>
+                        <p className="text-xs text-slate-500 mt-0.5">{pct.toFixed(0)}% full {isLow && '— Low stock!'}</p>
+                      </div>
+                    )}
+                    {tank.notes && <p className="text-xs text-slate-500 mt-2 italic">{tank.notes}</p>}
+                    {canIssueFuel && (
+                      <div className="mt-3 flex justify-end">
+                        <button onClick={() => setReplenishTankId(tank.id)}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-700/30 hover:bg-cyan-700/50 text-cyan-300 text-xs font-medium transition-colors">
+                          + Replenish Stock
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )
         )}
       </div>
 
@@ -3552,9 +3817,219 @@ function FuelTab({ companyId }) {
           companyId={companyId}
           userProfile={userProfile}
           onClose={() => setShowIssueForm(false)}
-          onSaved={() => { setShowIssueForm(false); qc.invalidateQueries(['fuel_issues', companyId, filterMonth]) }}
+          onSaved={() => {
+            setShowIssueForm(false)
+            qc.invalidateQueries({ queryKey: ['fuel_issues', companyId, filterMonth] })
+            refetchTanks()
+          }}
         />
       )}
+      {showAddTank && (
+        <FuelTankModal
+          companyId={companyId}
+          userProfile={userProfile}
+          onClose={() => setShowAddTank(false)}
+          onSaved={() => { setShowAddTank(false); refetchTanks() }}
+        />
+      )}
+      {replenishTankId && (
+        <ReplenishTankModal
+          companyId={companyId}
+          tankId={replenishTankId}
+          tankName={tanks.find(t => t.id === replenishTankId)?.name}
+          userProfile={userProfile}
+          onClose={() => setReplenishTankId(null)}
+          onSaved={() => { setReplenishTankId(null); refetchTanks() }}
+        />
+      )}
+    </div>
+  )
+}
+
+// ── Fuel Tank Modal (add new tank) ────────────────────────────────────────────
+function FuelTankModal({ companyId, onClose, onSaved }) {
+  const inp = 'w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500'
+  const [name,     setName]     = useState('')
+  const [type,     setType]     = useState('bowser')
+  const [location, setLocation] = useState('')
+  const [capacity, setCapacity] = useState('')
+  const [stock,    setStock]    = useState('0')
+  const [notes,    setNotes]    = useState('')
+  const [saving,   setSaving]   = useState(false)
+
+  const handleSave = async () => {
+    if (!name.trim()) return toast.error('Enter a tank name')
+    setSaving(true)
+    try {
+      const { error } = await supabase.from('fuel_tanks').insert({
+        company_id:      companyId,
+        name:            name.trim(),
+        tank_type:       type,
+        location:        location.trim() || null,
+        capacity_liters: capacity ? parseFloat(capacity) : null,
+        current_stock:   stock    ? parseFloat(stock)    : 0,
+        notes:           notes.trim() || null,
+      })
+      if (error) throw error
+      toast.success('Tank added')
+      onSaved()
+    } catch (e) { toast.error(e.message) } finally { setSaving(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+      <div className="bg-dark-800 border border-dark-600 rounded-2xl w-full max-w-md shadow-2xl">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-dark-700">
+          <p className="text-sm font-bold text-slate-100">Add Fuel Tank / Bowser</p>
+          <button onClick={onClose} className="text-slate-500 hover:text-slate-200"><X className="w-4 h-4" /></button>
+        </div>
+        <div className="px-5 py-4 space-y-3">
+          <div>
+            <p className="text-xs text-slate-400 mb-1">Tank Name *</p>
+            <input className={inp} value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Main Bowser, Site A Tank" />
+          </div>
+          <div>
+            <p className="text-xs text-slate-400 mb-1">Type</p>
+            <select className={inp} value={type} onChange={e => setType(e.target.value)}>
+              <option value="bowser">Bowser (mobile)</option>
+              <option value="fixed_tank">Fixed Tank</option>
+              <option value="drum">Drum</option>
+            </select>
+          </div>
+          <div>
+            <p className="text-xs text-slate-400 mb-1">Location / Site</p>
+            <input className={inp} value={location} onChange={e => setLocation(e.target.value)} placeholder="Site name or yard" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <p className="text-xs text-slate-400 mb-1">Capacity (L)</p>
+              <input type="number" className={inp} value={capacity} onChange={e => setCapacity(e.target.value)} placeholder="e.g. 5000" min="0" />
+            </div>
+            <div>
+              <p className="text-xs text-slate-400 mb-1">Opening Stock (L)</p>
+              <input type="number" className={inp} value={stock} onChange={e => setStock(e.target.value)} placeholder="0" min="0" />
+            </div>
+          </div>
+          <div>
+            <p className="text-xs text-slate-400 mb-1">Notes</p>
+            <input className={inp} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Any remarks" />
+          </div>
+        </div>
+        <div className="px-5 py-4 border-t border-dark-700 flex gap-3">
+          <button onClick={onClose} className="flex-1 py-2 rounded-lg border border-dark-600 text-slate-400 text-sm hover:text-slate-200 transition-colors">Cancel</button>
+          <button onClick={handleSave} disabled={saving}
+            className="flex-1 py-2 rounded-lg bg-primary-600 hover:bg-primary-500 text-white text-sm font-medium disabled:opacity-40 transition-colors flex items-center justify-center gap-2">
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            {saving ? 'Saving…' : 'Add Tank'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Replenish Tank Modal ───────────────────────────────────────────────────────
+function ReplenishTankModal({ companyId, tankId, tankName, userProfile, onClose, onSaved }) {
+  const inp = 'w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500'
+  const [date,       setDate]       = useState(new Date().toISOString().slice(0, 10))
+  const [qty,        setQty]        = useState('')
+  const [vendorId,   setVendorId]   = useState('')
+  const [invoiceRef, setInvoiceRef] = useState('')
+  const [rate,       setRate]       = useState('')
+  const [notes,      setNotes]      = useState('')
+  const [saving,     setSaving]     = useState(false)
+
+  const { data: fuelVendors = [] } = useQuery({
+    queryKey: ['fuel_vendors', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('vendors').select('id,name').eq('company_id', companyId).eq('vendor_type', 'fuel').eq('is_active', true).order('name')
+      return data || []
+    },
+  })
+
+  const selectedVendor = fuelVendors.find(v => v.id === vendorId)
+  const qtyNum         = parseFloat(qty) || 0
+  const totalAmount    = rate && qtyNum ? (parseFloat(rate) * qtyNum).toFixed(2) : null
+
+  const handleSave = async () => {
+    if (!qty || qtyNum <= 0) return toast.error('Enter quantity to replenish')
+    setSaving(true)
+    try {
+      const { error } = await supabase.from('fuel_tank_replenishments').insert({
+        company_id:      companyId,
+        tank_id:         tankId,
+        replenish_date:  date,
+        quantity_liters: qtyNum,
+        vendor_id:       vendorId || null,
+        vendor_name:     selectedVendor?.name || null,
+        invoice_ref:     invoiceRef.trim() || null,
+        rate_per_liter:  rate  ? parseFloat(rate)  : null,
+        total_amount:    totalAmount ? parseFloat(totalAmount) : null,
+        received_by:     userProfile?.id        || null,
+        received_by_name: userProfile?.full_name || null,
+        notes:           notes.trim() || null,
+      })
+      if (error) throw error
+      toast.success(`${qtyNum.toFixed(0)} L added to ${tankName}`)
+      onSaved()
+    } catch (e) { toast.error(e.message) } finally { setSaving(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+      <div className="bg-dark-800 border border-dark-600 rounded-2xl w-full max-w-md shadow-2xl">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-dark-700">
+          <p className="text-sm font-bold text-slate-100">Replenish — {tankName}</p>
+          <button onClick={onClose} className="text-slate-500 hover:text-slate-200"><X className="w-4 h-4" /></button>
+        </div>
+        <div className="px-5 py-4 space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <p className="text-xs text-slate-400 mb-1">Date *</p>
+              <input type="date" className={inp} value={date} onChange={e => setDate(e.target.value)} />
+            </div>
+            <div>
+              <p className="text-xs text-slate-400 mb-1">Qty Received (L) *</p>
+              <input type="number" className={inp} value={qty} onChange={e => setQty(e.target.value)} placeholder="0.0" min="0" step="0.5" />
+            </div>
+          </div>
+          <div>
+            <p className="text-xs text-slate-400 mb-1">Fuel Vendor</p>
+            <select className={inp} value={vendorId} onChange={e => setVendorId(e.target.value)}>
+              <option value="">Select vendor (optional)</option>
+              {fuelVendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+            </select>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <p className="text-xs text-slate-400 mb-1">Invoice / DC Ref.</p>
+              <input className={inp} value={invoiceRef} onChange={e => setInvoiceRef(e.target.value)} placeholder="INV-001" />
+            </div>
+            <div>
+              <p className="text-xs text-slate-400 mb-1">Rate per Litre (₹)</p>
+              <input type="number" className={inp} value={rate} onChange={e => setRate(e.target.value)} placeholder="0.00" min="0" step="0.01" />
+            </div>
+          </div>
+          {totalAmount && (
+            <div className="bg-dark-700 rounded-lg px-3 py-2 text-xs flex items-center justify-between">
+              <span className="text-slate-400">Total Value</span>
+              <span className="font-bold text-green-400">₹{Number(totalAmount).toLocaleString('en-IN')}</span>
+            </div>
+          )}
+          <div>
+            <p className="text-xs text-slate-400 mb-1">Notes</p>
+            <input className={inp} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Any remarks" />
+          </div>
+        </div>
+        <div className="px-5 py-4 border-t border-dark-700 flex gap-3">
+          <button onClick={onClose} className="flex-1 py-2 rounded-lg border border-dark-600 text-slate-400 text-sm hover:text-slate-200 transition-colors">Cancel</button>
+          <button onClick={handleSave} disabled={saving}
+            className="flex-1 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-medium disabled:opacity-40 transition-colors flex items-center justify-center gap-2">
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            {saving ? 'Saving…' : 'Add Stock'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
