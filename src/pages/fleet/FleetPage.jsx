@@ -1565,6 +1565,57 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
     },
   })
 
+  // Today's activity count — used to distinguish Active vs Idle within a shift window
+  const todayStr = new Date().toISOString().split('T')[0]
+  const { data: todayActivityCount = 0 } = useQuery({
+    queryKey: ['today_activity', equipment.id, todayStr],
+    queryFn: async () => {
+      const { count } = await supabase
+        .from('shift_fuel_entries')
+        .select('id', { count: 'exact', head: true })
+        .eq('equipment_id', equipment.id)
+        .gte('created_at', todayStr + 'T00:00:00')
+      return count || 0
+    },
+    enabled: !!equipment.current_project_id,
+    staleTime: 60_000,
+  })
+
+  // Derived availability status
+  const availStatus = (() => {
+    if (equipment.status === 'breakdown')
+      return { label: 'Breakdown',   dot: 'bg-red-400',    secondary: null }
+    if (equipment.status === 'maintenance')
+      return { label: 'Maintenance', dot: 'bg-orange-400', secondary: null }
+    if (!equipment.current_project_id)
+      return { label: 'Available',   dot: 'bg-emerald-400', secondary: null }
+
+    if (shiftSchedule) {
+      const toMins = t => { const [h, m] = t.split(':').map(Number); return h * 60 + m }
+      // handles same-day and overnight windows
+      const inWin = (s, e, n) => e > s ? (n >= s && n < e) : (n >= s || n < e)
+      const now     = new Date()
+      const nowMins = now.getHours() * 60 + now.getMinutes()
+      const grace   = graceMinutes || 30
+      const active  = shiftRows.slice(0, shiftCount)
+
+      for (const s of active) {
+        const sm = toMins(s.start), em = toMins(s.end)
+        if (inWin(sm, em, nowMins)) {
+          let sinceStart = nowMins - sm
+          if (sinceStart < 0) sinceStart += 1440
+          if (sinceStart < grace) break // still within grace — not yet committed
+          if (todayActivityCount > 0)
+            return { label: 'Active', dot: 'bg-emerald-400 animate-pulse', secondary: 'Engaged', secondaryDot: 'bg-blue-400' }
+          else
+            return { label: 'Idle',   dot: 'bg-yellow-400', secondary: 'Engaged', secondaryDot: 'bg-blue-400' }
+        }
+      }
+    }
+
+    return { label: 'Engaged', dot: 'bg-blue-400', secondary: null }
+  })()
+
   const { data: openIncidents = [] } = useQuery({
     queryKey: ['incidents', equipment.id],
     queryFn: async () => {
@@ -1920,24 +1971,30 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose }) {
             {/* Equipment Availability */}
             <div className="bg-dark-700 rounded-xl p-3 flex-1">
               <p className="text-xs font-semibold text-slate-300 uppercase tracking-wider mb-3">Equipment Availability</p>
-              <div className="flex items-center gap-2 mb-3">
-                <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${
-                  equipment.status === 'active'      ? 'bg-emerald-400' :
-                  equipment.status === 'breakdown'   ? 'bg-red-400' :
-                  equipment.status === 'maintenance' ? 'bg-orange-400' : 'bg-slate-400'
-                }`} />
-                <span className="text-sm font-semibold text-slate-100">{st.label}</span>
+
+              {/* Primary status */}
+              <div className="flex items-center gap-2 mb-2">
+                <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${availStatus.dot}`} />
+                <span className="text-sm font-semibold text-slate-100">{availStatus.label}</span>
               </div>
 
+              {/* Secondary badge (Engaged) shown alongside Active / Idle */}
+              {availStatus.secondary && (
+                <div className="flex items-center gap-1.5 mb-2 ml-0.5">
+                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${availStatus.secondaryDot}`} />
+                  <span className="text-xs text-blue-400 font-medium">{availStatus.secondary}</span>
+                </div>
+              )}
+
               {equipment.current_project_id ? (
-                <div className="bg-emerald-900/20 border border-emerald-700/30 rounded-lg px-2.5 py-2">
+                <div className="bg-emerald-900/20 border border-emerald-700/30 rounded-lg px-2.5 py-2 mt-2">
                   <p className="text-[10px] text-emerald-500 uppercase tracking-wider mb-0.5">On Deployment</p>
                   <p className="text-xs text-emerald-300 font-medium leading-tight truncate">
                     {deployedProject?.project_name || equipment.current_site_name || 'Active Project'}
                   </p>
                 </div>
               ) : (
-                <div className="bg-dark-800 rounded-lg px-2.5 py-2">
+                <div className="bg-dark-800 rounded-lg px-2.5 py-2 mt-2">
                   <p className="text-xs text-slate-400">Available for deployment</p>
                 </div>
               )}
