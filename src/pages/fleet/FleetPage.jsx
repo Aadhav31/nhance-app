@@ -3530,7 +3530,7 @@ function FuelIssueModal({ companyId, userProfile, onClose, onSaved }) {
 
 // ── Fuel Tab ──────────────────────────────────────────────────────────────────
 function FuelTab({ companyId }) {
-  const { userProfile } = useAuth()
+  const { userProfile, role } = useAuth()
   const qc = useQueryClient()
   const [subTab,          setSubTab]          = useState('issues')  // 'issues' | 'filled' | 'tanks'
   const [showIssueForm,   setShowIssueForm]   = useState(false)
@@ -3538,7 +3538,7 @@ function FuelTab({ companyId }) {
   const [replenishTankId, setReplenishTankId] = useState(null) // tank id to replenish, or null
   const [filterMonth,     setFilterMonth]     = useState(format(new Date(), 'yyyy-MM'))
 
-  const canIssueFuel = ['admin', 'manager'].includes(userProfile?.role)
+  const canIssueFuel = ['admin', 'manager'].includes(role)
 
   const monthStart = filterMonth + '-01'
   const monthEnd   = (() => {
