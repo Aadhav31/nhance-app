@@ -3554,7 +3554,9 @@ function FuelIssueModal({ companyId, userProfile, onClose, onSaved }) {
   const { data: tanks = [] } = useQuery({
     queryKey: ['fuel_tanks', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('fuel_tanks').select('id,name,tank_type,location,current_stock,capacity_liters').eq('company_id', companyId).eq('is_active', true).order('name')
+      const { data } = await supabase.from('fuel_tanks')
+        .select('id,name,tank_type,location,current_stock,capacity_liters,equipment_id,equipment:equipment_id(name,registration_number,equipment_number)')
+        .eq('company_id', companyId).eq('is_active', true).order('name')
       return data || []
     },
     enabled: isCompanySource,
@@ -3691,7 +3693,9 @@ function FuelIssueModal({ companyId, userProfile, onClose, onSaved }) {
                     <option value="">Select tank…</option>
                     {tanks.map(t => (
                       <option key={t.id} value={t.id}>
-                        {t.name}{t.location ? ` @ ${t.location}` : ''} — {t.current_stock?.toFixed(0)} L available
+                        {t.name}
+                        {t.equipment?.registration_number ? ` [${t.equipment.registration_number}]` : ''}
+                        {t.location ? ` @ ${t.location}` : ''} — {t.current_stock?.toFixed(0)} L available
                       </option>
                     ))}
                   </select>
@@ -3854,7 +3858,7 @@ function FuelTab({ companyId }) {
     queryKey: ['fuel_tanks', companyId],
     queryFn: async () => {
       const { data } = await supabase.from('fuel_tanks')
-        .select('id,name,tank_type,location,capacity_liters,current_stock,is_active,notes')
+        .select('id,name,tank_type,location,capacity_liters,current_stock,is_active,notes,equipment_id,equipment:equipment_id(name,registration_number,equipment_number,category)')
         .eq('company_id', companyId)
         .order('name')
       return data || []
@@ -4035,9 +4039,12 @@ function FuelTab({ companyId }) {
                   <div key={tank.id} className={`bg-dark-800 border rounded-xl p-4 ${isLow ? 'border-red-700/60' : 'border-dark-700'}`}>
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <p className="font-semibold text-slate-100 text-sm">{tank.name}</p>
                           <span className="text-xs bg-dark-600 text-slate-400 rounded px-1.5 py-0.5">{TANK_TYPE_LABELS[tank.tank_type] || tank.tank_type}</span>
+                          {tank.equipment?.registration_number && (
+                            <span className="text-xs font-mono text-primary-400 bg-primary-500/10 px-1.5 py-0.5 rounded">{tank.equipment.registration_number}</span>
+                          )}
                           {!tank.is_active && <span className="text-xs bg-red-900/40 text-red-400 rounded px-1.5 py-0.5">Inactive</span>}
                         </div>
                         {tank.location && <p className="text-xs text-slate-500 mt-0.5">📍 {tank.location}</p>}
@@ -4538,16 +4545,37 @@ function PMScheduleModal({ equipment, companyId, initialValues, onClose, onSaved
 // ── Fuel Tank Modal (add new tank) ────────────────────────────────────────────
 function FuelTankModal({ companyId, onClose, onSaved }) {
   const inp = 'w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500'
-  const [name,     setName]     = useState('')
-  const [type,     setType]     = useState('bowser')
-  const [location, setLocation] = useState('')
-  const [capacity, setCapacity] = useState('')
-  const [stock,    setStock]    = useState('0')
-  const [notes,    setNotes]    = useState('')
-  const [saving,   setSaving]   = useState(false)
+  const [name,        setName]        = useState('')
+  const [type,        setType]        = useState('fixed_tank')
+  const [location,    setLocation]    = useState('')
+  const [capacity,    setCapacity]    = useState('')
+  const [stock,       setStock]       = useState('0')
+  const [notes,       setNotes]       = useState('')
+  const [equipmentId, setEquipmentId] = useState('')
+  const [saving,      setSaving]      = useState(false)
+
+  // Fleet bowsers for linking
+  const { data: fleetBowsers = [] } = useQuery({
+    queryKey: ['fleet_bowsers', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('equipment')
+        .select('id, name, equipment_number, registration_number, category')
+        .eq('company_id', companyId)
+        .eq('category', 'Fuel Bowser')
+        .order('name')
+      return data || []
+    },
+    enabled: type === 'bowser' && !!companyId,
+  })
+
+  const handleEquipSelect = (equipId) => {
+    setEquipmentId(equipId)
+    const equip = fleetBowsers.find(e => e.id === equipId)
+    if (equip && !name.trim()) setName(equip.name)
+  }
 
   const handleSave = async () => {
-    if (!name.trim()) return toast.error('Enter a tank name')
+    if (!name.trim()) return toast.error('Enter a name')
     setSaving(true)
     try {
       const { error } = await supabase.from('fuel_tanks').insert({
@@ -4558,9 +4586,10 @@ function FuelTankModal({ companyId, onClose, onSaved }) {
         capacity_liters: capacity ? parseFloat(capacity) : null,
         current_stock:   stock    ? parseFloat(stock)    : 0,
         notes:           notes.trim() || null,
+        equipment_id:    equipmentId || null,
       })
       if (error) throw error
-      toast.success('Tank added')
+      toast.success(type === 'bowser' ? 'Bowser fuel record added' : 'Tank added')
       onSaved()
     } catch (e) { toast.error(e.message) } finally { setSaving(false) }
   }
@@ -4569,24 +4598,45 @@ function FuelTankModal({ companyId, onClose, onSaved }) {
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
       <div className="bg-dark-800 border border-dark-600 rounded-2xl w-full max-w-md shadow-2xl">
         <div className="flex items-center justify-between px-5 py-4 border-b border-dark-700">
-          <p className="text-sm font-bold text-slate-100">Add Fuel Tank / Bowser</p>
+          <p className="text-sm font-bold text-slate-100">Add Fuel Tank / Bowser Stock</p>
           <button onClick={onClose} className="text-slate-500 hover:text-slate-200"><X className="w-4 h-4" /></button>
         </div>
         <div className="px-5 py-4 space-y-3">
           <div>
-            <p className="text-xs text-slate-400 mb-1">Tank Name *</p>
-            <input className={inp} value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Main Bowser, Site A Tank" />
-          </div>
-          <div>
             <p className="text-xs text-slate-400 mb-1">Type</p>
-            <select className={inp} value={type} onChange={e => setType(e.target.value)}>
-              <option value="bowser">Bowser (mobile)</option>
-              <option value="fixed_tank">Fixed Tank</option>
+            <select className={inp} value={type} onChange={e => { setType(e.target.value); setEquipmentId('') }}>
+              <option value="fixed_tank">Fixed Tank (stationary)</option>
+              <option value="bowser">Bowser (mobile vehicle)</option>
               <option value="drum">Drum</option>
             </select>
           </div>
+
+          {/* If bowser: link to fleet equipment */}
+          {type === 'bowser' && (
+            <div className="bg-dark-700/60 rounded-xl p-3 space-y-2 border border-dark-600">
+              <p className="text-xs font-semibold text-primary-400 flex items-center gap-1.5">
+                <Truck className="w-3.5 h-3.5" /> Link to Fleet Bowser
+              </p>
+              <p className="text-[11px] text-slate-500">Select the bowser registered in Fleet to link its vehicle details. Register it in Fleet → Add Equipment (type: Fuel Bowser) first if not listed.</p>
+              <select className={inp} value={equipmentId} onChange={e => handleEquipSelect(e.target.value)}>
+                <option value="">— Select fleet bowser —</option>
+                {fleetBowsers.map(e => (
+                  <option key={e.id} value={e.id}>
+                    {e.name}{e.equipment_number ? ` (${e.equipment_number})` : ''}{e.registration_number ? ` · ${e.registration_number}` : ''}
+                  </option>
+                ))}
+                {fleetBowsers.length === 0 && <option disabled>No Fuel Bowser equipment registered yet</option>}
+              </select>
+            </div>
+          )}
+
           <div>
-            <p className="text-xs text-slate-400 mb-1">Location / Site</p>
+            <p className="text-xs text-slate-400 mb-1">{type === 'bowser' ? 'Bowser Name / Label *' : 'Tank Name *'}</p>
+            <input className={inp} value={name} onChange={e => setName(e.target.value)}
+              placeholder={type === 'bowser' ? 'e.g. Main Bowser, FB-01' : 'e.g. Site A Tank, Yard Tank'} />
+          </div>
+          <div>
+            <p className="text-xs text-slate-400 mb-1">{type === 'bowser' ? 'Base Location / Yard' : 'Location / Site'}</p>
             <input className={inp} value={location} onChange={e => setLocation(e.target.value)} placeholder="Site name or yard" />
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -4609,7 +4659,7 @@ function FuelTankModal({ companyId, onClose, onSaved }) {
           <button onClick={handleSave} disabled={saving}
             className="flex-1 py-2 rounded-lg bg-primary-600 hover:bg-primary-500 text-white text-sm font-medium disabled:opacity-40 transition-colors flex items-center justify-center gap-2">
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-            {saving ? 'Saving…' : 'Add Tank'}
+            {saving ? 'Saving…' : 'Add'}
           </button>
         </div>
       </div>

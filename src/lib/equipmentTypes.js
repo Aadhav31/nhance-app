@@ -546,6 +546,13 @@ export const CRUSHER_EQUIPMENT_TYPES = [
   },
   // ── Support Equipment ─────────────────────────────────────────────────────────
   {
+    type: 'Fuel Bowser',
+    prefix: 'FB',
+    meter_type: 'km',
+    sub_categories: ['Small (< 3,000 L)', 'Medium (3,000–6,000 L)', 'Large (6,000–10,000 L)', 'Extra Large (> 10,000 L)'],
+    attachments: ['Fuel Dispensing Nozzle', 'Flow Meter', 'Fire Extinguisher Mount'],
+  },
+  {
     type: 'Water Tanker',
     prefix: 'WT',
     meter_type: 'both',
