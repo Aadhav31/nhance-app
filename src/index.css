@@ -45,6 +45,86 @@ html .text-slate-300  { color: rgb(var(--t2)); }
 html .text-slate-400  { color: rgb(var(--t3)); }
 /* slate-500 is borderline — keep as-is (resolves to #64748b in light, fine contrast) */
 
+/* ── Dark mode: slate-700/800/900 → readable muted text ────────────────────
+   These near-black shades are invisible on dark-mode surfaces.
+   Remap to --t3 / --t2 / --t1 so they degrade gracefully.                  */
+[data-theme="dark"] .text-slate-700 { color: rgb(var(--t3)); }
+[data-theme="dark"] .text-slate-800 { color: rgb(var(--t2)); }
+[data-theme="dark"] .text-slate-900 { color: rgb(var(--t1)); }
+
+/* ── Semantic colored text — light-mode overrides ──────────────────────────
+   Bright variants (200–500) are illegible on light surfaces (contrast < 3:1).
+   In light mode ONLY, remap to -700 equivalents (≥ 4.6:1 on white).
+   In dark mode the original Tailwind values stay — bright on dark is fine.
+   Specificity: html:not([data-theme="dark"]) .class beats plain utilities.  */
+
+/* Emerald */
+html:not([data-theme="dark"]) .text-emerald-200,
+html:not([data-theme="dark"]) .text-emerald-300,
+html:not([data-theme="dark"]) .text-emerald-400,
+html:not([data-theme="dark"]) .text-emerald-500 { color: #047857; } /* emerald-700 6.4:1 */
+
+/* Red */
+html:not([data-theme="dark"]) .text-red-200,
+html:not([data-theme="dark"]) .text-red-300,
+html:not([data-theme="dark"]) .text-red-400,
+html:not([data-theme="dark"]) .text-red-500     { color: #b91c1c; } /* red-700    7.2:1 */
+
+/* Amber */
+html:not([data-theme="dark"]) .text-amber-200,
+html:not([data-theme="dark"]) .text-amber-300,
+html:not([data-theme="dark"]) .text-amber-400,
+html:not([data-theme="dark"]) .text-amber-500,
+html:not([data-theme="dark"]) .text-amber-600   { color: #b45309; } /* amber-700  4.8:1 */
+
+/* Yellow */
+html:not([data-theme="dark"]) .text-yellow-200,
+html:not([data-theme="dark"]) .text-yellow-300,
+html:not([data-theme="dark"]) .text-yellow-400,
+html:not([data-theme="dark"]) .text-yellow-500,
+html:not([data-theme="dark"]) .text-yellow-600  { color: #a16207; } /* yellow-700 5.0:1 */
+
+/* Orange */
+html:not([data-theme="dark"]) .text-orange-200,
+html:not([data-theme="dark"]) .text-orange-300,
+html:not([data-theme="dark"]) .text-orange-400,
+html:not([data-theme="dark"]) .text-orange-500,
+html:not([data-theme="dark"]) .text-orange-600  { color: #c2410c; } /* orange-700 6.6:1 */
+
+/* Blue */
+html:not([data-theme="dark"]) .text-blue-200,
+html:not([data-theme="dark"]) .text-blue-300,
+html:not([data-theme="dark"]) .text-blue-400,
+html:not([data-theme="dark"]) .text-blue-500    { color: #1d4ed8; } /* blue-700   8.5:1 */
+
+/* Teal */
+html:not([data-theme="dark"]) .text-teal-200,
+html:not([data-theme="dark"]) .text-teal-300,
+html:not([data-theme="dark"]) .text-teal-400,
+html:not([data-theme="dark"]) .text-teal-500    { color: #0f766e; } /* teal-700   7.9:1 */
+
+/* Cyan */
+html:not([data-theme="dark"]) .text-cyan-200,
+html:not([data-theme="dark"]) .text-cyan-300,
+html:not([data-theme="dark"]) .text-cyan-400,
+html:not([data-theme="dark"]) .text-cyan-500    { color: #0e7490; } /* cyan-700   7.4:1 */
+
+/* Purple */
+html:not([data-theme="dark"]) .text-purple-200,
+html:not([data-theme="dark"]) .text-purple-300,
+html:not([data-theme="dark"]) .text-purple-400,
+html:not([data-theme="dark"]) .text-purple-500  { color: #7e22ce; } /* purple-700 10.6:1 */
+
+/* Indigo */
+html:not([data-theme="dark"]) .text-indigo-200,
+html:not([data-theme="dark"]) .text-indigo-300,
+html:not([data-theme="dark"]) .text-indigo-400,
+html:not([data-theme="dark"]) .text-indigo-500  { color: #4338ca; } /* indigo-700 9.1:1 */
+
+/* Primary (custom sea-blue) — 300/400 fail on white; 500+ already pass AA */
+html:not([data-theme="dark"]) .text-primary-300,
+html:not([data-theme="dark"]) .text-primary-400 { color: #155A8A; } /* primary-600 */
+
 @layer base {
   * { box-sizing: border-box; }
 
@@ -119,6 +199,13 @@ html .text-slate-400  { color: rgb(var(--t3)); }
   .badge-danger  { @apply badge bg-red-500/15    text-red-700; }
   .badge-info    { @apply badge bg-cyan-500/15   text-cyan-700; }
   .badge-neutral { @apply badge bg-slate-500/10  text-slate-600; }
+
+  /* Dark mode: restore bright text — -700 shades are near-invisible on dark surfaces */
+  [data-theme="dark"] .badge-success { background-color: rgb(16 185 129 / 0.15); color: #6ee7b7; }  /* emerald-300 */
+  [data-theme="dark"] .badge-warning { background-color: rgb(245 158 11 / 0.15); color: #fcd34d; }  /* amber-300   */
+  [data-theme="dark"] .badge-danger  { background-color: rgb(239 68 68  / 0.15); color: #fca5a5; }  /* red-300     */
+  [data-theme="dark"] .badge-info    { background-color: rgb(6 182 212  / 0.15); color: #67e8f9; }  /* cyan-300    */
+  [data-theme="dark"] .badge-neutral { background-color: rgb(100 116 139 / 0.15); color: #94a3b8; } /* slate-400   */
 
   .stat-card { @apply card p-5 flex flex-col gap-2; }
   .page-container { @apply flex flex-col h-full overflow-hidden; }
