@@ -2977,8 +2977,8 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
                 <p className="text-sm text-slate-500">Admin access required to edit shift schedule</p>
               </div>
             )}
-          </div>{/* /shift-config wrapper */}
-        </div>{/* /space-y-5 */}
+          </div>
+        </div>
     )
   })()}
 
