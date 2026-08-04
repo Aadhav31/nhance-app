@@ -1433,6 +1433,10 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
   const [graceMinutes,   setGraceMinutes]   = useState(30)
   const [scheduleSaving, setScheduleSaving] = useState(false)
 
+  // ── Utilization calendar state ────────────────────────────────────────────────
+  const [calMonth, setCalMonth] = useState(() => { const d = new Date(); d.setDate(1); return d })
+  const [calSelectedDay, setCalSelectedDay] = useState(null) // 'YYYY-MM-DD' or null
+
   const setShiftRow = (i, key, val) =>
     setShiftRows(prev => prev.map((r, idx) => idx === i ? { ...r, [key]: val } : r))
 
@@ -1702,6 +1706,41 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
         .eq('equipment_id', equipment.id).order('created_at', { ascending: false }).limit(5)
       return data || []
     },
+  })
+
+  // ── Utilization calendar queries ──────────────────────────────────────────────
+  const _calY  = calMonth.getFullYear()
+  const _calM  = calMonth.getMonth()
+  const calMonthStart = `${_calY}-${String(_calM + 1).padStart(2, '0')}-01`
+  const calMonthEnd   = (() => {
+    const d = new Date(_calY, _calM + 1, 0)
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  })()
+
+  const { data: monthlyOps = [] } = useQuery({
+    queryKey: ['monthly_ops', equipment.id, calMonthStart],
+    queryFn: async () => {
+      const { data } = await supabase.from('daily_operations')
+        .select('ops_date,status,running_hours,fuel_consumed')
+        .eq('equipment_id', equipment.id)
+        .gte('ops_date', calMonthStart)
+        .lte('ops_date', calMonthEnd)
+      return data || []
+    },
+    enabled: detailTab === 'shift_schedule',
+  })
+
+  const { data: monthlyFuel = [] } = useQuery({
+    queryKey: ['monthly_fuel', equipment.id, calMonthStart],
+    queryFn: async () => {
+      const { data } = await supabase.from('shift_fuel_entries')
+        .select('entry_time,quantity_liters')
+        .eq('equipment_id', equipment.id)
+        .gte('entry_time', calMonthStart + 'T00:00:00')
+        .lte('entry_time', calMonthEnd + 'T23:59:59')
+      return data || []
+    },
+    enabled: detailTab === 'shift_schedule',
   })
 
   // Insurance doc — same queryKey as DocumentsSection so React Query deduplicates
@@ -2100,7 +2139,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
             { id: 'deployment',     label: 'Deployment'     },
             { id: 'maintenance',    label: 'Maintenance'    },
             { id: 'operator_log',   label: 'Log'            },
-            { id: 'shift_schedule', label: 'Shift Schedule' },
+            { id: 'shift_schedule', label: 'Utilization' },
             { id: 'pl',             label: 'Equipment P&L'  },
             { id: 'remarks',        label: 'Remarks'        },
           ].map(t => (
@@ -2641,12 +2680,227 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
           </div>
         )}
 
-        {/* ── SHIFT SCHEDULE TAB ── */}
-        {detailTab === 'shift_schedule' && (
-          <div className="space-y-4 pt-1">
-            {isAdmin ? (
-              <>
-                <div className="flex gap-2">
+        {/* ── UTILIZATION TAB ── */}
+        {detailTab === 'shift_schedule' && (() => {
+          // ── calendar helpers ──────────────────────────────────────────────────
+          const opsByDate = {}
+          for (const op of monthlyOps) {
+            if (!opsByDate[op.ops_date]) opsByDate[op.ops_date] = []
+            opsByDate[op.ops_date].push(op)
+          }
+          const fuelByDate = {}
+          for (const f of monthlyFuel) {
+            const d = (f.entry_time || '').slice(0, 10)
+            if (!d) continue
+            fuelByDate[d] = (fuelByDate[d] || 0) + (Number(f.quantity_liters) || 0)
+          }
+
+          const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December']
+          const DAY_LABELS  = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']
+
+          // Build calendar grid: array of weeks, each week has 7 day-slots (null = padding)
+          const firstDay  = new Date(_calY, _calM, 1).getDay()   // 0=Sun
+          const daysInMon = new Date(_calY, _calM + 1, 0).getDate()
+          const slots = []
+          for (let i = 0; i < firstDay; i++) slots.push(null)
+          for (let d = 1; d <= daysInMon; d++) slots.push(d)
+          while (slots.length % 7 !== 0) slots.push(null)
+          const weeks = []
+          for (let i = 0; i < slots.length; i += 7) weeks.push(slots.slice(i, i + 7))
+
+          const toDateStr = (day) => `${_calY}-${String(_calM + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+
+          const getTileKind = (day) => {
+            if (!day) return 'pad'
+            const ds    = toDateStr(day)
+            const date  = new Date(ds + 'T00:00:00')
+            const isSun = date.getDay() === 0
+            const ops   = opsByDate[ds] || []
+            const hasOps = ops.length > 0
+            if (isSun)  return hasOps ? 'gold' : 'blue'
+            if (!hasOps) return 'empty'
+            const statuses    = ops.map(o => o.status)
+            const hasBreakdown = statuses.includes('breakdown')
+            const hasWorking   = statuses.some(s => s === 'working' || s === 'idle' || s === 'maintenance')
+            if (hasBreakdown && hasWorking) return 'diagonal'
+            if (hasBreakdown) return 'red'
+            return 'green'
+          }
+
+          const TILE_STYLES = {
+            green:    { bg: 'bg-green-500/80',          border: 'border-green-500/60',  text: 'text-white',          label: 'Worked' },
+            red:      { bg: 'bg-red-500/80',             border: 'border-red-500/60',    text: 'text-white',          label: 'Breakdown' },
+            blue:     { bg: 'bg-blue-500/20',            border: 'border-blue-500/40',   text: 'text-blue-300',       label: 'Sunday' },
+            gold:     { bg: 'bg-yellow-500/80',          border: 'border-yellow-500/60', text: 'text-yellow-900',     label: 'Sunday — Worked' },
+            empty:    { bg: 'bg-dark-700/20',            border: 'border-dark-600/30',   text: 'text-slate-600',      label: 'No data' },
+            diagonal: { bg: '',                          border: 'border-orange-400/60', text: 'text-white',          label: 'Breakdown Resolved' },
+            pad:      { bg: 'bg-transparent',            border: 'border-transparent',   text: '',                    label: '' },
+          }
+
+          // Detail for selected day
+          const selOps  = calSelectedDay ? (opsByDate[calSelectedDay] || []) : []
+          const selFuel = calSelectedDay ? (fuelByDate[calSelectedDay] || 0)  : 0
+          const selRunHours  = selOps.reduce((s, o) => s + (Number(o.running_hours) || 0), 0)
+          const selFuelCons  = selOps.reduce((s, o) => s + (Number(o.fuel_consumed) || 0), 0)
+          const selKind = calSelectedDay ? getTileKind(Number(calSelectedDay.slice(8))) : null
+
+          return (
+            <div className="space-y-5 pt-1">
+              {/* ── Calendar section ──────────────────────────────────────── */}
+              <div className="bg-dark-800 rounded-2xl border border-dark-700 p-4 space-y-3">
+                {/* Month navigator */}
+                <div className="flex items-center justify-between">
+                  <button
+                    onClick={() => { setCalMonth(prev => new Date(prev.getFullYear(), prev.getMonth() - 1, 1)); setCalSelectedDay(null) }}
+                    className="p-1.5 rounded-lg hover:bg-dark-700 text-slate-400 hover:text-slate-200 transition-colors">
+                    <ChevronRight className="w-4 h-4 rotate-180" />
+                  </button>
+                  <span className="text-sm font-semibold text-slate-200">
+                    {MONTH_NAMES[_calM]} {_calY}
+                  </span>
+                  <button
+                    onClick={() => { setCalMonth(prev => new Date(prev.getFullYear(), prev.getMonth() + 1, 1)); setCalSelectedDay(null) }}
+                    className="p-1.5 rounded-lg hover:bg-dark-700 text-slate-400 hover:text-slate-200 transition-colors">
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {/* Day-of-week headers */}
+                <div className="grid grid-cols-7 gap-1">
+                  {DAY_LABELS.map(dl => (
+                    <div key={dl} className="text-center text-[10px] font-semibold text-slate-500 uppercase tracking-wider py-1">
+                      {dl}
+                    </div>
+                  ))}
+                </div>
+
+                {/* Calendar grid */}
+                <div className="space-y-1">
+                  {weeks.map((week, wi) => (
+                    <div key={wi} className="grid grid-cols-7 gap-1">
+                      {week.map((day, di) => {
+                        const kind = getTileKind(day)
+                        const ts   = TILE_STYLES[kind]
+                        const ds   = day ? toDateStr(day) : null
+                        const isSelected = ds && ds === calSelectedDay
+
+                        if (kind === 'pad') {
+                          return <div key={di} className="aspect-square rounded-lg" />
+                        }
+
+                        return (
+                          <button key={di}
+                            onClick={() => setCalSelectedDay(prev => prev === ds ? null : ds)}
+                            className={`aspect-square rounded-lg border text-xs font-semibold flex items-center justify-center transition-all
+                              ${ts.border} ${ts.text}
+                              ${kind !== 'diagonal' ? ts.bg : ''}
+                              ${isSelected ? 'ring-2 ring-white/60 scale-105 shadow-lg' : 'hover:scale-105'}
+                            `}
+                            style={kind === 'diagonal' ? {
+                              background: 'linear-gradient(135deg, #22c55e 50%, #f97316 50%)',
+                            } : undefined}
+                            title={ts.label}>
+                            {day}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  ))}
+                </div>
+
+                {/* Legend */}
+                <div className="flex flex-wrap gap-x-4 gap-y-1 pt-1 border-t border-dark-700">
+                  {[
+                    { kind: 'green',    label: 'Worked' },
+                    { kind: 'diagonal', label: 'Breakdown Resolved' },
+                    { kind: 'red',      label: 'Breakdown' },
+                    { kind: 'blue',     label: 'Sunday' },
+                    { kind: 'gold',     label: 'Sunday Worked' },
+                    { kind: 'empty',    label: 'No Data' },
+                  ].map(({ kind, label }) => (
+                    <div key={kind} className="flex items-center gap-1.5">
+                      <div className={`w-3 h-3 rounded-sm border ${TILE_STYLES[kind].border} ${kind !== 'diagonal' ? TILE_STYLES[kind].bg : ''}`}
+                        style={kind === 'diagonal' ? { background: 'linear-gradient(135deg, #22c55e 50%, #f97316 50%)' } : undefined} />
+                      <span className="text-[10px] text-slate-500">{label}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* ── Day detail panel ──────────────────────────────────────── */}
+              {calSelectedDay && (
+                <div className="bg-dark-800 rounded-2xl border border-dark-700 p-4 space-y-3 animate-fade-in">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs font-semibold text-slate-300">
+                        {new Date(calSelectedDay + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+                      </p>
+                      <span className={`inline-block mt-0.5 text-[10px] font-medium px-2 py-0.5 rounded-full
+                        ${selKind === 'green'    ? 'bg-green-500/20 text-green-400'   : ''}
+                        ${selKind === 'red'      ? 'bg-red-500/20 text-red-400'       : ''}
+                        ${selKind === 'blue'     ? 'bg-blue-500/20 text-blue-400'     : ''}
+                        ${selKind === 'gold'     ? 'bg-yellow-500/20 text-yellow-400' : ''}
+                        ${selKind === 'diagonal' ? 'bg-orange-500/20 text-orange-400' : ''}
+                        ${selKind === 'empty'    ? 'bg-dark-600 text-slate-500'       : ''}
+                      `}>
+                        {TILE_STYLES[selKind]?.label || ''}
+                      </span>
+                    </div>
+                    <button onClick={() => setCalSelectedDay(null)} className="text-slate-500 hover:text-slate-300 text-lg leading-none">×</button>
+                  </div>
+
+                  {selOps.length > 0 ? (
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="bg-dark-700 rounded-xl p-3 text-center">
+                        <p className="text-[10px] text-slate-500 mb-1">Running Hours</p>
+                        <p className="text-lg font-bold text-slate-100">{selRunHours > 0 ? selRunHours.toFixed(1) : '—'}</p>
+                        <p className="text-[10px] text-slate-500">hrs</p>
+                      </div>
+                      <div className="bg-dark-700 rounded-xl p-3 text-center">
+                        <p className="text-[10px] text-slate-500 mb-1">Fuel Consumed</p>
+                        <p className="text-lg font-bold text-slate-100">{selFuelCons > 0 ? selFuelCons.toFixed(1) : '—'}</p>
+                        <p className="text-[10px] text-slate-500">litres</p>
+                      </div>
+                      <div className="bg-dark-700 rounded-xl p-3 text-center">
+                        <p className="text-[10px] text-slate-500 mb-1">Fuel Filled</p>
+                        <p className="text-lg font-bold text-slate-100">{selFuel > 0 ? selFuel.toFixed(1) : '—'}</p>
+                        <p className="text-[10px] text-slate-500">litres</p>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-slate-500 text-center py-3">No operational data recorded for this date.</p>
+                  )}
+
+                  {selOps.length > 0 && (
+                    <div className="space-y-1">
+                      {selOps.map((op, idx) => (
+                        <div key={idx} className="flex items-center justify-between bg-dark-700/60 rounded-lg px-3 py-2">
+                          <div className="flex items-center gap-2">
+                            <span className={`w-2 h-2 rounded-full ${
+                              op.status === 'working'     ? 'bg-green-400' :
+                              op.status === 'breakdown'   ? 'bg-red-400'   :
+                              op.status === 'idle'        ? 'bg-yellow-400':
+                              'bg-slate-400'
+                            }`} />
+                            <span className="text-xs capitalize text-slate-300">{op.shift_type || 'general'} shift</span>
+                            <span className="text-[10px] text-slate-500 capitalize">· {op.status}</span>
+                          </div>
+                          {op.operator_name && (
+                            <span className="text-[10px] text-slate-500">{op.operator_name}</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ── Shift configuration (admin only) ─────────────────────── */}
+              <div>
+                <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-3">Shift Configuration</p>
+                {isAdmin ? (
+                  <>
+                    <div className="flex gap-2">
                   {[1, 2, 3].map(n => (
                     <button key={n} type="button" onClick={() => setShiftCount(n)}
                       className={`flex-1 py-2.5 rounded-xl border text-xs font-medium transition-all ${
@@ -2723,8 +2977,10 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
                 <p className="text-sm text-slate-500">Admin access required to edit shift schedule</p>
               </div>
             )}
-          </div>
-        )}
+          </div>{/* /shift-config wrapper */}
+        </div>{/* /space-y-5 */}
+    )
+  })()}
 
         {/* ── EQUIPMENT P&L TAB ── */}
         {detailTab === 'pl' && (
