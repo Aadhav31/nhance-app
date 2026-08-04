@@ -1480,10 +1480,10 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
     queryKey: ['active_deployment', equipmentProp.id],
     queryFn: async () => {
       const { data } = await supabase.from('equipment_deployments')
-        .select('rate_item_id').eq('equipment_id', equipmentProp.id).eq('status', 'active').maybeSingle()
+        .select('rate_item_id, hour_meter_at_deployment, operator_name, site_incharge, work_order_ref, machine_photo_url, hour_meter_photo_url, fuel_by_client, deployed_date')
+        .eq('equipment_id', equipmentProp.id).eq('status', 'active').maybeSingle()
       return data
     },
-    enabled: isAdmin,
   })
   useEffect(() => {
     if (activeDeployment?.rate_item_id && !deployRateItemId) {
@@ -2137,208 +2137,114 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
               </div>
             )}
 
-            {/* Admin: deploy form + operators */}
-            {isAdmin && (
+            {/* ── Deployment record (read-only) ── */}
+            {activeDeployment && (
               <div className="border border-dark-600 rounded-xl overflow-hidden">
-                <div className="bg-dark-700 px-4 py-2.5 flex items-center gap-2">
-                  <Shield className="w-4 h-4 text-primary-400" />
-                  <span className="text-xs font-semibold text-slate-300 uppercase tracking-wider">Operations Setup</span>
+                <div className="bg-dark-700 px-4 py-2.5 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <History className="w-4 h-4 text-slate-400" />
+                    <span className="text-xs font-semibold text-slate-300 uppercase tracking-wider">Deployment Record</span>
+                  </div>
+                  {activeDeployment.deployed_date && (
+                    <span className="text-[10px] text-slate-500">{format(new Date(activeDeployment.deployed_date), 'dd MMM yyyy')}</span>
+                  )}
                 </div>
-
-                {/* Deploy form */}
-                <div className="p-4 space-y-2.5 border-b border-dark-600">
-                  <p className="text-xs font-medium text-slate-400 flex items-center gap-1.5">
-                    <Building2 className="w-3.5 h-3.5" /> Deploy to Client / Project
-                  </p>
-                  {equipment.current_site_name && (
-                    <div className="bg-emerald-900/20 border border-emerald-700/30 rounded-lg px-2.5 py-1.5 text-xs text-emerald-300">
-                      ✓ Currently: {equipment.current_site_name}
+                <div className="divide-y divide-dark-600">
+                  {activeDeployment.hour_meter_at_deployment != null && (
+                    <div className="px-4 py-2.5 flex items-center justify-between">
+                      <span className="text-xs text-slate-500">Hour Meter at Deployment</span>
+                      <span className="text-xs font-semibold text-slate-200">{activeDeployment.hour_meter_at_deployment} hrs</span>
                     </div>
                   )}
-                  <select className={inp('text-xs')} value={deployClientId}
-                    onChange={e => { setDeployClientId(e.target.value); setDeployProjectId('') }}>
-                    <option value="">Select client…</option>
-                    {clients.map(c => <option key={c.id} value={c.id}>{c.display_name || c.business_name}</option>)}
-                  </select>
-                  {deployClientId && (
-                    <select className={inp('text-xs')} value={deployProjectId} onChange={e => setDeployProjectId(e.target.value)}>
-                      <option value="">Select project…</option>
-                      {projects.map(p => <option key={p.id} value={p.id}>{p.project_code ? `${p.project_code} — ` : ''}{p.project_name}</option>)}
-                    </select>
-                  )}
-                  <input className={inp('text-xs')} value={deploySiteName} onChange={e => setDeploySiteName(e.target.value)}
-                    placeholder="Site name (optional, e.g. Phase 2 — North Block)" />
-
-                  {deployProjectId && rateItems.length > 0 && (
-                    <div className="bg-dark-750 border border-dark-500 rounded-lg p-2.5 space-y-2">
-                      <p className="text-xs text-slate-400 font-medium">Select applicable rate item:</p>
-                      <select
-                        className="w-full bg-dark-700 border border-dark-500 rounded-lg px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-primary-500"
-                        value={deployRateItemId}
-                        onChange={e => setDeployRateItemId(e.target.value)}>
-                        <option value="">— None / Enter manually later —</option>
-                        {(matchedRates.length > 0 ? matchedRates : rateItems).map(r => (
-                          <option key={r.id} value={r.id}>
-                            {r.item_name}
-                            {r.billing_basis === 'monthly' ? ` — ₹${r.rate_per_month}/mo` : r.billing_basis === 'hourly' ? ` — ₹${r.rate_per_hour}/hr` : ` — ₹${r.rate_per_day}/day`}
-                            {matchedRates.includes(r) ? ' ✓' : ''}
-                          </option>
-                        ))}
-                      </select>
-                      {deployRateItemId && (() => {
-                        const r = rateItems.find(x => x.id === deployRateItemId)
-                        if (!r) return null
-                        return (
-                          <div className="text-[10px] text-slate-400 space-y-0.5">
-                            <p>Billing: <span className="text-slate-200 capitalize">{r.billing_basis}</span>
-                              {r.billing_basis === 'daily'   && r.max_hours_per_day   && ` · Max ${r.max_hours_per_day} hrs/day`}
-                              {r.billing_basis === 'monthly' && r.max_hours_per_month && ` · Max ${r.max_hours_per_month} hrs/mo`}
-                            </p>
-                            {r.ot_percentage && <p>OT: <span className="text-primary-300">{r.ot_percentage}% of pro-rata rate</span></p>}
-                          </div>
-                        )
-                      })()}
+                  {activeDeployment.operator_name && (
+                    <div className="px-4 py-2.5 flex items-center justify-between">
+                      <span className="text-xs text-slate-500">Operator at Deployment</span>
+                      <span className="text-xs font-semibold text-slate-200">{activeDeployment.operator_name}</span>
                     </div>
                   )}
-
-                  {deployProjectId && (
-                    <label className="flex items-center gap-2 cursor-pointer select-none">
-                      <div className={`w-8 h-4 rounded-full transition-colors relative ${deployFuelByClient ? 'bg-primary-500' : 'bg-dark-600'}`}
-                        onClick={() => setDeployFuelByClient(v => !v)}>
-                        <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full shadow transition-transform ${deployFuelByClient ? 'translate-x-4' : 'translate-x-0.5'}`} />
-                      </div>
-                      <span className="text-xs text-slate-300">Fuel supplied by client</span>
-                      {deployFuelByClient && (
-                        <span className="text-[10px] text-amber-400 bg-amber-900/20 border border-amber-700/30 rounded px-1.5 py-0.5">
-                          Fuel costs excluded from our P&amp;L
-                        </span>
-                      )}
-                    </label>
-                  )}
-
-                  {deployProjectId && (
-                    <div className="bg-dark-750 border border-dark-500 rounded-lg p-3 space-y-2.5">
-                      <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Deployment Record</p>
-                      <div>
-                        <label className="text-[10px] text-slate-500 uppercase tracking-wider">Hour Meter at Deployment</label>
-                        <input type="number" min="0" step="0.1" className={inp('text-xs mt-1')}
-                          value={deployHourMeter} onChange={e => setDeployHourMeter(e.target.value)}
-                          placeholder={`Current: ${equipment.current_meter_reading || 0} hrs`} />
-                      </div>
-                      <div>
-                        <label className="text-[10px] text-slate-500 uppercase tracking-wider">Operator at Deployment</label>
-                        <select className={inp('text-xs mt-1')} value={deployOperatorName} onChange={e => setDeployOperatorName(e.target.value)}>
-                          <option value="">Select operator…</option>
-                          {hrOperators.map(e => <option key={e.id} value={e.name}>{e.name}</option>)}
-                        </select>
-                      </div>
-                      <div>
-                        <label className="text-[10px] text-slate-500 uppercase tracking-wider">Site In-charge</label>
-                        <input className={inp('text-xs mt-1')} value={deploySiteIncharge}
-                          onChange={e => setDeploySiteIncharge(e.target.value)}
-                          placeholder="Name of person responsible at site" />
-                      </div>
-                      <div>
-                        <label className="text-[10px] text-slate-500 uppercase tracking-wider">Work Order / PO / Contract Ref</label>
-                        <input className={inp('text-xs mt-1')} value={deployWorkOrderRef}
-                          onChange={e => setDeployWorkOrderRef(e.target.value)}
-                          placeholder="e.g. WO-2026-042 or HC-001" />
-                      </div>
-                      <div>
-                        <label className="text-[10px] text-slate-500 uppercase tracking-wider">Machine Photo</label>
-                        <CameraButton companyId={companyId} label={`deploy_machine_${equipment.id}`}
-                          photoUrl={deployMachinePhotoUrl} onCapture={setDeployMachinePhotoUrl} location={deployGpsLoc} />
-                      </div>
-                      <div>
-                        <label className="text-[10px] text-slate-500 uppercase tracking-wider">
-                          Hour Meter Photo <span className="normal-case text-slate-600">(optional)</span>
-                        </label>
-                        <CameraButton companyId={companyId} label={`deploy_meter_${equipment.id}`}
-                          photoUrl={deployMeterPhotoUrl} onCapture={setDeployMeterPhotoUrl} location={deployGpsLoc} />
-                      </div>
-                      <GPSField location={deployGpsLoc} loading={deployGpsLoading} />
+                  {activeDeployment.site_incharge && (
+                    <div className="px-4 py-2.5 flex items-center justify-between">
+                      <span className="text-xs text-slate-500">Site In-charge</span>
+                      <span className="text-xs font-semibold text-slate-200">{activeDeployment.site_incharge}</span>
                     </div>
                   )}
-
-                  <button onClick={handleDeploy} disabled={deploySaving || !deployProjectId}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary-600 hover:bg-primary-500 text-white text-xs font-medium disabled:opacity-40 transition-colors">
-                    {deploySaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-                    {deploySaving ? 'Saving…' : 'Save Deployment'}
-                  </button>
-                </div>
-
-                {/* Operators */}
-                <div className="p-4 space-y-2">
-                  <p className="text-xs font-medium text-slate-400 flex items-center gap-1.5">
-                    <Users className="w-3.5 h-3.5" /> Assigned Operators
-                    <span className="text-slate-600 font-normal ml-1">· from HR module</span>
-                  </p>
-                  <p className="text-[10px] text-slate-600">📱 = has portal login</p>
-                  {assignments.length === 0 ? (
-                    <p className="text-xs text-slate-500 italic">No operators assigned yet</p>
-                  ) : (
-                    <div className="space-y-1.5">
-                      {assignments.map(a => {
-                        const hr = hrOperators.find(e => e.name === a.operator_name)
-                        const shiftLabel = { day: '☀️ Day', night: '🌙 Night', double: '🔄 Double' }[a.shift_type] || '☀️ Day'
-                        return (
-                          <div key={a.id} className="flex items-center justify-between rounded-lg px-2.5 py-1.5 bg-dark-700">
-                            <div className="flex-1 min-w-0">
-                              <span className="text-xs text-slate-200">{a.operator_name}</span>
-                              {hr && <span className="text-[10px] text-slate-500 ml-2">{hr.employee_number}</span>}
-                              {(hr?.user_id || a.user_id) && <span className="text-[10px] text-slate-400 ml-1">📱</span>}
-                              <span className="text-[10px] text-slate-500 ml-2">{shiftLabel}</span>
-                            </div>
-                            <button onClick={() => handleRemoveOperator(a.id, a.operator_name)}
-                              className="p-1 text-slate-500 hover:text-red-400 transition-colors shrink-0">
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        )
-                      })}
+                  {activeDeployment.work_order_ref && (
+                    <div className="px-4 py-2.5 flex items-center justify-between">
+                      <span className="text-xs text-slate-500">Work Order / PO Ref</span>
+                      <span className="text-xs font-mono text-primary-300">{activeDeployment.work_order_ref}</span>
                     </div>
                   )}
-                  {(() => {
-                    const assignedNames = new Set(assignments.map(a => a.operator_name))
-                    const available = hrOperators.filter(e => !assignedNames.has(e.name))
-                    if (hrOperators.length === 0) return (
-                      <p className="text-xs text-amber-400/80 bg-amber-900/20 border border-amber-700/30 rounded-lg px-2.5 py-2">
-                        No operators in HR module. Add employees with Operator/Driver designation first.
-                      </p>
-                    )
-                    return (
-                      <div className="space-y-1.5">
-                        <select
-                          className="w-full bg-dark-700 border border-dark-600 rounded-lg px-2.5 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-primary-500"
-                          value={newOperator}
-                          onChange={e => setNewOperator(e.target.value)}>
-                          <option value="">Select operator from HR…</option>
-                          {available.map(e => (
-                            <option key={e.id} value={e.id}>{e.name} — {e.designation}{e.user_id ? ' 📱' : ''}</option>
-                          ))}
-                        </select>
-                        {newOperator && !hrOperators.find(e => e.id === newOperator)?.user_id && (
-                          <p className="text-[10px] text-amber-400">⚠️ No portal login — operator won't appear in Operator Portal until account created in HR → Employee Logins</p>
-                        )}
-                        <div className="flex gap-2">
-                          <select
-                            className="flex-1 bg-dark-700 border border-dark-600 rounded-lg px-2.5 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-primary-500"
-                            value={newShiftType}
-                            onChange={e => setNewShiftType(e.target.value)}>
-                            <option value="day">☀️ Day Shift</option>
-                            <option value="night">🌙 Night Shift</option>
-                            <option value="double">🔄 Double Shift</option>
-                          </select>
-                          <button onClick={handleAddOperator} disabled={operatorSaving || !newOperator}
-                            className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-dark-600 border border-dark-500 hover:border-primary-500 text-xs text-slate-300 disabled:opacity-40 transition-colors shrink-0">
-                            {operatorSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />} Assign
-                          </button>
-                        </div>
-                      </div>
-                    )
-                  })()}
+                  {activeDeployment.fuel_by_client && (
+                    <div className="px-4 py-2.5">
+                      <span className="text-[10px] text-amber-400 bg-amber-900/20 border border-amber-700/30 rounded px-2 py-1">
+                        ⛽ Fuel supplied by client — excluded from P&L
+                      </span>
+                    </div>
+                  )}
+                  {activeDeployment.machine_photo_url && (
+                    <div className="px-4 py-2.5">
+                      <p className="text-[10px] text-slate-500 mb-1.5">Machine Photo</p>
+                      <img src={activeDeployment.machine_photo_url} alt="Machine at deployment"
+                        className="w-full max-w-xs rounded-lg border border-dark-500 object-cover" />
+                    </div>
+                  )}
                 </div>
               </div>
+            )}
+
+            {/* ── Assigned Operators (read-only) ── */}
+            <div className="border border-dark-600 rounded-xl overflow-hidden">
+              <div className="bg-dark-700 px-4 py-2.5 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Users className="w-4 h-4 text-slate-400" />
+                  <span className="text-xs font-semibold text-slate-300 uppercase tracking-wider">Assigned Operators</span>
+                </div>
+                {onNavigate && (
+                  <button onClick={() => { onClose(); onNavigate('hr') }}
+                    className="flex items-center gap-1 text-[11px] text-primary-400 hover:text-primary-300 transition-colors">
+                    Manage in HR <ChevronRight className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+              {assignments.length === 0 ? (
+                <div className="px-4 py-5 text-center">
+                  <p className="text-xs text-slate-500">No operators assigned</p>
+                  <p className="text-[10px] text-slate-600 mt-1">Assign operators from HR &amp; Payroll → Operators</p>
+                </div>
+              ) : (
+                <div className="divide-y divide-dark-600">
+                  {assignments.map(a => {
+                    const shiftLabel = { day: '☀️ Day', night: '🌙 Night', double: '🔄 Double' }[a.shift_type] || '☀️ Day'
+                    return (
+                      <div key={a.id} className="px-4 py-2.5 flex items-center justify-between">
+                        <div>
+                          <span className="text-xs font-medium text-slate-200">{a.operator_name}</span>
+                          {a.user_id && <span className="text-[10px] text-primary-400 ml-1.5">📱 Portal</span>}
+                        </div>
+                        <span className="text-[10px] text-slate-500">{shiftLabel}</span>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* ── Redirect hint ── */}
+            {onNavigate && equipment.current_project_id && (
+              <button onClick={() => { onClose(); onNavigate('projects') }}
+                className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-xl border border-dark-600 text-xs text-slate-400 hover:text-slate-200 hover:border-dark-500 transition-colors">
+                <FolderOpen className="w-3.5 h-3.5" />
+                Manage deployment in Projects
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            )}
+            {onNavigate && !equipment.current_project_id && (
+              <button onClick={() => { onClose(); onNavigate('projects') }}
+                className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-xl border border-dashed border-dark-600 text-xs text-slate-500 hover:text-slate-300 hover:border-dark-500 transition-colors">
+                <Building2 className="w-3.5 h-3.5" />
+                Deploy this equipment — go to Projects
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
             )}
           </div>
         )}
