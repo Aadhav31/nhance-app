@@ -331,7 +331,7 @@ function StartShiftModal({ equipment, companyId, onClose }) {
   const handleOperatorChange = (name) => {
     set('operator_name', name)
     if (!isAdmin) {
-      const assignment = assignments.find(a => a.operator_name === name)
+      const assignment = assignments.find(a => a.employee_name === name)
       if (assignment?.shift_type) set('shift_type', assignment.shift_type)
     }
   }
@@ -490,7 +490,9 @@ function StartShiftModal({ equipment, companyId, onClose }) {
             <select className={inp()} value={form.operator_name} onChange={e => handleOperatorChange(e.target.value)}>
               <option value="">Select operator…</option>
               {assignments.map(a => (
-                <option key={a.id} value={a.operator_name}>{a.operator_name}</option>
+                <option key={a.id} value={a.employee_name}>
+                  {a.employee_name}{a.employee_number ? ` · ${a.employee_number}` : ''}{a.shift_type ? ` (${a.shift_type})` : ''}
+                </option>
               ))}
             </select>
           )}
