@@ -1830,6 +1830,58 @@ function ProjectDocumentsSection({ project, companyId }) {
 function ProjectDetail({ project, companyId, docTotals, onClose, onEdit, onDelete }) {
   const { isAdvanced } = useDisplayMode()
   const [detailTab, setDetailTab] = useState('contract')
+  const [showAssignForm, setShowAssignForm] = useState(false)
+  const [assignEquipId, setAssignEquipId]   = useState('')
+  const [assignBusy, setAssignBusy]         = useState(false)
+  const qc = useQueryClient()
+
+  const { data: availableEquip = [] } = useQuery({
+    queryKey: ['available_equipment', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('equipment')
+        .select('id,name,category,make,model,equipment_number')
+        .eq('company_id', companyId)
+        .is('current_project_id', null)
+        .order('name')
+      return data || []
+    },
+    enabled: showAssignForm,
+  })
+
+  const handleAssign = async () => {
+    if (!assignEquipId) return
+    setAssignBusy(true)
+    const { error } = await supabase.from('equipment')
+      .update({ current_project_id: project.id })
+      .eq('id', assignEquipId)
+    if (error) { toast.error('Failed to assign equipment'); setAssignBusy(false); return }
+    qc.invalidateQueries({ queryKey: ['project_equipment', project.id] })
+    qc.invalidateQueries({ queryKey: ['available_equipment', companyId] })
+    setAssignEquipId('')
+    setShowAssignForm(false)
+    setAssignBusy(false)
+    toast.success('Equipment assigned to project')
+  }
+
+  const handleDescope = async (e) => {
+    if (!window.confirm(`Descope "${e.name}" from this project? Deployment history will be preserved.`)) return
+    // Close the active deployment record (set withdrawn_date = today)
+    const today = new Date().toISOString().slice(0, 10)
+    await supabase.from('equipment_deployments')
+      .update({ withdrawn_date: today })
+      .eq('equipment_id', e.id)
+      .eq('project_id', project.id)
+      .is('withdrawn_date', null)
+    // Unlink equipment from project
+    const { error } = await supabase.from('equipment')
+      .update({ current_project_id: null })
+      .eq('id', e.id)
+    if (error) { toast.error('Failed to descope equipment'); return }
+    qc.invalidateQueries({ queryKey: ['project_equipment', project.id] })
+    qc.invalidateQueries({ queryKey: ['project_deployments', project.id] })
+    qc.invalidateQueries({ queryKey: ['available_equipment', companyId] })
+    toast.success(`${e.name} descoped — history preserved`)
+  }
 
   const { data: equipment = [] } = useQuery({
     queryKey: ['project_equipment', project.id],
@@ -2127,18 +2179,54 @@ function ProjectDetail({ project, companyId, docTotals, onClose, onEdit, onDelet
       {detailTab === 'equipment' && (
         <div className="space-y-5">
           <div className="bg-dark-800/40 border border-dark-600/60 rounded-xl p-5">
-            <Sec icon={Cpu} label={`Currently on Site (${equipment.length})`}/>
+            {/* Header row */}
+            <div className="flex items-center justify-between mb-1">
+              <Sec icon={Cpu} label={`Currently on Site (${equipment.length})`}/>
+              <button onClick={() => { setShowAssignForm(v => !v); setAssignEquipId('') }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-primary-600 hover:bg-primary-500 text-white transition-colors">
+                <UserPlus className="w-3.5 h-3.5"/>
+                {showAssignForm ? 'Cancel' : 'Assign Equipment'}
+              </button>
+            </div>
+
+            {/* Inline assign form */}
+            {showAssignForm && (
+              <div className="mt-3 flex items-center gap-2 bg-dark-700/50 border border-primary-500/30 rounded-xl px-4 py-3">
+                <select value={assignEquipId} onChange={e => setAssignEquipId(e.target.value)}
+                  className="flex-1 bg-dark-600 border border-dark-500 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-primary-500">
+                  <option value="">— Select equipment to assign —</option>
+                  {availableEquip.map(e => (
+                    <option key={e.id} value={e.id}>
+                      {e.name}{e.equipment_number ? ` (${e.equipment_number})` : ''}{e.category ? ` — ${e.category}` : ''}
+                    </option>
+                  ))}
+                </select>
+                <button onClick={handleAssign} disabled={!assignEquipId || assignBusy}
+                  className="px-4 py-2 rounded-lg text-xs font-semibold bg-primary-600 hover:bg-primary-500 text-white disabled:opacity-40 transition-colors whitespace-nowrap">
+                  {assignBusy ? 'Assigning…' : 'Confirm'}
+                </button>
+              </div>
+            )}
+
+            {/* Equipment cards */}
             {equipment.length === 0 ? (
-              <p className="text-sm text-slate-500 mt-4 text-center py-8">No equipment deployed on this project yet.</p>
+              <p className="text-sm text-slate-500 mt-4 text-center py-8">No equipment assigned to this project yet.</p>
             ) : (
               <div className="mt-4 grid grid-cols-2 gap-3">
                 {equipment.map(e => (
-                  <div key={e.id} className="flex items-center justify-between bg-dark-700/40 rounded-xl px-4 py-3">
-                    <div>
-                      <p className="text-sm font-medium text-slate-200">{e.name}</p>
+                  <div key={e.id} className="flex items-center justify-between bg-dark-700/40 rounded-xl px-4 py-3 gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-slate-200 truncate">{e.name}</p>
                       <p className="text-xs text-slate-500">{e.category}{(e.make || e.model) ? ` · ${[e.make,e.model].filter(Boolean).join(' ')}` : ''}</p>
                     </div>
-                    <span className={`text-xs px-2.5 py-0.5 rounded-full font-medium ${e.status==='working'?'bg-emerald-500/15 text-emerald-300':e.status==='idle'?'bg-yellow-500/15 text-yellow-300':'bg-slate-500/15 text-slate-400'}`}>{e.status||'deployed'}</span>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className={`text-xs px-2.5 py-0.5 rounded-full font-medium ${e.status==='working'?'bg-emerald-500/15 text-emerald-300':e.status==='idle'?'bg-yellow-500/15 text-yellow-300':'bg-slate-500/15 text-slate-400'}`}>{e.status||'active'}</span>
+                      <button onClick={() => handleDescope(e)}
+                        title="Descope from project"
+                        className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium text-orange-400 border border-orange-500/30 hover:bg-orange-500/10 transition-colors">
+                        <X className="w-3 h-3"/> Descope
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
