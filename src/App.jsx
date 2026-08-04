@@ -239,6 +239,7 @@ function MobileNav({ role, activePage, onNavigate }) {
 function AppShell() {
   const { loading, session, role, hasModule, isSuperAdmin } = useAuth()
   const [activePage, setActivePage] = useState('dashboard')
+  const [navExtra,   setNavExtra]   = useState({})   // deep-link extras {tab, equipmentId, …}
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const isOnline = useOnlineStatus()
 
@@ -251,7 +252,7 @@ function AppShell() {
   // Operators get their own dedicated mobile portal
   if (role === 'operator') return <OperatorPortal />
 
-  const handleNavigate = (page) => setActivePage(page)
+  const handleNavigate = (page, extra = {}) => { setActivePage(page); setNavExtra(extra) }
 
   const defaultPage = isSuperAdmin() ? 'superadmin' : 'dashboard'
   const effectivePage = activePage === 'dashboard' ? defaultPage : activePage
@@ -292,7 +293,12 @@ function AppShell() {
             <FleetPage onNavigate={handleNavigate} />
           </Suspense>
         ) : <ModuleNotActive page={page} />
-      case 'operations':   return wrap(OperationsPage,     MODULES.OPERATIONS)
+      case 'operations':
+        return hasModule(MODULES.OPERATIONS) ? (
+          <Suspense fallback={<LoadingScreen message="Loading operations…" />}>
+            <OperationsPage initialTab={navExtra.tab} filterEquipmentId={navExtra.equipmentId} filterEquipmentName={navExtra.equipmentName} />
+          </Suspense>
+        ) : <ModuleNotActive page={page} />
       case 'maintenance':  return wrap(MaintenancePage,    MODULES.MAINTENANCE)
       case 'inventory':
         if (hasModule && !hasModule(MODULES.INVENTORY)) return isOnline ? <ModuleNotActive page="inventory" /> : <OfflineScreen />

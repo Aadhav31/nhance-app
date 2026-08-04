@@ -2597,7 +2597,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
                 <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Fuel Entries</p>
                 {onNavigate && (
                   <button
-                    onClick={() => { onClose(); onNavigate('operations') }}
+                    onClick={() => { onClose(); onNavigate('operations', { tab: 'fuel', equipmentId: equipment.id, equipmentName: equipment.name }) }}
                     className="flex items-center gap-1 text-[11px] text-primary-400 hover:text-primary-300 transition-colors"
                   >
                     View in Site Operations <ChevronRight className="w-3 h-3" />

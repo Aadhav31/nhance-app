@@ -2722,12 +2722,14 @@ function ShiftsTab({ companyId }) {
 }
 
 // ── Fuel Tab ──────────────────────────────────────────────────────────────────
-function FuelTab({ companyId }) {
+function FuelTab({ companyId, initialEquipmentId, initialEquipmentName }) {
   const { role, session } = useAuth()
   const isAdmin  = ['admin', 'superadmin'].includes(role)
   const qc       = useQueryClient()
-  const [filterDate,   setFilterDate]   = useState('')
-  const [selectedFuel, setSelectedFuel] = useState(null)
+  const [filterDate,      setFilterDate]      = useState('')
+  const [filterEqId,      setFilterEqId]      = useState(initialEquipmentId || '')
+  const [filterEqName,    setFilterEqName]    = useState(initialEquipmentName || '')
+  const [selectedFuel,    setSelectedFuel]    = useState(null)
 
   const deleteFuel = async (entry) => {
     try {
@@ -2741,15 +2743,16 @@ function FuelTab({ companyId }) {
   }
 
   const { data: entries = [], isLoading } = useQuery({
-    queryKey: ['all_fuel', companyId, filterDate],
+    queryKey: ['all_fuel', companyId, filterDate, filterEqId],
     queryFn: async () => {
       let q = supabase.from('shift_fuel_entries')
         .select('*, equipment(name, category)').eq('company_id', companyId)
-        .order('created_at', { ascending: false }).limit(100)
+        .order('created_at', { ascending: false }).limit(200)
       if (filterDate) {
-        const start = `${filterDate}T00:00:00`
-        const end   = `${filterDate}T23:59:59`
-        q = q.gte('created_at', start).lte('created_at', end)
+        q = q.gte('created_at', `${filterDate}T00:00:00`).lte('created_at', `${filterDate}T23:59:59`)
+      }
+      if (filterEqId) {
+        q = q.eq('equipment_id', filterEqId)
       }
       const { data, error } = await q
       if (error) throw error
@@ -2764,9 +2767,18 @@ function FuelTab({ companyId }) {
   return (
     <div className="flex flex-col h-full">
       <div className="px-4 py-2 shrink-0 flex items-center gap-3 flex-wrap">
+        {/* Equipment filter chip */}
+        {filterEqId && (
+          <div className="flex items-center gap-1.5 bg-primary-500/15 border border-primary-500/30 rounded-full px-3 py-1">
+            <span className="text-xs text-primary-300 font-medium">{filterEqName || 'Equipment filter'}</span>
+            <button onClick={() => { setFilterEqId(''); setFilterEqName('') }} className="text-primary-400 hover:text-primary-200">
+              <X className="w-3 h-3" />
+            </button>
+          </div>
+        )}
         <input type="date" className="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500"
           value={filterDate} onChange={e => setFilterDate(e.target.value)} />
-        {filterDate && <button onClick={() => setFilterDate('')} className="text-xs text-slate-400 hover:text-slate-200">Clear</button>}
+        {filterDate && <button onClick={() => setFilterDate('')} className="text-xs text-slate-400 hover:text-slate-200">Clear date</button>}
         {entries.length > 0 && (
           <div className="ml-auto flex gap-2">
             <div className="bg-dark-700 rounded-lg px-3 py-1.5 text-xs">
@@ -2936,9 +2948,9 @@ function IncidentsTab({ companyId }) {
 }
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
-export default function OperationsPage() {
+export default function OperationsPage({ initialTab, filterEquipmentId, filterEquipmentName }) {
   const { companyId } = useAuth()
-  const [activeTab, setActiveTab] = useState('today')
+  const [activeTab, setActiveTab] = useState(initialTab || 'today')
 
   const tabs = [
     { id: 'today',     label: "Today's Ops", icon: Activity },
@@ -2968,7 +2980,7 @@ export default function OperationsPage() {
       <div className="flex-1 overflow-hidden">
         {activeTab === 'today'     && <TodayTab     companyId={companyId} />}
         {activeTab === 'shifts'    && <ShiftsTab    companyId={companyId} />}
-        {activeTab === 'fuel'      && <FuelTab      companyId={companyId} />}
+        {activeTab === 'fuel'      && <FuelTab      companyId={companyId} initialEquipmentId={filterEquipmentId} initialEquipmentName={filterEquipmentName} />}
         {activeTab === 'incidents' && <IncidentsTab companyId={companyId} />}
       </div>
     </div>
