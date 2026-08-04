@@ -1441,7 +1441,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
     queryKey: ['equipment_assignments', equipment.id],
     queryFn: async () => {
       const { data } = await supabase.from('equipment_assignments')
-        .select('*').eq('equipment_id', equipment.id).eq('is_active', true).order('operator_name')
+        .select('*').eq('equipment_id', equipment.id).order('operator_name')
       return data || []
     },
   })
@@ -1808,7 +1808,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
       // Upsert into equipment_assignments — store user_id so portal can look up by user
       const { error } = await supabase.from('equipment_assignments').upsert({
         company_id: companyId, equipment_id: equipment.id,
-        operator_name: selectedEmp.name, shift_type: newShiftType, is_active: true,
+        operator_name: selectedEmp.name, shift_type: newShiftType,
         user_id: selectedEmp.user_id || null,
       }, { onConflict: 'equipment_id,operator_name' })
       if (error) throw error
@@ -1821,7 +1821,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
   }
 
   const handleRemoveOperator = async (assignmentId, name) => {
-    await supabase.from('equipment_assignments').update({ is_active: false }).eq('id', assignmentId)
+    await supabase.from('equipment_assignments').delete().eq('id', assignmentId)
     refetchAssignments()
     toast.success(`${name} removed`)
   }
