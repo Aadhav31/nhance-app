@@ -397,7 +397,7 @@ function AppShell() {
             </div>
           )}
           {/* pb-16 on mobile to avoid content hiding behind bottom nav */}
-          <main className="flex-1 overflow-y-auto bg-dark-900 lg:pb-0 pb-16">
+          <main className="flex-1 overflow-y-auto bg-dark-900 lg:pb-0 pb-16 relative overflow-hidden">
             {renderPage()}
           </main>
         </div>
