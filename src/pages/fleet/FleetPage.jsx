@@ -2747,37 +2747,37 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
           return (
             <div className="space-y-5 pt-1">
               {/* ── Calendar section ──────────────────────────────────────── */}
-              <div className="bg-dark-800 rounded-2xl border border-dark-700 p-4 space-y-3">
+              <div className="bg-dark-800 rounded-xl border border-dark-700 p-3 space-y-2">
                 {/* Month navigator */}
                 <div className="flex items-center justify-between">
                   <button
                     onClick={() => { setCalMonth(prev => new Date(prev.getFullYear(), prev.getMonth() - 1, 1)); setCalSelectedDay(null) }}
-                    className="p-1.5 rounded-lg hover:bg-dark-700 text-slate-400 hover:text-slate-200 transition-colors">
-                    <ChevronRight className="w-4 h-4 rotate-180" />
+                    className="p-1 rounded-lg hover:bg-dark-700 text-slate-400 hover:text-slate-200 transition-colors">
+                    <ChevronRight className="w-3.5 h-3.5 rotate-180" />
                   </button>
-                  <span className="text-sm font-semibold text-slate-200">
+                  <span className="text-xs font-semibold text-slate-200">
                     {MONTH_NAMES[_calM]} {_calY}
                   </span>
                   <button
                     onClick={() => { setCalMonth(prev => new Date(prev.getFullYear(), prev.getMonth() + 1, 1)); setCalSelectedDay(null) }}
-                    className="p-1.5 rounded-lg hover:bg-dark-700 text-slate-400 hover:text-slate-200 transition-colors">
-                    <ChevronRight className="w-4 h-4" />
+                    className="p-1 rounded-lg hover:bg-dark-700 text-slate-400 hover:text-slate-200 transition-colors">
+                    <ChevronRight className="w-3.5 h-3.5" />
                   </button>
                 </div>
 
                 {/* Day-of-week headers */}
-                <div className="grid grid-cols-7 gap-1">
+                <div className="grid grid-cols-7 gap-0.5">
                   {DAY_LABELS.map(dl => (
-                    <div key={dl} className="text-center text-[10px] font-semibold text-slate-500 uppercase tracking-wider py-1">
+                    <div key={dl} className="text-center text-[9px] font-semibold text-slate-500 uppercase tracking-wider">
                       {dl}
                     </div>
                   ))}
                 </div>
 
                 {/* Calendar grid */}
-                <div className="space-y-1">
+                <div className="space-y-0.5">
                   {weeks.map((week, wi) => (
-                    <div key={wi} className="grid grid-cols-7 gap-1">
+                    <div key={wi} className="grid grid-cols-7 gap-0.5">
                       {week.map((day, di) => {
                         const kind = getTileKind(day)
                         const ts   = TILE_STYLES[kind]
@@ -2785,16 +2785,16 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
                         const isSelected = ds && ds === calSelectedDay
 
                         if (kind === 'pad') {
-                          return <div key={di} className="aspect-square rounded-lg" />
+                          return <div key={di} className="h-8 rounded" />
                         }
 
                         return (
                           <button key={di}
                             onClick={() => setCalSelectedDay(prev => prev === ds ? null : ds)}
-                            className={`aspect-square rounded-lg border text-xs font-semibold flex items-center justify-center transition-all
+                            className={`h-8 rounded border text-[11px] font-semibold flex items-center justify-center transition-all
                               ${ts.border} ${ts.text}
                               ${kind !== 'diagonal' ? ts.bg : ''}
-                              ${isSelected ? 'ring-2 ring-white/60 scale-105 shadow-lg' : 'hover:scale-105'}
+                              ${isSelected ? 'ring-2 ring-white/60 scale-105 shadow-lg' : 'hover:opacity-90'}
                             `}
                             style={kind === 'diagonal' ? {
                               background: 'linear-gradient(135deg, #22c55e 50%, #f97316 50%)',
@@ -2895,89 +2895,6 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
                 </div>
               )}
 
-              {/* ── Shift configuration (admin only) ─────────────────────── */}
-              <div>
-                <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-3">Shift Configuration</p>
-                {isAdmin ? (
-                  <>
-                    <div className="flex gap-2">
-                  {[1, 2, 3].map(n => (
-                    <button key={n} type="button" onClick={() => setShiftCount(n)}
-                      className={`flex-1 py-2.5 rounded-xl border text-xs font-medium transition-all ${
-                        shiftCount === n
-                          ? 'border-primary-500 bg-primary-500/10 text-primary-300'
-                          : 'border-dark-600 bg-dark-700 text-slate-500 hover:text-slate-300'
-                      }`}>
-                      {n === 1 ? '☀️ Single' : n === 2 ? '☀️🌙 Double' : '☀️🌙🌒 Triple'}
-                    </button>
-                  ))}
-                </div>
-                <div className="space-y-2">
-                  {Array.from({ length: shiftCount }, (_, i) => i).map(i => (
-                    <div key={i} className="bg-dark-700 rounded-xl p-3 space-y-2">
-                      <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Shift {i + 1}</p>
-                      <div className="grid grid-cols-3 gap-2">
-                        <div>
-                          <p className="text-[10px] text-slate-500 mb-1">Name</p>
-                          <input
-                            className="w-full bg-dark-600 border border-dark-500 rounded-lg px-2 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-primary-500"
-                            value={shiftRows[i].label}
-                            onChange={e => setShiftRow(i, 'label', e.target.value)}
-                            placeholder={['Day', 'Night', 'Mid'][i]} />
-                        </div>
-                        <div>
-                          <p className="text-[10px] text-slate-500 mb-1">Start</p>
-                          <input type="time"
-                            className="w-full bg-dark-600 border border-dark-500 rounded-lg px-2 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-primary-500"
-                            value={shiftRows[i].start}
-                            onChange={e => setShiftRow(i, 'start', e.target.value)} />
-                        </div>
-                        <div>
-                          <p className="text-[10px] text-slate-500 mb-1">End</p>
-                          <input type="time"
-                            className="w-full bg-dark-600 border border-dark-500 rounded-lg px-2 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-primary-500"
-                            value={shiftRows[i].end}
-                            onChange={e => setShiftRow(i, 'end', e.target.value)} />
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <div className="bg-dark-700 rounded-xl px-4 py-3 space-y-2">
-                  <label className="flex items-center gap-2.5 cursor-pointer">
-                    <input type="checkbox" checked={alertEnabled} onChange={e => setAlertEnabled(e.target.checked)}
-                      className="w-4 h-4 rounded accent-primary-500" />
-                    <div>
-                      <p className="text-xs font-medium text-slate-200">Alert on late start / overdue end</p>
-                      <p className="text-[10px] text-slate-500">Notify when shift hasn't started or ended on time</p>
-                    </div>
-                  </label>
-                  {alertEnabled && (
-                    <div className="flex items-center gap-2 text-xs text-slate-400 pl-6">
-                      <span>Alert after</span>
-                      <input type="number" min="5" max="120" step="5"
-                        className="w-14 bg-dark-600 border border-dark-500 rounded-lg px-2 py-1 text-xs text-center text-slate-100 focus:outline-none focus:border-primary-500"
-                        value={graceMinutes} onChange={e => setGraceMinutes(e.target.value)} />
-                      <span>minutes past scheduled time</span>
-                    </div>
-                  )}
-                </div>
-                {shiftCount === 1 && (
-                  <p className="text-[10px] text-slate-500 italic">Single shift — no fixed time enforced. Operators can start anytime.</p>
-                )}
-                <button onClick={handleSaveSchedule} disabled={scheduleSaving}
-                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary-600 hover:bg-primary-500 text-white text-xs font-medium disabled:opacity-40 transition-colors">
-                  {scheduleSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-                  {scheduleSaving ? 'Saving…' : shiftSchedule ? 'Update Schedule' : 'Save Schedule'}
-                </button>
-              </>
-            ) : (
-              <div className="bg-dark-700/50 rounded-xl border border-dashed border-dark-600 p-8 text-center">
-                <Clock className="w-8 h-8 text-slate-600 mx-auto mb-2" />
-                <p className="text-sm text-slate-500">Admin access required to edit shift schedule</p>
-              </div>
-            )}
-          </div>
         </div>
     )
   })()}
