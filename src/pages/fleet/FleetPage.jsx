@@ -1441,7 +1441,8 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
     queryKey: ['equipment_assignments', equipment.id],
     queryFn: async () => {
       const { data } = await supabase.from('equipment_assignments')
-        .select('*').eq('equipment_id', equipment.id).order('operator_name')
+        .select('id, employee_id, employee_name, employee_number, shift_type, status')
+        .eq('equipment_id', equipment.id).order('employee_name')
       return data || []
     },
   })
@@ -1805,17 +1806,22 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
     if (!selectedEmp) return
     setOperatorSaving(true)
     try {
-      // Upsert into equipment_assignments — store user_id so portal can look up by user
-      const { error } = await supabase.from('equipment_assignments').upsert({
-        company_id: companyId, equipment_id: equipment.id,
-        operator_name: selectedEmp.name, shift_type: newShiftType,
-        user_id: selectedEmp.user_id || null,
-      }, { onConflict: 'equipment_id,operator_name' })
+      const { error } = await supabase.from('equipment_assignments').insert({
+        company_id: companyId,
+        equipment_id: equipment.id,
+        equipment_name: equipment.name,
+        employee_id: selectedEmp.id,
+        employee_name: selectedEmp.name,
+        employee_number: selectedEmp.employee_number || null,
+        shift_type: newShiftType === 'double' ? 'general' : newShiftType,
+        assignment_role: 'primary_operator',
+        status: 'assigned',
+      })
       if (error) throw error
 
       setNewOperator(''); setNewShiftType('day'); refetchAssignments()
       qc.invalidateQueries(['equipment_assignments', equipment.id])
-      toast.success(`${selectedEmp.name} assigned — ${newShiftType} shift${selectedEmp.user_id ? ' · Portal linked ✓' : ' (no portal login)'}`)
+      toast.success(`${selectedEmp.name} assigned — ${newShiftType} shift`)
     } catch (err) { toast.error(err.message || 'Failed to assign operator')
     } finally { setOperatorSaving(false) }
   }
@@ -2210,7 +2216,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
             {(() => {
               // slots driven by project's no_of_shifts setting
               // if any assignment is 'double', that single operator covers all shifts → cap at 1
-              const hasDouble = assignments.some(a => a.shift_type === 'double')
+              const hasDouble = assignments.some(a => a.shift_type === 'general')
               const maxSlots = hasDouble ? 1 : (projectNoOfShifts || 1)
               const slotsUsed = assignments.length
               const slotsLeft = maxSlots - slotsUsed
@@ -2218,6 +2224,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
               const takenShifts = new Set(assignments.map(a => a.shift_type))
               // smart default for next slot
               const nextShift = takenShifts.has('day') ? 'night' : 'day'
+              void nextShift // used for future UX hints
 
               return (
                 <div className="border border-dark-600 rounded-xl overflow-hidden">
@@ -2239,15 +2246,15 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
                   ) : (
                     <div className="divide-y divide-dark-600">
                       {assignments.map(a => {
-                        const shiftLabel = { day: '☀️ Day', night: '🌙 Night', double: '🔄 Double' }[a.shift_type] || '☀️ Day'
+                        const shiftLabel = { day: '☀️ Day', night: '🌙 Night', general: '🔄 General' }[a.shift_type] || '☀️ Day'
                         return (
                           <div key={a.id} className="px-4 py-2.5 flex items-center justify-between">
                             <div>
-                              <span className="text-xs font-medium text-slate-200">{a.operator_name}</span>
-                              {a.user_id && <span className="text-[10px] text-primary-400 ml-1.5">📱</span>}
+                              <span className="text-xs font-medium text-slate-200">{a.employee_name}</span>
+                              {a.employee_number && <span className="text-[10px] text-slate-500 ml-1.5">{a.employee_number}</span>}
                               <span className="text-[10px] text-slate-500 ml-2">{shiftLabel}</span>
                             </div>
-                            <button onClick={() => handleRemoveOperator(a.id, a.operator_name)}
+                            <button onClick={() => handleRemoveOperator(a.id, a.employee_name)}
                               className="p-1 text-slate-600 hover:text-red-400 transition-colors">
                               <X className="w-3.5 h-3.5" />
                             </button>
@@ -2259,8 +2266,8 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
 
                   {/* inline assign form — shown when slots available */}
                   {slotsLeft > 0 && (() => {
-                    const assignedNames = new Set(assignments.map(a => a.operator_name))
-                    const available = hrOperators.filter(e => !assignedNames.has(e.name))
+                    const assignedIds = new Set(assignments.map(a => a.employee_id))
+                    const available = hrOperators.filter(e => !assignedIds.has(e.id))
                     return (
                       <div className="border-t border-dark-600 p-3 space-y-2 bg-dark-750">
                         {hrOperators.length === 0 ? (
@@ -2287,7 +2294,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
                                 onChange={e => setNewShiftType(e.target.value)}>
                                 <option value="day">☀️ Day Shift</option>
                                 <option value="night">🌙 Night Shift</option>
-                                <option value="double">🔄 Double Shift</option>
+                                <option value="general">🔄 General Shift</option>
                               </select>
                               <button
                                 onClick={handleAddOperator}
