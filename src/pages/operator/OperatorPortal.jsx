@@ -914,12 +914,35 @@ function ShiftModule({ companyId, operatorId, employeeId, employeeName, lang }) 
   const L = LANGS[lang]
 
   const { data: assignedEq, isLoading: eqLoading } = useQuery({
-    queryKey: ['op_assigned_equipment', operatorId, companyId],
+    queryKey: ['op_assigned_equipment', operatorId, employeeId, companyId],
     queryFn: async () => {
       const { data: eq, error } = await supabase.rpc('get_my_equipment')
       if (error) { console.error('get_my_equipment error:', error); return null }
       if (!eq) return null
-      if (eq && !eq.default_shift_type) eq.default_shift_type = eq.assignment_shift_type
+      if (!eq.default_shift_type) eq.default_shift_type = eq.assignment_shift_type
+
+      // Client-side substitution check — defense-in-depth.
+      // The RPC should return is_substitution=true, but if the RPC version is old
+      // or the substitution stored hr_employees.id instead of user_profiles.id,
+      // we check both IDs here to catch all cases.
+      if (!eq.is_substitution) {
+        const orFilter = [
+          `substitute_operator_id.eq.${operatorId}`,
+          employeeId ? `substitute_operator_id.eq.${employeeId}` : null,
+        ].filter(Boolean).join(',')
+        const { data: sub } = await supabase
+          .from('operator_substitutions')
+          .select('id,shift_type,equipment_id')
+          .or(orFilter)
+          .eq('shift_date', today())
+          .eq('equipment_id', eq.id)
+          .maybeSingle()
+        if (sub) {
+          eq.is_substitution = true
+          eq.default_shift_type = sub.shift_type || eq.default_shift_type
+        }
+      }
+
       return eq
     },
     enabled: !!companyId && !!operatorId,
