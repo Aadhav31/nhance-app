@@ -2811,9 +2811,9 @@ function PaymentsMadeTab({ companyId, session }) {
 }
 
 // ── MAIN PURCHASE PAGE ────────────────────────────────────────────────────────
-export default function PurchasePage() {
+export default function PurchasePage({ initialTab }) {
   const { companyId, session } = useAuth()
-  const [activeTab, setActiveTab] = useState('vendors')
+  const [activeTab, setActiveTab] = useState(initialTab || 'vendors')
 
   const tabs = [
     { id: 'vendors',  label: 'Vendors',          icon: Building },
