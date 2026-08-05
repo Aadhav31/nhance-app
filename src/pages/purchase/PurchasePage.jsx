@@ -1317,10 +1317,11 @@ function BillsTab({ companyId, session }) {
     enabled: !!companyId,
   })
 
+  // Use a unique key so this query never collides with other tabs' vendors_list cache
   const { data: vendors = [] } = useQuery({
-    queryKey: ['vendors_list', companyId],
+    queryKey: ['vendors_for_bills', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('vendors').select('id, name, gstin').eq('company_id', companyId).order('name')
+      const { data } = await supabase.from('vendors').select('id, name, gstin, vendor_type').eq('company_id', companyId).order('name')
       return data || []
     },
     enabled: !!companyId,
@@ -1425,8 +1426,9 @@ function BillsTab({ companyId, session }) {
 
   const isTax = form.is_tax_invoice !== false
   const selectedVendorObj = vendors.find(v => v.id === form.vendor_id)
+  const isFuelVendor = selectedVendorObj?.vendor_type === 'fuel'
 
-  // Fuel tanks — load when the add-to-tank checkbox is ticked
+  // Fuel tanks — load only for fuel vendors when checkbox is ticked
   const { data: fuelTanks = [] } = useQuery({
     queryKey: ['fuel_tanks_for_bill', companyId],
     queryFn: async () => {
@@ -1435,7 +1437,7 @@ function BillsTab({ companyId, session }) {
         .eq('company_id', companyId).eq('is_active', true).order('tank_type').order('name')
       return data || []
     },
-    enabled: !!companyId && addToTank,
+    enabled: !!companyId && isFuelVendor && addToTank,
   })
 
   const save = async () => {
@@ -1884,6 +1886,7 @@ function BillsTab({ companyId, session }) {
               <Field label="Vendor *">
                 <select className={inp()} value={form.vendor_id} onChange={e => {
                   const v = vendors.find(x => x.id === e.target.value)
+                  if (v?.vendor_type !== 'fuel') { setAddToTank(false); setFuelTankId('') }
                   setForm(p => ({ ...p, vendor_id: e.target.value, vendor_gstin: v?.gstin || 'URP' }))
                 }}>
                   <option value="">-- Select vendor --</option>
@@ -2041,8 +2044,8 @@ function BillsTab({ companyId, session }) {
           </div>
           )}
 
-          {/* ── Receive Fuel Into Tank — create only ── */}
-          {!editing && (
+          {/* ── Receive Fuel Into Tank — fuel vendors only, create only ── */}
+          {!editing && isFuelVendor && (
           <div className={`rounded-xl border p-3 transition-colors ${addToTank ? 'border-orange-700/50 bg-orange-500/5' : 'border-dark-700 bg-dark-800/40'}`}>
             <label className="flex items-center gap-2.5 cursor-pointer select-none">
               <input type="checkbox" checked={addToTank} onChange={e => { setAddToTank(e.target.checked); if (!e.target.checked) setFuelTankId('') }}
