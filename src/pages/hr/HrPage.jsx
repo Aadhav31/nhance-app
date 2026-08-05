@@ -3506,12 +3506,15 @@ function SubstitutionFormModal({ companyId, userProfile, existing, onClose, onSa
 
   const inp = 'w-full bg-dark-700 border border-dark-500 rounded-xl px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-primary-500'
 
+  const subOp = operators.find(o => o.id === subId)
+  const subHasAccount = subOp ? !!subOp.user_id : true  // true = no warning until someone is selected
+
   return (
     <Modal title={isEdit ? 'Edit Substitution' : 'Log Operator Substitution'} onClose={onClose}
       footer={<>
         <button onClick={onClose} className="btn-ghost flex-1">Cancel</button>
-        <button onClick={handleSave} disabled={saving}
-          className="flex-1 btn-primary flex items-center justify-center gap-1.5">
+        <button onClick={handleSave} disabled={saving || !subHasAccount}
+          className="flex-1 btn-primary flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed">
           {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
           {isEdit ? 'Update' : 'Log Substitution'}
         </button>
@@ -3560,6 +3563,11 @@ function SubstitutionFormModal({ companyId, userProfile, existing, onClose, onSa
             <option key={o.id} value={o.id}>{o.name} — {o.employee_number}</option>
           ))}
         </select>
+        {subId && !subHasAccount && (
+          <div className="mt-2 bg-red-900/30 border border-red-600/40 rounded-xl px-3 py-2 text-xs text-red-300">
+            ⚠️ <strong>{subOp?.name}</strong> has no login account linked. The substitution cannot be saved until their account is created in Settings → Users and linked to their HR record. Contact Admin.
+          </div>
+        )}
       </div>
 
       <div>
