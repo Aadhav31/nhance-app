@@ -94,18 +94,40 @@ function checkShiftWindow(project, equipment) {
   const end   = project?.shift_end_time   || null
   const grace = project?.shift_grace_mins ?? 30
 
+  // No window configured → always open
   if (!start || !end) return { allowed: true, reason: null, shiftType }
 
   const now = new Date()
   const nowMins = now.getHours() * 60 + now.getMinutes()
   const [sh, sm] = start.split(':').map(Number)
   const [eh, em] = end.split(':').map(Number)
-  const windowStart = sh * 60 + sm - grace
-  const windowEnd   = eh * 60 + em + grace
+  const dayStart = sh * 60 + sm   // e.g. 480  (08:00)
+  const dayEnd   = eh * 60 + em   // e.g. 1200 (20:00)
+
+  // ── Double shift: spans the full day, always open ──────────────────────────
+  if (shiftType === 'double') {
+    return { allowed: true, reason: null, shiftType }
+  }
+
+  // ── Night shift: window is dayEnd±grace → midnight → dayStart±grace ────────
+  // e.g. project 08:00–20:00 → night window is 19:30 – 08:30 (crosses midnight)
+  if (shiftType === 'night') {
+    const nightStart = dayEnd - grace   // 19:30 = 1170 mins
+    const nightEnd   = dayStart + grace // 08:30 =  510 mins
+    // allowed if time ≥ nightStart (evening side) OR ≤ nightEnd (morning side)
+    if (nowMins >= nightStart || nowMins <= nightEnd) {
+      return { allowed: true, reason: null, shiftType }
+    }
+    const readyAt = `${String(eh).padStart(2,'0')}:${String(em - grace >= 0 ? em - grace % 60 : 0).padStart(2,'0')}`
+    return { allowed: false, reason: `Night shift opens at ${String(eh).padStart(2,'0')}:${String(em).padStart(2,'0')}`, shiftType }
+  }
+
+  // ── Day shift: window is dayStart±grace ────────────────────────────────────
+  const windowStart = dayStart - grace
+  const windowEnd   = dayEnd + grace
 
   if (nowMins < windowStart) {
-    const readyAt = `${String(sh).padStart(2,'0')}:${String(sm).padStart(2,'0')}`
-    return { allowed: false, reason: `Shift starts at ${readyAt}`, shiftType }
+    return { allowed: false, reason: `Shift starts at ${String(sh).padStart(2,'0')}:${String(sm).padStart(2,'0')}`, shiftType }
   }
   if (nowMins > windowEnd) {
     return { allowed: false, reason: `Shift window closed`, shiftType }
