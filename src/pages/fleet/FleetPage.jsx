@@ -1481,6 +1481,34 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
   })
 
   // Rate card items for the selected deploy project
+  // Certifications for the operator selected in the assign form
+  const { data: selectedOpCerts = [] } = useQuery({
+    queryKey: ['operator_certs_by_emp', companyId, newOperator],
+    queryFn: async () => {
+      if (!newOperator) return []
+      const { data } = await supabase.from('operator_certifications')
+        .select('equipment_category, expiry_date')
+        .eq('employee_id', newOperator)
+      return data || []
+    },
+    enabled: !!newOperator,
+  })
+
+  const certWarning = (() => {
+    if (!newOperator || !equipment.category) return null
+    const today = new Date().toISOString().slice(0, 10)
+    // Look for cert matching equipment category (case-insensitive partial match)
+    const match = selectedOpCerts.find(c =>
+      equipment.category.toLowerCase().includes(c.equipment_category.toLowerCase()) ||
+      c.equipment_category.toLowerCase().includes(equipment.category.toLowerCase().split(/[\s/]+/)[0])
+    )
+    if (!match) return { level: 'warn', msg: `No certification on record for ${equipment.category}` }
+    if (match.expiry_date && match.expiry_date < today) return { level: 'error', msg: `${match.equipment_category} cert expired on ${match.expiry_date}` }
+    const warn = new Date(); warn.setDate(warn.getDate() + 30)
+    if (match.expiry_date && match.expiry_date <= warn.toISOString().slice(0, 10)) return { level: 'warn', msg: `Cert expiring soon: ${match.expiry_date}` }
+    return { level: 'ok', msg: `Certified for ${match.equipment_category}` }
+  })()
+
   const { data: rateItems = [] } = useQuery({
     queryKey: ['rate_items', deployProjectId],
     queryFn: async () => {
@@ -2458,6 +2486,18 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
                                 </option>
                               ))}
                             </select>
+                            {certWarning && (
+                              <div className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10px] font-medium
+                                ${certWarning.level === 'ok'    ? 'bg-green-500/10 text-green-400 border border-green-500/20' : ''}
+                                ${certWarning.level === 'warn'  ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' : ''}
+                                ${certWarning.level === 'error' ? 'bg-red-500/10 text-red-400 border border-red-500/25' : ''}
+                              `}>
+                                {certWarning.level === 'ok'    && <CheckCircle className="w-3 h-3 shrink-0" />}
+                                {certWarning.level === 'warn'  && <AlertTriangle className="w-3 h-3 shrink-0" />}
+                                {certWarning.level === 'error' && <AlertTriangle className="w-3 h-3 shrink-0" />}
+                                {certWarning.msg}
+                              </div>
+                            )}
                             <div className="flex gap-2">
                               <select
                                 className="flex-1 bg-dark-700 border border-dark-600 rounded-lg px-2.5 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-primary-500"
