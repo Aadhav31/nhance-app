@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import PagePanel from '../../components/shared/PagePanel'
@@ -1053,7 +1053,7 @@ function ExpensesTab({ companyId, session }) {
 }
 
 // ── BILLS TAB ─────────────────────────────────────────────────────────────────
-function BillsTab({ companyId, session }) {
+function BillsTab({ companyId, session, initialStockTxnId }) {
   const qc = useQueryClient()
   const { company, userProfile, industryType } = useAuth()
   const isCrusher = industryType === 'crusher'
@@ -1152,6 +1152,17 @@ function BillsTab({ companyId, session }) {
     setAddToInv(false); setInvCategory(''); setInvStore('')
     clearAttach(); setAttachUrl(null); setShowCreate(true)
   }
+
+  // Auto-open Create Bill form when navigated from Inventory banner (single pending receipt)
+  const autoOpenRef = useRef(false)
+  useEffect(() => {
+    if (!initialStockTxnId || autoOpenRef.current) return
+    if (!pendingStockBills.length || !vendors.length) return
+    const receipt = pendingStockBills.find(r => r.id === initialStockTxnId)
+    if (!receipt) return
+    autoOpenRef.current = true
+    openCreateForReceipt(receipt)
+  }, [initialStockTxnId, pendingStockBills, vendors]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const openEdit = async (bill) => {
     const [{ data: ld }] = await Promise.all([
@@ -2811,7 +2822,7 @@ function PaymentsMadeTab({ companyId, session }) {
 }
 
 // ── MAIN PURCHASE PAGE ────────────────────────────────────────────────────────
-export default function PurchasePage({ initialTab }) {
+export default function PurchasePage({ initialTab, initialStockTxnId }) {
   const { companyId, session } = useAuth()
   const [activeTab, setActiveTab] = useState(initialTab || 'vendors')
 
@@ -2855,7 +2866,7 @@ export default function PurchasePage({ initialTab }) {
       <div className="flex-1 overflow-hidden">
         {activeTab === 'vendors'  && <VendorsTab  companyId={companyId} session={session} />}
         {activeTab === 'expenses' && <ExpensesTab companyId={companyId} session={session} />}
-        {activeTab === 'bills'    && <BillsTab    companyId={companyId} session={session} />}
+        {activeTab === 'bills'    && <BillsTab    companyId={companyId} session={session} initialStockTxnId={initialStockTxnId} />}
         {activeTab === 'pos'      && <PurchaseOrdersTab companyId={companyId} session={session} />}
         {activeTab === 'vcredits' && <VendorCreditsTab  companyId={companyId} session={session} />}
         {activeTab === 'payments' && <PaymentsMadeTab   companyId={companyId} session={session} />}

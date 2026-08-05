@@ -329,7 +329,7 @@ function AppShell() {
         if (hasModule && !hasModule(MODULES.PURCHASE)) return isOnline ? <ModuleNotActive page="purchase" /> : <OfflineScreen />
         return (
           <Suspense fallback={<LoadingScreen message="Loading purchase…" />}>
-            <PurchasePage initialTab={navExtra.tab} />
+            <PurchasePage initialTab={navExtra.tab} initialStockTxnId={navExtra.createForTxnId} />
           </Suspense>
         )
       case 'reports':      return wrap(ReportsPage,        MODULES.REPORTS)

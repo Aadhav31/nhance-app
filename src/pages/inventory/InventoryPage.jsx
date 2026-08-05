@@ -156,7 +156,10 @@ function OverviewTab({ companyId, onNavigate, onNavigatePage }) {
       {/* ── Pending bill alert ── */}
       {pendingBills.length > 0 && (
         <div
-          onClick={() => onNavigatePage?.('purchase', { tab: 'bills' })}
+          onClick={() => onNavigatePage?.('purchase', {
+            tab: 'bills',
+            createForTxnId: pendingBills.length === 1 ? pendingBills[0].id : null,
+          })}
           className="bg-amber-500/10 border border-amber-500/30 rounded-xl px-4 py-3 flex items-center gap-3 cursor-pointer hover:bg-amber-500/20 transition-colors"
         >
           <span className="text-lg">🚛</span>
@@ -168,7 +171,10 @@ function OverviewTab({ companyId, onNavigate, onNavigatePage }) {
             </p>
           </div>
           <button
-            onClick={e => { e.stopPropagation(); onNavigatePage?.('purchase', { tab: 'bills' }) }}
+            onClick={e => { e.stopPropagation(); onNavigatePage?.('purchase', {
+              tab: 'bills',
+              createForTxnId: pendingBills.length === 1 ? pendingBills[0].id : null,
+            }) }}
             className="text-[11px] font-semibold bg-amber-500 hover:bg-amber-400 text-white px-3 py-1.5 rounded-lg shrink-0 transition-colors"
           >
             Go to Bills →
