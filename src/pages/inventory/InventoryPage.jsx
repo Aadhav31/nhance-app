@@ -9,7 +9,7 @@ import {
   Package, Plus, X, Loader2, Search, ChevronRight, AlertTriangle,
   ArrowDownCircle, ArrowUpCircle, RefreshCcw, Shuffle, Store,
   LayoutDashboard, Edit2, Trash2, TrendingDown, IndianRupee,
-  Wrench, Droplets, Box, Layers, CheckCircle,
+  Wrench, Droplets, Box, Layers, CheckCircle, Fuel,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format } from 'date-fns'
@@ -22,12 +22,13 @@ const fmtQty  = (n, u) => `${Number(n || 0).toLocaleString('en-IN', { maximumFra
 const fmtDate = (d) => d ? format(new Date(d), 'dd MMM yyyy') : '—'
 
 const CATEGORIES = [
-  { value: 'raw_material',  label: 'Raw Material',   icon: Layers,   color: 'text-amber-400',   bg: 'bg-amber-500/10 border-amber-700/40' },
-  { value: 'spare_part',    label: 'Spare Part',      icon: Wrench,   color: 'text-blue-400',    bg: 'bg-blue-500/10 border-blue-700/40' },
-  { value: 'lubricant',     label: 'Lubricant',       icon: Droplets, color: 'text-cyan-400',    bg: 'bg-cyan-500/10 border-cyan-700/40' },
-  { value: 'consumable',    label: 'Consumable',      icon: Package,  color: 'text-violet-400',  bg: 'bg-violet-500/10 border-violet-700/40' },
-  { value: 'tool',          label: 'Tool',            icon: Wrench,   color: 'text-orange-400',  bg: 'bg-orange-500/10 border-orange-700/40' },
-  { value: 'finished_good', label: 'Finished Goods/Products', icon: Box, color: 'text-emerald-400', bg: 'bg-emerald-500/10 border-emerald-700/40' },
+  { value: 'raw_material',  label: 'Raw Material',          icon: Layers,   color: 'text-amber-400',   bg: 'bg-amber-500/10 border-amber-700/40' },
+  { value: 'spare_part',    label: 'Spare Part',             icon: Wrench,   color: 'text-blue-400',    bg: 'bg-blue-500/10 border-blue-700/40' },
+  { value: 'fuel',          label: 'Fuel',                   icon: Fuel,     color: 'text-orange-400',  bg: 'bg-orange-500/10 border-orange-700/40' },
+  { value: 'lubricant',     label: 'Lubricant / Oil',        icon: Droplets, color: 'text-cyan-400',    bg: 'bg-cyan-500/10 border-cyan-700/40' },
+  { value: 'consumable',    label: 'Consumable',             icon: Package,  color: 'text-violet-400',  bg: 'bg-violet-500/10 border-violet-700/40' },
+  { value: 'tool',          label: 'Tool',                   icon: Wrench,   color: 'text-slate-400',   bg: 'bg-slate-500/10 border-slate-700/40' },
+  { value: 'finished_good', label: 'Finished Goods/Products',icon: Box,      color: 'text-emerald-400', bg: 'bg-emerald-500/10 border-emerald-700/40' },
 ]
 
 const CAT_MAP = Object.fromEntries(CATEGORIES.map(c => [c.value, c]))
