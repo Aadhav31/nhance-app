@@ -19,17 +19,17 @@ alter table equipment_utilization_targets enable row level security;
 
 create policy "company members can read utilization targets"
   on equipment_utilization_targets for select
-  using (company_id = (select company_id from user_profiles where id = auth.uid()));
+  using (company_id = (select company_id from user_roles where user_id = auth.uid()));
 
 create policy "admins and managers can upsert utilization targets"
   on equipment_utilization_targets for all
-  using (company_id = (select company_id from user_profiles where id = auth.uid()))
+  using (company_id = (select company_id from user_roles where user_id = auth.uid()))
   with check (
-    company_id = (select company_id from user_profiles where id = auth.uid())
+    company_id = (select company_id from user_roles where user_id = auth.uid())
     and exists (
-      select 1 from user_profiles
-      where id = auth.uid()
-      and role in ('admin', 'manager', 'pm_manager')
+      select 1 from user_roles
+      where user_id = auth.uid()
+      and role::text in ('admin', 'manager', 'pm_manager')
     )
   );
 
