@@ -1471,13 +1471,13 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
   })
 
   const { data: projects = [] } = useQuery({
-    queryKey: ['projects_for_client', deployClientId],
+    queryKey: ['projects_for_deploy', companyId],
     queryFn: async () => {
       const { data } = await supabase.from('projects')
-        .select('id, project_name, project_code').eq('company_id', companyId).eq('client_id', deployClientId).order('project_name')
+        .select('id, project_name, project_code, client_id').eq('company_id', companyId).order('project_name')
       return data || []
     },
-    enabled: isAdmin && !!deployClientId,
+    enabled: isAdmin,
   })
 
   // Rate card items for the selected deploy project
@@ -2474,7 +2474,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
                       value={deployClientId}
                       onChange={e => { setDeployClientId(e.target.value); setDeployProjectId('') }}>
                       <option value="">— No client —</option>
-                      {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                      {clients.map(c => <option key={c.id} value={c.id}>{c.business_name || c.display_name}</option>)}
                     </select>
                   </div>
                   {/* Project */}
