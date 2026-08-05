@@ -3963,7 +3963,7 @@ function FleetTab({ companyId, showAdd, setShowAdd, onNavigate }) {
               </div>
             ))}
           </div>
-        ) : (
+        ) : viewMode === 'utilization' ? (
           /* ── Fleet Utilization Grid ── */
           <div className="space-y-3">
             {/* Month navigator */}
