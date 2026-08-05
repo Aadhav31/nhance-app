@@ -1,11 +1,15 @@
 /**
- * OperatorPortal.jsx — Mobile-first operator interface
- * Rules:
- *  - Equipment is PRE-ASSIGNED by admin — operator cannot change it
- *  - Shift type is AUTO-FILLED from project/site assignment — operator cannot change it
- *  - Shift can only be started within project/site defined time window (± grace period)
- *  - Attendance auto-calculated from clock time when shift ends (≥4 hrs = Present, <4 = Half Day)
- *  - Live salary shown: days worked × daily rate, updates after each shift
+ * OperatorPortal.jsx — Icon-first operator interface
+ * Design rules:
+ *  - Zero reading required: icons + colors communicate everything
+ *  - Max 3 taps to complete any action
+ *  - Photo is the PRIMARY input, not optional
+ *  - Large touch targets (min 56px)
+ *  - Regional language captions (EN / தமிழ் / हिंदी / తెలుగు)
+ *  - Green = good / Red = action needed — no text status
+ *  - Equipment PRE-ASSIGNED by admin — operator cannot change it
+ *  - Shift type AUTO-FILLED from project — operator cannot change it
+ *  - Attendance auto-calculated: ≥4 clock hrs = Present, <4 = Half Day
  */
 
 import { useState, useRef, useEffect } from 'react'
@@ -77,7 +81,6 @@ async function stampAndUpload(file, label) {
   })
 }
 
-// Returns { allowed, reason, shiftType }
 function checkShiftWindow(project, equipment) {
   const start = project?.shift_start_time || null
   const end   = project?.shift_end_time   || null
@@ -95,87 +98,217 @@ function checkShiftWindow(project, equipment) {
 
   if (nowMins < windowStart) {
     const readyAt = `${String(sh).padStart(2,'0')}:${String(sm).padStart(2,'0')}`
-    return { allowed: false, reason: `Your shift starts at ${readyAt}. You cannot start the shift yet.`, shiftType }
+    return { allowed: false, reason: `Shift starts at ${readyAt}`, shiftType }
   }
   if (nowMins > windowEnd) {
-    const endedAt = `${String(eh).padStart(2,'0')}:${String(em).padStart(2,'0')}`
-    return { allowed: false, reason: `Your shift window ended at ${endedAt}. Contact your supervisor for any changes.`, shiftType }
+    return { allowed: false, reason: `Shift window closed`, shiftType }
   }
   return { allowed: true, reason: null, shiftType }
 }
 
-// ─── Shared UI ────────────────────────────────────────────────────────────────
+// ─── Language System ──────────────────────────────────────────────────────────
 
-function ModeToggle({ mode, onChange }) {
+const LANGS = {
+  en: {
+    flag: '🇬🇧', label: 'EN',
+    startShift: 'Start Shift', endShift: 'End Shift',
+    fuel: 'Fuel', problem: 'Problem',
+    shift: 'Shift', attendance: 'Days', pay: 'Pay', expenses: 'Bills',
+    meterReading: 'Meter Reading', meterPhoto: 'Meter Photo',
+    presencePhoto: 'Your Photo', fuelQty: 'Litres',
+    noEquip: 'No Machine Assigned', contactSupervisor: 'Call your supervisor',
+    shiftRunning: 'Shift Running', shiftDone: 'Done for Today',
+    takePhoto: '📷 Take Photo', photoOk: '✓ Photo Done',
+    enterNumber: 'Enter number',
+    submit: 'Submit', saving: 'Saving…',
+    fullDay: 'Full Day ✓', halfDay: '½ Day',
+    present: 'Present', absent: 'Absent', leave: 'Leave',
+    good: 'Good', greeting_morning: 'Morning', greeting_afternoon: 'Afternoon', greeting_evening: 'Evening',
+    shiftNotAvail: 'Shift Not Open Yet',
+    windowClosed: 'Shift Window Closed',
+  },
+  ta: {
+    flag: '🇮🇳', label: 'தமிழ்',
+    startShift: 'ஷிஃப்ட் தொடங்கு', endShift: 'ஷிஃப்ட் முடி',
+    fuel: 'டீசல்', problem: 'பிரச்சனை',
+    shift: 'ஷிஃப்ட்', attendance: 'நாட்கள்', pay: 'சம்பளம்', expenses: 'செலவு',
+    meterReading: 'மீட்டர் ரீடிங்', meterPhoto: 'மீட்டர் போட்டோ',
+    presencePhoto: 'உங்கள் போட்டோ', fuelQty: 'லிட்டர்',
+    noEquip: 'இயந்திரம் இல்லை', contactSupervisor: 'சூப்பர்வைசரை அழைக்கவும்',
+    shiftRunning: 'ஷிஃப்ட் நடக்கிறது', shiftDone: 'இன்றைய வேலை முடிந்தது',
+    takePhoto: '📷 போட்டோ எடு', photoOk: '✓ போட்டோ சரி',
+    enterNumber: 'எண் உள்ளிடவும்',
+    submit: 'சமர்ப்பி', saving: 'சேமிக்கிறது…',
+    fullDay: 'முழு நாள் ✓', halfDay: 'அரை நாள்',
+    present: 'வந்தார்', absent: 'வரவில்லை', leave: 'விடுப்பு',
+    good: 'வணக்கம்', greeting_morning: 'காலை', greeting_afternoon: 'மதியம்', greeting_evening: 'மாலை',
+    shiftNotAvail: 'ஷிஃப்ட் நேரம் இல்லை',
+    windowClosed: 'ஷிஃப்ட் முடிந்தது',
+  },
+  hi: {
+    flag: '🇮🇳', label: 'हिंदी',
+    startShift: 'शिफ्ट शुरू', endShift: 'शिफ्ट खत्म',
+    fuel: 'डीजल', problem: 'समस्या',
+    shift: 'शिफ्ट', attendance: 'दिन', pay: 'तनख्वाह', expenses: 'खर्च',
+    meterReading: 'मीटर रीडिंग', meterPhoto: 'मीटर फोटो',
+    presencePhoto: 'आपकी फोटो', fuelQty: 'लीटर',
+    noEquip: 'मशीन नहीं मिली', contactSupervisor: 'सुपरवाइजर को बुलाएं',
+    shiftRunning: 'शिफ्ट चल रही है', shiftDone: 'आज का काम हो गया',
+    takePhoto: '📷 फोटो लें', photoOk: '✓ फोटो ठीक है',
+    enterNumber: 'नंबर डालें',
+    submit: 'जमा करें', saving: 'सेव हो रहा है…',
+    fullDay: 'पूरा दिन ✓', halfDay: 'आधा दिन',
+    present: 'उपस्थित', absent: 'अनुपस्थित', leave: 'छुट्टी',
+    good: 'नमस्ते', greeting_morning: 'सुबह', greeting_afternoon: 'दोपहर', greeting_evening: 'शाम',
+    shiftNotAvail: 'शिफ्ट का समय नहीं',
+    windowClosed: 'शिफ्ट बंद है',
+  },
+  te: {
+    flag: '🇮🇳', label: 'తెలుగు',
+    startShift: 'షిఫ్ట్ ప్రారంభించు', endShift: 'షిఫ్ట్ ముగించు',
+    fuel: 'డీజిల్', problem: 'సమస్య',
+    shift: 'షిఫ్ట్', attendance: 'రోజులు', pay: 'జీతం', expenses: 'ఖర్చు',
+    meterReading: 'మీటర్ రీడింగ్', meterPhoto: 'మీటర్ ఫోటో',
+    presencePhoto: 'మీ ఫోటో', fuelQty: 'లీటర్లు',
+    noEquip: 'యంత్రం కేటాయించలేదు', contactSupervisor: 'సూపర్‌వైజర్‌ను పిలవండి',
+    shiftRunning: 'షిఫ్ట్ నడుస్తోంది', shiftDone: 'ఈరోజు పని అయింది',
+    takePhoto: '📷 ఫోటో తీయండి', photoOk: '✓ ఫోటో సరే',
+    enterNumber: 'సంఖ్య నమోదు చేయండి',
+    submit: 'సమర్పించండి', saving: 'సేవ్ అవుతోంది…',
+    fullDay: 'పూర్తి రోజు ✓', halfDay: 'అర రోజు',
+    present: 'హాజరు', absent: 'గైర్హాజరు', leave: 'సెలవు',
+    good: 'నమస్కారం', greeting_morning: 'ఉదయం', greeting_afternoon: 'మధ్యాహ్నం', greeting_evening: 'సాయంత్రం',
+    shiftNotAvail: 'షిఫ్ట్ సమయం కాదు',
+    windowClosed: 'షిఫ్ట్ మూసింది',
+  },
+}
+
+// ─── Shared UI primitives ──────────────────────────────────────────────────────
+
+/** Full-screen bottom sheet */
+function Sheet({ open, onClose, children }) {
+  if (!open) return null
   return (
-    <div className="flex bg-dark-800 border border-dark-600 rounded-full p-0.5 text-xs">
-      {['basic','advanced'].map(m => (
-        <button key={m} onClick={() => onChange(m)}
-          className={`px-3 py-1 rounded-full capitalize font-semibold transition-all ${mode===m ? 'bg-primary-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}>
-          {m}
-        </button>
+    <div className="fixed inset-0 z-50 flex items-end">
+      <div className="absolute inset-0 bg-black/70" onClick={onClose} />
+      <div className="relative w-full max-h-[95vh] bg-dark-900 border-t-2 border-dark-600 rounded-t-3xl overflow-y-auto">
+        {/* drag handle */}
+        <div className="flex justify-center pt-3 pb-1">
+          <div className="w-10 h-1 bg-dark-600 rounded-full" />
+        </div>
+        <div className="px-4 pb-8">{children}</div>
+      </div>
+    </div>
+  )
+}
+
+/** Big photo capture button with preview */
+function BigPhoto({ label, sublabel, onCapture, preview, disabled }) {
+  const ref = useRef()
+  return (
+    <div>
+      {label && <p className="text-center text-sm font-semibold text-slate-300 mb-1">{label}</p>}
+      {sublabel && <p className="text-center text-xs text-slate-500 mb-3">{sublabel}</p>}
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => ref.current?.click()}
+        className={`w-full rounded-2xl border-2 border-dashed transition-all active:scale-[0.97] flex flex-col items-center justify-center gap-2 disabled:opacity-40
+          ${preview
+            ? 'border-green-500 bg-green-900/10 p-2'
+            : 'border-primary-600/60 bg-dark-800 py-8'
+          }`}
+      >
+        {preview ? (
+          <>
+            <img src={preview} alt="proof" className="w-full max-h-48 object-cover rounded-xl" />
+            <span className="text-green-400 font-bold text-sm py-1">✓ Done — tap to retake</span>
+          </>
+        ) : (
+          <>
+            <span className="text-5xl">📷</span>
+            <span className="text-slate-300 font-semibold text-base">{label || 'Take Photo'}</span>
+          </>
+        )}
+      </button>
+      <input ref={ref} type="file" accept="image/*" capture="environment" className="hidden"
+        onChange={e => e.target.files?.[0] && onCapture(e.target.files[0])} />
+    </div>
+  )
+}
+
+/** Full-width action button */
+function BigBtn({ onClick, disabled, loading, children, color='primary', className='' }) {
+  const colors = {
+    primary: 'bg-primary-600 hover:bg-primary-500 text-white',
+    green:   'bg-green-600 hover:bg-green-500 text-white',
+    red:     'bg-red-700 hover:bg-red-600 text-white',
+    amber:   'bg-amber-600 hover:bg-amber-500 text-white',
+    ghost:   'bg-dark-700 border border-dark-500 text-slate-200',
+  }
+  return (
+    <button onClick={onClick} disabled={disabled || loading}
+      className={`w-full py-4 rounded-2xl font-bold text-base transition-all active:scale-[0.98] disabled:opacity-40 flex items-center justify-center gap-2 shadow-lg ${colors[color]} ${className}`}>
+      {loading
+        ? <span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+        : children}
+    </button>
+  )
+}
+
+/** Big number input */
+function BigNumber({ value, onChange, placeholder = '0', min = 0, step = '0.1', label }) {
+  return (
+    <div>
+      {label && <p className="text-center text-sm text-slate-400 mb-2">{label}</p>}
+      <input
+        type="number"
+        inputMode="decimal"
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder}
+        step={step}
+        min={min}
+        className="w-full bg-dark-700 border-2 border-dark-500 focus:border-primary-500 rounded-2xl px-4 py-4 text-4xl font-bold text-slate-100 placeholder-slate-600 focus:outline-none text-center tracking-widest"
+      />
+    </div>
+  )
+}
+
+/** Step progress indicator */
+function StepDots({ total, current }) {
+  return (
+    <div className="flex justify-center gap-2 py-3">
+      {Array.from({ length: total }).map((_, i) => (
+        <div key={i} className={`rounded-full transition-all ${i < current ? 'w-3 h-3 bg-green-500' : i === current ? 'w-4 h-4 bg-primary-500' : 'w-3 h-3 bg-dark-600'}`} />
       ))}
     </div>
   )
 }
 
-function PhotoCapture({ label, onCapture, preview, disabled }) {
-  const ref = useRef()
+/** Status circle: true=green, false=red, null=grey */
+function StatusCircle({ ok, size = 'lg' }) {
+  const sz = size === 'lg' ? 'w-16 h-16 text-3xl' : 'w-8 h-8 text-base'
+  const col = ok === true ? 'bg-green-500' : ok === false ? 'bg-red-500' : 'bg-dark-600'
+  const icon = ok === true ? '✓' : ok === false ? '!' : '·'
   return (
-    <div>
-      <p className="text-xs text-slate-400 mb-1.5">{label}</p>
-      <div className="flex items-center gap-3">
-        <button type="button" disabled={disabled} onClick={() => ref.current?.click()}
-          className="flex items-center gap-2 px-4 py-2.5 bg-dark-700 border border-dark-500 rounded-xl text-sm text-slate-200 hover:bg-dark-600 active:scale-95 transition-all disabled:opacity-40">
-          📷 Take Photo
+    <div className={`${sz} ${col} rounded-full flex items-center justify-center text-white font-bold shadow-lg`}>
+      {icon}
+    </div>
+  )
+}
+
+/** Language selector pill */
+function LangPicker({ lang, onChange }) {
+  const keys = Object.keys(LANGS)
+  return (
+    <div className="flex gap-1">
+      {keys.map(k => (
+        <button key={k} onClick={() => onChange(k)}
+          className={`px-2 py-0.5 rounded-full text-[10px] font-bold transition-all ${lang === k ? 'bg-primary-600 text-white' : 'bg-dark-800 text-slate-500 border border-dark-600'}`}>
+          {LANGS[k].label}
         </button>
-        {preview && (
-          <div className="w-16 h-16 rounded-lg overflow-hidden border border-primary-700">
-            <img src={preview} alt="preview" className="w-full h-full object-cover" />
-          </div>
-        )}
-        <input ref={ref} type="file" accept="image/*" capture="environment" className="hidden"
-          onChange={e => e.target.files?.[0] && onCapture(e.target.files[0])} />
-      </div>
-    </div>
-  )
-}
-
-function Sheet({ open, onClose, title, children }) {
-  if (!open) return null
-  return (
-    <div className="fixed inset-0 z-50 flex items-end">
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-full max-h-[92vh] bg-dark-900 border-t border-dark-600 rounded-t-2xl overflow-y-auto">
-        <div className="sticky top-0 bg-dark-900 border-b border-dark-700 px-4 py-3 flex items-center justify-between">
-          <h3 className="font-semibold text-slate-100 text-base">{title}</h3>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-200 text-2xl leading-none">×</button>
-        </div>
-        <div className="p-4">{children}</div>
-      </div>
-    </div>
-  )
-}
-
-const FL = ({ children }) => <p className="text-xs text-slate-400 mb-1">{children}</p>
-const inp = 'w-full bg-dark-700 border border-dark-500 rounded-xl px-4 py-3 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-primary-500'
-const bigNum = 'w-full bg-dark-700 border border-dark-500 rounded-xl px-4 py-4 text-2xl font-bold text-slate-100 placeholder-slate-600 focus:outline-none focus:border-primary-500 text-center tracking-widest'
-
-function Btn({ onClick, disabled, loading, children, variant='primary', className='' }) {
-  const v = { primary:'bg-primary-600 hover:bg-primary-500 text-white', danger:'bg-red-700 hover:bg-red-600 text-white', ghost:'bg-dark-700 hover:bg-dark-600 text-slate-200 border border-dark-500' }
-  return (
-    <button onClick={onClick} disabled={disabled||loading}
-      className={`w-full py-3.5 rounded-xl font-semibold text-sm transition-all active:scale-[0.98] disabled:opacity-40 flex items-center justify-center gap-2 ${v[variant]} ${className}`}>
-      {loading ? <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"/> : children}
-    </button>
-  )
-}
-
-function InfoRow({ label, value, accent }) {
-  return (
-    <div className="flex justify-between text-sm py-1">
-      <span className="text-slate-400">{label}</span>
-      <span className={accent||'text-slate-200'}>{value || '—'}</span>
+      ))}
     </div>
   )
 }
@@ -184,281 +317,330 @@ function InfoRow({ label, value, accent }) {
 
 function requestNotificationPermission() {
   if (!('Notification' in window)) return
-  if (Notification.permission === 'default') {
-    Notification.requestPermission()
-  }
+  if (Notification.permission === 'default') Notification.requestPermission()
 }
 
 function fireNotification(title, body, tag) {
   if (!('Notification' in window) || Notification.permission !== 'granted') return
-  try {
-    new Notification(title, {
-      body,
-      tag,                   // deduplicates — replaces existing same-tag notification
-      requireInteraction: true,
-      icon: '/nhance-icon.png',
-      badge: '/nhance-icon.png',
-    })
-  } catch (_) {}
+  try { new Notification(title, { body, tag, requireInteraction: true, icon: '/nhance-icon.png' }) } catch (_) {}
 }
 
-// ─── Shift Alarm Banner ───────────────────────────────────────────────────────
+// ─── Overdue Alarm Banner (fixed, full-width) ─────────────────────────────────
 
-function ShiftAlarmBanner({ type, elapsedHrs, onEndNow, onDismiss }) {
-  if (type === 'overdue') {
-    return (
-      <div className="fixed top-0 left-0 right-0 z-[100] max-w-lg mx-auto animate-pulse">
-        <div className="bg-red-600 border-b-2 border-red-400 px-4 py-3 flex items-center gap-3 shadow-2xl">
-          <span className="text-2xl shrink-0">🚨</span>
-          <div className="flex-1 min-w-0">
-            <p className="text-white font-bold text-sm leading-tight">Shift Overdue — {Number(elapsedHrs).toFixed(1)} hrs running</p>
-            <p className="text-red-100 text-xs mt-0.5">Please close your shift immediately</p>
-          </div>
-          <button onClick={onEndNow}
-            className="shrink-0 bg-white text-red-700 font-bold text-xs px-3 py-1.5 rounded-lg active:scale-95">
-            End Now
-          </button>
-          <button onClick={onDismiss} className="shrink-0 text-red-200 hover:text-white text-xl leading-none px-1">×</button>
-        </div>
-      </div>
-    )
-  }
-  if (type === 'login_reminder') {
-    return (
-      <div className="fixed top-0 left-0 right-0 z-[100] max-w-lg mx-auto">
-        <div className="bg-amber-600 border-b-2 border-amber-400 px-4 py-3 flex items-center gap-3 shadow-2xl">
-          <span className="text-2xl shrink-0">⏰</span>
-          <div className="flex-1 min-w-0">
-            <p className="text-white font-bold text-sm leading-tight">Shift Window is Open</p>
-            <p className="text-amber-100 text-xs mt-0.5">Don't forget to start your shift!</p>
-          </div>
-          <button onClick={onDismiss} className="shrink-0 text-amber-200 hover:text-white text-xl leading-none px-1">×</button>
-        </div>
-      </div>
-    )
-  }
-  return null
-}
-
-// ─── SHIFT MODULE ─────────────────────────────────────────────────────────────
-
-function ShiftWindowBanner({ check }) {
-  if (check.allowed) return null
+function OverdueBanner({ elapsedHrs, onEndNow, onDismiss }) {
   return (
-    <div className="bg-red-950/50 border border-red-700/50 rounded-2xl p-4">
-      <div className="flex items-start gap-3">
-        <span className="text-2xl">🚫</span>
-        <div>
-          <p className="text-red-300 font-semibold text-sm">Shift Not Available</p>
-          <p className="text-red-400/80 text-xs mt-1">{check.reason}</p>
-          <p className="text-slate-500 text-[11px] mt-2">OT and schedule changes can only be authorised by your Manager, HR, or Admin.</p>
+    <div className="fixed top-0 left-0 right-0 z-[100] max-w-lg mx-auto animate-pulse">
+      <div className="bg-red-600 px-4 py-3 flex items-center gap-3 shadow-2xl">
+        <span className="text-3xl shrink-0">🚨</span>
+        <div className="flex-1 min-w-0">
+          <p className="text-white font-black text-base leading-tight">{Number(elapsedHrs).toFixed(1)} HRS</p>
+          <p className="text-red-100 text-xs">Shift too long — end now</p>
         </div>
+        <button onClick={onEndNow} className="shrink-0 bg-white text-red-700 font-black text-sm px-4 py-2 rounded-xl active:scale-95">
+          END
+        </button>
+        <button onClick={onDismiss} className="shrink-0 text-red-200 text-2xl px-1">×</button>
       </div>
     </div>
   )
 }
 
-function AssignedEquipmentCard({ equipment, project }) {
-  return (
-    <div className="bg-dark-800 border border-primary-700/30 rounded-2xl p-4">
-      <p className="text-[10px] text-primary-400 uppercase tracking-widest font-semibold mb-2">Your Assigned Equipment</p>
-      <div className="flex items-start justify-between">
-        <div>
-          <p className="text-slate-100 font-bold text-lg">{equipment.name}</p>
-          <p className="text-slate-500 text-xs font-mono">{equipment.equipment_number} · {equipment.category}</p>
-        </div>
-        <span className="text-[10px] px-2 py-1 bg-primary-900/30 border border-primary-700/30 text-primary-400 rounded-full capitalize font-semibold">
-          {equipment.default_shift_type || 'day'} shift
-        </span>
-      </div>
-      {project && (
-        <div className="mt-3 pt-3 border-t border-dark-700 flex items-center justify-between">
-          <p className="text-xs text-slate-400">Project</p>
-          <p className="text-xs text-slate-200">{project.project_name}</p>
-        </div>
-      )}
-      {(project?.shift_start_time && project?.shift_end_time) && (
-        <div className="flex items-center justify-between">
-          <p className="text-xs text-slate-400">Shift Window</p>
-          <p className="text-xs text-slate-200">{project.shift_start_time.slice(0,5)} – {project.shift_end_time.slice(0,5)}</p>
-        </div>
-      )}
-      {equipment.current_meter_reading && (
-        <div className="flex items-center justify-between mt-1">
-          <p className="text-xs text-slate-400">Last Meter</p>
-          <p className="text-xs text-slate-200 font-mono">{Number(equipment.current_meter_reading).toLocaleString('en-IN')} hrs</p>
-        </div>
-      )}
-    </div>
-  )
-}
+// ─── START SHIFT FLOW ─────────────────────────────────────────────────────────
 
-function StartShiftForm({ companyId, operatorId, employeeId, equipment, project, mode, onStarted }) {
-  const [meter,        setMeter]     = useState('')
-  const [meterFile,    setMeterFile] = useState(null)
-  const [meterPreview, setMeterPrev] = useState(null)
-  const [saving, setSaving]          = useState(false)
+function StartShiftFlow({ companyId, operatorId, employeeId, equipment, project, lang, onStarted }) {
+  const L = LANGS[lang]
+  const [step, setStep]       = useState(0) // 0=meter, 1=photo, 2=confirm
+  const [meter, setMeter]     = useState('')
+  const [meterFile, setFile]  = useState(null)
+  const [meterPrev, setPrev]  = useState(null)
+  const [saving, setSaving]   = useState(false)
 
   const check = checkShiftWindow(project, equipment)
 
-  const handleMeterPhoto = f => { setMeterFile(f); setMeterPrev(URL.createObjectURL(f)) }
-
-  const canSubmit = check.allowed && meter && meterFile
+  const handlePhoto = f => { setFile(f); setPrev(URL.createObjectURL(f)) }
 
   const handleStart = async () => {
-    if (!check.allowed) return toast.error(check.reason || 'Outside shift window')
-    if (!meter)     return toast.error('Enter hour meter reading')
-    if (!meterFile) return toast.error('Take a photo of the hour meter')
     setSaving(true)
     try {
-      const meterLabel = `${equipment.equipment_number} — Meter Start`
-      const { url: meterUrl, location } = await stampAndUpload(meterFile, meterLabel)
+      const { url: meterUrl, location } = await stampAndUpload(meterFile, `${equipment.equipment_number} — Meter Start`)
       const { data, error } = await supabase.from('shifts').insert({
         company_id: companyId, equipment_id: equipment.id, operator_id: employeeId,
         shift_date: today(), shift_type: check.shiftType, start_time: nowTime(),
         start_meter: Number(meter), start_meter_photo: meterUrl,
-        start_location: location,
-        project_id: project?.id || null, status: 'open',
+        start_location: location, project_id: project?.id || null, status: 'open',
       }).select().single()
       if (error) throw error
-      toast.success('Shift started!')
+      toast.success('Shift started! 🚀')
       onStarted(data)
-    } catch (err) { toast.error(err.message || 'Failed to start shift')
+    } catch (err) { toast.error(err.message || 'Failed')
     } finally { setSaving(false) }
   }
 
-  return (
-    <div className="space-y-5">
-      <div>
-        <FL>Start Hour Meter Reading</FL>
-        <input type="number" className={bigNum} value={meter} onChange={e => setMeter(e.target.value)}
-          placeholder="0000.0" step="0.1" min="0" inputMode="decimal" />
-        {equipment?.current_meter_reading && (
-          <p className="text-center text-xs text-slate-500 mt-1">Last recorded: {Number(equipment.current_meter_reading).toLocaleString('en-IN')} hrs</p>
+  // Shift window blocked
+  if (!check.allowed) {
+    return (
+      <div className="flex flex-col items-center gap-4 py-10 px-4 text-center">
+        <div className="w-24 h-24 bg-red-900/40 border-2 border-red-700/40 rounded-full flex items-center justify-center text-5xl">🚫</div>
+        <p className="text-red-300 font-bold text-xl">{L.shiftNotAvail}</p>
+        <p className="text-slate-500 text-sm">{check.reason}</p>
+        {(project?.shift_start_time && project?.shift_end_time) && (
+          <div className="bg-dark-800 border border-dark-600 rounded-2xl px-6 py-4">
+            <p className="text-slate-400 text-xs mb-1">Shift Window</p>
+            <p className="text-slate-100 font-bold text-2xl">
+              {project.shift_start_time.slice(0,5)} – {project.shift_end_time.slice(0,5)}
+            </p>
+          </div>
         )}
       </div>
+    )
+  }
 
-      {/* Required photo: Meter reading */}
-      <div className="bg-dark-800 border border-dark-600 rounded-2xl p-4">
-        <p className="text-xs text-amber-400 font-semibold uppercase tracking-wide mb-3">📷 Meter Reading Photo</p>
-        <div className={`rounded-xl border-2 p-3 transition-all ${meterFile ? 'border-green-600/60 bg-green-900/10' : 'border-dashed border-dark-500'}`}>
-          <div className="flex items-center gap-2 mb-2">
-            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${meterFile ? 'bg-green-700/30 text-green-400' : 'bg-red-900/30 text-red-400'}`}>
-              {meterFile ? '✓ Done' : 'Required'}
-            </span>
-            <span className="text-xs text-slate-300">Photo of hour meter</span>
-          </div>
-          <PhotoCapture label="" onCapture={handleMeterPhoto} preview={meterPreview} />
+  return (
+    <div className="space-y-4">
+      {/* Equipment card — compact */}
+      <div className="bg-dark-800 border border-primary-700/30 rounded-2xl p-4 flex items-center gap-3">
+        <div className="text-4xl">🏗</div>
+        <div className="flex-1 min-w-0">
+          <p className="text-slate-100 font-bold text-lg truncate">{equipment.name}</p>
+          <p className="text-slate-500 text-xs font-mono">{equipment.equipment_number}</p>
+          {project && <p className="text-primary-400 text-xs mt-0.5 truncate">{project.project_name}</p>}
+        </div>
+        <div className="text-center">
+          <p className="text-xl font-bold text-primary-400">{equipment.default_shift_type || 'day'}</p>
+          <p className="text-[10px] text-slate-500">shift</p>
         </div>
       </div>
 
-      {!check.allowed ? (
-        <ShiftWindowBanner check={check} />
-      ) : (
-        <Btn onClick={handleStart} loading={saving} disabled={!canSubmit}>
-          {canSubmit ? '🚀 Start Shift' : `Complete ${!meter ? 'meter reading' : 'meter photo'} first`}
-        </Btn>
+      {equipment.current_meter_reading && (
+        <div className="bg-dark-800 border border-dark-600 rounded-xl px-4 py-2 flex justify-between items-center">
+          <span className="text-xs text-slate-500">Last meter</span>
+          <span className="text-sm font-mono font-bold text-slate-200">{Number(equipment.current_meter_reading).toLocaleString('en-IN')} hrs</span>
+        </div>
+      )}
+
+      <StepDots total={2} current={step} />
+
+      {/* Step 0: Meter reading */}
+      {step === 0 && (
+        <div className="space-y-4">
+          <BigNumber value={meter} onChange={setMeter} placeholder="0000.0" label={L.meterReading} />
+          <BigBtn onClick={() => setStep(1)} disabled={!meter || Number(meter) <= 0} color="primary">
+            Next →
+          </BigBtn>
+        </div>
+      )}
+
+      {/* Step 1: Meter photo + Submit */}
+      {step === 1 && (
+        <div className="space-y-4">
+          <BigPhoto label={L.meterPhoto} sublabel={equipment.equipment_number} onCapture={handlePhoto} preview={meterPrev} />
+          <div className="flex gap-3">
+            <BigBtn onClick={() => setStep(0)} color="ghost" className="max-w-20">← {meter}</BigBtn>
+            <BigBtn onClick={handleStart} disabled={!meterFile} loading={saving} color="green" className="flex-1">
+              🚀 {L.startShift}
+            </BigBtn>
+          </div>
+        </div>
       )}
     </div>
   )
 }
 
-function RecordFuelSheet({ open, onClose, shift, companyId, mode }) {
+// ─── ACTIVE SHIFT VIEW ─────────────────────────────────────────────────────────
+
+function ActiveShiftView({ shift, fuelEntries, lang, onFuel, onIncident, onEnd }) {
+  const L = LANGS[lang]
+  const [sh, sm] = (shift.start_time || '00:00').split(':').map(Number)
+  const now = new Date()
+  const elapsedMins = (now.getHours() * 60 + now.getMinutes()) - (sh * 60 + sm)
+  const elapsedHrs = Math.max(0, elapsedMins / 60)
+  const isFullDay = elapsedHrs >= 4
+  const totalFuel = fuelEntries.reduce((s, f) => s + (Number(f.quantity_liters) || 0), 0)
+
+  return (
+    <div className="space-y-4">
+      {/* Big status card */}
+      <div className={`rounded-3xl p-5 border-2 ${isFullDay ? 'bg-green-900/20 border-green-700/30' : 'bg-amber-900/20 border-amber-700/30'}`}>
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <p className="text-xs text-slate-500 uppercase tracking-widest">Active</p>
+            <p className="text-slate-100 font-black text-xl mt-0.5">{shift.equipment?.name}</p>
+            <p className="text-slate-500 text-xs font-mono">{shift.equipment?.equipment_number}</p>
+          </div>
+          <div className="text-center">
+            <p className={`text-5xl font-black leading-none ${isFullDay ? 'text-green-400' : 'text-amber-400'}`}>
+              {elapsedHrs.toFixed(1)}
+            </p>
+            <p className={`text-xs font-bold mt-1 ${isFullDay ? 'text-green-400' : 'text-amber-400'}`}>
+              {isFullDay ? L.fullDay : L.halfDay}
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-3 gap-2">
+          <div className="bg-dark-900/40 rounded-xl py-2.5 text-center">
+            <p className="text-base font-bold text-slate-100">{shift.start_time}</p>
+            <p className="text-[10px] text-slate-500">Started</p>
+          </div>
+          <div className="bg-dark-900/40 rounded-xl py-2.5 text-center">
+            <p className="text-base font-bold text-slate-100 font-mono">{Number(shift.start_meter).toLocaleString()}</p>
+            <p className="text-[10px] text-slate-500">Start Meter</p>
+          </div>
+          <div className="bg-dark-900/40 rounded-xl py-2.5 text-center">
+            <p className="text-base font-bold text-yellow-300">{fmtN(totalFuel, 1)} L</p>
+            <p className="text-[10px] text-slate-500">{L.fuel}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* 3 large action buttons */}
+      <div className="grid grid-cols-3 gap-3">
+        <button onClick={onFuel}
+          className="flex flex-col items-center justify-center gap-2 py-6 rounded-2xl bg-yellow-900/30 border-2 border-yellow-700/30 active:scale-95 transition-all">
+          <span className="text-4xl">⛽</span>
+          <span className="text-yellow-300 text-xs font-bold">{L.fuel}</span>
+        </button>
+        <button onClick={onIncident}
+          className="flex flex-col items-center justify-center gap-2 py-6 rounded-2xl bg-orange-900/30 border-2 border-orange-700/30 active:scale-95 transition-all">
+          <span className="text-4xl">⚠️</span>
+          <span className="text-orange-300 text-xs font-bold">{L.problem}</span>
+        </button>
+        <button onClick={onEnd}
+          className="flex flex-col items-center justify-center gap-2 py-6 rounded-2xl bg-red-900/30 border-2 border-red-700/30 active:scale-95 transition-all">
+          <span className="text-4xl">🏁</span>
+          <span className="text-red-300 text-xs font-bold">{L.endShift}</span>
+        </button>
+      </div>
+
+      {/* Fuel log (compact) */}
+      {fuelEntries.length > 0 && (
+        <div className="bg-dark-800 border border-dark-600 rounded-2xl overflow-hidden">
+          <p className="text-[10px] text-slate-500 uppercase tracking-widest px-4 py-2 border-b border-dark-700">
+            {L.fuel} today
+          </p>
+          {fuelEntries.map(f => (
+            <div key={f.id} className="flex items-center gap-3 px-4 py-2.5 border-b border-dark-700 last:border-0">
+              <span className="text-xl">⛽</span>
+              <p className="text-yellow-300 font-bold text-lg flex-1">{Number(f.quantity_liters)} L</p>
+              <p className="text-xs text-slate-500">{new Date(f.created_at).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})}</p>
+              {f.receipt_url && <a href={f.receipt_url} target="_blank" rel="noreferrer" className="text-primary-400 text-lg">📷</a>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── FUEL SHEET ───────────────────────────────────────────────────────────────
+
+function FuelSheet({ open, onClose, shift, companyId, lang }) {
+  const L = LANGS[lang]
+  const [step, setStep]         = useState(0)
   const [qty, setQty]           = useState('')
   const [meter, setMeter]       = useState('')
-  const [rate, setRate]         = useState('')
-  const [source, setSource]     = useState('tank')
   const [photoFile, setPhoto]   = useState(null)
   const [photoPreview, setPP]   = useState(null)
   const [saving, setSaving]     = useState(false)
   const qc = useQueryClient()
 
+  const reset = () => { setStep(0); setQty(''); setMeter(''); setPhoto(null); setPP(null) }
+
   const handlePhoto = f => { setPhoto(f); setPP(URL.createObjectURL(f)) }
 
   const handleSave = async () => {
-    if (!qty)     return toast.error('Enter fuel quantity')
-    if (!photoFile) return toast.error('Take a proof photo')
     setSaving(true)
     try {
       const { url } = await stampAndUpload(photoFile, 'Fuel Entry Proof')
-      const totalAmt = rate && qty ? Number(qty) * Number(rate) : null
       await supabase.from('shift_fuel_entries').insert({
         company_id: companyId, shift_id: shift.id, equipment_id: shift.equipment_id,
-        quantity_liters: Number(qty), rate_per_liter: rate ? Number(rate) : null,
-        total_amount: totalAmt, meter_at_filling: meter ? Number(meter) : null,
-        fuel_source: source, receipt_url: url,
+        quantity_liters: Number(qty),
+        meter_at_filling: meter ? Number(meter) : null,
+        fuel_source: 'tank', receipt_url: url,
       })
-      toast.success('Fuel recorded')
+      toast.success('⛽ Fuel recorded')
       qc.invalidateQueries(['op_shift_fuel', shift.id])
-      setQty(''); setMeter(''); setRate(''); setSource('tank'); setPhoto(null); setPP(null)
-      onClose()
+      reset(); onClose()
     } catch (err) { toast.error(err.message)
     } finally { setSaving(false) }
   }
 
   return (
-    <Sheet open={open} onClose={onClose} title="⛽ Record Fuel">
-      <div className="space-y-4">
-        <div>
-          <FL>Quantity Filled (Litres) *</FL>
-          <input type="number" className={bigNum} value={qty} onChange={e => setQty(e.target.value)}
-            placeholder="0.0" step="0.5" min="0" inputMode="decimal" />
-        </div>
-        <div>
-          <FL>Hour Meter at Filling (optional)</FL>
-          <input type="number" className={inp} value={meter} onChange={e => setMeter(e.target.value)}
-            placeholder="Current meter reading" step="0.1" min="0" inputMode="decimal" />
+    <Sheet open={open} onClose={() => { reset(); onClose() }}>
+      <div className="space-y-5">
+        <div className="text-center pt-2">
+          <span className="text-5xl">⛽</span>
+          <p className="text-slate-100 font-bold text-xl mt-2">{L.fuel}</p>
         </div>
 
-        {/* Advanced-only: rate + fuel source */}
-        {mode === 'advanced' && (
-          <>
+        <StepDots total={2} current={step} />
+
+        {step === 0 && (
+          <div className="space-y-4">
+            <BigNumber value={qty} onChange={setQty} placeholder="0.0" step="0.5" label={L.fuelQty} />
             <div>
-              <FL>Rate per Litre (₹) — for cost tracking</FL>
-              <input type="number" className={inp} value={rate} onChange={e => setRate(e.target.value)}
-                placeholder="e.g. 95.50" step="0.01" min="0" inputMode="decimal" />
-              {qty && rate && <p className="text-xs text-primary-400 mt-1">Total: {fmt(Number(qty)*Number(rate))}</p>}
+              <p className="text-center text-xs text-slate-500 mb-2">Hour Meter (optional)</p>
+              <input type="number" inputMode="decimal" value={meter} onChange={e => setMeter(e.target.value)}
+                placeholder="e.g. 1234.5" step="0.1"
+                className="w-full bg-dark-700 border border-dark-500 rounded-xl px-4 py-3 text-sm text-slate-200 focus:outline-none focus:border-primary-500 text-center" />
             </div>
-            <div>
-              <FL>Fuel Source</FL>
-              <div className="grid grid-cols-2 gap-2">
-                {[['tank','🛢 Our Tank'],['client','🏗 Client Supplied']].map(([v,l]) => (
-                  <button key={v} onClick={() => setSource(v)}
-                    className={`py-2.5 rounded-xl text-xs font-semibold transition-all ${source===v ? 'bg-primary-600 text-white' : 'bg-dark-700 text-slate-400 border border-dark-500'}`}>
-                    {l}
-                  </button>
-                ))}
-              </div>
-              {source === 'client' && <p className="text-[10px] text-amber-400 mt-1">Client-supplied fuel will be excluded from our cost P&L</p>}
-            </div>
-          </>
+            <BigBtn onClick={() => setStep(1)} disabled={!qty || Number(qty) <= 0} color="primary">
+              Next →
+            </BigBtn>
+          </div>
         )}
 
-        <PhotoCapture label="Proof Photo (meter / receipt) *" onCapture={handlePhoto} preview={photoPreview} />
-        <Btn onClick={handleSave} loading={saving}>Save Fuel Entry</Btn>
+        {step === 1 && (
+          <div className="space-y-4">
+            <BigPhoto label={L.takePhoto} sublabel="Meter / receipt proof" onCapture={handlePhoto} preview={photoPreview} />
+            <div className="flex gap-3">
+              <BigBtn onClick={() => setStep(0)} color="ghost" className="max-w-20">←</BigBtn>
+              <BigBtn onClick={handleSave} disabled={!photoFile} loading={saving} color="green" className="flex-1">
+                ✓ Save
+              </BigBtn>
+            </div>
+          </div>
+        )}
       </div>
     </Sheet>
   )
 }
 
-function RecordIncidentSheet({ open, onClose, shift, companyId, mode }) {
-  const [type, setType]         = useState('breakdown')
-  const [sev, setSev]           = useState('low')
-  const [desc, setDesc]         = useState('')
-  const [action, setAction]     = useState('')
-  const [photoFile, setPhoto]   = useState(null)
-  const [photoPreview, setPP]   = useState(null)
-  const [saving, setSaving]     = useState(false)
+// ─── INCIDENT SHEET ────────────────────────────────────────────────────────────
+
+const INCIDENT_ICONS = [
+  { type: 'breakdown',  icon: '🔧', label: 'Breakdown' },
+  { type: 'accident',   icon: '💥', label: 'Accident'  },
+  { type: 'near_miss',  icon: '⚡', label: 'Near Miss' },
+  { type: 'damage',     icon: '🪛', label: 'Damage'    },
+  { type: 'theft',      icon: '🔒', label: 'Theft'     },
+  { type: 'other',      icon: '❓', label: 'Other'     },
+]
+
+const SEV_ICONS = [
+  { val: 'low',      icon: '🟡', label: 'Low'      },
+  { val: 'medium',   icon: '🟠', label: 'Medium'   },
+  { val: 'high',     icon: '🔴', label: 'High'     },
+  { val: 'critical', icon: '🚨', label: 'Critical' },
+]
+
+function IncidentSheet({ open, onClose, shift, companyId, lang }) {
+  const L = LANGS[lang]
+  const [step, setStep]       = useState(0)
+  const [type, setType]       = useState(null)
+  const [sev, setSev]         = useState(null)
+  const [desc, setDesc]       = useState('')
+  const [photoFile, setPhoto] = useState(null)
+  const [photoPrev, setPP]    = useState(null)
+  const [saving, setSaving]   = useState(false)
   const qc = useQueryClient()
 
-  const TYPES = ['breakdown','accident','near_miss','damage','theft','other']
-  const SEVS  = ['low','medium','high','critical']
-  const SEV_COLOR = { low:'bg-green-700', medium:'bg-yellow-600', high:'bg-orange-600', critical:'bg-red-600' }
+  const reset = () => { setStep(0); setType(null); setSev(null); setDesc(''); setPhoto(null); setPP(null) }
 
   const handlePhoto = f => { setPhoto(f); setPP(URL.createObjectURL(f)) }
 
   const handleSave = async () => {
-    if (!desc.trim()) return toast.error('Describe the incident')
+    if (!type || !sev) return toast.error('Select type and severity')
     setSaving(true)
     try {
       let photoUrls = []
@@ -468,88 +650,131 @@ function RecordIncidentSheet({ open, onClose, shift, companyId, mode }) {
       }
       await supabase.from('shift_incidents').insert({
         company_id: companyId, shift_id: shift.id, equipment_id: shift.equipment_id,
-        incident_type: type, severity: sev, description: desc,
-        action_taken: action || null,
+        incident_type: type, severity: sev,
+        description: desc || `${type} reported by operator`,
         reported_by: shift.operator_id, photo_urls: photoUrls,
         incident_time: new Date().toISOString(),
       })
-      toast.success('Incident reported')
+      toast.success('⚠️ Incident reported')
       qc.invalidateQueries(['op_incidents', shift.id])
-      setDesc(''); setAction(''); setType('breakdown'); setSev('low'); setPhoto(null); setPP(null)
-      onClose()
+      reset(); onClose()
     } catch (err) { toast.error(err.message)
     } finally { setSaving(false) }
   }
 
   return (
-    <Sheet open={open} onClose={onClose} title="⚠️ Report Incident">
-      <div className="space-y-4">
-        <div>
-          <FL>Incident Type *</FL>
-          <select className={inp} value={type} onChange={e => setType(e.target.value)}>
-            {TYPES.map(t => <option key={t} value={t}>{t.replace('_',' ').replace(/\b\w/g,c=>c.toUpperCase())}</option>)}
-          </select>
-        </div>
-        <div>
-          <FL>Severity *</FL>
-          <div className="grid grid-cols-4 gap-2">
-            {SEVS.map(s => (
-              <button key={s} onClick={() => setSev(s)}
-                className={`py-2 rounded-xl text-xs font-semibold capitalize transition-all ${sev===s ? `${SEV_COLOR[s]} text-white` : 'bg-dark-700 text-slate-400 border border-dark-500'}`}>
-                {s}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div>
-          <FL>Description *</FL>
-          <textarea className={`${inp} resize-none`} rows={3} value={desc} onChange={e => setDesc(e.target.value)}
-            placeholder="Describe what happened…" />
+    <Sheet open={open} onClose={() => { reset(); onClose() }}>
+      <div className="space-y-5">
+        <div className="text-center pt-2">
+          <span className="text-5xl">⚠️</span>
+          <p className="text-slate-100 font-bold text-xl mt-2">{L.problem}</p>
         </div>
 
-        {/* Advanced: action taken */}
-        {mode === 'advanced' && (
-          <div>
-            <FL>Action Taken</FL>
-            <textarea className={`${inp} resize-none`} rows={2} value={action} onChange={e => setAction(e.target.value)}
-              placeholder="What did you do about it? (e.g. shut down, called supervisor, bypassed…)" />
+        <StepDots total={3} current={step} />
+
+        {/* Step 0: Pick incident type */}
+        {step === 0 && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-3 gap-3">
+              {INCIDENT_ICONS.map(({ type: t, icon, label }) => (
+                <button key={t} onClick={() => { setType(t); setStep(1) }}
+                  className={`flex flex-col items-center gap-2 py-5 rounded-2xl border-2 active:scale-95 transition-all
+                    ${type === t ? 'bg-orange-900/40 border-orange-500' : 'bg-dark-800 border-dark-600'}`}>
+                  <span className="text-3xl">{icon}</span>
+                  <span className="text-xs text-slate-300 font-semibold">{label}</span>
+                </button>
+              ))}
+            </div>
           </div>
         )}
 
-        <PhotoCapture label="Photo (optional)" onCapture={handlePhoto} preview={photoPreview} />
-        <Btn onClick={handleSave} loading={saving} variant="danger">Submit Incident Report</Btn>
+        {/* Step 1: Severity */}
+        {step === 1 && (
+          <div className="space-y-4">
+            <p className="text-center text-slate-400 text-sm">How bad is it?</p>
+            <div className="grid grid-cols-2 gap-3">
+              {SEV_ICONS.map(({ val, icon, label }) => (
+                <button key={val} onClick={() => { setSev(val); setStep(2) }}
+                  className={`flex items-center gap-3 p-4 rounded-2xl border-2 active:scale-95 transition-all
+                    ${sev === val ? 'bg-red-900/30 border-red-500' : 'bg-dark-800 border-dark-600'}`}>
+                  <span className="text-3xl">{icon}</span>
+                  <span className="text-slate-200 font-bold text-base">{label}</span>
+                </button>
+              ))}
+            </div>
+            <BigBtn onClick={() => setStep(0)} color="ghost">← Back</BigBtn>
+          </div>
+        )}
+
+        {/* Step 2: Photo + optional note + submit */}
+        {step === 2 && (
+          <div className="space-y-4">
+            <div className="flex items-center gap-3 bg-dark-800 rounded-xl px-4 py-2.5">
+              <span className="text-2xl">{INCIDENT_ICONS.find(x=>x.type===type)?.icon}</span>
+              <span className="text-slate-200 font-semibold capitalize">{type?.replace('_',' ')}</span>
+              <span className="ml-auto text-xl">{SEV_ICONS.find(x=>x.val===sev)?.icon}</span>
+            </div>
+
+            <BigPhoto label="Photo (optional but recommended)" onCapture={handlePhoto} preview={photoPrev} />
+
+            <div>
+              <p className="text-xs text-slate-500 mb-1.5 text-center">Describe what happened (optional)</p>
+              <textarea
+                className="w-full bg-dark-700 border border-dark-500 rounded-xl px-4 py-3 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-primary-500 resize-none"
+                rows={3} value={desc} onChange={e => setDesc(e.target.value)}
+                placeholder="What happened?" />
+            </div>
+
+            <div className="flex gap-3">
+              <BigBtn onClick={() => setStep(1)} color="ghost" className="max-w-20">←</BigBtn>
+              <BigBtn onClick={handleSave} loading={saving} color="red" className="flex-1">
+                🚨 Report
+              </BigBtn>
+            </div>
+          </div>
+        )}
       </div>
     </Sheet>
   )
 }
 
-function EndShiftSheet({ open, onClose, shift, companyId, employeeId, mode, onEnded }) {
-  const [meter,         setMeter]     = useState('')
-  const [idleHrs,       setIdleHrs]   = useState('')
-  const [breakdownType, setBdType]    = useState('')
-  const [workDesc,      setWorkDesc]  = useState('')
-  const [notes,         setNotes]     = useState('')
-  const [meterFile,     setMeterFile] = useState(null)
-  const [meterPreview,  setMeterPrev] = useState(null)
-  const [logoutFile,    setLogoutFile]= useState(null)
-  const [logoutPreview, setLogoutPrev]= useState(null)
-  const [saving, setSaving]           = useState(false)
+// ─── END SHIFT SHEET ──────────────────────────────────────────────────────────
 
-  const handleMeterPhoto  = f => { setMeterFile(f);  setMeterPrev(URL.createObjectURL(f)) }
-  const handleLogoutPhoto = f => { setLogoutFile(f); setLogoutPrev(URL.createObjectURL(f)) }
+function EndShiftSheet({ open, onClose, shift, companyId, employeeId, lang, onEnded }) {
+  const L = LANGS[lang]
+  const [step, setStep]         = useState(0)
+  const [meter, setMeter]       = useState('')
+  const [meterFile, setMFile]   = useState(null)
+  const [meterPrev, setMPrev]   = useState(null)
+  const [selfieFile, setSFile]  = useState(null)
+  const [selfiePrev, setSPrev]  = useState(null)
+  const [saving, setSaving]     = useState(false)
 
-  const canSubmit = meter && meterFile && logoutFile
+  const handleMeter   = f => { setMFile(f);  setMPrev(URL.createObjectURL(f)) }
+  const handleSelfie  = f => { setSFile(f);  setSPrev(URL.createObjectURL(f)) }
+
+  const reset = () => {
+    setStep(0); setMeter(''); setMFile(null); setMPrev(null); setSFile(null); setSPrev(null)
+  }
+
+  const meterDelta = meter && shift.start_meter ? Math.max(0, Number(meter) - Number(shift.start_meter)).toFixed(1) : null
+
+  const clockPreview = (() => {
+    if (!shift.start_time) return null
+    const [sh, sm] = shift.start_time.split(':').map(Number)
+    const now = new Date()
+    const mins = (now.getHours() * 60 + now.getMinutes()) - (sh * 60 + sm)
+    if (mins <= 0) return null
+    return { hrs: (mins / 60).toFixed(1), isHalfDay: mins / 60 < 4 }
+  })()
 
   const handleEnd = async () => {
-    if (!meter)      return toast.error('Enter end hour meter reading')
-    if (!meterFile)  return toast.error('Take a photo of the closing meter')
-    if (!logoutFile) return toast.error('Take a logout / presence photo')
     setSaving(true)
     try {
       const endTime = nowTime()
-      const [{ url: meterUrl, location }, { url: logoutUrl }] = await Promise.all([
+      const [{ url: meterUrl, location }, { url: selfieUrl }] = await Promise.all([
         stampAndUpload(meterFile,  'Shift End — Hour Meter'),
-        stampAndUpload(logoutFile, 'Logout — Presence'),
+        stampAndUpload(selfieFile, 'Logout — Presence'),
       ])
       const startM   = Number(shift.start_meter) || 0
       const endM     = Number(meter)
@@ -560,15 +785,12 @@ function EndShiftSheet({ open, onClose, shift, companyId, employeeId, mode, onEn
 
       const { error } = await supabase.from('shifts').update({
         end_time: endTime, end_meter: endM, end_meter_photo: meterUrl,
-        logout_photo_url: logoutUrl,
+        logout_photo_url: selfieUrl,
         end_location: location, working_hours: meterHrs,
-        idle_hours: idleHrs ? Number(idleHrs) : 0,
-        notes: [workDesc ? `Work: ${workDesc}` : '', notes ? `Handover: ${notes}` : ''].filter(Boolean).join(' | ') || null,
-        status: 'closed',
+        idle_hours: 0, status: 'closed',
       }).eq('id', shift.id)
       if (error) throw error
 
-      // ── Auto attendance from clock time ──────────────────────────────────
       if (employeeId) {
         const attStatus = clockHrs >= 4 ? 'present' : clockHrs > 0 ? 'half_day' : 'absent'
         const attPayload = {
@@ -586,156 +808,105 @@ function EndShiftSheet({ open, onClose, shift, companyId, employeeId, mode, onEn
         }
       }
 
-      const label = clockHrs >= 4 ? 'Present' : clockHrs > 0 ? 'Half Day' : ''
-      toast.success(`Shift ended · ${meterHrs.toFixed(1)} meter hrs · ${clockHrs.toFixed(1)} clock hrs${label ? ` · ${label}` : ''}`)
-      onEnded()
-      onClose()
-      // reset
-      setMeter(''); setIdleHrs(''); setBdType(''); setWorkDesc(''); setNotes(''); setPhoto(null); setPP(null)
+      const label = clockHrs >= 4 ? '✓ Present' : clockHrs > 0 ? '½ Half Day' : ''
+      toast.success(`🏁 ${meterHrs.toFixed(1)} hrs · ${label}`)
+      onEnded(); reset(); onClose()
     } catch (err) { toast.error(err.message || 'Failed')
     } finally { setSaving(false) }
   }
 
-  const meterDelta = meter && shift.start_meter ? Math.max(0, Number(meter) - Number(shift.start_meter)).toFixed(1) : null
-  const clockPreview = (() => {
-    if (!shift.start_time) return null
-    const [sh, sm] = shift.start_time.split(':').map(Number)
-    const now = new Date()
-    const mins = (now.getHours() * 60 + now.getMinutes()) - (sh * 60 + sm)
-    if (mins <= 0) return null
-    return { hrs: (mins/60).toFixed(1), isHalfDay: mins/60 < 4 }
-  })()
-
-  const BREAKDOWN_TYPES = ['Mechanical','Electrical','Hydraulic','Fuel/Starvation','Operator Error','Waiting for Work','Other']
-
   return (
-    <Sheet open={open} onClose={onClose} title="🏁 End Shift">
+    <Sheet open={open} onClose={() => { reset(); onClose() }}>
       <div className="space-y-5">
-        {/* Shift summary */}
-        <div className="bg-dark-800 border border-dark-600 rounded-xl p-3 space-y-1.5">
-          <InfoRow label="Started at" value={shift.start_time} />
-          <InfoRow label="Start meter" value={`${Number(shift.start_meter).toLocaleString('en-IN')} hrs`} />
+        <div className="text-center pt-2">
+          <span className="text-5xl">🏁</span>
+          <p className="text-slate-100 font-bold text-xl mt-2">{L.endShift}</p>
+
+          {/* Clock preview */}
           {clockPreview && (
-            <div className="flex justify-between text-sm pt-1 border-t border-dark-700">
-              <span className="text-slate-400">Time on site</span>
-              <span className={`font-semibold ${clockPreview.isHalfDay ? 'text-yellow-400' : 'text-green-400'}`}>
-                {clockPreview.hrs} hrs {clockPreview.isHalfDay ? '— Half Day' : '— Full Day'}
-              </span>
+            <div className={`mt-3 inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-bold
+              ${clockPreview.isHalfDay ? 'bg-amber-900/30 text-amber-300' : 'bg-green-900/30 text-green-300'}`}>
+              {clockPreview.isHalfDay ? '½' : '✓'} {clockPreview.hrs} hrs on site
             </div>
           )}
         </div>
 
-        <div>
-          <FL>End Hour Meter Reading *</FL>
-          <input type="number" className={bigNum} value={meter} onChange={e => setMeter(e.target.value)}
-            placeholder="0000.0" step="0.1" min={shift.start_meter||0} inputMode="decimal" />
-          {meterDelta && <p className="text-center text-sm text-primary-400 font-semibold mt-2">{meterDelta} working hrs (meter)</p>}
-        </div>
+        <StepDots total={3} current={step} />
 
-        {/* Required photos */}
-        <div className="space-y-3 bg-dark-800 border border-dark-600 rounded-2xl p-4">
-          <p className="text-xs text-amber-400 font-semibold uppercase tracking-wide">📷 Required Photos — both must be taken</p>
-
-          <div className={`rounded-xl border-2 p-3 transition-all ${meterFile ? 'border-green-600/60 bg-green-900/10' : 'border-dashed border-dark-500'}`}>
-            <div className="flex items-center gap-2 mb-2">
-              <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${meterFile ? 'bg-green-700/30 text-green-400' : 'bg-red-900/30 text-red-400'}`}>
-                {meterFile ? '✓ Done' : 'Required'}
-              </span>
-              <span className="text-xs text-slate-300">Closing Meter Photo</span>
-            </div>
-            <PhotoCapture label="" onCapture={handleMeterPhoto} preview={meterPreview} />
-          </div>
-
-          <div className={`rounded-xl border-2 p-3 transition-all ${logoutFile ? 'border-green-600/60 bg-green-900/10' : 'border-dashed border-dark-500'}`}>
-            <div className="flex items-center gap-2 mb-2">
-              <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${logoutFile ? 'bg-green-700/30 text-green-400' : 'bg-red-900/30 text-red-400'}`}>
-                {logoutFile ? '✓ Done' : 'Required'}
-              </span>
-              <span className="text-xs text-slate-300">Logout / Presence Photo</span>
-            </div>
-            <p className="text-[11px] text-slate-500 mb-2">Selfie or site photo confirming your end-of-shift presence</p>
-            <PhotoCapture label="" onCapture={handleLogoutPhoto} preview={logoutPreview} />
-          </div>
-        </div>
-
-        {/* Advanced mode extra fields */}
-        {mode === 'advanced' && (
-          <>
-            <div>
-              <FL>Work Done This Shift</FL>
-              <textarea className={`${inp} resize-none`} rows={2} value={workDesc} onChange={e => setWorkDesc(e.target.value)}
-                placeholder="Brief description of work performed…" />
-            </div>
-            <div>
-              <FL>Idle / Breakdown Hours</FL>
-              <input type="number" className={inp} value={idleHrs} onChange={e => setIdleHrs(e.target.value)}
-                placeholder="0.0" step="0.5" min="0" inputMode="decimal" />
-            </div>
-            {idleHrs && Number(idleHrs) > 0 && (
-              <div>
-                <FL>Breakdown / Idle Reason</FL>
-                <select className={inp} value={breakdownType} onChange={e => setBdType(e.target.value)}>
-                  <option value="">Select reason…</option>
-                  {BREAKDOWN_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-                </select>
+        {/* Step 0: End meter reading */}
+        {step === 0 && (
+          <div className="space-y-4">
+            <BigNumber value={meter} onChange={setMeter} placeholder={shift.start_meter || '0000.0'}
+              min={shift.start_meter || 0} label={L.meterReading} />
+            {meterDelta && (
+              <div className="text-center">
+                <span className="text-primary-400 font-bold text-lg">{meterDelta}</span>
+                <span className="text-slate-500 text-sm"> working hrs</span>
               </div>
             )}
-          </>
+            <BigBtn onClick={() => setStep(1)} disabled={!meter || Number(meter) < (Number(shift.start_meter) || 0)} color="primary">
+              Next →
+            </BigBtn>
+          </div>
         )}
 
-        <div>
-          <FL>Handover Notes for Next Operator</FL>
-          <textarea className={`${inp} resize-none`} rows={2} value={notes} onChange={e => setNotes(e.target.value)}
-            placeholder="Any issues, fuel level, pending work…" />
-        </div>
+        {/* Step 1: Meter photo */}
+        {step === 1 && (
+          <div className="space-y-4">
+            <BigPhoto label={L.meterPhoto} sublabel={`Started: ${Number(shift.start_meter).toLocaleString()} → Now: ${meter}`}
+              onCapture={handleMeter} preview={meterPrev} />
+            <div className="flex gap-3">
+              <BigBtn onClick={() => setStep(0)} color="ghost" className="max-w-20">←</BigBtn>
+              <BigBtn onClick={() => setStep(2)} disabled={!meterFile} color="primary" className="flex-1">Next →</BigBtn>
+            </div>
+          </div>
+        )}
 
-        <div className="bg-blue-950/30 border border-blue-700/20 rounded-xl px-3 py-2">
-          <p className="text-[11px] text-blue-400">📋 Attendance auto-marked on submit: ≥4 clock hrs = Present · &lt;4 hrs = Half Day</p>
-        </div>
-
-        <Btn onClick={handleEnd} loading={saving} disabled={!canSubmit}>
-          {canSubmit ? '🏁 End Shift & Record Attendance' : `Complete ${!meter ? 'meter reading' : !meterFile ? 'meter photo' : 'logout photo'} first`}
-        </Btn>
+        {/* Step 2: Selfie / presence + final submit */}
+        {step === 2 && (
+          <div className="space-y-4">
+            <BigPhoto label={L.presencePhoto} sublabel="Selfie or site photo" onCapture={handleSelfie} preview={selfiePrev} />
+            <div className="bg-blue-950/30 border border-blue-700/20 rounded-xl px-3 py-2 text-center">
+              <p className="text-blue-400 text-xs">≥4 hrs = Present · &lt;4 hrs = Half Day</p>
+            </div>
+            <div className="flex gap-3">
+              <BigBtn onClick={() => setStep(1)} color="ghost" className="max-w-20">←</BigBtn>
+              <BigBtn onClick={handleEnd} disabled={!selfieFile} loading={saving} color="red" className="flex-1">
+                🏁 {L.endShift}
+              </BigBtn>
+            </div>
+          </div>
+        )}
       </div>
     </Sheet>
   )
 }
 
-function ActionBtn({ icon, label, onClick, color }) {
-  const C = { yellow:'bg-yellow-900/30 border-yellow-700/30 text-yellow-400', orange:'bg-orange-900/30 border-orange-700/30 text-orange-400', red:'bg-red-900/30 border-red-700/30 text-red-400' }
-  return (
-    <button onClick={onClick}
-      className={`flex flex-col items-center justify-center gap-1 py-4 rounded-2xl border font-medium transition-all active:scale-95 ${C[color]}`}>
-      <span className="text-2xl">{icon}</span>
-      <span className="text-[11px]">{label}</span>
-    </button>
-  )
-}
+// ─── SHIFT MODULE (orchestrator) ───────────────────────────────────────────────
 
-function ShiftModule({ companyId, operatorId, employeeId, employeeName, mode }) {
+function ShiftModule({ companyId, operatorId, employeeId, employeeName, lang }) {
   const qc = useQueryClient()
-  const [fuelOpen,     setFuelOpen]   = useState(false)
-  const [incOpen,      setIncOpen]    = useState(false)
-  const [endOpen,      setEndOpen]    = useState(false)
-  const [alarmType,    setAlarmType]  = useState(null)   // 'overdue' | 'login_reminder' | null
-  const [alarmDismiss, setDismissed]  = useState(false)
-  const [elapsedHrs,   setElapsed]    = useState(0)
+  const [fuelOpen, setFuelOpen] = useState(false)
+  const [incOpen,  setIncOpen]  = useState(false)
+  const [endOpen,  setEndOpen]  = useState(false)
+  const [alarmType,  setAlarmType]  = useState(null)
+  const [alarmDismiss, setDismissed] = useState(false)
+  const [elapsedHrs, setElapsed]    = useState(0)
 
-  // Equipment lookup — SECURITY DEFINER RPC bypasses RLS, uses auth.uid() server-side
+  const L = LANGS[lang]
+
   const { data: assignedEq, isLoading: eqLoading } = useQuery({
     queryKey: ['op_assigned_equipment', operatorId, companyId],
     queryFn: async () => {
       const { data: eq, error } = await supabase.rpc('get_my_equipment')
       if (error) { console.error('get_my_equipment error:', error); return null }
       if (!eq) return null
-      // Use assignment's shift_type as fallback if equipment doesn't have one
       if (eq && !eq.default_shift_type) eq.default_shift_type = eq.assignment_shift_type
       return eq
     },
     enabled: !!companyId && !!operatorId,
   })
 
-  // Project shift timing
   const { data: project } = useQuery({
     queryKey: ['op_project_timing', assignedEq?.current_project_id],
     queryFn: async () => {
@@ -747,41 +918,33 @@ function ShiftModule({ companyId, operatorId, employeeId, employeeName, mode }) 
     enabled: !!assignedEq?.current_project_id,
   })
 
-  // Today's active shift
   const { data: activeShift, isLoading: shiftLoading, refetch: refetchShift } = useQuery({
     queryKey: ['op_active_shift', employeeId, today()],
     queryFn: async () => {
       const { data } = await supabase.from('shifts')
         .select('*, equipment:equipment_id(name,equipment_number,category)')
         .eq('company_id', companyId).eq('operator_id', employeeId)
-        .eq('shift_date', today()).eq('status','open')
-        .order('created_at', { ascending:false }).limit(1).maybeSingle()
+        .eq('shift_date', today()).eq('status', 'open')
+        .order('created_at', { ascending: false }).limit(1).maybeSingle()
       return data || null
     },
     enabled: !!companyId && !!employeeId,
-    refetchInterval: 30_000,          // poll every 30 s as fallback
+    refetchInterval: 30_000,
     refetchIntervalInBackground: true,
   })
 
-  // Realtime: instantly sync shift state across devices
   useEffect(() => {
     if (!companyId || !employeeId) return
     const channel = supabase
       .channel(`op_shift_${employeeId}`)
-      .on('postgres_changes', {
-        event: '*', schema: 'public', table: 'shifts',
-        filter: `operator_id=eq.${employeeId}`,
-      }, () => {
-        qc.invalidateQueries(['op_active_shift', employeeId, today()])
-      })
-      .subscribe()
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'shifts', filter: `operator_id=eq.${employeeId}` },
+        () => qc.invalidateQueries(['op_active_shift', employeeId, today()])
+      ).subscribe()
     return () => { supabase.removeChannel(channel) }
   }, [companyId, employeeId])
 
-  // Alarm / reminder system — checks every 60 s
   useEffect(() => {
-    const OVERDUE_HRS = 10   // fire alarm if shift > 10 hrs
-
+    const OVERDUE_HRS = 10
     const check = () => {
       if (activeShift) {
         const [sh, sm] = (activeShift.start_time || '00:00').split(':').map(Number)
@@ -790,36 +953,21 @@ function ShiftModule({ companyId, operatorId, employeeId, employeeName, mode }) 
         setElapsed(Math.max(0, hrs))
         if (hrs > OVERDUE_HRS) {
           if (!alarmDismiss) setAlarmType('overdue')
-          fireNotification(
-            '🚨 Shift Overdue',
-            `Your shift has been running for ${hrs.toFixed(1)} hours. Please close your shift!`,
-            'shift-overdue'
-          )
-        } else {
-          setAlarmType(null)
-        }
+          fireNotification('🚨 Shift Overdue', `Running ${hrs.toFixed(1)} hrs — close now!`, 'shift-overdue')
+        } else { setAlarmType(null) }
       } else if (assignedEq && project) {
-        // Check if within shift window but no shift started
         const { allowed } = checkShiftWindow(project, assignedEq)
         if (allowed) {
           if (!alarmDismiss) setAlarmType('login_reminder')
-          fireNotification(
-            '⏰ Shift Reminder',
-            'Your shift window is open. Don\'t forget to start your shift!',
-            'shift-login-reminder'
-          )
-        } else {
-          setAlarmType(null)
-        }
+          fireNotification('⏰ Shift Reminder', 'Window open — start your shift!', 'shift-login-reminder')
+        } else { setAlarmType(null) }
       }
     }
-
-    check()   // run immediately
-    const timer = setInterval(check, 60_000)   // then every 60 s
+    check()
+    const timer = setInterval(check, 60_000)
     return () => clearInterval(timer)
   }, [activeShift, assignedEq, project, alarmDismiss])
 
-  // Fuel entries
   const { data: fuelEntries = [] } = useQuery({
     queryKey: ['op_shift_fuel', activeShift?.id],
     queryFn: async () => {
@@ -830,8 +978,6 @@ function ShiftModule({ companyId, operatorId, employeeId, employeeName, mode }) 
     enabled: !!activeShift?.id,
   })
 
-  const totalFuel = fuelEntries.reduce((s,f) => s + (Number(f.quantity_liters)||0), 0)
-
   const onEnded = () => {
     refetchShift()
     qc.invalidateQueries(['op_active_shift', employeeId, today()])
@@ -840,130 +986,74 @@ function ShiftModule({ companyId, operatorId, employeeId, employeeName, mode }) 
     qc.invalidateQueries(['op_live_salary', operatorId])
   }
 
-  if (eqLoading || shiftLoading) return (
-    <div className="flex items-center justify-center h-48">
-      <div className="w-8 h-8 border-2 border-primary-500/30 border-t-primary-500 rounded-full animate-spin" />
-    </div>
-  )
-
-  // No equipment assigned
-  if (!assignedEq) return (
-    <div className="bg-dark-800 border border-dark-600 rounded-2xl p-6 text-center">
-      <div className="text-4xl mb-3">🏗</div>
-      <p className="text-slate-200 font-semibold">No Equipment Assigned</p>
-      <p className="text-slate-500 text-sm mt-2">Contact your supervisor or HR to get an equipment assignment before you can start a shift.</p>
-    </div>
-  )
-
-  // No active shift → show start form
-  if (!activeShift) {
-    const check = checkShiftWindow(project, assignedEq)
-    const hour  = new Date().getHours()
-    const greeting = hour < 12 ? 'Morning' : hour < 17 ? 'Afternoon' : 'Evening'
-
-    return (
-      <div className="space-y-5">
-        <div className="text-center">
-          <p className="text-slate-200 font-semibold text-lg">Good {greeting}!</p>
-          <p className="text-slate-500 text-sm mt-0.5">No active shift today</p>
-        </div>
-        <AssignedEquipmentCard equipment={assignedEq} project={project} />
-        {!check.allowed && <ShiftWindowBanner check={check} />}
-        {check.allowed && (
-          <StartShiftForm companyId={companyId} operatorId={operatorId} employeeId={employeeId}
-            equipment={assignedEq} project={project} mode={mode} onStarted={refetchShift} />
-        )}
-      </div>
-    )
-  }
-
-  // Active shift view
-  const eq = activeShift.equipment
-  const [sh, sm] = (activeShift.start_time||'00:00').split(':').map(Number)
-  const now = new Date()
-  const currentElapsed = ((now.getHours()*60+now.getMinutes()) - (sh*60+sm)) / 60
-  const isHalfDaySoFar = currentElapsed < 4
-
   const handleDismissAlarm = () => {
-    setDismissed(true)
-    setAlarmType(null)
-    // Re-enable alarm after 30 min so it fires again
+    setDismissed(true); setAlarmType(null)
     setTimeout(() => setDismissed(false), 30 * 60 * 1000)
   }
 
-  return (
-    <div className="space-y-4">
-      {/* Alarm / reminder banner */}
-      {alarmType && (
-        <ShiftAlarmBanner
-          type={alarmType}
-          elapsedHrs={elapsedHrs}
-          onEndNow={() => { setEndOpen(true); handleDismissAlarm() }}
-          onDismiss={handleDismissAlarm}
-        />
-      )}
-
-      {/* Active shift card */}
-      <div className="bg-gradient-to-br from-primary-900/40 to-dark-800 border border-primary-700/30 rounded-2xl p-4">
-        <div className="flex items-start justify-between mb-3">
-          <div>
-            <p className="text-[10px] text-primary-400 uppercase tracking-widest font-semibold">Active Shift</p>
-            <p className="text-slate-100 font-bold text-lg mt-0.5">{eq?.name}</p>
-            <p className="text-slate-500 text-xs">{eq?.equipment_number}</p>
-          </div>
-          <div className="text-right">
-            <p className="text-2xl font-bold text-primary-300">{Math.max(0,currentElapsed).toFixed(1)}</p>
-            <p className={`text-[10px] font-semibold ${isHalfDaySoFar ? 'text-yellow-400' : 'text-green-400'}`}>
-              hrs · {isHalfDaySoFar ? 'Half Day so far' : 'Full Day ✓'}
-            </p>
-          </div>
-        </div>
-        <div className="grid grid-cols-3 gap-2 text-center">
-          <div className="bg-dark-800/60 rounded-xl py-2">
-            <p className="text-sm font-bold text-slate-100">{activeShift.start_time}</p>
-            <p className="text-[10px] text-slate-500">Started</p>
-          </div>
-          <div className="bg-dark-800/60 rounded-xl py-2">
-            <p className="text-sm font-bold text-slate-100">{Number(activeShift.start_meter).toLocaleString()}</p>
-            <p className="text-[10px] text-slate-500">Start Meter</p>
-          </div>
-          <div className="bg-dark-800/60 rounded-xl py-2">
-            <p className="text-sm font-bold text-yellow-300">{fmtN(totalFuel,1)} L</p>
-            <p className="text-[10px] text-slate-500">Fuel</p>
-          </div>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-3 gap-3">
-        <ActionBtn icon="⛽" label="Record Fuel" onClick={() => setFuelOpen(true)} color="yellow" />
-        <ActionBtn icon="⚠️" label="Incident"    onClick={() => setIncOpen(true)}  color="orange" />
-        <ActionBtn icon="🏁" label="End Shift"   onClick={() => setEndOpen(true)}  color="red"    />
-      </div>
-
-      {fuelEntries.length > 0 && (
-        <div className="bg-dark-800 border border-dark-600 rounded-xl p-3">
-          <p className="text-xs text-slate-500 uppercase tracking-wide mb-2">Fuel Today</p>
-          {fuelEntries.map(f => (
-            <div key={f.id} className="flex items-center justify-between py-1.5 border-b border-dark-700 last:border-0">
-              <p className="text-xs text-slate-400">{new Date(f.created_at).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})}</p>
-              <p className="text-sm font-semibold text-yellow-400">{Number(f.quantity_liters)} L</p>
-              <p className="text-xs text-slate-500 capitalize">{f.fuel_source==='client'?'Client':'Tank'}</p>
-              {f.receipt_url && <a href={f.receipt_url} target="_blank" rel="noreferrer" className="text-[10px] text-primary-400">📷</a>}
-            </div>
-          ))}
-        </div>
-      )}
-
-      <RecordFuelSheet     open={fuelOpen} onClose={() => setFuelOpen(false)} shift={activeShift} companyId={companyId} mode={mode} />
-      <RecordIncidentSheet open={incOpen}  onClose={() => setIncOpen(false)}  shift={activeShift} companyId={companyId} mode={mode} />
-      <EndShiftSheet       open={endOpen}  onClose={() => setEndOpen(false)}  shift={activeShift} companyId={companyId} employeeId={employeeId} mode={mode} onEnded={onEnded} />
+  if (eqLoading || shiftLoading) return (
+    <div className="flex items-center justify-center h-64">
+      <div className="w-10 h-10 border-2 border-primary-500/30 border-t-primary-500 rounded-full animate-spin" />
     </div>
+  )
+
+  if (!assignedEq) return (
+    <div className="flex flex-col items-center gap-5 py-16 px-6 text-center">
+      <div className="w-28 h-28 bg-dark-800 border-2 border-dark-600 rounded-full flex items-center justify-center text-6xl">🏗</div>
+      <div>
+        <p className="text-slate-200 font-bold text-xl">{L.noEquip}</p>
+        <p className="text-slate-500 text-sm mt-2">{L.contactSupervisor}</p>
+      </div>
+    </div>
+  )
+
+  // Login reminder banner (not overdue)
+  const loginReminderBanner = alarmType === 'login_reminder' && !activeShift ? (
+    <div className="bg-amber-600 px-4 py-3 flex items-center gap-3 rounded-2xl mb-4">
+      <span className="text-2xl">⏰</span>
+      <p className="text-white font-bold flex-1">Shift window is open!</p>
+      <button onClick={handleDismissAlarm} className="text-amber-200 text-xl">×</button>
+    </div>
+  ) : null
+
+  return (
+    <>
+      {alarmType === 'overdue' && (
+        <OverdueBanner elapsedHrs={elapsedHrs} onEndNow={() => { setEndOpen(true); handleDismissAlarm() }} onDismiss={handleDismissAlarm} />
+      )}
+
+      <div className={alarmType === 'overdue' ? 'mt-14' : ''}>
+        {loginReminderBanner}
+
+        {activeShift ? (
+          <>
+            <ActiveShiftView
+              shift={activeShift}
+              fuelEntries={fuelEntries}
+              lang={lang}
+              onFuel={() => setFuelOpen(true)}
+              onIncident={() => setIncOpen(true)}
+              onEnd={() => setEndOpen(true)}
+            />
+            <FuelSheet    open={fuelOpen} onClose={() => setFuelOpen(false)} shift={activeShift} companyId={companyId} lang={lang} />
+            <IncidentSheet open={incOpen}  onClose={() => setIncOpen(false)}  shift={activeShift} companyId={companyId} lang={lang} />
+            <EndShiftSheet open={endOpen}  onClose={() => setEndOpen(false)}  shift={activeShift} companyId={companyId} employeeId={employeeId} lang={lang} onEnded={onEnded} />
+          </>
+        ) : (
+          <StartShiftFlow
+            companyId={companyId} operatorId={operatorId} employeeId={employeeId}
+            equipment={assignedEq} project={project} lang={lang} onStarted={refetchShift}
+          />
+        )}
+      </div>
+    </>
   )
 }
 
 // ─── ATTENDANCE MODULE ────────────────────────────────────────────────────────
 
-function AttendanceModule({ companyId, operatorId, employeeId, mode }) {
+function AttendanceModule({ companyId, operatorId, employeeId, lang }) {
+  const L = LANGS[lang]
   const qc = useQueryClient()
   const [leaveOpen, setLeaveOpen] = useState(false)
   const todayStr = today()
@@ -971,7 +1061,7 @@ function AttendanceModule({ companyId, operatorId, employeeId, mode }) {
   const month = now.getMonth() + 1
   const year  = now.getFullYear()
 
-  const STATUS_COLOR = { present:'text-green-400', absent:'text-red-400', on_leave:'text-blue-400', half_day:'text-yellow-400', holiday:'text-purple-400' }
+  const STATUS_BG = { present: 'bg-green-500', absent: 'bg-red-500', on_leave: 'bg-blue-500', half_day: 'bg-yellow-500', holiday: 'bg-purple-500' }
 
   const { data: todayShift } = useQuery({
     queryKey: ['op_today_shift_att', employeeId, todayStr],
@@ -979,7 +1069,7 @@ function AttendanceModule({ companyId, operatorId, employeeId, mode }) {
       const { data } = await supabase.from('shifts')
         .select('start_time,end_time,working_hours,status,equipment:equipment_id(name,equipment_number)')
         .eq('company_id', companyId).eq('operator_id', employeeId).eq('shift_date', todayStr)
-        .order('created_at',{ascending:false}).limit(1).maybeSingle()
+        .order('created_at', {ascending: false}).limit(1).maybeSingle()
       return data || null
     },
     enabled: !!companyId && !!employeeId, refetchInterval: 30000,
@@ -1004,7 +1094,7 @@ function AttendanceModule({ companyId, operatorId, employeeId, mode }) {
       const to   = `${year}-${String(month).padStart(2,'0')}-31`
       const { data } = await supabase.from('hr_attendance')
         .select('*').eq('employee_id', employeeId).gte('attendance_date', from).lte('attendance_date', to)
-        .order('attendance_date',{ascending:false})
+        .order('attendance_date', {ascending: false})
       return data || []
     },
     enabled: !!employeeId,
@@ -1015,95 +1105,98 @@ function AttendanceModule({ companyId, operatorId, employeeId, mode }) {
     queryFn: async () => {
       if (!employeeId) return []
       const { data } = await supabase.from('hr_leaves')
-        .select('*').eq('employee_id', employeeId).order('created_at',{ascending:false}).limit(20)
+        .select('*').eq('employee_id', employeeId).order('created_at', {ascending: false}).limit(20)
       return data || []
     },
     enabled: !!employeeId,
   })
 
-  const daysPresent = monthAtt.filter(a=>a.status==='present').length
-  const daysHalf    = monthAtt.filter(a=>a.status==='half_day').length
-  const daysAbsent  = monthAtt.filter(a=>a.status==='absent').length
-  const daysLeave   = monthAtt.filter(a=>a.status==='on_leave').length
+  const daysPresent = monthAtt.filter(a => a.status === 'present').length
+  const daysHalf    = monthAtt.filter(a => a.status === 'half_day').length
+  const daysAbsent  = monthAtt.filter(a => a.status === 'absent').length
+  const daysLeave   = monthAtt.filter(a => a.status === 'on_leave').length
 
   return (
     <div className="space-y-4">
-      {/* Today card */}
-      <div className="bg-dark-800 border border-dark-600 rounded-2xl p-4">
-        <p className="text-xs text-slate-500 uppercase tracking-wide mb-3">
-          Today · {new Date().toLocaleDateString('en-IN',{weekday:'long',day:'numeric',month:'short'})}
+      {/* Today status — big visual */}
+      <div className="bg-dark-800 border border-dark-600 rounded-3xl p-5">
+        <p className="text-xs text-slate-500 text-center uppercase tracking-widest mb-4">
+          {new Date().toLocaleDateString('en-IN', {weekday:'long', day:'numeric', month:'short'})}
         </p>
-        <div className="bg-primary-950/40 border border-primary-800/30 rounded-xl px-3 py-2 mb-3">
-          <p className="text-[11px] text-primary-400">📋 Attendance auto-tracked from shift — start & end your shift in the Shift tab</p>
+        <div className="flex items-center justify-center gap-5">
+          <div className={`w-20 h-20 rounded-full flex items-center justify-center text-white font-black text-3xl
+            ${todayAtt ? (STATUS_BG[todayAtt.status] || 'bg-dark-600') : todayShift ? 'bg-primary-600 animate-pulse' : 'bg-dark-600'}`}>
+            {todayAtt?.status === 'present' ? '✓' : todayAtt?.status === 'half_day' ? '½' : todayAtt?.status === 'absent' ? '✗' : todayShift ? '●' : '?'}
+          </div>
+          <div>
+            <p className="text-slate-100 font-bold text-lg">
+              {todayAtt
+                ? (todayAtt.status === 'present' ? L.present : todayAtt.status === 'half_day' ? L.halfDay : todayAtt.status === 'on_leave' ? L.leave : 'Absent')
+                : todayShift ? 'Shift running…' : 'Not started'
+              }
+            </p>
+            {todayShift && (
+              <p className="text-slate-500 text-sm">
+                {todayShift.start_time}{todayShift.end_time ? ` → ${todayShift.end_time}` : ' →  now'}
+              </p>
+            )}
+          </div>
         </div>
-        {todayShift ? (
-          <div className="space-y-1.5">
-            <InfoRow label="Equipment" value={todayShift.equipment?.name} />
-            <InfoRow label="Shift started" value={todayShift.start_time} accent="text-green-400" />
-            {todayShift.end_time
-              ? <InfoRow label="Shift ended" value={todayShift.end_time} accent="text-orange-400" />
-              : <div className="flex justify-between text-sm"><span className="text-slate-400">Status</span><span className="text-primary-400 font-semibold animate-pulse">● In progress</span></div>
-            }
-            {todayShift.working_hours > 0 && <InfoRow label="Working hrs (meter)" value={`${Number(todayShift.working_hours).toFixed(1)} hrs`} />}
-          </div>
-        ) : (
-          <p className="text-slate-500 text-sm text-center py-2">No shift started today</p>
-        )}
-        {todayAtt && (
-          <div className={`mt-3 rounded-xl px-3 py-2 border flex items-center justify-between ${todayAtt.status==='present' ? 'bg-green-900/20 border-green-700/30' : todayAtt.status==='half_day' ? 'bg-yellow-900/20 border-yellow-700/30' : 'bg-dark-700 border-dark-600'}`}>
-            <p className="text-xs text-slate-400">Today's attendance</p>
-            <span className={`text-sm font-bold capitalize ${STATUS_COLOR[todayAtt.status]||'text-slate-300'}`}>
-              {todayAtt.status?.replace('_',' ')}
-            </span>
-          </div>
-        )}
       </div>
 
-      {/* Month summary */}
+      {/* Month summary — 4 big circles */}
       <div className="grid grid-cols-4 gap-2">
-        {[['Present',daysPresent,'text-green-400'],['Half',daysHalf,'text-yellow-400'],['Absent',daysAbsent,'text-red-400'],['Leave',daysLeave,'text-blue-400']].map(([l,v,c]) => (
-          <div key={l} className="bg-dark-800 border border-dark-600 rounded-xl p-2.5 text-center">
-            <p className={`text-xl font-bold ${c}`}>{v}</p>
-            <p className="text-[9px] text-slate-500 mt-0.5">{l}</p>
+        {[
+          [daysPresent, 'bg-green-600', L.present.slice(0,3)],
+          [daysHalf,    'bg-yellow-600', '½'],
+          [daysAbsent,  'bg-red-600',   L.absent.slice(0,3)],
+          [daysLeave,   'bg-blue-600',  L.leave.slice(0,3)],
+        ].map(([n, bg, lbl], i) => (
+          <div key={i} className={`${bg} rounded-2xl py-4 text-center`}>
+            <p className="text-white font-black text-3xl">{n}</p>
+            <p className="text-white/70 text-[10px] font-semibold mt-1">{lbl}</p>
           </div>
         ))}
       </div>
 
-      {/* Leave */}
-      <div className="flex items-center justify-between">
-        <p className="text-sm font-semibold text-slate-300">Leave Requests</p>
-        <button onClick={() => setLeaveOpen(true)}
-          className="text-xs text-primary-400 bg-primary-900/20 border border-primary-700/30 px-3 py-1.5 rounded-lg">
-          + Apply Leave
-        </button>
-      </div>
-      {leaves.length === 0 && <p className="text-slate-600 text-xs text-center py-2">No leave requests yet</p>}
-      {leaves.slice(0,5).map(l => (
-        <div key={l.id} className="bg-dark-800 border border-dark-600 rounded-xl px-4 py-3 flex items-center justify-between">
-          <div>
-            <p className="text-sm text-slate-200 capitalize">{l.leave_type} Leave</p>
-            <p className="text-xs text-slate-500">{l.from_date} → {l.to_date} · {l.days} day{l.days!==1?'s':''}</p>
+      {/* Leave button */}
+      <button onClick={() => setLeaveOpen(true)}
+        className="w-full py-4 rounded-2xl border-2 border-dashed border-primary-600/40 text-primary-400 font-bold text-base active:scale-[0.98] transition-all">
+        + Leave Request
+      </button>
+
+      {/* Recent leaves */}
+      {leaves.slice(0, 5).map(l => (
+        <div key={l.id} className="bg-dark-800 border border-dark-600 rounded-2xl px-4 py-3 flex items-center gap-3">
+          <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-bold shrink-0
+            ${l.status === 'approved' ? 'bg-green-600' : l.status === 'rejected' ? 'bg-red-600' : 'bg-yellow-600'}`}>
+            {l.status === 'approved' ? '✓' : l.status === 'rejected' ? '✗' : '?'}
           </div>
-          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full shrink-0 ${l.status==='approved'?'bg-green-900/30 text-green-400':l.status==='rejected'?'bg-red-900/30 text-red-400':'bg-yellow-900/30 text-yellow-400'}`}>
-            {l.status}
-          </span>
+          <div className="flex-1 min-w-0">
+            <p className="text-slate-200 text-sm font-semibold capitalize">{l.leave_type} Leave</p>
+            <p className="text-slate-500 text-xs">{l.from_date} → {l.to_date}</p>
+          </div>
+          <span className="text-xs text-slate-500">{l.days}d</span>
         </div>
       ))}
 
-      {/* Full history — Advanced */}
-      {mode === 'advanced' && monthAtt.length > 0 && (
-        <div className="bg-dark-800 border border-dark-600 rounded-xl overflow-hidden">
-          <p className="text-xs text-slate-500 uppercase tracking-wide px-4 py-2.5 border-b border-dark-700">
-            {now.toLocaleString('en-IN',{month:'long',year:'numeric'})} History
+      {/* Month calendar — compact */}
+      {monthAtt.length > 0 && (
+        <div className="bg-dark-800 border border-dark-600 rounded-2xl overflow-hidden">
+          <p className="text-xs text-slate-500 uppercase tracking-wide px-4 py-3 border-b border-dark-700">
+            {now.toLocaleString('en-IN', {month:'long', year:'numeric'})}
           </p>
-          <div className="divide-y divide-dark-700 max-h-72 overflow-y-auto">
-            {monthAtt.map(a => (
-              <div key={a.id} className="flex items-center gap-3 px-4 py-2.5">
-                <p className="text-xs text-slate-500 w-14 shrink-0">{new Date(a.attendance_date).toLocaleDateString('en-IN',{weekday:'short',day:'numeric'})}</p>
-                <p className="text-xs text-slate-400 flex-1">{a.shift_start_time||'—'} → {a.shift_end_time||'—'}</p>
-                <span className={`text-xs font-semibold capitalize shrink-0 ${STATUS_COLOR[a.status]||'text-slate-400'}`}>{a.status?.replace('_',' ')}</span>
-              </div>
-            ))}
+          <div className="grid grid-cols-7 gap-1 p-3">
+            {monthAtt.map(a => {
+              const d = new Date(a.attendance_date)
+              const bg = STATUS_BG[a.status] || 'bg-dark-700'
+              return (
+                <div key={a.id} className={`${bg} rounded-lg flex flex-col items-center py-1.5`}>
+                  <p className="text-white text-[10px] font-bold">{d.getDate()}</p>
+                  <p className="text-white/60 text-[8px]">{d.toLocaleDateString('en-IN',{weekday:'short'}).slice(0,1)}</p>
+                </div>
+              )
+            })}
           </div>
         </div>
       )}
@@ -1122,9 +1215,16 @@ function LeaveRequestSheet({ open, onClose, companyId, employeeId, onSaved }) {
   const [reason, setReason] = useState('')
   const [saving, setSaving] = useState(false)
 
+  const TYPES = [
+    { val: 'casual', icon: '🌴' },
+    { val: 'sick',   icon: '🤒' },
+    { val: 'earned', icon: '⭐' },
+    { val: 'unpaid', icon: '💸' },
+  ]
+
   const handleSubmit = async () => {
     if (!employeeId) return toast.error('Employee record not linked')
-    const days = Math.max(1, Math.round((new Date(to)-new Date(from))/86400000)+1)
+    const days = Math.max(1, Math.round((new Date(to) - new Date(from)) / 86400000) + 1)
     setSaving(true)
     try {
       await supabase.from('hr_leaves').insert({
@@ -1138,51 +1238,61 @@ function LeaveRequestSheet({ open, onClose, companyId, employeeId, onSaved }) {
   }
 
   return (
-    <Sheet open={open} onClose={onClose} title="Apply for Leave">
-      <div className="space-y-4">
-        <div>
-          <FL>Leave Type</FL>
-          <div className="grid grid-cols-3 gap-2">
-            {['casual','sick','earned','unpaid','comp_off'].map(t => (
-              <button key={t} onClick={() => setType(t)}
-                className={`py-2 rounded-lg text-xs font-semibold capitalize ${type===t?'bg-primary-600 text-white':'bg-dark-700 text-slate-400 border border-dark-500'}`}>
-                {t.replace('_',' ')}
-              </button>
-            ))}
-          </div>
+    <Sheet open={open} onClose={onClose}>
+      <div className="space-y-5">
+        <div className="text-center pt-2">
+          <span className="text-5xl">🌴</span>
+          <p className="text-slate-100 font-bold text-xl mt-2">Leave Request</p>
+        </div>
+        <div className="grid grid-cols-4 gap-2">
+          {TYPES.map(t => (
+            <button key={t.val} onClick={() => setType(t.val)}
+              className={`flex flex-col items-center gap-1 py-3 rounded-2xl border-2 active:scale-95 transition-all
+                ${type === t.val ? 'bg-primary-900/40 border-primary-500 text-primary-300' : 'bg-dark-800 border-dark-600 text-slate-400'}`}>
+              <span className="text-2xl">{t.icon}</span>
+              <span className="text-[10px] font-semibold capitalize">{t.val}</span>
+            </button>
+          ))}
         </div>
         <div className="grid grid-cols-2 gap-3">
-          <div><FL>From</FL><input type="date" className={inp} value={from} onChange={e => setFrom(e.target.value)} /></div>
-          <div><FL>To</FL><input type="date" className={inp} value={to}   onChange={e => setTo(e.target.value)}   /></div>
+          <div>
+            <p className="text-xs text-slate-500 mb-1 text-center">From</p>
+            <input type="date" value={from} onChange={e => setFrom(e.target.value)}
+              className="w-full bg-dark-700 border border-dark-500 rounded-xl px-3 py-3 text-sm text-slate-200 focus:outline-none focus:border-primary-500" />
+          </div>
+          <div>
+            <p className="text-xs text-slate-500 mb-1 text-center">To</p>
+            <input type="date" value={to} onChange={e => setTo(e.target.value)}
+              className="w-full bg-dark-700 border border-dark-500 rounded-xl px-3 py-3 text-sm text-slate-200 focus:outline-none focus:border-primary-500" />
+          </div>
         </div>
-        <div><FL>Reason</FL><textarea className={`${inp} resize-none`} rows={2} value={reason} onChange={e => setReason(e.target.value)} placeholder="Reason for leave…" /></div>
-        <Btn onClick={handleSubmit} loading={saving}>Submit Request</Btn>
+        <textarea className="w-full bg-dark-700 border border-dark-500 rounded-xl px-4 py-3 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-primary-500 resize-none"
+          rows={2} value={reason} onChange={e => setReason(e.target.value)} placeholder="Reason (optional)…" />
+        <BigBtn onClick={handleSubmit} loading={saving} color="primary">Send Request</BigBtn>
       </div>
     </Sheet>
   )
 }
 
-// ─── HR MODULE ────────────────────────────────────────────────────────────────
+// ─── PAY MODULE ───────────────────────────────────────────────────────────────
 
-function HRModule({ companyId, operatorId, employeeId, profile, mode }) {
-  const [editOpen, setEditOpen] = useState(false)
+function PayModule({ companyId, operatorId, employeeId, profile, lang }) {
+  const L = LANGS[lang]
   const now   = new Date()
   const month = now.getMonth() + 1
   const year  = now.getFullYear()
-  const qc = useQueryClient()
 
   const { data: salary } = useQuery({
     queryKey: ['op_salary_structure', employeeId],
     queryFn: async () => {
       if (!employeeId) return null
       const { data } = await supabase.from('hr_salary_structure')
-        .select('*').eq('employee_id', employeeId).order('effective_from',{ascending:false}).limit(1).maybeSingle()
+        .select('*').eq('employee_id', employeeId).order('effective_from', {ascending: false}).limit(1).maybeSingle()
       return data || null
     },
     enabled: !!employeeId,
   })
 
-  // Live earnings: attendance × daily_rate (updates every shift completion)
   const { data: liveEarnings } = useQuery({
     queryKey: ['op_live_salary', operatorId, year, month],
     queryFn: async () => {
@@ -1190,14 +1300,12 @@ function HRModule({ companyId, operatorId, employeeId, profile, mode }) {
       const dailyRate = Number(salary.daily_rate) ||
         ((Number(salary.basic_salary)||0)+(Number(salary.hra)||0)+(Number(salary.special_allowance)||0)+(Number(salary.other_allowance)||0)) / 26
       if (!dailyRate) return null
-
       const from = `${year}-${String(month).padStart(2,'0')}-01`
       const to   = `${year}-${String(month).padStart(2,'0')}-31`
       const { data: att } = await supabase.from('hr_attendance')
         .select('status').eq('employee_id', employeeId).gte('attendance_date', from).lte('attendance_date', to)
-
-      const present = (att||[]).filter(a=>a.status==='present').length
-      const halfDay = (att||[]).filter(a=>a.status==='half_day').length
+      const present = (att||[]).filter(a => a.status === 'present').length
+      const halfDay = (att||[]).filter(a => a.status === 'half_day').length
       const earnedDays = present + halfDay * 0.5
       return { dailyRate, present, halfDay, earnedDays, earned: earnedDays * dailyRate }
     },
@@ -1214,187 +1322,111 @@ function HRModule({ companyId, operatorId, employeeId, profile, mode }) {
     enabled: !!operatorId,
   })
 
-  // Salary history (Advanced)
-  const { data: salHistory = [] } = useQuery({
-    queryKey: ['op_salary_history', employeeId],
-    queryFn: async () => {
-      if (!employeeId) return []
-      const { data } = await supabase.from('hr_salary_history')
-        .select('*').eq('employee_id', employeeId).order('created_at',{ascending:false}).limit(10)
-      return data || []
-    },
-    enabled: !!employeeId && mode === 'advanced',
-  })
-
   const gross = salary
     ? (Number(salary.basic_salary)||0)+(Number(salary.hra)||0)+(Number(salary.special_allowance)||0)+(Number(salary.other_allowance)||0)
     : 0
 
   return (
     <div className="space-y-4">
-      {/* Profile card */}
-      <div className="bg-gradient-to-br from-dark-800 to-dark-900 border border-dark-600 rounded-2xl p-4 flex items-center gap-4">
-        <div className="w-14 h-14 rounded-full bg-primary-900/40 border-2 border-primary-700/40 flex items-center justify-center text-xl font-bold text-primary-300 shrink-0">
+      {/* Profile */}
+      <div className="bg-gradient-to-br from-dark-800 to-dark-900 border border-dark-600 rounded-3xl p-5 flex items-center gap-4">
+        <div className="w-16 h-16 rounded-full bg-primary-900/40 border-2 border-primary-600/40 flex items-center justify-center text-2xl font-black text-primary-300 shrink-0">
           {profile?.full_name?.charAt(0)?.toUpperCase() || '?'}
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-slate-100 font-bold text-lg truncate">{profile?.full_name}</p>
+          <p className="text-slate-100 font-black text-xl truncate">{profile?.full_name}</p>
           <p className="text-slate-400 text-sm">{profile?.designation || 'Operator'}</p>
           {profile?.employee_id && <p className="text-xs text-slate-500 font-mono">{profile.employee_id}</p>}
         </div>
-        <button onClick={() => setEditOpen(true)} className="text-xs text-primary-400 px-2 py-1 rounded-lg bg-primary-900/20 border border-primary-700/20 shrink-0">Edit</button>
       </div>
 
-      {/* Live earnings — THIS MONTH */}
-      <div className="bg-dark-800 border border-dark-600 rounded-2xl p-4">
-        <p className="text-xs text-slate-500 uppercase tracking-wide mb-3">
-          {now.toLocaleString('en-IN',{month:'long',year:'numeric'})} — Live Earnings
+      {/* Big earnings display */}
+      <div className="bg-dark-800 border border-dark-600 rounded-3xl p-5">
+        <p className="text-xs text-slate-500 uppercase tracking-widest text-center mb-4">
+          {now.toLocaleString('en-IN', {month:'long', year:'numeric'})}
         </p>
+
         {liveEarnings ? (
           <>
-            <div className="flex items-end justify-between mb-4">
-              <div>
-                <p className="text-3xl font-bold text-green-400">{fmt(liveEarnings.earned)}</p>
-                <p className="text-xs text-slate-500 mt-0.5">earned so far</p>
-              </div>
-              <div className="text-right">
-                <p className="text-sm text-slate-300">{fmt(liveEarnings.dailyRate)}<span className="text-slate-500 text-xs">/day</span></p>
-                <p className="text-xs text-slate-500">{liveEarnings.earnedDays} days</p>
-              </div>
+            <div className="text-center mb-5">
+              <p className="text-5xl font-black text-green-400">{fmt(liveEarnings.earned)}</p>
+              <p className="text-slate-500 text-sm mt-1">earned this month</p>
             </div>
-            <div className="grid grid-cols-3 gap-2 text-center">
-              {[['Present',liveEarnings.present,'text-green-400'],['Half Day',liveEarnings.halfDay,'text-yellow-400'],['Earned Days',liveEarnings.earnedDays.toFixed(1),'text-primary-400']].map(([l,v,c]) => (
-                <div key={l} className="bg-dark-900/60 rounded-xl py-2">
-                  <p className={`text-lg font-bold ${c}`}>{v}</p>
-                  <p className="text-[9px] text-slate-500">{l}</p>
+            <div className="grid grid-cols-3 gap-3">
+              {[
+                [liveEarnings.present,              'text-green-400',   L.present.slice(0,3)],
+                [liveEarnings.halfDay,              'text-yellow-400',  '½'],
+                [liveEarnings.earnedDays.toFixed(1),'text-primary-400', 'Days'],
+              ].map(([v, c, l], i) => (
+                <div key={i} className="bg-dark-900/60 rounded-2xl py-3 text-center">
+                  <p className={`text-2xl font-black ${c}`}>{v}</p>
+                  <p className="text-[10px] text-slate-500 mt-1">{l}</p>
                 </div>
               ))}
             </div>
-            <p className="text-[10px] text-slate-600 text-center mt-2">Updates automatically after each shift</p>
+            {salary?.daily_rate > 0 && (
+              <p className="text-center text-xs text-slate-500 mt-3">{fmt(liveEarnings.dailyRate)} per day</p>
+            )}
           </>
         ) : salary ? (
-          <div>
-            <p className="text-xs text-slate-500 mb-2">Salary structure on file — attendance data loading…</p>
-            <div className="flex justify-between text-sm"><span className="text-slate-400">Gross Monthly</span><span className="text-slate-200 font-semibold">{fmt(gross)}</span></div>
-            {salary.daily_rate > 0 && <div className="flex justify-between text-sm mt-1"><span className="text-slate-400">Daily Rate</span><span className="text-slate-200">{fmt(salary.daily_rate)}</span></div>}
+          <div className="text-center">
+            <p className="text-4xl font-black text-slate-200">{fmt(gross)}</p>
+            <p className="text-slate-500 text-sm mt-1">monthly gross</p>
           </div>
         ) : (
-          <p className="text-slate-500 text-sm text-center py-4">No salary information on file.<br/>Contact HR.</p>
+          <div className="text-center py-6">
+            <p className="text-5xl mb-3">💬</p>
+            <p className="text-slate-400">Contact HR for salary info</p>
+          </div>
         )}
       </div>
 
-      {/* Processed payslip (if available) */}
+      {/* Processed payslip */}
       {payslip && (
         <div className="bg-dark-800 border border-dark-600 rounded-2xl p-4">
           <div className="flex items-center justify-between mb-3">
-            <p className="text-xs text-slate-500 uppercase tracking-wide">Processed Payslip</p>
-            <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${payslip.status==='paid'?'bg-green-900/30 text-green-400':'bg-yellow-900/30 text-yellow-400'}`}>
-              {payslip.status==='paid'?'✓ Paid':payslip.status}
+            <p className="text-xs text-slate-500 uppercase tracking-wide">Payslip</p>
+            <span className={`px-3 py-1 rounded-full text-xs font-bold ${payslip.status === 'paid' ? 'bg-green-600 text-white' : 'bg-yellow-600 text-white'}`}>
+              {payslip.status === 'paid' ? '✓ PAID' : payslip.status}
             </span>
           </div>
-          {[['Days Present',`${payslip.days_present}/${payslip.working_days}`],['Gross Salary',fmt(payslip.gross_salary)],['Deductions',`-${fmt(payslip.deductions)}`],['Net Pay',fmt(payslip.net_salary)]].map(([l,v]) => (
+          {[
+            ['Days', `${payslip.days_present}/${payslip.working_days}`],
+            ['Gross', fmt(payslip.gross_salary)],
+            ['Deductions', `-${fmt(payslip.deductions)}`],
+          ].map(([l, v]) => (
             <div key={l} className="flex justify-between text-sm py-1">
-              <span className="text-slate-400">{l}</span>
-              <span className={l==='Net Pay'?'text-green-400 font-bold text-base':'text-slate-200'}>{v}</span>
+              <span className="text-slate-500">{l}</span>
+              <span className="text-slate-200">{v}</span>
             </div>
           ))}
-          {payslip.payment_date && <p className="text-xs text-slate-500 mt-2">Paid on {payslip.payment_date}</p>}
-        </div>
-      )}
-
-      {/* Advanced: contact info + salary history */}
-      {mode === 'advanced' && (
-        <>
-          <div className="bg-dark-800 border border-dark-600 rounded-2xl p-4 space-y-2">
-            <p className="text-xs text-slate-500 uppercase tracking-wide mb-1">Contact & Info</p>
-            {[['Phone',profile?.phone],['Joined',profile?.date_of_joining],['Blood Group',profile?.blood_group],['Department',profile?.department],
-              ['Emergency',profile?.emergency_contact_name ? `${profile.emergency_contact_name} · ${profile.emergency_contact_phone||''}`:null]
-            ].filter(([,v])=>v).map(([l,v]) => (
-              <div key={l} className="flex justify-between text-sm">
-                <span className="text-slate-500">{l}</span>
-                <span className="text-slate-200 text-right max-w-48 truncate">{v}</span>
-              </div>
-            ))}
+          <div className="flex justify-between text-base font-black mt-2 pt-2 border-t border-dark-700">
+            <span className="text-slate-300">Net Pay</span>
+            <span className="text-green-400">{fmt(payslip.net_salary)}</span>
           </div>
-
-          {salHistory.length > 0 && (
-            <div className="bg-dark-800 border border-dark-600 rounded-2xl overflow-hidden">
-              <p className="text-xs text-slate-500 uppercase tracking-wide px-4 py-2.5 border-b border-dark-700">Salary History</p>
-              {salHistory.map(h => (
-                <div key={h.id} className="px-4 py-2.5 border-b border-dark-700 last:border-0">
-                  <div className="flex justify-between text-sm">
-                    <span className="text-slate-300 capitalize">{h.change_type}</span>
-                    <span className="text-green-400 font-semibold">
-                      {h.percentage_change > 0 ? `+${h.percentage_change}%` : ''}
-                    </span>
-                  </div>
-                  <div className="flex justify-between text-xs text-slate-500 mt-0.5">
-                    <span>{h.effective_date}</span>
-                    <span>{fmt(h.previous_basic)} → {fmt(h.new_basic)}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </>
-      )}
-
-      <EditProfileSheet open={editOpen} onClose={() => setEditOpen(false)} profile={profile} operatorId={operatorId} qc={qc} />
-    </div>
-  )
-}
-
-function EditProfileSheet({ open, onClose, profile, operatorId, qc }) {
-  const [phone, setPhone]     = useState(profile?.phone||'')
-  const [blood, setBlood]     = useState(profile?.blood_group||'')
-  const [ecName, setEcName]   = useState(profile?.emergency_contact_name||'')
-  const [ecPhone, setEcPhone] = useState(profile?.emergency_contact_phone||'')
-  const [saving, setSaving]   = useState(false)
-
-  const handleSave = async () => {
-    setSaving(true)
-    try {
-      await supabase.from('user_profiles').update({ phone, blood_group: blood, emergency_contact_name: ecName, emergency_contact_phone: ecPhone }).eq('id', operatorId)
-      toast.success('Profile updated')
-      qc.invalidateQueries(['op_profile']); onClose()
-    } catch (err) { toast.error(err.message)
-    } finally { setSaving(false) }
-  }
-
-  return (
-    <Sheet open={open} onClose={onClose} title="Edit Profile">
-      <div className="space-y-4">
-        <div><FL>Phone</FL><input className={inp} value={phone} onChange={e => setPhone(e.target.value)} placeholder="Mobile number" type="tel" /></div>
-        <div>
-          <FL>Blood Group</FL>
-          <select className={inp} value={blood} onChange={e => setBlood(e.target.value)}>
-            <option value="">Select…</option>
-            {['A+','A-','B+','B-','AB+','AB-','O+','O-'].map(b => <option key={b}>{b}</option>)}
-          </select>
+          {payslip.payment_date && <p className="text-xs text-slate-500 mt-2">Paid {payslip.payment_date}</p>}
         </div>
-        <div><FL>Emergency Contact Name</FL><input className={inp} value={ecName} onChange={e => setEcName(e.target.value)} placeholder="Name" /></div>
-        <div><FL>Emergency Contact Phone</FL><input className={inp} value={ecPhone} onChange={e => setEcPhone(e.target.value)} placeholder="Phone" type="tel" /></div>
-        <Btn onClick={handleSave} loading={saving}>Save Changes</Btn>
-      </div>
-    </Sheet>
+      )}
+    </div>
   )
 }
 
 // ─── MAIN PORTAL ──────────────────────────────────────────────────────────────
 
 const TABS = [
-  { id:'shift',      icon:'⚙️', label:'Shift'      },
-  { id:'attendance', icon:'📅', label:'Attendance'  },
-  { id:'hr',         icon:'👤', label:'HR & Pay'    },
-  { id:'expenses',   icon:'🧾', label:'Expenses'    },
+  { id: 'shift',      big: '⚙️',  label: 'shift'      },
+  { id: 'attendance', big: '📅',  label: 'attendance' },
+  { id: 'pay',        big: '💰',  label: 'pay'        },
+  { id: 'expenses',   big: '🧾',  label: 'expenses'   },
 ]
 
 export default function OperatorPortal() {
   const { userProfile, company, companyId, signOut } = useAuth()
-  const [tab, setTab]   = useState('shift')
-  const [mode, setMode] = useState('basic')
+  const [tab,  setTab]  = useState('shift')
+  const [lang, setLang] = useState('en')
 
-  // Request notification permission once on portal load
+  const L = LANGS[lang]
+
   useEffect(() => { requestNotificationPermission() }, [])
 
   const { data: employee } = useQuery({
@@ -1410,75 +1442,52 @@ export default function OperatorPortal() {
 
   const employeeId   = employee?.id   || null
   const employeeName = employee?.name || null
-  const props = { companyId, operatorId: userProfile?.id, employeeId, employeeName, profile: userProfile, mode }
-
-  const content = () => {
-    switch (tab) {
-      case 'shift':      return <ShiftModule      {...props} />
-      case 'attendance': return <AttendanceModule {...props} />
-      case 'hr':         return <HRModule         {...props} />
-      case 'expenses':   return <FieldExpensePage embedded={true} />
-      default:           return null
-    }
-  }
+  const sharedProps  = { companyId, operatorId: userProfile?.id, employeeId, employeeName, profile: userProfile, lang }
 
   return (
     <div className="flex flex-col h-screen bg-dark-900 text-slate-100 max-w-lg mx-auto">
-      {/* Top bar */}
-      <div className="shrink-0 bg-dark-800 border-b border-dark-700 px-4 py-3 flex items-center gap-3">
+      {/* Top bar — minimal */}
+      <div className="shrink-0 bg-dark-800 border-b border-dark-700 px-4 py-2.5 flex items-center gap-2">
         <div className="flex-1 min-w-0">
           <p className="text-sm font-bold text-slate-100 truncate">{userProfile?.full_name}</p>
-          <p className="text-[11px] text-slate-500 truncate">{company?.name} · {userProfile?.designation||'Operator'}</p>
+          <p className="text-[10px] text-slate-500 truncate">{company?.name}</p>
         </div>
-        <ModeToggle mode={mode} onChange={setMode} />
-        <button onClick={signOut} className="text-slate-500 hover:text-slate-300 text-xs px-2 py-1 rounded-lg hover:bg-dark-700">
-          Out
+        <LangPicker lang={lang} onChange={setLang} />
+        <button onClick={signOut} className="ml-1 w-8 h-8 flex items-center justify-center rounded-full bg-dark-700 border border-dark-600 text-slate-400 hover:text-slate-200 active:scale-95 text-base">
+          ⏻
         </button>
       </div>
 
-      {/* Mode indicator */}
-      {mode === 'advanced' && (
-        <div className="shrink-0 bg-primary-900/20 border-b border-primary-700/20 px-4 py-1.5">
-          <p className="text-[10px] text-primary-400 text-center tracking-wide">ADVANCED MODE — additional fields visible</p>
+      {/* Content */}
+      {tab === 'expenses' ? (
+        <div className="flex-1 overflow-hidden flex flex-col pb-16">
+          <FieldExpensePage embedded={true} />
+        </div>
+      ) : (
+        <div className="flex-1 overflow-y-auto">
+          <div className="p-4 pb-28">
+            {tab === 'shift'      && <ShiftModule      {...sharedProps} />}
+            {tab === 'attendance' && <AttendanceModule {...sharedProps} />}
+            {tab === 'pay'        && <PayModule        {...sharedProps} />}
+          </div>
         </div>
       )}
 
-      {/* Content */}
-      {tab === 'expenses'
-        ? (
-          /* Expenses: full-height, no extra padding — FieldExpensePage handles its own layout */
-          <div className="flex-1 overflow-hidden flex flex-col pb-16">
-            <FieldExpensePage embedded={true} />
-          </div>
-        )
-        : (
-          <div className="flex-1 overflow-y-auto">
-            <div className="p-4 pb-28">
-              <div className="flex items-center gap-2 mb-5">
-                {TABS.map(t => (
-                  <button key={t.id} onClick={() => setTab(t.id)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${tab===t.id ? 'bg-primary-600 text-white' : 'bg-dark-800 text-slate-400 border border-dark-600'}`}>
-                    {t.icon} {t.label}
-                  </button>
-                ))}
-              </div>
-              {content()}
-            </div>
-          </div>
-        )
-      }
-
-      {/* Bottom nav */}
+      {/* Bottom nav — large icons, no clutter */}
       <div className="shrink-0 fixed bottom-0 left-0 right-0 max-w-lg mx-auto bg-dark-800/95 backdrop-blur border-t border-dark-700">
         <div className="flex">
-          {TABS.map(t => (
-            <button key={t.id} onClick={() => setTab(t.id)}
-              className={`flex-1 flex flex-col items-center py-3 gap-0.5 transition-colors ${tab===t.id ? 'text-primary-400' : 'text-slate-500'}`}>
-              <span className="text-xl leading-none">{t.icon}</span>
-              <span className="text-[10px] font-medium">{t.label}</span>
-              {tab===t.id && <div className="w-1 h-1 rounded-full bg-primary-400 mt-0.5" />}
-            </button>
-          ))}
+          {TABS.map(t => {
+            const active = tab === t.id
+            const label  = L[t.label] || t.label
+            return (
+              <button key={t.id} onClick={() => setTab(t.id)}
+                className={`flex-1 flex flex-col items-center py-2.5 gap-0.5 transition-colors ${active ? 'text-primary-400' : 'text-slate-500'}`}>
+                <span className="text-2xl leading-none">{t.big}</span>
+                <span className="text-[9px] font-semibold truncate max-w-full px-1">{label}</span>
+                {active && <div className="w-1.5 h-1.5 rounded-full bg-primary-400" />}
+              </button>
+            )
+          })}
         </div>
       </div>
     </div>
