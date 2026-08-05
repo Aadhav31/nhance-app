@@ -17,7 +17,7 @@ import {
   Save, Trash2, Edit2, FileText, Wrench, Shield, Phone, Mail,
   ChevronRight, AlertCircle, Clock, Activity, LayoutGrid, List,
   Upload, Download, Eye, FolderOpen, Bell,
-  Search, History, BookOpen, PackageOpen, Tag, ArrowLeftRight, Pencil, CalendarDays
+  Search, History, BookOpen, PackageOpen, Tag, ArrowLeftRight, Pencil, CalendarDays, IndianRupee
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format, differenceInDays } from 'date-fns'
@@ -254,6 +254,8 @@ function EquipmentFormModal({ companyId, initialValues, onClose, onSaved }) {
     // Service
     last_service_date: '', last_service_meter: '', service_interval_hrs: '250',
     next_service_date: '', next_service_meter: '',
+    // Internal cost allocation
+    internal_rate_basis: 'hourly', internal_rate_per_hour: '', internal_rate_per_day: '', internal_rate_per_month: '',
   }
   const [form, setForm]     = useState(() => ({ ...blankForm, ...initialValues }))
   const [saving, setSaving] = useState(false)
@@ -343,6 +345,11 @@ function EquipmentFormModal({ companyId, initialValues, onClose, onSaved }) {
         service_interval_hrs: form.service_interval_hrs ? Number(form.service_interval_hrs) : 250,
         next_service_date:    form.next_service_date    || null,
         next_service_meter:   form.next_service_meter   ? Number(form.next_service_meter)   : null,
+        // Internal cost allocation rates
+        internal_rate_basis:      form.internal_rate_basis || 'hourly',
+        internal_rate_per_hour:   form.internal_rate_per_hour   ? Number(form.internal_rate_per_hour)   : null,
+        internal_rate_per_day:    form.internal_rate_per_day    ? Number(form.internal_rate_per_day)    : null,
+        internal_rate_per_month:  form.internal_rate_per_month  ? Number(form.internal_rate_per_month)  : null,
       }
 
       let error
@@ -547,6 +554,42 @@ function EquipmentFormModal({ companyId, initialValues, onClose, onSaved }) {
           <input type="number" className={inp()} value={form.next_service_meter} onChange={e => set('next_service_meter', e.target.value)} placeholder="e.g. 4500" step="0.1" />
         </Field>
       </div>
+
+      {/* ── Internal Cost Allocation ── */}
+      <SectionHeader icon={IndianRupee} label="Internal Hire Rate (P&M Cross-Charge)" />
+      <div className="flex items-start gap-2.5 bg-dark-700/60 border border-dark-600 rounded-xl px-3 py-3 mb-1">
+        <IndianRupee className="w-4 h-4 text-primary-400 shrink-0 mt-0.5" />
+        <p className="text-xs text-slate-400 leading-relaxed">
+          Used for internal cost allocation — how much P&M charges each project per hour/day/month for using this machine.
+          This is separate from client billing rates.
+        </p>
+      </div>
+      <Field label="Rate Basis">
+        <div className="grid grid-cols-3 gap-2">
+          {[{ value: 'hourly', label: 'Per Hour' }, { value: 'daily', label: 'Per Day' }, { value: 'monthly', label: 'Per Month' }].map(o => (
+            <button key={o.value} type="button" onClick={() => set('internal_rate_basis', o.value)}
+              className={`px-2 py-2 rounded-lg border text-xs font-medium transition-all text-center
+                ${form.internal_rate_basis === o.value ? 'border-primary-500 bg-primary-500/10 text-primary-300' : 'border-dark-600 bg-dark-700 text-slate-400'}`}>
+              {o.label}
+            </button>
+          ))}
+        </div>
+      </Field>
+      {form.internal_rate_basis === 'hourly' && (
+        <Field label="Internal Rate (₹/hour)">
+          <input type="number" className={inp()} value={form.internal_rate_per_hour} onChange={e => set('internal_rate_per_hour', e.target.value)} placeholder="e.g. 850" min="0" />
+        </Field>
+      )}
+      {form.internal_rate_basis === 'daily' && (
+        <Field label="Internal Rate (₹/day)">
+          <input type="number" className={inp()} value={form.internal_rate_per_day} onChange={e => set('internal_rate_per_day', e.target.value)} placeholder="e.g. 6000" min="0" />
+        </Field>
+      )}
+      {form.internal_rate_basis === 'monthly' && (
+        <Field label="Internal Rate (₹/month)">
+          <input type="number" className={inp()} value={form.internal_rate_per_month} onChange={e => set('internal_rate_per_month', e.target.value)} placeholder="e.g. 120000" min="0" />
+        </Field>
+      )}
     </Modal>
   )
 }
@@ -3532,10 +3575,11 @@ function FleetTab({ companyId, showAdd, setShowAdd, onNavigate }) {
   const [search,          setSearch]          = useState('')
   const [filterStatus,    setFilterStatus]    = useState('all')
   const [filterOwnership, setFilterOwnership] = useState('all')
-  const [viewMode,        setViewMode]        = useState('grid')    // 'grid' | 'site' | 'utilization'
+  const [viewMode,        setViewMode]        = useState('grid')    // 'grid' | 'site' | 'utilization' | 'cost'
   const [alertDismissed,  setAlertDismissed]  = useState(false)
   const [gateDismissed,   setGateDismissed]   = useState(false)
-  // Fleet utilization grid state
+  const [costGroupBy,     setCostGroupBy]     = useState('project') // 'project' | 'machine'
+  // Shared month state for utilization grid + cost allocation
   const [gridMonth, setGridMonth] = useState(() => { const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), 1) })
 
   const { data: equipment = [], isLoading } = useQuery({
@@ -3632,6 +3676,120 @@ function FleetTab({ companyId, showAdd, setShowAdd, onNavigate }) {
   }
   const gridTargetByEquip = {}
   for (const t of gridTargets) gridTargetByEquip[t.equipment_id] = t.planned_days
+
+  // ── Cost Allocation queries ──
+  const { data: costOps = [] } = useQuery({
+    queryKey: ['cost_ops', companyId, gridMonthStart],
+    queryFn: async () => {
+      const { data } = await supabase.from('daily_operations')
+        .select('equipment_id, ops_date, running_hours, project_id, status')
+        .eq('company_id', companyId)
+        .gte('ops_date', gridMonthStart)
+        .lte('ops_date', gridMonthEnd)
+      return data || []
+    },
+    enabled: viewMode === 'cost',
+  })
+
+  const { data: costDeployments = [] } = useQuery({
+    queryKey: ['cost_deployments', companyId, gridMonthStart, gridMonthEnd],
+    queryFn: async () => {
+      const { data } = await supabase.from('equipment_deployments')
+        .select('equipment_id, project_id, deployed_date, withdrawn_date, project:project_id(name)')
+        .eq('company_id', companyId)
+        .lte('deployed_date', gridMonthEnd)
+        .or(`withdrawn_date.is.null,withdrawn_date.gte.${gridMonthStart}`)
+      return data || []
+    },
+    enabled: viewMode === 'cost',
+  })
+
+  const { data: costProjects = [] } = useQuery({
+    queryKey: ['projects_for_cost', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('projects').select('id, name').eq('company_id', companyId)
+      return data || []
+    },
+    enabled: viewMode === 'cost',
+  })
+
+  // Cost allocation computation
+  const costAllocationData = useMemo(() => {
+    if (!costOps.length && viewMode !== 'cost') return { byProject: {}, byMachine: {}, grandTotal: 0, pairs: [] }
+    const equipMap   = Object.fromEntries(equipment.map(e => [e.id, e]))
+    const projMap    = Object.fromEntries(costProjects.map(p => [p.id, p]))
+    const deplByEquip = {}
+    for (const d of costDeployments) {
+      if (!deplByEquip[d.equipment_id]) deplByEquip[d.equipment_id] = []
+      deplByEquip[d.equipment_id].push(d)
+    }
+    // Aggregate (equipId, projectId) → { hours, daySet }
+    const agg = {}
+    for (const op of costOps) {
+      if (op.status === 'breakdown') continue
+      let pid = op.project_id
+      if (!pid) {
+        const depls = deplByEquip[op.equipment_id] || []
+        const m = depls.find(d =>
+          d.deployed_date <= op.ops_date &&
+          (!d.withdrawn_date || d.withdrawn_date >= op.ops_date)
+        )
+        pid = m?.project_id || '__none__'
+      }
+      const key = `${op.equipment_id}|||${pid}`
+      if (!agg[key]) agg[key] = { equipId: op.equipment_id, pid, hours: 0, days: new Set() }
+      agg[key].hours += Number(op.running_hours || 0)
+      agg[key].days.add(op.ops_date)
+    }
+    const fmtMoney = n => `₹${Math.round(n).toLocaleString('en-IN')}`
+    const pairs = Object.values(agg).map(({ equipId, pid, hours, days }) => {
+      const eq   = equipMap[equipId]
+      const proj = pid === '__none__' ? { name: 'No Project (Yard / Standby)' } : projMap[pid]
+      const basis = eq?.internal_rate_basis || 'hourly'
+      let cost = 0
+      let rateStr = 'No rate set'
+      let hasRate = false
+      if (eq) {
+        if (basis === 'hourly' && eq.internal_rate_per_hour) {
+          cost = hours * Number(eq.internal_rate_per_hour)
+          rateStr = `${fmtMoney(eq.internal_rate_per_hour)}/hr`
+          hasRate = true
+        } else if (basis === 'daily' && eq.internal_rate_per_day) {
+          cost = days.size * Number(eq.internal_rate_per_day)
+          rateStr = `${fmtMoney(eq.internal_rate_per_day)}/day`
+          hasRate = true
+        } else if (basis === 'monthly' && eq.internal_rate_per_month) {
+          cost = Number(eq.internal_rate_per_month)
+          rateStr = `${fmtMoney(eq.internal_rate_per_month)}/mo`
+          hasRate = true
+        }
+      }
+      return {
+        equipId, pid,
+        equipName:   eq ? `${eq.name}${eq.equipment_number ? ` (${eq.equipment_number})` : ''}` : 'Unknown Machine',
+        projectName: proj?.name || 'Unknown Project',
+        hours:       Math.round(hours * 10) / 10,
+        days:        days.size,
+        cost:        Math.round(cost),
+        rateStr,
+        hasRate,
+      }
+    }).sort((a, b) => b.cost - a.cost)
+    const byProject = {}
+    for (const p of pairs) {
+      if (!byProject[p.pid]) byProject[p.pid] = { name: p.projectName, rows: [], subtotal: 0 }
+      byProject[p.pid].rows.push(p)
+      byProject[p.pid].subtotal += p.cost
+    }
+    const byMachine = {}
+    for (const p of pairs) {
+      if (!byMachine[p.equipId]) byMachine[p.equipId] = { name: p.equipName, rows: [], subtotal: 0 }
+      byMachine[p.equipId].rows.push(p)
+      byMachine[p.equipId].subtotal += p.cost
+    }
+    const grandTotal = pairs.reduce((s, p) => s + p.cost, 0)
+    return { byProject, byMachine, grandTotal, pairs }
+  }, [costOps, costDeployments, costProjects, equipment, viewMode])
 
   const MONTH_NAMES_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 
@@ -3764,6 +3922,9 @@ function FleetTab({ companyId, showAdd, setShowAdd, onNavigate }) {
           <button onClick={() => setViewMode('utilization')}
             className={`px-2.5 py-2 transition-colors ${viewMode === 'utilization' ? 'bg-primary-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}
             title="Fleet utilization grid"><CalendarDays className="w-3.5 h-3.5" /></button>
+          <button onClick={() => setViewMode('cost')}
+            className={`px-2.5 py-2 transition-colors ${viewMode === 'cost' ? 'bg-primary-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}
+            title="Internal cost allocation"><IndianRupee className="w-3.5 h-3.5" /></button>
         </div>
       </div>
 
@@ -3942,6 +4103,158 @@ function FleetTab({ companyId, showAdd, setShowAdd, onNavigate }) {
                 )
               })()}
             </div>
+          </div>
+        ) : (
+          /* ── Internal Cost Allocation ── */
+          <div className="space-y-3">
+            {/* Month navigator */}
+            <div className="flex items-center justify-between bg-dark-800 rounded-xl border border-dark-700 px-3 py-2">
+              <button onClick={() => setGridMonth(prev => new Date(prev.getFullYear(), prev.getMonth() - 1, 1))}
+                className="p-1 rounded-lg hover:bg-dark-700 text-slate-400 hover:text-slate-200 transition-colors">
+                <ChevronRight className="w-4 h-4 rotate-180" />
+              </button>
+              <div className="text-center">
+                <span className="text-sm font-semibold text-slate-200">{MONTH_NAMES_SHORT[_gM]} {_gY}</span>
+                <p className="text-[10px] text-slate-500 mt-0.5">P&M internal cross-charge to projects</p>
+              </div>
+              <button onClick={() => setGridMonth(prev => new Date(prev.getFullYear(), prev.getMonth() + 1, 1))}
+                className="p-1 rounded-lg hover:bg-dark-700 text-slate-400 hover:text-slate-200 transition-colors">
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Group-by toggle */}
+            <div className="flex gap-2">
+              {[{ v: 'project', l: 'By Project' }, { v: 'machine', l: 'By Machine' }].map(({ v, l }) => (
+                <button key={v} onClick={() => setCostGroupBy(v)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all
+                    ${costGroupBy === v ? 'bg-primary-600 border-primary-500 text-white' : 'bg-dark-700 border-dark-600 text-slate-400 hover:text-slate-200'}`}>
+                  {l}
+                </button>
+              ))}
+              {/* Grand total */}
+              <div className="ml-auto flex items-center gap-2 bg-dark-800 border border-dark-700 rounded-lg px-3 py-1.5">
+                <IndianRupee className="w-3.5 h-3.5 text-primary-400" />
+                <span className="text-xs font-bold text-primary-300">
+                  {costAllocationData.grandTotal > 0
+                    ? `₹${costAllocationData.grandTotal.toLocaleString('en-IN')}`
+                    : '₹0'}
+                </span>
+                <span className="text-[10px] text-slate-500">total</span>
+              </div>
+            </div>
+
+            {/* No data empty state */}
+            {costAllocationData.pairs.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 gap-3 text-center">
+                <IndianRupee className="w-10 h-10 text-slate-600" />
+                <p className="text-sm font-medium text-slate-400">No operational data for {MONTH_NAMES_SHORT[_gM]} {_gY}</p>
+                <p className="text-xs text-slate-500 max-w-xs">
+                  Log daily operations to see cost allocation. Set internal hire rates on each machine using the edit form.
+                </p>
+              </div>
+            ) : costGroupBy === 'project' ? (
+              /* By Project view */
+              <div className="space-y-3">
+                {Object.entries(costAllocationData.byProject)
+                  .sort(([, a], [, b]) => b.subtotal - a.subtotal)
+                  .map(([pid, group]) => (
+                  <div key={pid} className="rounded-xl border border-dark-700 bg-dark-800/60 overflow-hidden">
+                    {/* Project header */}
+                    <div className="flex items-center justify-between px-3 py-2 bg-dark-900/40 border-b border-dark-700">
+                      <div className="flex items-center gap-2">
+                        <Building2 className="w-3.5 h-3.5 text-primary-400 shrink-0" />
+                        <span className="text-xs font-semibold text-slate-200">{group.name}</span>
+                      </div>
+                      <span className="text-xs font-bold text-primary-300">
+                        {group.subtotal > 0 ? `₹${group.subtotal.toLocaleString('en-IN')}` : '—'}
+                      </span>
+                    </div>
+                    {/* Machine rows */}
+                    <div className="divide-y divide-dark-700/50">
+                      {/* Column headers */}
+                      <div className="grid grid-cols-12 px-3 py-1.5 text-[9px] font-semibold text-slate-500 uppercase tracking-wider">
+                        <span className="col-span-4">Machine</span>
+                        <span className="col-span-2 text-right">Days</span>
+                        <span className="col-span-2 text-right">Hours</span>
+                        <span className="col-span-2 text-right">Rate</span>
+                        <span className="col-span-2 text-right">Cost</span>
+                      </div>
+                      {group.rows.map((row, i) => (
+                        <div key={i} className="grid grid-cols-12 px-3 py-2 hover:bg-dark-700/30 transition-colors">
+                          <div className="col-span-4">
+                            <p className="text-xs text-slate-200 font-medium truncate">{row.equipName}</p>
+                          </div>
+                          <span className="col-span-2 text-right text-xs text-slate-400">{row.days}d</span>
+                          <span className="col-span-2 text-right text-xs text-slate-400">{row.hours}h</span>
+                          <span className={`col-span-2 text-right text-[10px] ${row.hasRate ? 'text-slate-400' : 'text-amber-500'}`}>
+                            {row.rateStr}
+                          </span>
+                          <span className={`col-span-2 text-right text-xs font-semibold ${row.hasRate ? 'text-slate-200' : 'text-slate-500'}`}>
+                            {row.hasRate ? `₹${row.cost.toLocaleString('en-IN')}` : '—'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              /* By Machine view */
+              <div className="space-y-3">
+                {Object.entries(costAllocationData.byMachine)
+                  .sort(([, a], [, b]) => b.subtotal - a.subtotal)
+                  .map(([eid, group]) => (
+                  <div key={eid} className="rounded-xl border border-dark-700 bg-dark-800/60 overflow-hidden">
+                    {/* Machine header */}
+                    <div className="flex items-center justify-between px-3 py-2 bg-dark-900/40 border-b border-dark-700">
+                      <div className="flex items-center gap-2">
+                        <Truck className="w-3.5 h-3.5 text-primary-400 shrink-0" />
+                        <span className="text-xs font-semibold text-slate-200">{group.name}</span>
+                      </div>
+                      <span className="text-xs font-bold text-primary-300">
+                        {group.subtotal > 0 ? `₹${group.subtotal.toLocaleString('en-IN')}` : '—'}
+                      </span>
+                    </div>
+                    {/* Project rows */}
+                    <div className="divide-y divide-dark-700/50">
+                      <div className="grid grid-cols-12 px-3 py-1.5 text-[9px] font-semibold text-slate-500 uppercase tracking-wider">
+                        <span className="col-span-4">Project</span>
+                        <span className="col-span-2 text-right">Days</span>
+                        <span className="col-span-2 text-right">Hours</span>
+                        <span className="col-span-2 text-right">Rate</span>
+                        <span className="col-span-2 text-right">Cost</span>
+                      </div>
+                      {group.rows.map((row, i) => (
+                        <div key={i} className="grid grid-cols-12 px-3 py-2 hover:bg-dark-700/30 transition-colors">
+                          <div className="col-span-4">
+                            <p className="text-xs text-slate-200 font-medium truncate">{row.projectName}</p>
+                          </div>
+                          <span className="col-span-2 text-right text-xs text-slate-400">{row.days}d</span>
+                          <span className="col-span-2 text-right text-xs text-slate-400">{row.hours}h</span>
+                          <span className={`col-span-2 text-right text-[10px] ${row.hasRate ? 'text-slate-400' : 'text-amber-500'}`}>
+                            {row.rateStr}
+                          </span>
+                          <span className={`col-span-2 text-right text-xs font-semibold ${row.hasRate ? 'text-slate-200' : 'text-slate-500'}`}>
+                            {row.hasRate ? `₹${row.cost.toLocaleString('en-IN')}` : '—'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* No rate warning */}
+            {costAllocationData.pairs.some(p => !p.hasRate) && (
+              <div className="flex items-start gap-2 bg-amber-500/10 border border-amber-500/20 rounded-xl px-3 py-2.5">
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+                <p className="text-[11px] text-amber-300">
+                  Some machines have no internal rate set. Edit the equipment and add an Internal Hire Rate to see cost values.
+                </p>
+              </div>
+            )}
           </div>
         )}
       </div>
