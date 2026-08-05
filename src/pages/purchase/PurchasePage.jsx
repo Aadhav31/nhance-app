@@ -2004,90 +2004,93 @@ function BillsTab({ companyId, session }) {
           </div>
           <LineItemsEditor lines={lines} setLines={setLines} isTax={isTax} />
 
-          {/* Tax Inclusive toggle */}
-          <label className="flex items-center gap-2.5 cursor-pointer select-none mt-1">
-            <input type="checkbox" checked={!!form.tax_inclusive} onChange={e => setF('tax_inclusive', e.target.checked)}
-              className="w-4 h-4 rounded accent-violet-500 cursor-pointer" />
-            <span className="text-xs text-slate-400">Prices are <strong>tax-inclusive</strong> (GST already included in the rates entered above)</span>
-          </label>
-
-          {/* ── Add to Inventory (create only) ── */}
+          {/* ── On Save — Additional Actions (create only) ── */}
           {!editing && (
-          <div className={`rounded-xl border p-3 transition-colors ${addToInv ? 'border-emerald-700/50 bg-emerald-500/5' : 'border-dark-700 bg-dark-800/40'}`}>
-            <label className="flex items-center gap-2.5 cursor-pointer select-none">
-              <input type="checkbox" checked={addToInv} onChange={e => setAddToInv(e.target.checked)}
-                className="w-4 h-4 rounded accent-emerald-500 cursor-pointer" />
-              <span className="text-sm font-semibold text-slate-200">Add material to inventory</span>
-              {addToInv && <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-600/20 text-emerald-400 font-medium">Active</span>}
-            </label>
-            {addToInv && (
-              <div className="mt-3 grid grid-cols-2 gap-3">
-                <Field label="Material Category *">
-                  <select className={inp()} value={invCategory} onChange={e => setInvCategory(e.target.value)}>
-                    <option value="">Select category…</option>
-                    {INV_CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
-                  </select>
-                </Field>
-                <Field label="Store / Location *">
-                  <select className={inp()} value={invStore} onChange={e => setInvStore(e.target.value)}>
-                    <option value="">Select store…</option>
-                    {stores.map(s => <option key={s.id} value={s.id}>{s.store_name}</option>)}
-                  </select>
-                </Field>
-                <div className="col-span-2 text-[11px] text-emerald-600/80 flex items-center gap-1.5">
-                  <CheckCircle className="w-3.5 h-3.5 shrink-0" />
-                  All line items will be auto-added to inventory on save under the selected category and store.
-                </div>
-              </div>
-            )}
-          </div>
-          )}
+          <div className="rounded-xl border border-dark-700 bg-dark-800/30 overflow-hidden">
+            <div className="px-3 py-2 border-b border-dark-700 bg-dark-700/50">
+              <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">On Save — Additional Actions</p>
+              <p className="text-[10px] text-slate-600 mt-0.5">Tick any that apply to this bill. Leave both unticked for a standard bill.</p>
+            </div>
+            <div className="divide-y divide-dark-700">
 
-          {/* ── Receive Fuel Into Tank — create only ── */}
-          {!editing && !!form.vendor_id && (
-          <div className={`rounded-xl border p-3 transition-colors ${addToTank ? 'border-orange-700/50 bg-orange-500/5' : 'border-dark-700 bg-dark-800/40'}`}>
-            <label className="flex items-center gap-2.5 cursor-pointer select-none">
-              <input type="checkbox" checked={addToTank} onChange={e => { setAddToTank(e.target.checked); if (!e.target.checked) setFuelTankId('') }}
-                className="w-4 h-4 rounded accent-orange-500 cursor-pointer" />
-              <Fuel className="w-4 h-4 text-orange-400" />
-              <span className="text-sm font-semibold text-slate-200">Receive fuel into tank / bowser</span>
-              {addToTank && <span className="text-[10px] px-2 py-0.5 rounded-full bg-orange-600/20 text-orange-400 font-medium">Active</span>}
-            </label>
-            {addToTank && (
-              <div className="mt-3 space-y-2">
-                <select className={inp()} value={fuelTankId} onChange={e => setFuelTankId(e.target.value)}>
-                  <option value="">-- Select destination tank / bowser *</option>
-                  {fuelTanks.map(t => {
-                    const label = t.tank_type === 'bowser'
-                      ? `🚛 ${t.name}${t.equipment?.registration_number ? ` [${t.equipment.registration_number}]` : ''}`
-                      : t.tank_type === 'drum'
-                      ? `🛢 ${t.name}${t.location ? ` @ ${t.location}` : ''}`
-                      : `⛽ ${t.name}${t.location ? ` @ ${t.location}` : ''}`
-                    const stock = `${Number(t.current_stock || 0).toFixed(0)} L`
-                    const cap   = t.capacity_liters ? ` / ${t.capacity_liters} L cap` : ''
-                    return <option key={t.id} value={t.id}>{label} — {stock}{cap}</option>
-                  })}
-                </select>
-                {fuelTankId && (() => {
-                  const tank = fuelTanks.find(t => t.id === fuelTankId)
-                  const incomingL = lines.reduce((s, l) => s + (parseFloat(l.quantity) || 0), 0)
-                  if (!tank || incomingL <= 0) return null
-                  const newStock = Number(tank.current_stock || 0) + incomingL
-                  const overCap  = tank.capacity_liters && newStock > tank.capacity_liters
-                  return (
-                    <div className={`text-[11px] flex items-center gap-1.5 px-2 py-1.5 rounded-lg ${overCap ? 'bg-red-500/10 text-red-400' : 'bg-orange-500/10 text-orange-400'}`}>
-                      <Fuel className="w-3 h-3 shrink-0" />
-                      {Number(tank.current_stock || 0).toFixed(0)} L + {incomingL.toFixed(0)} L = <strong>{newStock.toFixed(0)} L</strong>
-                      {overCap && <span className="text-red-400 font-semibold ml-1">⚠ Exceeds capacity ({tank.capacity_liters} L)</span>}
-                    </div>
-                  )
-                })()}
-                <p className="text-[11px] text-orange-600/70 flex items-center gap-1.5">
-                  <CheckCircle className="w-3.5 h-3.5 shrink-0" />
-                  Total quantity from line items will be added to the selected tank's stock on save.
-                </p>
+              {/* Add to Inventory */}
+              <div className={`p-3 transition-colors ${addToInv ? 'bg-emerald-500/5' : ''}`}>
+                <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                  <input type="checkbox" checked={addToInv} onChange={e => setAddToInv(e.target.checked)}
+                    className="w-4 h-4 rounded accent-emerald-500 cursor-pointer" />
+                  <CheckCircle className="w-4 h-4 text-emerald-500" />
+                  <div className="flex-1">
+                    <p className="text-sm font-semibold text-slate-200">Add material to inventory</p>
+                    <p className="text-[11px] text-slate-500">Line items will be auto-inducted as stock on save</p>
+                  </div>
+                  {addToInv && <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-600/20 text-emerald-400 font-medium shrink-0">Active</span>}
+                </label>
+                {addToInv && (
+                  <div className="mt-3 grid grid-cols-2 gap-3 pl-6">
+                    <Field label="Material Category *">
+                      <select className={inp()} value={invCategory} onChange={e => setInvCategory(e.target.value)}>
+                        <option value="">Select category…</option>
+                        {INV_CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+                      </select>
+                    </Field>
+                    <Field label="Store / Location *">
+                      <select className={inp()} value={invStore} onChange={e => setInvStore(e.target.value)}>
+                        <option value="">Select store…</option>
+                        {stores.map(s => <option key={s.id} value={s.id}>{s.store_name}</option>)}
+                      </select>
+                    </Field>
+                  </div>
+                )}
               </div>
-            )}
+
+              {/* Receive Fuel Into Tank */}
+              {!!form.vendor_id && (
+              <div className={`p-3 transition-colors ${addToTank ? 'bg-orange-500/5' : ''}`}>
+                <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                  <input type="checkbox" checked={addToTank} onChange={e => { setAddToTank(e.target.checked); if (!e.target.checked) setFuelTankId('') }}
+                    className="w-4 h-4 rounded accent-orange-500 cursor-pointer" />
+                  <Fuel className="w-4 h-4 text-orange-400" />
+                  <div className="flex-1">
+                    <p className="text-sm font-semibold text-slate-200">Receive fuel into tank / bowser</p>
+                    <p className="text-[11px] text-slate-500">Total qty received will update the selected tank's stock</p>
+                  </div>
+                  {addToTank && <span className="text-[10px] px-2 py-0.5 rounded-full bg-orange-600/20 text-orange-400 font-medium shrink-0">Active</span>}
+                </label>
+                {addToTank && (
+                  <div className="mt-3 space-y-2 pl-6">
+                    <select className={inp()} value={fuelTankId} onChange={e => setFuelTankId(e.target.value)}>
+                      <option value="">-- Select destination tank / bowser *</option>
+                      {fuelTanks.map(t => {
+                        const label = t.tank_type === 'bowser'
+                          ? `🚛 ${t.name}${t.equipment?.registration_number ? ` [${t.equipment.registration_number}]` : ''}`
+                          : t.tank_type === 'drum'
+                          ? `🛢 ${t.name}${t.location ? ` @ ${t.location}` : ''}`
+                          : `⛽ ${t.name}${t.location ? ` @ ${t.location}` : ''}`
+                        const stock = `${Number(t.current_stock || 0).toFixed(0)} L`
+                        const cap   = t.capacity_liters ? ` / ${t.capacity_liters} L cap` : ''
+                        return <option key={t.id} value={t.id}>{label} — {stock}{cap}</option>
+                      })}
+                    </select>
+                    {fuelTankId && (() => {
+                      const tank = fuelTanks.find(t => t.id === fuelTankId)
+                      const incomingL = lines.reduce((s, l) => s + (parseFloat(l.quantity) || 0), 0)
+                      if (!tank || incomingL <= 0) return null
+                      const newStock = Number(tank.current_stock || 0) + incomingL
+                      const overCap  = tank.capacity_liters && newStock > tank.capacity_liters
+                      return (
+                        <div className={`text-[11px] flex items-center gap-1.5 px-2 py-1.5 rounded-lg ${overCap ? 'bg-red-500/10 text-red-400' : 'bg-orange-500/10 text-orange-400'}`}>
+                          <Fuel className="w-3 h-3 shrink-0" />
+                          {Number(tank.current_stock || 0).toFixed(0)} L + {incomingL.toFixed(0)} L = <strong>{newStock.toFixed(0)} L</strong>
+                          {overCap && <span className="text-red-400 font-semibold ml-1">⚠ Exceeds capacity ({tank.capacity_liters} L)</span>}
+                        </div>
+                      )
+                    })()}
+                  </div>
+                )}
+              </div>
+              )}
+
+            </div>
           </div>
           )}
 
@@ -2110,7 +2113,24 @@ function BillsTab({ companyId, session }) {
             </div>
           )}
 
-          <TaxSummary lines={lines} form={form} setF={setF} />
+          {/* ── Tax / GST Settings ── */}
+          <div className="rounded-xl border border-dark-700 bg-dark-800/30 overflow-hidden">
+            <div className="px-3 py-2 border-b border-dark-700 bg-dark-700/50">
+              <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Tax &amp; GST</p>
+            </div>
+            <div className="p-3 space-y-3">
+              <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                <input type="checkbox" checked={!!form.tax_inclusive} onChange={e => setF('tax_inclusive', e.target.checked)}
+                  className="w-4 h-4 rounded accent-violet-500 cursor-pointer" />
+                <div>
+                  <p className="text-sm font-semibold text-slate-200">Prices are tax-inclusive</p>
+                  <p className="text-[11px] text-slate-500">GST is already included in the rates entered above — system will back-calculate tax</p>
+                </div>
+              </label>
+              <TaxSummary lines={lines} form={form} setF={setF} />
+            </div>
+          </div>
+
           <Field label="Notes"><textarea className={inp()} rows={2} value={form.notes} onChange={e => setF('notes', e.target.value)} /></Field>
 
           {/* ── Vendor Bill Attachment ── */}
