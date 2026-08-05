@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useCallback } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
@@ -6,7 +6,10 @@ import { useAuth } from '../../contexts/AuthContext'
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const REPORTS = [
-  { id: 'equip_utilization', cat: 'Operations',    label: 'Equipment Utilization', desc: 'Hours worked, idle & breakdown per machine' },
+  { id: 'fleet_status',       cat: 'P&M Reports',   label: 'Monthly Fleet Status',    desc: 'All machines: status, utilization, fuel & incidents — printable' },
+  { id: 'breakdown_analysis', cat: 'P&M Reports',   label: 'Breakdown Analysis',      desc: 'Count, downtime hours, repeat offenders, lost revenue — for MD' },
+  { id: 'fuel_vs_benchmark',  cat: 'P&M Reports',   label: 'Fuel vs Benchmark',       desc: 'Issued vs consumed vs standard L/hr — outliers flagged' },
+  { id: 'equip_utilization',  cat: 'Operations',    label: 'Equipment Utilization',   desc: 'Hours worked, idle & breakdown per machine' },
   { id: 'equip_pl',          cat: 'Operations',    label: 'Equipment P&L',          desc: 'Revenue vs fuel & maintenance costs' },
   { id: 'shift_log',         cat: 'Operations',    label: 'Shift Log',              desc: 'Full shift history with operator & project' },
   { id: 'fuel_report',       cat: 'Operations',    label: 'Fuel Report',            desc: 'Fuel consumption and cost by equipment' },
@@ -22,7 +25,7 @@ const REPORTS = [
   { id: 'stock_status',      cat: 'Inventory',     label: 'Stock Status',           desc: 'Current inventory levels by item' },
 ]
 
-const CATS = ['Operations', 'HR & Payroll', 'Maintenance', 'Finance', 'Projects', 'Clients', 'Inventory']
+const CATS = ['P&M Reports', 'Operations', 'HR & Payroll', 'Maintenance', 'Finance', 'Projects', 'Clients', 'Inventory']
 const CAT_ICONS = { 'Operations':'⚙️', 'HR & Payroll':'👥', 'Maintenance':'🔧', 'Finance':'💰', 'Projects':'🏗️', 'Clients':'🤝', 'Inventory':'📦' }
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
@@ -1456,12 +1459,481 @@ function StockStatusReport({ companyId }) {
   )
 }
 
+// ─── P&M Report 1: Monthly Fleet Status ──────────────────────────────────────
+
+function FleetStatusReport({ companyId }) {
+  const today = new Date()
+  const [selYear,  setSelYear]  = useState(today.getFullYear())
+  const [selMonth, setSelMonth] = useState(today.getMonth() + 1)
+
+  const monthStart = `${selYear}-${String(selMonth).padStart(2,'0')}-01`
+  const monthEnd   = (() => { const d = new Date(selYear, selMonth, 0); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}` })()
+  const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+
+  const { data: equipment = [], isLoading: eqLoad } = useQuery({
+    queryKey: ['rpt_eq_all', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('equipment').select('id,name,equipment_number,category,status,current_project_id,current_site_name,specific_consumption_lph,internal_rate_per_hour,internal_rate_per_day').eq('company_id', companyId).order('name')
+      return data || []
+    },
+  })
+
+  const { data: ops = [], isLoading: opsLoad } = useQuery({
+    queryKey: ['rpt_fleet_ops', companyId, monthStart],
+    queryFn: async () => {
+      const { data } = await supabase.from('daily_operations').select('equipment_id,ops_date,status,running_hours,fuel_consumed').eq('company_id', companyId).gte('ops_date', monthStart).lte('ops_date', monthEnd)
+      return data || []
+    },
+  })
+
+  const { data: targets = [] } = useQuery({
+    queryKey: ['rpt_fleet_targets', companyId, selYear, selMonth],
+    queryFn: async () => {
+      const { data } = await supabase.from('equipment_utilization_targets').select('equipment_id,planned_days').eq('company_id', companyId).eq('year', selYear).eq('month', selMonth)
+      return data || []
+    },
+  })
+
+  const { data: incidents = [] } = useQuery({
+    queryKey: ['rpt_fleet_incidents', companyId, monthStart],
+    queryFn: async () => {
+      const { data } = await supabase.from('shift_incidents').select('equipment_id,severity').eq('company_id', companyId).gte('incident_date', monthStart).lte('incident_date', monthEnd)
+      return data || []
+    },
+  })
+
+  const rows = useMemo(() => {
+    const targetMap   = Object.fromEntries(targets.map(t => [t.equipment_id, t.planned_days]))
+    const opsByEquip  = {}
+    for (const op of ops) {
+      if (!opsByEquip[op.equipment_id]) opsByEquip[op.equipment_id] = []
+      opsByEquip[op.equipment_id].push(op)
+    }
+    const incByEquip = {}
+    for (const inc of incidents) {
+      if (!incByEquip[inc.equipment_id]) incByEquip[inc.equipment_id] = 0
+      incByEquip[inc.equipment_id]++
+    }
+    return equipment.map(eq => {
+      const eOps     = opsByEquip[eq.id] || []
+      const workedDays = new Set(eOps.filter(o => o.status === 'working' || o.status === 'idle').map(o => o.ops_date)).size
+      const brkDays    = new Set(eOps.filter(o => o.status === 'breakdown').map(o => o.ops_date)).size
+      const totalHrs   = eOps.reduce((s, o) => s + Number(o.running_hours || 0), 0)
+      const fuelConsumed = eOps.reduce((s, o) => s + Number(o.fuel_consumed || 0), 0)
+      const plannedDays  = targetMap[eq.id] ?? null
+      const utilPct      = plannedDays ? Math.round((workedDays / plannedDays) * 100) : null
+      const actLph       = totalHrs > 0 ? fuelConsumed / totalHrs : null
+      const stdLph       = eq.specific_consumption_lph ? Number(eq.specific_consumption_lph) : null
+      const fuelVariance = (actLph !== null && stdLph) ? Math.round(((actLph - stdLph) / stdLph) * 100) : null
+      return { eq, workedDays, brkDays, totalHrs: Math.round(totalHrs * 10) / 10, fuelConsumed: Math.round(fuelConsumed), plannedDays, utilPct, actLph: actLph ? Math.round(actLph * 10) / 10 : null, stdLph, fuelVariance, incidents: incByEquip[eq.id] || 0 }
+    })
+  }, [equipment, ops, targets, incidents])
+
+  const STATUS_COL = { active:'#22c55e', idle:'#eab308', breakdown:'#ef4444', maintenance:'#f97316', disposed:'#94a3b8' }
+
+  if (eqLoad || opsLoad) return <Spinner />
+
+  const printHTML = () => {
+    const trs = rows.map(r => {
+      const util  = r.utilPct !== null ? `${r.utilPct}%` : '—'
+      const uCol  = r.utilPct === null ? '#888' : r.utilPct >= 90 ? 'green' : r.utilPct >= 70 ? 'orange' : 'red'
+      const fv    = r.fuelVariance !== null ? `${r.fuelVariance > 0 ? '+' : ''}${r.fuelVariance}%` : '—'
+      const fCol  = r.fuelVariance === null ? '#888' : r.fuelVariance > 20 ? 'red' : r.fuelVariance > 0 ? 'orange' : 'green'
+      return `<tr>
+        <td>${r.eq.equipment_number || '—'}</td>
+        <td><b>${r.eq.name}</b></td>
+        <td>${r.eq.category || '—'}</td>
+        <td style="color:${STATUS_COL[r.eq.status] || '#888'};font-weight:bold">${r.eq.status?.toUpperCase()}</td>
+        <td>${r.eq.current_site_name || '—'}</td>
+        <td style="color:${uCol};font-weight:bold">${util}</td>
+        <td>${r.workedDays}/${r.plannedDays ?? '?'}</td>
+        <td>${r.brkDays > 0 ? `<span style="color:red">${r.brkDays}d</span>` : '0d'}</td>
+        <td>${fmtN(r.totalHrs, 1)} hrs</td>
+        <td>${r.actLph !== null ? r.actLph + ' L/hr' : '—'} vs ${r.stdLph ? r.stdLph + ' std' : '—'}</td>
+        <td style="color:${fCol};font-weight:bold">${fv}</td>
+        <td>${r.incidents > 0 ? `<span style="color:red">${r.incidents}</span>` : '0'}</td>
+      </tr>`
+    }).join('')
+    const summary = `
+      <div>
+        <span class="stat"><span class="stat-v">${equipment.length}</span><br/><span class="stat-l">Total Machines</span></span>
+        <span class="stat"><span class="stat-v" style="color:green">${equipment.filter(e=>e.status==='active').length}</span><br/><span class="stat-l">Active</span></span>
+        <span class="stat"><span class="stat-v" style="color:red">${equipment.filter(e=>e.status==='breakdown').length}</span><br/><span class="stat-l">Breakdown</span></span>
+        <span class="stat"><span class="stat-v">${rows.filter(r=>r.utilPct!==null&&r.utilPct>=90).length}</span><br/><span class="stat-l">On Track (≥90%)</span></span>
+      </div>`
+    printSection(`Monthly Fleet Status — ${MONTH_NAMES[selMonth-1]} ${selYear}`,
+      `<h1>Monthly Fleet Status Report</h1><p class="sub">${MONTH_NAMES[selMonth-1]} ${selYear} &nbsp;·&nbsp; Generated ${new Date().toLocaleDateString('en-IN')}</p>${summary}
+      <table style="font-size:10px">
+        <tr><th>Eq No.</th><th>Machine</th><th>Category</th><th>Status</th><th>Site</th><th>Util %</th><th>Days W/P</th><th>Brkdn</th><th>Hours</th><th>Fuel L/hr</th><th>Variance</th><th>Incidents</th></tr>
+        ${trs}
+      </table>`)
+  }
+
+  return (
+    <div>
+      {/* Month picker */}
+      <div className="flex items-center gap-3 mb-5 p-3 bg-dark-800 border border-dark-600 rounded-xl flex-wrap">
+        <select value={selMonth} onChange={e => setSelMonth(Number(e.target.value))}
+          className="bg-dark-700 border border-dark-500 rounded-lg px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-primary-500">
+          {MONTH_NAMES.map((m, i) => <option key={i} value={i+1}>{m}</option>)}
+        </select>
+        <select value={selYear} onChange={e => setSelYear(Number(e.target.value))}
+          className="bg-dark-700 border border-dark-500 rounded-lg px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-primary-500">
+          {[today.getFullYear(), today.getFullYear()-1].map(y => <option key={y} value={y}>{y}</option>)}
+        </select>
+        <span className="text-xs text-slate-400">{equipment.length} machines · {rows.filter(r=>r.totalHrs>0).length} with ops data</span>
+        <button onClick={printHTML} className="ml-auto flex items-center gap-1.5 px-3 py-1.5 bg-dark-700 border border-dark-500 hover:border-primary-500 rounded-lg text-xs text-slate-300 transition-colors">🖨 Print / PDF</button>
+      </div>
+
+      {/* Summary cards */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+        <StatCard label="Total Machines"    value={equipment.length}                                        accent="text-slate-300" />
+        <StatCard label="Active"            value={equipment.filter(e=>e.status==='active').length}         accent="text-green-400" />
+        <StatCard label="In Breakdown"      value={equipment.filter(e=>e.status==='breakdown').length}      accent="text-red-400" />
+        <StatCard label="On Track (≥90%)"   value={rows.filter(r=>r.utilPct!==null&&r.utilPct>=90).length} accent="text-primary-400" sub={`of ${rows.filter(r=>r.utilPct!==null).length} with targets`} />
+      </div>
+
+      {/* Table */}
+      <div className="overflow-x-auto rounded-xl border border-dark-600">
+        <table className="w-full">
+          <THead cols={['Eq No.','Machine','Category','Status','Site / Project','Util %','Days W/P','Brkdn','Hours','Act L/hr','Variance','Incidents']} />
+          <tbody>
+            {rows.map(({ eq, workedDays, brkDays, totalHrs, fuelConsumed, plannedDays, utilPct, actLph, stdLph, fuelVariance, incidents }) => {
+              const uCol  = utilPct === null ? 'text-slate-500' : utilPct >= 90 ? 'text-green-400 font-bold' : utilPct >= 70 ? 'text-amber-400 font-bold' : 'text-red-400 font-bold'
+              const fvCol = fuelVariance === null ? 'text-slate-500' : fuelVariance > 20 ? 'text-red-400 font-semibold' : fuelVariance > 5 ? 'text-amber-400' : 'text-green-400'
+              const stBg  = { active:'bg-green-500/10 text-green-400', idle:'bg-amber-500/10 text-amber-400', breakdown:'bg-red-500/10 text-red-400', maintenance:'bg-orange-500/10 text-orange-400', disposed:'bg-slate-500/10 text-slate-400' }[eq.status] || 'text-slate-500'
+              return (
+                <tr key={eq.id} className="border-b border-dark-700/50 hover:bg-dark-700/20">
+                  <td className="py-2 px-3 text-xs text-primary-400 font-mono">{eq.equipment_number || '—'}</td>
+                  <td className="py-2 px-3 text-xs text-slate-200 font-medium">{eq.name}</td>
+                  <td className="py-2 px-3 text-xs text-slate-400">{eq.category || '—'}</td>
+                  <td className="py-2 px-3"><span className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold ${stBg}`}>{eq.status}</span></td>
+                  <td className="py-2 px-3 text-xs text-slate-400">{eq.current_site_name || '—'}</td>
+                  <td className={`py-2 px-3 text-xs ${uCol}`}>{utilPct !== null ? `${utilPct}%` : '—'}</td>
+                  <td className="py-2 px-3 text-xs text-slate-400">{workedDays}/{plannedDays ?? '?'}</td>
+                  <td className={`py-2 px-3 text-xs ${brkDays > 0 ? 'text-red-400 font-semibold' : 'text-slate-500'}`}>{brkDays}d</td>
+                  <td className="py-2 px-3 text-xs text-slate-300">{fmtN(totalHrs, 1)}</td>
+                  <td className="py-2 px-3 text-xs text-slate-400">{actLph !== null ? `${actLph}` : '—'}<span className="text-slate-600"> / {stdLph ?? '—'}</span></td>
+                  <td className={`py-2 px-3 text-xs ${fvCol}`}>{fuelVariance !== null ? `${fuelVariance > 0 ? '+' : ''}${fuelVariance}%` : '—'}</td>
+                  <td className={`py-2 px-3 text-xs ${incidents > 0 ? 'text-red-400 font-semibold' : 'text-slate-500'}`}>{incidents}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+      {rows.length === 0 && <Empty />}
+    </div>
+  )
+}
+
+// ─── P&M Report 2: Breakdown Analysis ────────────────────────────────────────
+
+function BreakdownAnalysisReport({ companyId, from, to }) {
+  const { data: equipment = [] } = useQuery({
+    queryKey: ['rpt_ba_equip', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('equipment').select('id,name,equipment_number,category,internal_rate_per_hour,internal_rate_per_day').eq('company_id', companyId)
+      return data || []
+    },
+  })
+
+  const { data: brkOps = [], isLoading } = useQuery({
+    queryKey: ['rpt_ba_ops', companyId, from, to],
+    queryFn: async () => {
+      const { data } = await supabase.from('daily_operations').select('equipment_id,ops_date,running_hours,status').eq('company_id', companyId).eq('status', 'breakdown').gte('ops_date', from).lte('ops_date', to)
+      return data || []
+    },
+  })
+
+  const { data: jobCards = [] } = useQuery({
+    queryKey: ['rpt_ba_jobs', companyId, from, to],
+    queryFn: async () => {
+      const { data } = await supabase.from('job_cards').select('equipment_id,total_cost,closed_at').eq('company_id', companyId).gte('closed_at', from).lte('closed_at', to)
+      return data || []
+    },
+  })
+
+  const rows = useMemo(() => {
+    const equipMap = Object.fromEntries(equipment.map(e => [e.id, e]))
+    const brkByEquip = {}
+    for (const op of brkOps) {
+      if (!brkByEquip[op.equipment_id]) brkByEquip[op.equipment_id] = { days: new Set(), hours: 0 }
+      brkByEquip[op.equipment_id].days.add(op.ops_date)
+      brkByEquip[op.equipment_id].hours += Number(op.running_hours || 8) // assume 8h shift if not logged
+    }
+    const repairByEquip = {}
+    for (const jc of jobCards) {
+      if (!repairByEquip[jc.equipment_id]) repairByEquip[jc.equipment_id] = 0
+      repairByEquip[jc.equipment_id] += Number(jc.total_cost || 0)
+    }
+    return Object.entries(brkByEquip).map(([eid, { days, hours }]) => {
+      const eq       = equipMap[eid]
+      const brkDays  = days.size
+      const brkHrs   = Math.round(hours * 10) / 10
+      const rateHr   = Number(eq?.internal_rate_per_hour || 0)
+      const rateDay  = Number(eq?.internal_rate_per_day || 0)
+      const lostRev  = rateHr > 0 ? Math.round(rateHr * brkHrs) : rateDay > 0 ? Math.round(rateDay * brkDays) : 0
+      const repairCost = Math.round(repairByEquip[eid] || 0)
+      const totalCost  = lostRev + repairCost
+      const chronic    = brkDays >= 3
+      return { eid, name: eq?.name || 'Unknown', eqNo: eq?.equipment_number || '—', category: eq?.category || '—', brkDays, brkHrs, repairCost, lostRev, totalCost, chronic }
+    }).sort((a, b) => b.brkDays - a.brkDays)
+  }, [brkOps, jobCards, equipment])
+
+  const totalBrkDays     = rows.reduce((s, r) => s + r.brkDays, 0)
+  const totalBrkHrs      = rows.reduce((s, r) => s + r.brkHrs, 0)
+  const totalLostRev     = rows.reduce((s, r) => s + r.lostRev, 0)
+  const totalRepairCost  = rows.reduce((s, r) => s + r.repairCost, 0)
+  const chronicMachines  = rows.filter(r => r.chronic).length
+
+  if (isLoading) return <Spinner />
+
+  const printHTML = () => {
+    const trs = rows.map(r => `<tr style="${r.chronic ? 'background:#fff0f0' : ''}">
+      <td>${r.eqNo}</td><td><b>${r.name}</b></td><td>${r.category}</td>
+      <td style="color:red;font-weight:bold">${r.brkDays}d</td>
+      <td>${fmtN(r.brkHrs,1)} hrs</td>
+      <td>${fmt(r.repairCost)}</td>
+      <td>${r.lostRev > 0 ? fmt(r.lostRev) : '—'}</td>
+      <td style="font-weight:bold">${r.totalCost > 0 ? fmt(r.totalCost) : '—'}</td>
+      <td>${r.chronic ? '<span style="color:red;font-weight:bold">⚠ CHRONIC</span>' : '—'}</td>
+    </tr>`).join('')
+    printSection('Breakdown Analysis Report',
+      `<h1>Breakdown Analysis Report</h1><p class="sub">${fmtDate(from)} to ${fmtDate(to)} &nbsp;·&nbsp; Generated ${new Date().toLocaleDateString('en-IN')}</p>
+      <div>
+        <span class="stat"><span class="stat-v" style="color:red">${rows.length}</span><br/><span class="stat-l">Machines Affected</span></span>
+        <span class="stat"><span class="stat-v">${totalBrkDays}</span><br/><span class="stat-l">Total Breakdown Days</span></span>
+        <span class="stat"><span class="stat-v">${fmtN(totalBrkHrs,1)}</span><br/><span class="stat-l">Downtime Hours</span></span>
+        <span class="stat"><span class="stat-v" style="color:red">${chronicMachines}</span><br/><span class="stat-l">Chronic (≥3 events)</span></span>
+        <span class="stat"><span class="stat-v">${fmt(totalLostRev+totalRepairCost)}</span><br/><span class="stat-l">Total Impact</span></span>
+      </div>
+      <table><tr><th>Eq No.</th><th>Machine</th><th>Category</th><th>Breakdown Days</th><th>Downtime Hrs</th><th>Repair Cost</th><th>Lost Revenue</th><th>Total Impact</th><th>Flag</th></tr>${trs}</table>`)
+  }
+
+  return (
+    <div>
+      <FilterBar from={from} setFrom={() => {}} to={to} setTo={() => {}}>
+        <span className="text-[11px] text-slate-500">(adjust period using the date pickers above)</span>
+      </FilterBar>
+
+      {/* Summary cards */}
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-5">
+        <StatCard label="Machines Affected"   value={rows.length}                       accent="text-red-400" />
+        <StatCard label="Breakdown Days"      value={totalBrkDays}                      accent="text-red-400" />
+        <StatCard label="Downtime Hours"      value={fmtN(totalBrkHrs, 1)}             accent="text-amber-400" />
+        <StatCard label="Chronic (≥3 events)" value={chronicMachines}                   accent="text-red-500" sub="same machine, 3+ days" />
+        <StatCard label="Total Cost Impact"   value={fmt(totalLostRev + totalRepairCost)} accent="text-orange-400" sub="lost rev + repair" />
+      </div>
+
+      {/* Chronic alert */}
+      {chronicMachines > 0 && (
+        <div className="mb-4 flex items-start gap-2.5 bg-red-500/10 border border-red-500/25 rounded-xl px-3 py-2.5">
+          <span className="text-red-400 text-sm">⚠</span>
+          <div>
+            <p className="text-xs font-semibold text-red-300">Chronic breakdown alert</p>
+            <p className="text-[11px] text-red-400 mt-0.5">{rows.filter(r=>r.chronic).map(r=>r.name).join(', ')} — {chronicMachines} machine{chronicMachines>1?'s':''} with 3+ breakdown days. Escalate to maintenance.</p>
+          </div>
+        </div>
+      )}
+
+      <div className="overflow-x-auto rounded-xl border border-dark-600">
+        <table className="w-full">
+          <THead cols={['Eq No.','Machine','Category','Brkdn Days','Downtime Hrs','Repair Cost','Lost Revenue','Total Impact','Flag']} />
+          <tbody>
+            {rows.map(r => (
+              <tr key={r.eid} className={`border-b border-dark-700/50 hover:bg-dark-700/20 ${r.chronic ? 'bg-red-500/5' : ''}`}>
+                <td className="py-2.5 px-3 text-xs text-primary-400 font-mono">{r.eqNo}</td>
+                <td className="py-2.5 px-3 text-xs text-slate-200 font-medium">{r.name}</td>
+                <td className="py-2.5 px-3 text-xs text-slate-400">{r.category}</td>
+                <td className="py-2.5 px-3 text-xs text-red-400 font-bold">{r.brkDays}d</td>
+                <td className="py-2.5 px-3 text-xs text-amber-400">{fmtN(r.brkHrs, 1)} hrs</td>
+                <td className="py-2.5 px-3 text-xs text-slate-300">{r.repairCost > 0 ? fmt(r.repairCost) : '—'}</td>
+                <td className="py-2.5 px-3 text-xs text-slate-300">{r.lostRev > 0 ? fmt(r.lostRev) : <span className="text-slate-600">No rate set</span>}</td>
+                <td className="py-2.5 px-3 text-xs text-orange-400 font-semibold">{r.totalCost > 0 ? fmt(r.totalCost) : '—'}</td>
+                <td className="py-2.5 px-3">
+                  {r.chronic
+                    ? <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-red-500/15 text-red-400">⚠ Chronic</span>
+                    : <span className="text-[10px] text-slate-600">—</span>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {rows.length === 0 && <Empty msg="No breakdown records for this period" />}
+      <ExportBar
+        onPrint={printHTML}
+        onCSV={() => exportCSV(rows.map(r=>({ eq_no:r.eqNo, machine:r.name, category:r.category, breakdown_days:r.brkDays, downtime_hrs:r.brkHrs, repair_cost:r.repairCost, lost_revenue:r.lostRev, total_impact:r.totalCost, chronic:r.chronic?'Yes':'No' })),
+          [{key:'eq_no',label:'Eq No.'},{key:'machine',label:'Machine'},{key:'category',label:'Category'},{key:'breakdown_days',label:'Brkdn Days'},{key:'downtime_hrs',label:'Downtime Hrs'},{key:'repair_cost',label:'Repair Cost'},{key:'lost_revenue',label:'Lost Revenue'},{key:'total_impact',label:'Total Impact'},{key:'chronic',label:'Chronic'}],'breakdown_analysis')}
+      />
+    </div>
+  )
+}
+
+// ─── P&M Report 3: Fuel vs Benchmark ─────────────────────────────────────────
+
+const DIESEL_RATE_PER_LITRE = 95 // ₹/L — update as needed
+
+function FuelVsBenchmarkReport({ companyId, from, to }) {
+  const { data: equipment = [] } = useQuery({
+    queryKey: ['rpt_fvb_equip', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('equipment').select('id,name,equipment_number,category,specific_consumption_lph').eq('company_id', companyId)
+      return data || []
+    },
+  })
+
+  const { data: ops = [], isLoading: opsLoad } = useQuery({
+    queryKey: ['rpt_fvb_ops', companyId, from, to],
+    queryFn: async () => {
+      const { data } = await supabase.from('daily_operations').select('equipment_id,running_hours,fuel_consumed,status').eq('company_id', companyId).gte('ops_date', from).lte('ops_date', to).neq('status', 'breakdown')
+      return data || []
+    },
+  })
+
+  const { data: issued = [], isLoading: issLoad } = useQuery({
+    queryKey: ['rpt_fvb_issued', companyId, from, to],
+    queryFn: async () => {
+      const { data } = await supabase.from('fuel_issues').select('equipment_id,qty_liters').eq('company_id', companyId).gte('issue_date', from).lte('issue_date', to)
+      return data || []
+    },
+  })
+
+  const rows = useMemo(() => {
+    const equipMap = Object.fromEntries(equipment.map(e => [e.id, e]))
+    const opsByEquip = {}
+    for (const op of ops) {
+      if (!opsByEquip[op.equipment_id]) opsByEquip[op.equipment_id] = { hours: 0, consumed: 0 }
+      opsByEquip[op.equipment_id].hours    += Number(op.running_hours  || 0)
+      opsByEquip[op.equipment_id].consumed += Number(op.fuel_consumed  || 0)
+    }
+    const issuedByEquip = {}
+    for (const f of issued) {
+      if (!issuedByEquip[f.equipment_id]) issuedByEquip[f.equipment_id] = 0
+      issuedByEquip[f.equipment_id] += Number(f.qty_liters || 0)
+    }
+    // Union of equipment that have either ops or fuel issues
+    const eqIds = new Set([...Object.keys(opsByEquip), ...Object.keys(issuedByEquip)])
+    return Array.from(eqIds).map(eid => {
+      const eq        = equipMap[eid]
+      const hours     = Math.round((opsByEquip[eid]?.hours    || 0) * 10) / 10
+      const consumed  = Math.round(opsByEquip[eid]?.consumed  || 0)
+      const issuedL   = Math.round(issuedByEquip[eid]         || 0)
+      const stdLph    = eq?.specific_consumption_lph ? Number(eq.specific_consumption_lph) : null
+      const actLph    = hours > 0 && consumed > 0 ? Math.round((consumed / hours) * 10) / 10 : null
+      const stdTotal  = (stdLph && hours > 0) ? Math.round(stdLph * hours) : null
+      const variance  = (actLph !== null && stdLph) ? Math.round(((actLph - stdLph) / stdLph) * 100) : null
+      const costActual = Math.round(consumed * DIESEL_RATE_PER_LITRE)
+      const costStd    = stdTotal ? Math.round(stdTotal * DIESEL_RATE_PER_LITRE) : null
+      const outlier    = variance !== null && variance > 20
+      const issued_consumed_gap = issuedL > 0 && consumed > 0 ? Math.round(((issuedL - consumed) / issuedL) * 100) : null
+      return { eid, name: eq?.name || 'Unknown', eqNo: eq?.equipment_number || '—', category: eq?.category || '—', hours, consumed, issuedL, stdLph, actLph, stdTotal, variance, costActual, costStd, outlier, issued_consumed_gap }
+    }).filter(r => r.hours > 0 || r.issuedL > 0).sort((a, b) => (b.variance ?? -99) - (a.variance ?? -99))
+  }, [ops, issued, equipment])
+
+  const totalIssued   = rows.reduce((s, r) => s + r.issuedL, 0)
+  const totalConsumed = rows.reduce((s, r) => s + r.consumed, 0)
+  const totalHrs      = rows.reduce((s, r) => s + r.hours, 0)
+  const totalCost     = rows.reduce((s, r) => s + r.costActual, 0)
+  const outliers      = rows.filter(r => r.outlier).length
+
+  if (opsLoad || issLoad) return <Spinner />
+
+  const printHTML = () => {
+    const trs = rows.map(r => `<tr style="${r.outlier ? 'background:#fff8f0' : ''}">
+      <td>${r.eqNo}</td><td><b>${r.name}</b></td><td>${r.category}</td>
+      <td>${fmtN(r.hours,1)}</td>
+      <td>${r.issuedL > 0 ? r.issuedL + ' L' : '—'}</td>
+      <td>${r.consumed > 0 ? r.consumed + ' L' : '—'}</td>
+      <td>${r.actLph !== null ? r.actLph + ' L/hr' : '—'}</td>
+      <td>${r.stdLph ? r.stdLph + ' L/hr' : '—'}</td>
+      <td style="color:${r.variance===null?'#888':r.variance>20?'red':r.variance>5?'orange':'green'};font-weight:bold">${r.variance !== null ? (r.variance > 0 ? '+' : '') + r.variance + '%' : '—'}</td>
+      <td>${fmt(r.costActual)}</td>
+      <td>${r.outlier ? '<span style="color:red;font-weight:bold">🔴 HIGH</span>' : '—'}</td>
+    </tr>`).join('')
+    printSection('Fuel vs Benchmark Report',
+      `<h1>Fuel Consumption vs Benchmark Report</h1><p class="sub">${fmtDate(from)} to ${fmtDate(to)} &nbsp;·&nbsp; Diesel rate: ₹${DIESEL_RATE_PER_LITRE}/L (update as needed)</p>
+      <div>
+        <span class="stat"><span class="stat-v">${totalIssued.toLocaleString('en-IN')} L</span><br/><span class="stat-l">Total Issued</span></span>
+        <span class="stat"><span class="stat-v">${totalConsumed.toLocaleString('en-IN')} L</span><br/><span class="stat-l">Total Consumed (logged)</span></span>
+        <span class="stat"><span class="stat-v">${fmt(totalCost)}</span><br/><span class="stat-l">Fuel Cost</span></span>
+        <span class="stat"><span class="stat-v" style="color:${outliers>0?'red':'green'}">${outliers}</span><br/><span class="stat-l">High Consumption Outliers</span></span>
+      </div>
+      <table><tr><th>Eq No.</th><th>Machine</th><th>Category</th><th>Hrs</th><th>Issued (L)</th><th>Consumed (L)</th><th>Act L/hr</th><th>Std L/hr</th><th>Variance</th><th>Cost</th><th>Flag</th></tr>${trs}</table>`)
+  }
+
+  return (
+    <div>
+      <FilterBar from={from} setFrom={() => {}} to={to} setTo={() => {}}>
+        <span className="text-[11px] text-slate-500">Diesel @ ₹{DIESEL_RATE_PER_LITRE}/L · outlier = &gt;20% over standard</span>
+      </FilterBar>
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+        <StatCard label="Total Issued"       value={`${totalIssued.toLocaleString('en-IN')} L`}   accent="text-slate-300" />
+        <StatCard label="Total Consumed"     value={`${totalConsumed.toLocaleString('en-IN')} L`} accent="text-amber-400" sub="from daily ops logs" />
+        <StatCard label="Fuel Cost (est.)"   value={fmt(totalCost)}                               accent="text-orange-400" sub={`${fmtN(totalHrs,0)} hrs worked`} />
+        <StatCard label="High Outliers"      value={outliers}                                      accent={outliers > 0 ? 'text-red-400' : 'text-green-400'} sub=">20% over standard L/hr" />
+      </div>
+
+      {outliers > 0 && (
+        <div className="mb-4 flex items-start gap-2.5 bg-red-500/10 border border-red-500/25 rounded-xl px-3 py-2.5">
+          <span className="text-red-400 text-sm">⚠</span>
+          <div>
+            <p className="text-xs font-semibold text-red-300">High fuel consumption alert</p>
+            <p className="text-[11px] text-red-400 mt-0.5">{rows.filter(r=>r.outlier).map(r=>`${r.name} (+${r.variance}%)`).join(' · ')} — inspect for leaks, idling, or calibration issues.</p>
+          </div>
+        </div>
+      )}
+
+      <div className="overflow-x-auto rounded-xl border border-dark-600">
+        <table className="w-full">
+          <THead cols={['Eq No.','Machine','Category','Hrs','Issued (L)','Consumed (L)','Act L/hr','Std L/hr','Variance','Cost (est.)','Flag']} />
+          <tbody>
+            {rows.map(r => {
+              const vCol = r.variance === null ? 'text-slate-500' : r.variance > 20 ? 'text-red-400 font-bold' : r.variance > 5 ? 'text-amber-400' : 'text-green-400'
+              return (
+                <tr key={r.eid} className={`border-b border-dark-700/50 hover:bg-dark-700/20 ${r.outlier ? 'bg-red-500/5' : ''}`}>
+                  <td className="py-2.5 px-3 text-xs text-primary-400 font-mono">{r.eqNo}</td>
+                  <td className="py-2.5 px-3 text-xs text-slate-200 font-medium">{r.name}</td>
+                  <td className="py-2.5 px-3 text-xs text-slate-400">{r.category}</td>
+                  <td className="py-2.5 px-3 text-xs text-slate-400">{fmtN(r.hours, 1)}</td>
+                  <td className="py-2.5 px-3 text-xs text-slate-300">{r.issuedL > 0 ? `${r.issuedL} L` : '—'}</td>
+                  <td className="py-2.5 px-3 text-xs text-slate-300">{r.consumed > 0 ? `${r.consumed} L` : '—'}</td>
+                  <td className="py-2.5 px-3 text-xs text-slate-300">{r.actLph !== null ? r.actLph : '—'}</td>
+                  <td className="py-2.5 px-3 text-xs text-slate-500">{r.stdLph ?? <span className="text-slate-700">not set</span>}</td>
+                  <td className={`py-2.5 px-3 text-xs ${vCol}`}>{r.variance !== null ? `${r.variance > 0 ? '+' : ''}${r.variance}%` : '—'}</td>
+                  <td className="py-2.5 px-3 text-xs text-slate-300">{fmt(r.costActual)}</td>
+                  <td className="py-2.5 px-3">
+                    {r.outlier
+                      ? <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-red-500/15 text-red-400">🔴 High</span>
+                      : <span className="text-[10px] text-slate-600">OK</span>}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+      {rows.length === 0 && <Empty msg="No fuel or operational data for this period" />}
+      <ExportBar
+        onPrint={printHTML}
+        onCSV={() => exportCSV(rows.map(r=>({ eq_no:r.eqNo, machine:r.name, category:r.category, hours:r.hours, issued_l:r.issuedL, consumed_l:r.consumed, act_lph:r.actLph, std_lph:r.stdLph, variance_pct:r.variance, cost:r.costActual, outlier:r.outlier?'Yes':'No' })),
+          [{key:'eq_no',label:'Eq No.'},{key:'machine',label:'Machine'},{key:'category',label:'Category'},{key:'hours',label:'Hours'},{key:'issued_l',label:'Issued L'},{key:'consumed_l',label:'Consumed L'},{key:'act_lph',label:'Act L/hr'},{key:'std_lph',label:'Std L/hr'},{key:'variance_pct',label:'Variance %'},{key:'cost',label:'Cost'},{key:'outlier',label:'Outlier'}],'fuel_vs_benchmark')}
+      />
+    </div>
+  )
+}
+
 // ─── Dispatcher ───────────────────────────────────────────────────────────────
 
 function ReportContent({ reportId, companyId, from, to }) {
   const p = { companyId, from, to }
   switch (reportId) {
-    case 'equip_utilization': return <EquipUtilizationReport {...p} />
+    case 'fleet_status':       return <FleetStatusReport       companyId={companyId} />
+    case 'breakdown_analysis': return <BreakdownAnalysisReport {...p} />
+    case 'fuel_vs_benchmark':  return <FuelVsBenchmarkReport   {...p} />
+    case 'equip_utilization':  return <EquipUtilizationReport  {...p} />
     case 'equip_pl':          return <EquipPLReport          {...p} />
     case 'shift_log':         return <ShiftLogReport         {...p} />
     case 'fuel_report':       return <FuelReport             {...p} />
