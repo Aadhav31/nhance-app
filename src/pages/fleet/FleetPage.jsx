@@ -17,7 +17,8 @@ import {
   Save, Trash2, Edit2, FileText, Wrench, Shield, Phone, Mail,
   ChevronRight, AlertCircle, Clock, Activity, LayoutGrid, List,
   Upload, Download, Eye, FolderOpen, Bell,
-  Search, History, BookOpen, PackageOpen, Tag, ArrowLeftRight, Pencil, CalendarDays, IndianRupee
+  Search, History, BookOpen, PackageOpen, Tag, ArrowLeftRight, Pencil, CalendarDays, IndianRupee,
+  TrendingUp
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format, differenceInDays } from 'date-fns'
@@ -254,6 +255,8 @@ function EquipmentFormModal({ companyId, initialValues, onClose, onSaved }) {
     // Service
     last_service_date: '', last_service_meter: '', service_interval_hrs: '250',
     next_service_date: '', next_service_meter: '',
+    // Lifecycle
+    useful_life_hours: '', major_overhaul_hours: '', meter_at_purchase: '0',
     // Internal cost allocation
     internal_rate_basis: 'hourly', internal_rate_per_hour: '', internal_rate_per_day: '', internal_rate_per_month: '',
   }
@@ -345,6 +348,10 @@ function EquipmentFormModal({ companyId, initialValues, onClose, onSaved }) {
         service_interval_hrs: form.service_interval_hrs ? Number(form.service_interval_hrs) : 250,
         next_service_date:    form.next_service_date    || null,
         next_service_meter:   form.next_service_meter   ? Number(form.next_service_meter)   : null,
+        // Lifecycle
+        useful_life_hours:    form.useful_life_hours    ? Number(form.useful_life_hours)    : null,
+        major_overhaul_hours: form.major_overhaul_hours ? Number(form.major_overhaul_hours) : null,
+        meter_at_purchase:    form.meter_at_purchase    ? Number(form.meter_at_purchase)    : 0,
         // Internal cost allocation rates
         internal_rate_basis:      form.internal_rate_basis || 'hourly',
         internal_rate_per_hour:   form.internal_rate_per_hour   ? Number(form.internal_rate_per_hour)   : null,
@@ -554,6 +561,32 @@ function EquipmentFormModal({ companyId, initialValues, onClose, onSaved }) {
           <input type="number" className={inp()} value={form.next_service_meter} onChange={e => set('next_service_meter', e.target.value)} placeholder="e.g. 4500" step="0.1" />
         </Field>
       </div>
+
+      {/* ── Machine Lifecycle ── */}
+      <SectionHeader icon={TrendingUp} label="Machine Lifecycle" />
+      <div className="flex items-start gap-2.5 bg-dark-700/60 border border-dark-600 rounded-xl px-3 py-2.5 mb-1">
+        <TrendingUp className="w-3.5 h-3.5 text-sky-400 shrink-0 mt-0.5" />
+        <p className="text-xs text-slate-400 leading-relaxed">
+          Used to display lifecycle stage, remaining hours, and overhaul scheduling on the equipment card and detail panel.
+        </p>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Expected Useful Life (hrs)">
+          <input type="number" className={inp()} value={form.useful_life_hours}
+            onChange={e => set('useful_life_hours', e.target.value)}
+            placeholder="e.g. 20000" min="0" step="100" />
+        </Field>
+        <Field label="Major Overhaul Due At (hrs)">
+          <input type="number" className={inp()} value={form.major_overhaul_hours}
+            onChange={e => set('major_overhaul_hours', e.target.value)}
+            placeholder="e.g. 15000" min="0" step="100" />
+        </Field>
+      </div>
+      <Field label="Meter Reading at Purchase (hrs — 0 if purchased new)">
+        <input type="number" className={inp()} value={form.meter_at_purchase}
+          onChange={e => set('meter_at_purchase', e.target.value)}
+          placeholder="0" min="0" step="0.1" />
+      </Field>
 
       {/* ── Internal Cost Allocation ── */}
       <SectionHeader icon={IndianRupee} label="Internal Hire Rate (P&M Cross-Charge)" />
@@ -2687,6 +2720,9 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
               </div>
             </div>
 
+            {/* Lifecycle Bar */}
+            <LifecycleBar equipment={equipment} />
+
             {/* Physical Attachments */}
             <AttachmentsSection equipment={equipment} companyId={companyId} isAdmin={isAdmin} />
           </div>
@@ -3950,6 +3986,125 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
 }
 
 // ── Equipment Card ────────────────────────────────────────────────────────────
+// ── LifecycleBar ─────────────────────────────────────────────────────────────
+// compact=true → slim 2-line bar for the card grid
+// compact=false → full panel for the equipment detail header
+function LifecycleBar({ equipment, compact = false }) {
+  const currentHrs  = Number(equipment.current_meter_reading || 0)
+  const lifeHrs     = Number(equipment.useful_life_hours || 0)
+  const overhaulHrs = Number(equipment.major_overhaul_hours || 0)
+  const atPurchase  = Number(equipment.meter_at_purchase || 0)
+  const mfgYear     = equipment.year_of_manufacture
+  const thisYear    = new Date().getFullYear()
+
+  const hasData = lifeHrs > 0 || mfgYear
+  if (!hasData) return null
+
+  const ageYrs     = mfgYear ? thisYear - mfgYear : null
+  const lifePct    = lifeHrs > 0 ? Math.min(100, (currentHrs / lifeHrs) * 100) : null
+  const hrsLeft    = lifeHrs > 0 ? Math.max(0, lifeHrs - currentHrs) : null
+  const overhaulIn = overhaulHrs > 0 ? overhaulHrs - currentHrs : null
+  const overhaulDue = overhaulIn !== null && overhaulIn <= 0
+
+  const stage = lifePct === null ? null
+    : lifePct < 40 ? { label: 'Early Life', color: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30', bar: 'bg-emerald-500', tip: '✓ Early life — low failure risk, well-suited for project bidding.' }
+    : lifePct < 70 ? { label: 'Mid Life',   color: 'text-sky-400 bg-sky-500/10 border-sky-500/30',             bar: 'bg-sky-500',     tip: '✓ Productive mid-life — monitor major overhaul schedule.' }
+    : lifePct < 90 ? { label: 'Late Life',  color: 'text-amber-400 bg-amber-500/10 border-amber-500/30',       bar: 'bg-amber-500',   tip: '🔧 Late life — plan increased maintenance frequency and a successor machine.' }
+    :                { label: 'End of Life',color: 'text-red-400 bg-red-500/10 border-red-500/30',             bar: 'bg-red-500',     tip: '⚠ Approaching end of useful life — evaluate retirement or replacement.' }
+
+  /* ── COMPACT (card) ── */
+  if (compact) {
+    if (!lifeHrs) return null
+    return (
+      <div className="mt-2 space-y-1">
+        <div className="flex items-center justify-between text-[10px]">
+          <span className="text-slate-600">{currentHrs.toLocaleString('en-IN')} / {lifeHrs.toLocaleString('en-IN')} hrs</span>
+          {stage && <span className={`font-medium ${stage.color.split(' ')[0]}`}>{stage.label}</span>}
+        </div>
+        <div className="h-1.5 bg-dark-600 rounded-full overflow-hidden">
+          <div className={`h-full rounded-full ${stage?.bar || 'bg-slate-500'}`} style={{ width: `${lifePct}%` }} />
+        </div>
+      </div>
+    )
+  }
+
+  /* ── FULL (detail panel) ── */
+  return (
+    <div className="bg-dark-800 rounded-xl p-3.5 space-y-3">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <p className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">Machine Lifecycle</p>
+        {stage && (
+          <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${stage.color}`}>{stage.label}</span>
+        )}
+      </div>
+
+      {/* Stat pills */}
+      <div className="grid grid-cols-4 gap-2 text-center">
+        {ageYrs !== null && (
+          <div className="bg-dark-700 rounded-lg p-2">
+            <p className="text-sm font-bold text-slate-200">{ageYrs}<span className="text-[10px] font-normal text-slate-500 ml-0.5">yr</span></p>
+            <p className="text-[9px] text-slate-600 mt-0.5">Age</p>
+          </div>
+        )}
+        <div className="bg-dark-700 rounded-lg p-2">
+          <p className="text-sm font-bold text-slate-200">{currentHrs.toLocaleString('en-IN')}</p>
+          <p className="text-[9px] text-slate-600 mt-0.5">Total Hrs</p>
+        </div>
+        {hrsLeft !== null && (
+          <div className="bg-dark-700 rounded-lg p-2">
+            <p className={`text-sm font-bold ${hrsLeft < (lifeHrs * 0.1) ? 'text-red-400' : 'text-slate-200'}`}>
+              {hrsLeft.toLocaleString('en-IN')}
+            </p>
+            <p className="text-[9px] text-slate-600 mt-0.5">Hrs Left</p>
+          </div>
+        )}
+        {overhaulHrs > 0 && (
+          <div className="bg-dark-700 rounded-lg p-2">
+            <p className={`text-sm font-bold ${overhaulDue ? 'text-red-400' : overhaulIn < 500 ? 'text-amber-400' : 'text-slate-200'}`}>
+              {overhaulDue ? 'DUE' : Math.abs(overhaulIn).toLocaleString('en-IN')}
+            </p>
+            <p className="text-[9px] text-slate-600 mt-0.5">{overhaulDue ? '⚠ Overhaul' : 'To Overhaul'}</p>
+          </div>
+        )}
+      </div>
+
+      {/* Progress bar */}
+      {lifeHrs > 0 && (
+        <div className="space-y-1.5">
+          <div className="relative h-3 bg-dark-700 rounded-full overflow-hidden">
+            {/* Overhaul milestone marker */}
+            {overhaulHrs > 0 && overhaulHrs < lifeHrs && (
+              <div className="absolute top-0 bottom-0 w-0.5 bg-amber-400/90 z-10"
+                style={{ left: `${Math.min(99, (overhaulHrs / lifeHrs) * 100)}%` }} />
+            )}
+            <div className={`h-full rounded-full transition-all duration-500 ${stage?.bar || 'bg-slate-500'}`}
+              style={{ width: `${lifePct}%` }} />
+          </div>
+          <div className="flex items-center justify-between text-[10px] text-slate-600">
+            <span>{atPurchase > 0 ? `Acquired at ${atPurchase.toLocaleString('en-IN')} hrs` : mfgYear ? `Mfr: ${mfgYear}` : ''}</span>
+            <div className="flex items-center gap-3">
+              {overhaulHrs > 0 && overhaulHrs < lifeHrs && (
+                <span className="text-amber-600/80">│ Overhaul @ {overhaulHrs.toLocaleString('en-IN')} hrs</span>
+              )}
+              <span>{lifePct?.toFixed(1)}% of {lifeHrs.toLocaleString('en-IN')} hrs used</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Decision tip */}
+      {stage && (
+        <p className={`text-[11px] rounded-lg px-2.5 py-1.5 leading-relaxed ${
+          stage.label === 'End of Life' ? 'bg-red-500/10 text-red-300' :
+          stage.label === 'Late Life'   ? 'bg-amber-500/10 text-amber-300' :
+          'bg-dark-700/60 text-slate-500'
+        }`}>{stage.tip}</p>
+      )}
+    </div>
+  )
+}
+
 function EquipmentCard({ equipment, onClick }) {
   const st         = STATUS_COLORS[equipment.status] || STATUS_COLORS.active
   const alert      = hasExpiryAlert(equipment)
@@ -3994,6 +4149,9 @@ function EquipmentCard({ equipment, onClick }) {
           </span>
         </div>
       </div>
+
+      {/* Row 2b: lifecycle mini-bar (only if useful_life_hours is set) */}
+      <LifecycleBar equipment={equipment} compact />
 
       {/* Row 3: reg number + ownership + site */}
       <div className="flex items-center justify-between mt-2 gap-2">
