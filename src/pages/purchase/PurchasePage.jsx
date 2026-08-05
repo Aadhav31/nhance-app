@@ -1326,16 +1326,6 @@ function BillsTab({ companyId, session }) {
     enabled: !!companyId,
   })
 
-  // Separate lightweight query: check if selected vendor is a fuel supplier
-  const { data: selectedVendorMeta } = useQuery({
-    queryKey: ['vendor_meta', form.vendor_id],
-    queryFn: async () => {
-      const { data } = await supabase.from('vendors').select('vendor_type').eq('id', form.vendor_id).single()
-      return data
-    },
-    enabled: !!form.vendor_id,
-    staleTime: 60_000,
-  })
 
   // Inventory items + stores for the inward-type link
   const { data: invItems = [] } = useQuery({
@@ -1436,9 +1426,8 @@ function BillsTab({ companyId, session }) {
 
   const isTax = form.is_tax_invoice !== false
   const selectedVendorObj = vendors.find(v => v.id === form.vendor_id)
-  const isFuelVendor = selectedVendorMeta?.vendor_type === 'fuel'
 
-  // Fuel tanks — load only for fuel vendors when checkbox is ticked
+  // Fuel tanks — load when checkbox is ticked
   const { data: fuelTanks = [] } = useQuery({
     queryKey: ['fuel_tanks_for_bill', companyId],
     queryFn: async () => {
@@ -1447,7 +1436,7 @@ function BillsTab({ companyId, session }) {
         .eq('company_id', companyId).eq('is_active', true).order('tank_type').order('name')
       return data || []
     },
-    enabled: !!companyId && isFuelVendor && addToTank,
+    enabled: !!companyId && addToTank,
   })
 
   const save = async () => {
@@ -1896,7 +1885,7 @@ function BillsTab({ companyId, session }) {
               <Field label="Vendor *">
                 <select className={inp()} value={form.vendor_id} onChange={e => {
                   const v = vendors.find(x => x.id === e.target.value)
-                  setAddToTank(false); setFuelTankId('')
+                  setAddToTank(false); setFuelTankId('') // reset tank on vendor change
                   setForm(p => ({ ...p, vendor_id: e.target.value, vendor_gstin: v?.gstin || 'URP' }))
                 }}>
                   <option value="">-- Select vendor --</option>
@@ -2054,8 +2043,8 @@ function BillsTab({ companyId, session }) {
           </div>
           )}
 
-          {/* ── Receive Fuel Into Tank — fuel vendors only, create only ── */}
-          {!editing && isFuelVendor && (
+          {/* ── Receive Fuel Into Tank — create only ── */}
+          {!editing && !!form.vendor_id && (
           <div className={`rounded-xl border p-3 transition-colors ${addToTank ? 'border-orange-700/50 bg-orange-500/5' : 'border-dark-700 bg-dark-800/40'}`}>
             <label className="flex items-center gap-2.5 cursor-pointer select-none">
               <input type="checkbox" checked={addToTank} onChange={e => { setAddToTank(e.target.checked); if (!e.target.checked) setFuelTankId('') }}
