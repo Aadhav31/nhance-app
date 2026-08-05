@@ -1320,7 +1320,7 @@ function BillsTab({ companyId, session }) {
   const { data: vendors = [] } = useQuery({
     queryKey: ['vendors_list', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('vendors').select('id, name, gstin, vendor_type').eq('company_id', companyId).order('name')
+      const { data } = await supabase.from('vendors').select('id, name, gstin').eq('company_id', companyId).order('name')
       return data || []
     },
     enabled: !!companyId,
@@ -1424,12 +1424,9 @@ function BillsTab({ companyId, session }) {
   })
 
   const isTax = form.is_tax_invoice !== false
-
-  // Derive whether the selected vendor is a fuel supplier
   const selectedVendorObj = vendors.find(v => v.id === form.vendor_id)
-  const isFuelVendor = selectedVendorObj?.vendor_type === 'fuel'
 
-  // Fuel tanks — only load when a fuel vendor is selected
+  // Fuel tanks — load when the add-to-tank checkbox is ticked
   const { data: fuelTanks = [] } = useQuery({
     queryKey: ['fuel_tanks_for_bill', companyId],
     queryFn: async () => {
@@ -1438,7 +1435,7 @@ function BillsTab({ companyId, session }) {
         .eq('company_id', companyId).eq('is_active', true).order('tank_type').order('name')
       return data || []
     },
-    enabled: !!companyId && isFuelVendor,
+    enabled: !!companyId && addToTank,
   })
 
   const save = async () => {
@@ -2044,8 +2041,8 @@ function BillsTab({ companyId, session }) {
           </div>
           )}
 
-          {/* ── Receive Fuel Into Tank — only for fuel vendors, create only ── */}
-          {!editing && isFuelVendor && (
+          {/* ── Receive Fuel Into Tank — create only ── */}
+          {!editing && (
           <div className={`rounded-xl border p-3 transition-colors ${addToTank ? 'border-orange-700/50 bg-orange-500/5' : 'border-dark-700 bg-dark-800/40'}`}>
             <label className="flex items-center gap-2.5 cursor-pointer select-none">
               <input type="checkbox" checked={addToTank} onChange={e => { setAddToTank(e.target.checked); if (!e.target.checked) setFuelTankId('') }}
