@@ -17,7 +17,7 @@ import {
   Save, Trash2, Edit2, FileText, Wrench, Shield, Phone, Mail,
   ChevronRight, AlertCircle, Clock, Activity, LayoutGrid, List,
   Upload, Download, Eye, FolderOpen, Bell,
-  Search, History, BookOpen, PackageOpen, Tag, ArrowLeftRight
+  Search, History, BookOpen, PackageOpen, Tag, ArrowLeftRight, Pencil, CalendarDays
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format, differenceInDays } from 'date-fns'
@@ -1746,6 +1746,37 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
   // ── Utilization calendar queries ──────────────────────────────────────────────
   const _calY  = calMonth.getFullYear()
   const _calM  = calMonth.getMonth()
+  // planned working days target for this machine/month
+  const [editingTarget, setEditingTarget] = useState(false)
+  const [targetInput,   setTargetInput]   = useState('')
+  const [savingTarget,  setSavingTarget]  = useState(false)
+  const { data: utilizationTarget, refetch: refetchTarget } = useQuery({
+    queryKey: ['utilization_target', equipment.id, _calY, _calM + 1],
+    queryFn: async () => {
+      const { data } = await supabase.from('equipment_utilization_targets')
+        .select('id, planned_days')
+        .eq('equipment_id', equipment.id)
+        .eq('year', _calY)
+        .eq('month', _calM + 1)
+        .maybeSingle()
+      return data
+    },
+    enabled: detailTab === 'shift_schedule',
+  })
+  const saveTarget = async () => {
+    const days = parseInt(targetInput, 10)
+    if (isNaN(days) || days < 0 || days > 31) { toast.error('Enter a valid number (0–31)'); return }
+    setSavingTarget(true)
+    try {
+      const { error } = await supabase.from('equipment_utilization_targets')
+        .upsert({ equipment_id: equipment.id, company_id: companyId, year: _calY, month: _calM + 1, planned_days: days }, { onConflict: 'equipment_id,year,month' })
+      if (error) throw error
+      await refetchTarget()
+      setEditingTarget(false)
+      toast.success('Target saved')
+    } catch (err) { toast.error(err.message)
+    } finally { setSavingTarget(false) }
+  }
   const calMonthStart = `${_calY}-${String(_calM + 1).padStart(2, '0')}-01`
   const calMonthEnd   = (() => {
     const d = new Date(_calY, _calM + 1, 0)
@@ -3094,8 +3125,67 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
           const selFuelCons  = selOps.reduce((s, o) => s + (Number(o.fuel_consumed) || 0), 0)
           const selKind = calSelectedDay ? getTileKind(Number(calSelectedDay.slice(8))) : null
 
+          // ── Planned vs Actual stats ──────────────────────────────────────
+          const actualWorkedDays = Object.keys(opsByDate).filter(ds => {
+            const ops = opsByDate[ds] || []
+            return ops.some(o => o.status === 'working' || o.status === 'idle' || o.status === 'maintenance')
+          }).length
+          const plannedDays = utilizationTarget?.planned_days ?? null
+          const utilPct = (plannedDays && plannedDays > 0) ? Math.round((actualWorkedDays / plannedDays) * 100) : null
+          const utilColor = utilPct === null ? 'text-slate-400' : utilPct >= 90 ? 'text-green-400' : utilPct >= 70 ? 'text-amber-400' : 'text-red-400'
+          const utilBg    = utilPct === null ? 'bg-dark-700/40 border-dark-600' : utilPct >= 90 ? 'bg-green-500/10 border-green-500/30' : utilPct >= 70 ? 'bg-amber-500/10 border-amber-500/30' : 'bg-red-500/10 border-red-500/30'
+
           return (
             <div className="space-y-5 pt-1">
+
+              {/* ── Planned vs Actual banner ──────────────────────────────── */}
+              <div className={`rounded-xl border p-3 ${utilBg}`}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="grid grid-cols-3 gap-3 flex-1">
+                    <div className="text-center">
+                      <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-0.5">Actual</p>
+                      <p className="text-2xl font-bold text-slate-100">{actualWorkedDays}</p>
+                      <p className="text-[10px] text-slate-500">days worked</p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-0.5">Planned</p>
+                      {editingTarget ? (
+                        <div className="flex items-center gap-1 justify-center">
+                          <input type="number" min={0} max={31}
+                            className="w-14 bg-dark-700 border border-dark-500 rounded px-1.5 py-0.5 text-sm text-center text-slate-100 focus:outline-none"
+                            value={targetInput} onChange={e => setTargetInput(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter') saveTarget(); if (e.key === 'Escape') setEditingTarget(false) }}
+                            autoFocus />
+                          <button onClick={saveTarget} disabled={savingTarget}
+                            className="text-[10px] px-1.5 py-0.5 rounded bg-primary-600 text-white disabled:opacity-40">
+                            {savingTarget ? '…' : '✓'}
+                          </button>
+                          <button onClick={() => setEditingTarget(false)} className="text-[10px] text-slate-500 hover:text-slate-300">✕</button>
+                        </div>
+                      ) : (
+                        <button className="group flex items-center gap-1 justify-center w-full"
+                          onClick={() => { setTargetInput(plannedDays ?? ''); setEditingTarget(true) }}
+                          disabled={!isAdmin}>
+                          <p className={`text-2xl font-bold ${plannedDays !== null ? 'text-slate-100' : 'text-slate-600'}`}>
+                            {plannedDays !== null ? plannedDays : '—'}
+                          </p>
+                          {isAdmin && <Pencil className="w-3 h-3 text-slate-600 group-hover:text-slate-400 shrink-0 mb-1" />}
+                        </button>
+                      )}
+                      <p className="text-[10px] text-slate-500">days target</p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-0.5">Utilization</p>
+                      <p className={`text-2xl font-bold ${utilColor}`}>{utilPct !== null ? `${utilPct}%` : '—'}</p>
+                      <p className="text-[10px] text-slate-500">{utilPct === null ? 'set target' : utilPct >= 90 ? 'on track' : utilPct >= 70 ? 'review' : 'below target'}</p>
+                    </div>
+                  </div>
+                </div>
+                {!isAdmin && plannedDays === null && (
+                  <p className="text-[10px] text-slate-600 text-center mt-2">No planned days set for this month</p>
+                )}
+              </div>
+
               {/* ── Calendar section ──────────────────────────────────────── */}
               <div className="bg-dark-800 rounded-xl border border-dark-700 p-3 space-y-2">
                 {/* Month navigator */}
@@ -3402,9 +3492,11 @@ function FleetTab({ companyId, showAdd, setShowAdd, onNavigate }) {
   const [search,          setSearch]          = useState('')
   const [filterStatus,    setFilterStatus]    = useState('all')
   const [filterOwnership, setFilterOwnership] = useState('all')
-  const [viewMode,        setViewMode]        = useState('grid')    // 'grid' | 'site'
+  const [viewMode,        setViewMode]        = useState('grid')    // 'grid' | 'site' | 'utilization'
   const [alertDismissed,  setAlertDismissed]  = useState(false)
   const [gateDismissed,   setGateDismissed]   = useState(false)
+  // Fleet utilization grid state
+  const [gridMonth, setGridMonth] = useState(() => { const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), 1) })
 
   const { data: equipment = [], isLoading } = useQuery({
     queryKey: ['equipment', companyId],
@@ -3450,6 +3542,58 @@ function FleetTab({ companyId, showAdd, setShowAdd, onNavigate }) {
     enabled: equipment.length > 0,
     staleTime: 5 * 60 * 1000,
   })
+
+  // Fleet utilization grid data
+  const _gY  = gridMonth.getFullYear()
+  const _gM  = gridMonth.getMonth()
+  const gridMonthStart = `${_gY}-${String(_gM + 1).padStart(2, '0')}-01`
+  const gridMonthEnd   = (() => { const d = new Date(_gY, _gM + 1, 0); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` })()
+  const daysInGridMonth = new Date(_gY, _gM + 1, 0).getDate()
+
+  const { data: gridOps = [] } = useQuery({
+    queryKey: ['fleet_grid_ops', companyId, gridMonthStart],
+    queryFn: async () => {
+      const { data } = await supabase.from('daily_operations')
+        .select('equipment_id, ops_date, status')
+        .eq('company_id', companyId)
+        .gte('ops_date', gridMonthStart)
+        .lte('ops_date', gridMonthEnd)
+      return data || []
+    },
+    enabled: viewMode === 'utilization',
+  })
+
+  const { data: gridTargets = [] } = useQuery({
+    queryKey: ['fleet_grid_targets', companyId, _gY, _gM + 1],
+    queryFn: async () => {
+      const { data } = await supabase.from('equipment_utilization_targets')
+        .select('equipment_id, planned_days')
+        .eq('company_id', companyId)
+        .eq('year', _gY)
+        .eq('month', _gM + 1)
+      return data || []
+    },
+    enabled: viewMode === 'utilization',
+  })
+
+  // Build lookup: equipment_id → Set of worked day numbers
+  const gridOpsByEquip = {}
+  const gridBreakByEquip = {}
+  for (const op of gridOps) {
+    const day = parseInt(op.ops_date.slice(8), 10)
+    if (!gridOpsByEquip[op.equipment_id]) gridOpsByEquip[op.equipment_id] = new Set()
+    if (op.status === 'working' || op.status === 'idle' || op.status === 'maintenance') {
+      gridOpsByEquip[op.equipment_id].add(day)
+    }
+    if (op.status === 'breakdown') {
+      if (!gridBreakByEquip[op.equipment_id]) gridBreakByEquip[op.equipment_id] = new Set()
+      gridBreakByEquip[op.equipment_id].add(day)
+    }
+  }
+  const gridTargetByEquip = {}
+  for (const t of gridTargets) gridTargetByEquip[t.equipment_id] = t.planned_days
+
+  const MONTH_NAMES_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 
   const filtered = equipment.filter(e =>
     (!search || e.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -3577,6 +3721,9 @@ function FleetTab({ companyId, showAdd, setShowAdd, onNavigate }) {
           <button onClick={() => setViewMode('site')}
             className={`px-2.5 py-2 transition-colors ${viewMode === 'site' ? 'bg-primary-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}
             title="Group by site"><List className="w-3.5 h-3.5" /></button>
+          <button onClick={() => setViewMode('utilization')}
+            className={`px-2.5 py-2 transition-colors ${viewMode === 'utilization' ? 'bg-primary-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}
+            title="Fleet utilization grid"><CalendarDays className="w-3.5 h-3.5" /></button>
         </div>
       </div>
 
@@ -3596,7 +3743,7 @@ function FleetTab({ companyId, showAdd, setShowAdd, onNavigate }) {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {filtered.map(eq => <EquipmentCard key={eq.id} equipment={eq} onClick={() => setSelected(eq)} />)}
           </div>
-        ) : (
+        ) : viewMode === 'site' ? (
           /* Site-grouped view */
           <div className="space-y-5">
             {bySite.map(([site, items]) => (
@@ -3614,6 +3761,147 @@ function FleetTab({ companyId, showAdd, setShowAdd, onNavigate }) {
                 </div>
               </div>
             ))}
+          </div>
+        ) : (
+          /* ── Fleet Utilization Grid ── */
+          <div className="space-y-3">
+            {/* Month navigator */}
+            <div className="flex items-center justify-between bg-dark-800 rounded-xl border border-dark-700 px-3 py-2">
+              <button onClick={() => setGridMonth(prev => new Date(prev.getFullYear(), prev.getMonth() - 1, 1))}
+                className="p-1 rounded-lg hover:bg-dark-700 text-slate-400 hover:text-slate-200 transition-colors">
+                <ChevronRight className="w-4 h-4 rotate-180" />
+              </button>
+              <div className="text-center">
+                <span className="text-sm font-semibold text-slate-200">{MONTH_NAMES_SHORT[_gM]} {_gY}</span>
+                <p className="text-[10px] text-slate-500 mt-0.5">{daysInGridMonth} days · {equipment.filter(e => !!e.current_project_id).length} deployed machines</p>
+              </div>
+              <button onClick={() => setGridMonth(prev => new Date(prev.getFullYear(), prev.getMonth() + 1, 1))}
+                className="p-1 rounded-lg hover:bg-dark-700 text-slate-400 hover:text-slate-200 transition-colors">
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Legend */}
+            <div className="flex gap-4 flex-wrap px-1">
+              {[
+                { color: 'bg-green-500/80',  label: 'Worked' },
+                { color: 'bg-red-500/70',    label: 'Breakdown' },
+                { color: 'bg-blue-500/20',   label: 'Sunday' },
+                { color: 'bg-dark-600/40',   label: 'No data' },
+              ].map(({ color, label }) => (
+                <div key={label} className="flex items-center gap-1.5">
+                  <div className={`w-2.5 h-2.5 rounded-sm ${color}`} />
+                  <span className="text-[10px] text-slate-500">{label}</span>
+                </div>
+              ))}
+            </div>
+
+            {/* Grid header: day numbers */}
+            <div className="overflow-x-auto rounded-xl border border-dark-700 bg-dark-800">
+              {/* Day header row */}
+              <div className="flex border-b border-dark-700 bg-dark-900/50 sticky top-0 z-10" style={{ minWidth: `${180 + daysInGridMonth * 20}px` }}>
+                <div className="w-44 shrink-0 px-3 py-1.5 text-[10px] font-semibold text-slate-500 uppercase tracking-wider border-r border-dark-700">Machine</div>
+                <div className="w-16 shrink-0 px-2 py-1.5 text-[10px] font-semibold text-slate-500 uppercase tracking-wider border-r border-dark-700 text-center">Util %</div>
+                {Array.from({ length: daysInGridMonth }, (_, i) => i + 1).map(day => {
+                  const dow = new Date(_gY, _gM, day).getDay()
+                  return (
+                    <div key={day} className={`flex-1 py-1.5 text-center text-[9px] font-semibold border-r border-dark-700/50 last:border-r-0
+                      ${dow === 0 ? 'text-blue-400' : 'text-slate-500'}`} style={{ minWidth: 20 }}>
+                      {day}
+                    </div>
+                  )
+                })}
+              </div>
+
+              {/* Machine rows */}
+              {equipment.length === 0 ? (
+                <div className="py-10 text-center text-xs text-slate-500">No equipment found</div>
+              ) : (
+                equipment.map(eq => {
+                  const worked   = gridOpsByEquip[eq.id]  || new Set()
+                  const broken   = gridBreakByEquip[eq.id] || new Set()
+                  const planned  = gridTargetByEquip[eq.id] ?? null
+                  const actualDays = worked.size
+                  const pct = (planned && planned > 0) ? Math.round((actualDays / planned) * 100) : null
+                  const pctColor = pct === null ? 'text-slate-500' : pct >= 90 ? 'text-green-400' : pct >= 70 ? 'text-amber-400' : 'text-red-400'
+
+                  return (
+                    <button key={eq.id}
+                      onClick={() => setSelected(eq)}
+                      className="flex w-full border-b border-dark-700/50 last:border-b-0 hover:bg-dark-700/30 transition-colors group text-left"
+                      style={{ minWidth: `${180 + daysInGridMonth * 20}px` }}>
+                      {/* Machine name */}
+                      <div className="w-44 shrink-0 px-3 py-2 border-r border-dark-700 flex flex-col justify-center">
+                        <p className="text-xs font-medium text-slate-200 truncate group-hover:text-primary-300 transition-colors">{eq.name}</p>
+                        {eq.registration_number && (
+                          <p className="text-[9px] text-slate-600 truncate">{eq.registration_number}</p>
+                        )}
+                      </div>
+                      {/* Utilization % */}
+                      <div className="w-16 shrink-0 px-2 py-2 border-r border-dark-700 flex flex-col items-center justify-center">
+                        <span className={`text-xs font-bold ${pctColor}`}>{pct !== null ? `${pct}%` : '—'}</span>
+                        <span className="text-[9px] text-slate-600">{actualDays}/{planned ?? '?'}</span>
+                      </div>
+                      {/* Day cells */}
+                      {Array.from({ length: daysInGridMonth }, (_, i) => i + 1).map(day => {
+                        const dow    = new Date(_gY, _gM, day).getDay()
+                        const isSun  = dow === 0
+                        const hasW   = worked.has(day)
+                        const hasB   = broken.has(day)
+                        const today  = new Date()
+                        const isFut  = new Date(_gY, _gM, day) > today
+
+                        let cellBg = isFut ? 'bg-transparent' : isSun ? 'bg-blue-500/15' : 'bg-dark-600/25'
+                        if (hasW && hasB)   cellBg = 'bg-gradient-to-br from-green-500/70 to-red-500/70'
+                        else if (hasW)      cellBg = 'bg-green-500/75'
+                        else if (hasB)      cellBg = 'bg-red-500/65'
+
+                        return (
+                          <div key={day}
+                            className={`flex-1 py-2 border-r border-dark-700/30 last:border-r-0 ${cellBg}`}
+                            style={{ minWidth: 20 }} />
+                        )
+                      })}
+                    </button>
+                  )
+                })
+              )}
+            </div>
+
+            {/* Summary footer */}
+            <div className="grid grid-cols-3 gap-3">
+              {(() => {
+                const totalActual  = equipment.reduce((s, eq) => s + (gridOpsByEquip[eq.id]?.size || 0), 0)
+                const totalPlanned = equipment.reduce((s, eq) => s + (gridTargetByEquip[eq.id] || 0), 0)
+                const fleetPct = totalPlanned > 0 ? Math.round((totalActual / totalPlanned) * 100) : null
+                const onTrack = equipment.filter(eq => {
+                  const a = gridOpsByEquip[eq.id]?.size || 0
+                  const p = gridTargetByEquip[eq.id]
+                  return p && (a / p) >= 0.9
+                }).length
+                return (
+                  <>
+                    <div className="bg-dark-800 rounded-xl border border-dark-700 p-3 text-center">
+                      <p className="text-[10px] text-slate-500 mb-0.5">Fleet Utilization</p>
+                      <p className={`text-xl font-bold ${fleetPct === null ? 'text-slate-500' : fleetPct >= 90 ? 'text-green-400' : fleetPct >= 70 ? 'text-amber-400' : 'text-red-400'}`}>
+                        {fleetPct !== null ? `${fleetPct}%` : '—'}
+                      </p>
+                      <p className="text-[10px] text-slate-600">{totalActual} / {totalPlanned || '?'} days</p>
+                    </div>
+                    <div className="bg-dark-800 rounded-xl border border-dark-700 p-3 text-center">
+                      <p className="text-[10px] text-slate-500 mb-0.5">On Track (≥90%)</p>
+                      <p className="text-xl font-bold text-green-400">{onTrack}</p>
+                      <p className="text-[10px] text-slate-600">of {equipment.length} machines</p>
+                    </div>
+                    <div className="bg-dark-800 rounded-xl border border-dark-700 p-3 text-center">
+                      <p className="text-[10px] text-slate-500 mb-0.5">No Target Set</p>
+                      <p className="text-xl font-bold text-slate-400">{equipment.filter(eq => gridTargetByEquip[eq.id] === undefined).length}</p>
+                      <p className="text-[10px] text-slate-600">machines</p>
+                    </div>
+                  </>
+                )
+              })()}
+            </div>
           </div>
         )}
       </div>
