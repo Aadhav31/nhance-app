@@ -2453,22 +2453,85 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
               )
             })()}
 
-            {/* ── Redirect hint ── */}
-            {onNavigate && equipment.current_project_id && (
-              <button onClick={() => { onClose(); onNavigate('projects') }}
-                className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-xl border border-dark-600 text-xs text-slate-400 hover:text-slate-200 hover:border-dark-500 transition-colors">
-                <FolderOpen className="w-3.5 h-3.5" />
-                Manage deployment in Projects
-                <ChevronRight className="w-3.5 h-3.5" />
-              </button>
-            )}
-            {onNavigate && !equipment.current_project_id && (
-              <button onClick={() => { onClose(); onNavigate('projects') }}
-                className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-xl border border-dashed border-dark-600 text-xs text-slate-500 hover:text-slate-300 hover:border-dark-500 transition-colors">
-                <Building2 className="w-3.5 h-3.5" />
-                Deploy this equipment — go to Projects
-                <ChevronRight className="w-3.5 h-3.5" />
-              </button>
+            {/* ── Deploy / Transfer form (admin only) ── */}
+            {isAdmin && (
+              <div className={`rounded-xl border overflow-hidden ${equipment.current_project_id ? 'border-amber-700/40 bg-amber-500/5' : 'border-dark-600 bg-dark-800/40'}`}>
+                <div className="px-4 py-2.5 border-b border-dark-700/60 flex items-center gap-2">
+                  <ArrowLeftRight className="w-3.5 h-3.5 text-amber-400" />
+                  <span className="text-xs font-semibold text-slate-300 uppercase tracking-wider">
+                    {equipment.current_project_id ? 'Transfer to Another Project' : 'Deploy to Project'}
+                  </span>
+                  {equipment.current_project_id && (
+                    <span className="text-[10px] text-amber-500 ml-auto">TC will be generated on transfer</span>
+                  )}
+                </div>
+                <div className="p-3 space-y-2.5">
+                  {/* Client */}
+                  <div>
+                    <label className="block text-[10px] text-slate-500 mb-1 uppercase tracking-wider">Client</label>
+                    <select
+                      className="w-full bg-dark-700 border border-dark-600 rounded-lg px-2.5 py-2 text-xs text-slate-100 focus:outline-none focus:border-primary-500 appearance-none"
+                      value={deployClientId}
+                      onChange={e => { setDeployClientId(e.target.value); setDeployProjectId('') }}>
+                      <option value="">— No client —</option>
+                      {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                  </div>
+                  {/* Project */}
+                  <div>
+                    <label className="block text-[10px] text-slate-500 mb-1 uppercase tracking-wider">Project <span className="text-red-400">*</span></label>
+                    <select
+                      className="w-full bg-dark-700 border border-dark-600 rounded-lg px-2.5 py-2 text-xs text-slate-100 focus:outline-none focus:border-primary-500 appearance-none"
+                      value={deployProjectId}
+                      onChange={e => setDeployProjectId(e.target.value)}>
+                      <option value="">— Select project —</option>
+                      {projects
+                        .filter(p => !deployClientId || p.client_id === deployClientId)
+                        .map(p => <option key={p.id} value={p.id}>{p.project_name}{p.project_code ? ` · ${p.project_code}` : ''}</option>)}
+                    </select>
+                  </div>
+                  {/* Rate card (if items exist) */}
+                  {rateItems.length > 0 && (
+                    <div>
+                      <label className="block text-[10px] text-slate-500 mb-1 uppercase tracking-wider">Rate Card Item</label>
+                      <select
+                        className="w-full bg-dark-700 border border-dark-600 rounded-lg px-2.5 py-2 text-xs text-slate-100 focus:outline-none focus:border-primary-500 appearance-none"
+                        value={deployRateItemId}
+                        onChange={e => setDeployRateItemId(e.target.value)}>
+                        <option value="">— Auto-select / none —</option>
+                        {rateItems.map(r => (
+                          <option key={r.id} value={r.id}>
+                            {r.item_name} · {r.billing_basis} · ₹{Number(r.rate_per_hour || r.rate_per_day || r.rate_per_month || 0).toLocaleString('en-IN')}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                  {/* Fuel by client toggle */}
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input type="checkbox" checked={deployFuelByClient}
+                      onChange={e => setDeployFuelByClient(e.target.checked)}
+                      className="w-3.5 h-3.5 rounded accent-amber-500" />
+                    <span className="text-xs text-slate-400">Fuel supplied by client</span>
+                  </label>
+                  {/* Deploy button */}
+                  <button
+                    onClick={handleDeploy}
+                    disabled={deploySaving || !deployProjectId}
+                    className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-semibold transition-colors disabled:opacity-40 ${
+                      equipment.current_project_id
+                        ? 'bg-amber-600 hover:bg-amber-500 text-white'
+                        : 'bg-primary-600 hover:bg-primary-500 text-white'
+                    }`}>
+                    {deploySaving
+                      ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      : equipment.current_project_id
+                        ? <ArrowLeftRight className="w-3.5 h-3.5" />
+                        : <Activity className="w-3.5 h-3.5" />}
+                    {deploySaving ? 'Processing…' : equipment.current_project_id ? 'Transfer Equipment' : 'Deploy Equipment'}
+                  </button>
+                </div>
+              </div>
             )}
           </div>
         )}
