@@ -1153,17 +1153,6 @@ function BillsTab({ companyId, session, initialStockTxnId }) {
     clearAttach(); setAttachUrl(null); setShowCreate(true)
   }
 
-  // Auto-open Create Bill form when navigated from Inventory banner (single pending receipt)
-  const autoOpenRef = useRef(false)
-  useEffect(() => {
-    if (!initialStockTxnId || autoOpenRef.current) return
-    if (!pendingStockBills.length || !vendors.length) return
-    const receipt = pendingStockBills.find(r => r.id === initialStockTxnId)
-    if (!receipt) return
-    autoOpenRef.current = true
-    openCreateForReceipt(receipt)
-  }, [initialStockTxnId, pendingStockBills, vendors]) // eslint-disable-line react-hooks/exhaustive-deps
-
   const openEdit = async (bill) => {
     const [{ data: ld }] = await Promise.all([
       supabase.from('bill_line_items').select('*').eq('bill_id', bill.id).order('sort_order'),
@@ -1418,6 +1407,17 @@ function BillsTab({ companyId, session, initialStockTxnId }) {
     enabled: !!companyId,
     staleTime: 30_000,
   })
+
+  // Auto-open Create Bill when navigated from Inventory with a specific stock receipt
+  const autoOpenRef = useRef(false)
+  useEffect(() => {
+    if (!initialStockTxnId || autoOpenRef.current) return
+    if (!pendingStockBills.length || !vendors.length) return
+    const receipt = pendingStockBills.find(r => r.id === initialStockTxnId)
+    if (!receipt) return
+    autoOpenRef.current = true
+    openCreateForReceipt(receipt)
+  }, [initialStockTxnId, pendingStockBills, vendors]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Unlinked payments for "Link Payment" modal — fetched on demand
   const { data: unlinkedPays = [], refetch: refetchUnlinked } = useQuery({
