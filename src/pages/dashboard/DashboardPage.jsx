@@ -1268,6 +1268,268 @@ function SalesSection({ companyId, range, onNavigate }) {
   )
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SMART ALERTS
+// ─────────────────────────────────────────────────────────────────────────────
+
+const DOC_LABEL = {
+  insurance:        'Insurance Policy',
+  rc_book:          'RC Book',
+  fitness:          'Fitness Cert',
+  puc:              'PUC',
+  permit:           'Permit',
+  warranty:         'Warranty',
+  purchase_invoice: 'Purchase Invoice',
+}
+
+function useAlerts(companyId) {
+  const today = new Date().toISOString().slice(0, 10)
+  const in7   = new Date(Date.now() +  7 * 86_400_000).toISOString().slice(0, 10)
+  const in30  = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10)
+
+  // 1. Equipment in breakdown / maintenance
+  const { data: eqAlerts = [] } = useQuery({
+    queryKey: ['alerts_eq', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('equipment')
+        .select('id, name, equipment_number, status')
+        .eq('company_id', companyId)
+        .in('status', ['breakdown', 'maintenance'])
+      return data || []
+    },
+    staleTime: 30_000, refetchInterval: 60_000, enabled: !!companyId,
+  })
+
+  // 2. Equipment documents expiring within 30 days
+  const { data: docAlerts = [] } = useQuery({
+    queryKey: ['alerts_docs', companyId, in30],
+    queryFn: async () => {
+      const { data } = await supabase.from('equipment_documents')
+        .select('id, doc_type, expiry_date, equipment:equipment_id(name, equipment_number)')
+        .eq('company_id', companyId)
+        .not('expiry_date', 'is', null)
+        .lte('expiry_date', in30)
+        .order('expiry_date', { ascending: true })
+      return data || []
+    },
+    staleTime: 3_600_000, enabled: !!companyId,
+  })
+
+  // 3. Overdue invoices (global — not period-filtered)
+  const { data: invoiceAlerts = [] } = useQuery({
+    queryKey: ['alerts_invoices', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('client_invoices')
+        .select('id, invoice_number, client_name, balance_due, due_date')
+        .eq('company_id', companyId)
+        .eq('status', 'overdue')
+        .neq('invoice_type', 'proforma')
+        .order('due_date', { ascending: true })
+      return data || []
+    },
+    staleTime: 60_000, enabled: !!companyId,
+  })
+
+  // 4. Bills due within 7 days (not yet paid)
+  const { data: billAlerts = [] } = useQuery({
+    queryKey: ['alerts_bills', companyId, today, in7],
+    queryFn: async () => {
+      const { data } = await supabase.from('bills')
+        .select('id, bill_number, vendor_name, balance_due, due_date, status')
+        .eq('company_id', companyId)
+        .not('due_date', 'is', null)
+        .lte('due_date', in7)
+        .gte('due_date', today)
+        .not('status', 'in', '("paid","cancelled")')
+        .order('due_date', { ascending: true })
+      return data || []
+    },
+    staleTime: 60_000, enabled: !!companyId,
+  })
+
+  // 5. Pending leave requests
+  const { data: leaveAlerts = [] } = useQuery({
+    queryKey: ['alerts_leaves', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('leave_requests')
+        .select('id, employee_name, from_date, leave_type')
+        .eq('company_id', companyId)
+        .eq('status', 'pending')
+      return data || []
+    },
+    staleTime: 120_000, enabled: !!companyId,
+  })
+
+  // 6. Open shift incidents
+  const { data: incidentAlerts = [] } = useQuery({
+    queryKey: ['alerts_incidents', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('shift_incidents')
+        .select('id, incident_type, equipment_name, severity, incident_date')
+        .eq('company_id', companyId)
+        .eq('status', 'open')
+        .order('incident_date', { ascending: false })
+      return data || []
+    },
+    staleTime: 60_000, enabled: !!companyId,
+  })
+
+  // 7. Deployed machines missing today's ops log
+  const { data: unloggedAlerts = [] } = useQuery({
+    queryKey: ['alerts_unlogged', companyId, today],
+    queryFn: async () => {
+      const { data: deployed } = await supabase.from('equipment')
+        .select('id, name, equipment_number')
+        .eq('company_id', companyId)
+        .eq('status', 'active')
+        .not('current_project_id', 'is', null)
+      if (!deployed?.length) return []
+      const { data: logged } = await supabase.from('daily_operations')
+        .select('equipment_id')
+        .eq('company_id', companyId)
+        .eq('ops_date', today)
+        .in('equipment_id', deployed.map(e => e.id))
+      const loggedIds = new Set((logged || []).map(l => l.equipment_id))
+      return deployed.filter(e => !loggedIds.has(e.id))
+    },
+    staleTime: 30_000, refetchInterval: 300_000, enabled: !!companyId,
+  })
+
+  return useMemo(() => {
+    const items = []
+
+    // ── CRITICAL ─────────────────────────────────────────────────────────────
+    // Machines in breakdown
+    eqAlerts.filter(e => e.status === 'breakdown').forEach(e => {
+      items.push({ level: 'critical', title: `${e.name} — BREAKDOWN`, sub: e.equipment_number || 'Fleet', nav: 'fleet', id: `eq-brk-${e.id}` })
+    })
+    // Overdue invoices
+    invoiceAlerts.forEach(inv => {
+      const days = Math.round((new Date(today) - new Date(inv.due_date)) / 86_400_000)
+      items.push({ level: 'critical', title: `Invoice overdue ${days}d — ${inv.client_name || inv.invoice_number}`, sub: `${inv.invoice_number} · ${fmtINRShort(inv.balance_due)} pending`, nav: 'sales', id: `inv-${inv.id}` })
+    })
+    // Expired documents
+    docAlerts.filter(d => d.expiry_date < today).forEach(d => {
+      const days = Math.round((new Date(today) - new Date(d.expiry_date)) / 86_400_000)
+      items.push({ level: 'critical', title: `${DOC_LABEL[d.doc_type] || d.doc_type} EXPIRED — ${d.equipment?.name || 'Equipment'}`, sub: `Expired ${days}d ago`, nav: 'fleet', id: `doc-exp-${d.id}` })
+    })
+
+    // ── WARNING ──────────────────────────────────────────────────────────────
+    // Machines in maintenance
+    eqAlerts.filter(e => e.status === 'maintenance').forEach(e => {
+      items.push({ level: 'warning', title: `${e.name} — Under Maintenance`, sub: e.equipment_number || 'Fleet', nav: 'fleet', id: `eq-mnt-${e.id}` })
+    })
+    // Documents expiring within 7 days
+    docAlerts.filter(d => {
+      if (d.expiry_date < today) return false
+      const days = Math.round((new Date(d.expiry_date) - new Date(today)) / 86_400_000)
+      return days <= 7
+    }).forEach(d => {
+      const days = Math.round((new Date(d.expiry_date) - new Date(today)) / 86_400_000)
+      items.push({ level: 'warning', title: `${DOC_LABEL[d.doc_type] || d.doc_type} expiring in ${days}d`, sub: d.equipment?.name || 'Equipment', nav: 'fleet', id: `doc-w-${d.id}` })
+    })
+    // Bills due within 3 days
+    billAlerts.filter(b => Math.round((new Date(b.due_date) - new Date(today)) / 86_400_000) <= 3).forEach(b => {
+      const days = Math.round((new Date(b.due_date) - new Date(today)) / 86_400_000)
+      items.push({ level: 'warning', title: `Bill due ${days === 0 ? 'today' : `in ${days}d`} — ${b.vendor_name || b.bill_number}`, sub: `${b.bill_number} · ${fmtINRShort(b.balance_due)}`, nav: 'purchase', id: `bill-w-${b.id}` })
+    })
+    // Open incidents (top 3)
+    incidentAlerts.slice(0, 3).forEach(i => {
+      items.push({ level: 'warning', title: `Open incident — ${i.equipment_name || 'Equipment'}`, sub: `${i.incident_type || 'Incident'} · ${fmtDate(i.incident_date)}`, nav: 'fleet', id: `inc-${i.id}` })
+    })
+
+    // ── INFO ─────────────────────────────────────────────────────────────────
+    // Documents expiring in 8–30 days
+    docAlerts.filter(d => {
+      if (d.expiry_date < today) return false
+      const days = Math.round((new Date(d.expiry_date) - new Date(today)) / 86_400_000)
+      return days > 7
+    }).forEach(d => {
+      const days = Math.round((new Date(d.expiry_date) - new Date(today)) / 86_400_000)
+      items.push({ level: 'info', title: `${DOC_LABEL[d.doc_type] || d.doc_type} expiring in ${days}d`, sub: d.equipment?.name || 'Equipment', nav: 'fleet', id: `doc-i-${d.id}` })
+    })
+    // Bills due in 4–7 days
+    billAlerts.filter(b => Math.round((new Date(b.due_date) - new Date(today)) / 86_400_000) > 3).forEach(b => {
+      const days = Math.round((new Date(b.due_date) - new Date(today)) / 86_400_000)
+      items.push({ level: 'info', title: `Bill due in ${days}d — ${b.vendor_name || b.bill_number}`, sub: `${b.bill_number} · ${fmtINRShort(b.balance_due)}`, nav: 'purchase', id: `bill-i-${b.id}` })
+    })
+    // Pending leave requests (grouped)
+    if (leaveAlerts.length > 0) {
+      items.push({ level: 'info', title: `${leaveAlerts.length} leave request${leaveAlerts.length > 1 ? 's' : ''} pending approval`, sub: leaveAlerts.slice(0, 3).map(l => l.employee_name).join(', '), nav: 'hr', id: 'leaves-pending' })
+    }
+    // Deployed machines not logged today
+    if (unloggedAlerts.length > 0) {
+      items.push({ level: 'info', title: `${unloggedAlerts.length} deployed machine${unloggedAlerts.length > 1 ? 's' : ''} not logged today`, sub: unloggedAlerts.slice(0, 3).map(e => e.name).join(', '), nav: 'fleet', id: 'unlogged-ops' })
+    }
+
+    return items
+  }, [eqAlerts, docAlerts, invoiceAlerts, billAlerts, leaveAlerts, incidentAlerts, unloggedAlerts, today])
+}
+
+// ── AlertStrip ────────────────────────────────────────────────────────────────
+const LEVEL_CFG = {
+  critical: { dot: 'bg-red-500',   text: 'text-red-300',    sub: 'text-red-400/60',    strip: 'border-red-500/40 bg-red-500/8',    header: 'text-red-300',    icon: 'text-red-400' },
+  warning:  { dot: 'bg-amber-500', text: 'text-amber-300',  sub: 'text-amber-400/60',  strip: 'border-amber-500/30 bg-amber-500/6', header: 'text-amber-300',  icon: 'text-amber-400' },
+  info:     { dot: 'bg-slate-500', text: 'text-slate-300',  sub: 'text-slate-500',     strip: 'border-dark-600 bg-dark-800/60',    header: 'text-slate-300',  icon: 'text-slate-400' },
+}
+
+function AlertStrip({ alerts, onNavigate }) {
+  const criticals = alerts.filter(a => a.level === 'critical')
+  const warnings  = alerts.filter(a => a.level === 'warning')
+  const [open, setOpen] = useState(criticals.length > 0 || warnings.length > 0)
+
+  if (!alerts.length) return null
+
+  const topLevel = criticals.length > 0 ? 'critical' : warnings.length > 0 ? 'warning' : 'info'
+  const cfg = LEVEL_CFG[topLevel]
+
+  const headerText = criticals.length > 0
+    ? `${criticals.length} critical · ${(warnings.length + alerts.filter(a=>a.level==='info').length)} other${criticals.length + warnings.length + alerts.filter(a=>a.level==='info').length > 1 ? 's' : ''}`
+    : warnings.length > 0
+    ? `${warnings.length} item${warnings.length > 1 ? 's' : ''} need attention${alerts.filter(a=>a.level==='info').length > 0 ? ` · ${alerts.filter(a=>a.level==='info').length} info` : ''}`
+    : `${alerts.length} item${alerts.length > 1 ? 's' : ''} for your attention`
+
+  return (
+    <div className={`rounded-xl border overflow-hidden ${cfg.strip}`}>
+      {/* Collapsible header */}
+      <button onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between px-4 py-3 text-left gap-3">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <AlertCircle className={`w-4 h-4 shrink-0 ${cfg.icon}`} />
+          <span className={`text-sm font-semibold truncate ${cfg.header}`}>{headerText}</span>
+          {criticals.length > 0 && (
+            <span className="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 animate-pulse">{criticals.length}</span>
+          )}
+          {criticals.length === 0 && warnings.length > 0 && (
+            <span className="bg-amber-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0">{warnings.length}</span>
+          )}
+        </div>
+        <ChevronRight className={`w-4 h-4 text-slate-500 transition-transform shrink-0 ${open ? 'rotate-90' : ''}`} />
+      </button>
+
+      {/* Item rows */}
+      {open && (
+        <div className="border-t border-dark-700/40 divide-y divide-dark-700/20">
+          {alerts.map(alert => {
+            const s = LEVEL_CFG[alert.level]
+            return (
+              <button key={alert.id} onClick={() => onNavigate?.(alert.nav)}
+                className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-dark-700/30 transition-colors group">
+                <span className={`w-1.5 h-1.5 rounded-full shrink-0 mt-0.5 ${s.dot}`} />
+                <div className="flex-1 min-w-0">
+                  <p className={`text-xs font-medium truncate ${s.text}`}>{alert.title}</p>
+                  {alert.sub && <p className={`text-[10px] truncate mt-0.5 ${s.sub}`}>{alert.sub}</p>}
+                </div>
+                <ChevronRight className="w-3.5 h-3.5 text-slate-700 group-hover:text-slate-500 shrink-0 transition-colors" />
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Operator Dashboard ─────────────────────────────────────────────────────────
 function OperatorDashboard({ companyId, userId, range, onNavigate }) {
   const [panel, setPanel] = useState(null)
@@ -1349,6 +1611,9 @@ export default function DashboardPage({ onNavigate }) {
   const isSupervisor = role === ROLES.SUPERVISOR
   const isOperator   = role === ROLES.OPERATOR
 
+  // Smart alerts — only for admin / supervisor
+  const alerts = useAlerts(isAdmin || isSupervisor ? companyId : null)
+
   if (!companyId) return (
     <div className="flex items-center justify-center h-full text-slate-500 text-sm">Loading…</div>
   )
@@ -1373,6 +1638,9 @@ export default function DashboardPage({ onNavigate }) {
           ))}
         </div>
       </div>
+
+      {/* Smart alert strip — floats above sections for admin/supervisor */}
+      {(isAdmin || isSupervisor) && <AlertStrip alerts={alerts} onNavigate={onNavigate} />}
 
       {isOperator   && <OperatorDashboard companyId={companyId} userId={userProfile?.id} range={range} onNavigate={onNavigate} />}
       {isSupervisor && <>
