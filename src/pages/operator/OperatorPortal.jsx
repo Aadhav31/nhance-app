@@ -82,10 +82,17 @@ async function stampAndUpload(file, label) {
 }
 
 function checkShiftWindow(project, equipment) {
+  const shiftType = equipment?.default_shift_type || 'day'
+
+  // Substituted operators have already been approved by a manager —
+  // bypass the shift window check entirely so they can start immediately
+  if (equipment?.is_substitution) {
+    return { allowed: true, reason: null, shiftType, isSubstitution: true }
+  }
+
   const start = project?.shift_start_time || null
   const end   = project?.shift_end_time   || null
   const grace = project?.shift_grace_mins ?? 30
-  const shiftType = equipment?.default_shift_type || 'day'
 
   if (!start || !end) return { allowed: true, reason: null, shiftType }
 
@@ -397,8 +404,19 @@ function StartShiftFlow({ companyId, operatorId, employeeId, equipment, project,
 
   return (
     <div className="space-y-4">
+      {/* Substitution notice */}
+      {equipment.is_substitution && (
+        <div className="bg-amber-900/30 border border-amber-600/40 rounded-2xl px-4 py-3 flex items-center gap-3">
+          <span className="text-2xl shrink-0">🔄</span>
+          <div>
+            <p className="text-amber-300 font-bold text-sm">Substitution Active</p>
+            <p className="text-amber-400/70 text-xs">You are covering for today's {equipment.default_shift_type} shift — approved by manager</p>
+          </div>
+        </div>
+      )}
+
       {/* Equipment card — compact */}
-      <div className="bg-dark-800 border border-primary-700/30 rounded-2xl p-4 flex items-center gap-3">
+      <div className={`rounded-2xl p-4 flex items-center gap-3 border ${equipment.is_substitution ? 'bg-dark-800 border-amber-700/30' : 'bg-dark-800 border-primary-700/30'}`}>
         <div className="text-4xl">🏗</div>
         <div className="flex-1 min-w-0">
           <p className="text-slate-100 font-bold text-lg truncate">{equipment.name}</p>
@@ -406,7 +424,7 @@ function StartShiftFlow({ companyId, operatorId, employeeId, equipment, project,
           {project && <p className="text-primary-400 text-xs mt-0.5 truncate">{project.project_name}</p>}
         </div>
         <div className="text-center">
-          <p className="text-xl font-bold text-primary-400">{equipment.default_shift_type || 'day'}</p>
+          <p className={`text-xl font-bold ${equipment.is_substitution ? 'text-amber-400' : 'text-primary-400'}`}>{equipment.default_shift_type || 'day'}</p>
           <p className="text-[10px] text-slate-500">shift</p>
         </div>
       </div>
