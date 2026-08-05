@@ -1418,6 +1418,9 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
     setDeployFormSynced(true)
   }, [equipment, deployFormSynced]) // eslint-disable-line
   const [deploySaving,     setDeploySaving]     = useState(false)
+  // TC capture state — shown when a transfer between projects is detected
+  const [showTCModal,      setShowTCModal]      = useState(false)
+  const [tcPending,        setTcPending]        = useState(null)   // { fromProject, toProject, fromDepId }
   const [newOperator,      setNewOperator]      = useState('')
   const [newShiftType,     setNewShiftType]     = useState('day')
   const [operatorSaving,   setOperatorSaving]   = useState(false)
@@ -1803,21 +1806,42 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
   const mt = equipment.meter_type
 
   // ── Admin actions ────────────────────────────────────────────────────────────
+
+  // Phase 1: Detect transfer. If machine is already on a project → show TC capture modal first.
   const handleDeploy = async () => {
     if (!deployProjectId) { toast.error('Select a project to deploy'); return }
     setDeploySaving(true)
     try {
-      // 1. Resolve the selected rate item (if any)
-      const selectedRate = rateItems.find(r => r.id === deployRateItemId) || null
-      const effectiveRate = selectedRate || (matchedRates.length === 1 ? matchedRates[0] : null)
-
-      // 2. Snapshot existing active deployment for Transfer Certificate
       const { data: existingDep } = await supabase.from('equipment_deployments')
         .select('id, project_id, projects:project_id(project_name)')
         .eq('equipment_id', equipment.id).eq('status', 'active').maybeSingle()
       const fromProjectName = existingDep?.projects?.project_name || null
+      const toProjectName   = projects.find(p => p.id === deployProjectId)?.project_name || deployProjectId
 
-      // 3. Update equipment current deployment fields
+      if (fromProjectName) {
+        // Transfer detected — pause and show TC capture modal
+        setTcPending({ fromProject: fromProjectName, toProject: toProjectName, fromDepId: existingDep.id })
+        setShowTCModal(true)
+        setDeploySaving(false)
+        return
+      }
+      // Fresh deployment — proceed directly
+      await completeDeploy(null, null, null)
+    } catch (err) { toast.error(err.message || 'Failed to check deployment')
+    } finally { setDeploySaving(false) }
+  }
+
+  // Phase 2: Do all DB work, optionally with TC details captured from modal.
+  // tcDetails = { fuelLevel, condition, conditionNotes, fromIncharge, fromDesig, toIncharge, toDesig, authorizedBy, meterReading }
+  const completeDeploy = async (tcDetails, fromProjectName, fromDepId) => {
+    setDeploySaving(true)
+    try {
+      const selectedRate  = rateItems.find(r => r.id === deployRateItemId) || null
+      const effectiveRate = selectedRate || (matchedRates.length === 1 ? matchedRates[0] : null)
+      const toProjectName = projects.find(p => p.id === deployProjectId)?.project_name || deployProjectId
+      const today         = new Date().toISOString().slice(0, 10)
+
+      // Update equipment current deployment fields
       const { error } = await supabase.from('equipment').update({
         current_client_id:  deployClientId  || null,
         current_project_id: deployProjectId || null,
@@ -1826,25 +1850,24 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
       }).eq('id', equipment.id)
       if (error) throw error
 
-      // 4. Close any active deployment — save TC project snapshot on it
-      const toProjectName = projects.find(p => p.id === deployProjectId)?.project_name || deployProjectId
-      if (existingDep?.id) {
+      // Close active deployment — stamp TC snapshot if it was a transfer
+      if (fromDepId) {
         await supabase.from('equipment_deployments')
           .update({
             status:          'withdrawn',
-            withdrawn_date:  new Date().toISOString().slice(0, 10),
+            withdrawn_date:  today,
             tc_from_project: fromProjectName,
             tc_to_project:   toProjectName,
-            tc_generated_at: new Date().toISOString(),
+            tc_generated_at: tcDetails ? new Date().toISOString() : null,
           })
-          .eq('id', existingDep.id)
+          .eq('id', fromDepId)
       } else {
         await supabase.from('equipment_deployments')
-          .update({ status: 'withdrawn', withdrawn_date: new Date().toISOString().slice(0, 10) })
+          .update({ status: 'withdrawn', withdrawn_date: today })
           .eq('equipment_id', equipment.id).eq('status', 'active')
       }
 
-      // 4. Insert new deployment record with full rate details
+      // Insert new deployment record
       const legacyRate = effectiveRate
         ? (Number(effectiveRate.rate_per_hour) || Number(effectiveRate.rate_per_day) || Number(effectiveRate.rate_per_month) || 0)
         : 0
@@ -1856,59 +1879,62 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
         equipment_id:        equipment.id,
         project_id:          deployProjectId,
         client_id:           deployClientId || null,
-        deployed_date:       new Date().toISOString().slice(0, 10),
+        deployed_date:       today,
         status:              'active',
         rental_rate:         legacyRate,
         rate_unit:           legacyUnit,
-        // Rate card details
-        rate_item_id:        effectiveRate?.id        || null,
-        item_name:           effectiveRate?.item_name || null,
-        billing_basis:       effectiveRate?.billing_basis    || null,
-        rate_per_hour:       effectiveRate?.rate_per_hour    || null,
-        rate_per_day:        effectiveRate?.rate_per_day     || null,
-        rate_per_month:      effectiveRate?.rate_per_month   || null,
+        rate_item_id:        effectiveRate?.id             || null,
+        item_name:           effectiveRate?.item_name      || null,
+        billing_basis:       effectiveRate?.billing_basis  || null,
+        rate_per_hour:       effectiveRate?.rate_per_hour  || null,
+        rate_per_day:        effectiveRate?.rate_per_day   || null,
+        rate_per_month:      effectiveRate?.rate_per_month || null,
         max_hours_per_day:      effectiveRate?.max_hours_per_day      || 8,
         max_hours_per_month:    effectiveRate?.max_hours_per_month    || 200,
         working_days_per_month: effectiveRate?.working_days_per_month || 26,
         ot_percentage:          effectiveRate?.ot_percentage          || 125,
         fuel_by_client:      deployFuelByClient,
-        // Deployment record
         hour_meter_at_deployment: deployHourMeter !== '' ? Number(deployHourMeter) : null,
-        operator_name:        deployOperatorName   || null,
-        site_incharge:        deploySiteIncharge   || null,
-        work_order_ref:       deployWorkOrderRef   || null,
+        operator_name:        deployOperatorName    || null,
+        site_incharge:        deploySiteIncharge    || null,
+        work_order_ref:       deployWorkOrderRef    || null,
         machine_photo_url:    deployMachinePhotoUrl || null,
-        hour_meter_photo_url: deployMeterPhotoUrl  || null,
+        hour_meter_photo_url: deployMeterPhotoUrl   || null,
         deployment_location:  deployGpsLoc?.address || null,
       })
 
       setEquipment(e => ({ ...e, current_client_id: deployClientId, current_project_id: deployProjectId, current_site_name: deploySiteName, fuel_by_client: deployFuelByClient }))
       qc.invalidateQueries(['equipment', companyId])
       qc.invalidateQueries(['project_detail', deployProjectId])
+      setShowTCModal(false)
+      setTcPending(null)
 
-      // Auto-offer TC download if this was a transfer (from one project to another)
-      if (fromProjectName && toProjectName) {
+      if (tcDetails && fromProjectName) {
+        // Generate TC PDF immediately with the captured details
+        const meterForTC = tcDetails.meterReading || deployHourMeter || equipment.current_meter_reading || ''
         const tcData = {
-          tcNumber:      `TC-${new Date().getFullYear()}-${Date.now().toString().slice(-4)}`,
-          tcDate:        new Date().toISOString().slice(0, 10),
-          equipmentName: `${equipment.name}${equipment.equipment_number ? ` (${equipment.equipment_number})` : ''}`,
-          equipmentType: equipment.category || equipment.equipment_type || '',
+          tcNumber:       `TC-${new Date().getFullYear()}-${Date.now().toString().slice(-4)}`,
+          tcDate:         today,
+          equipmentName:  `${equipment.name}${equipment.equipment_number ? ` (${equipment.equipment_number})` : ''}`,
+          equipmentType:  equipment.category || equipment.equipment_type || '',
           registrationNo: equipment.registration_number || '',
-          meterReading:  deployHourMeter || equipment.current_meter_reading || '',
-          meterUnit:     equipment.meter_type === 'km' ? 'km' : 'hrs',
-          fromProject:   fromProjectName,
-          toProject:     toProjectName,
-          fuelLevel:     '',
-          condition:     'Good',
-          conditionNotes: '',
-          authorizedBy:  userProfile?.full_name || '',
+          meterReading:   meterForTC,
+          meterUnit:      equipment.meter_type === 'km' ? 'km' : 'hrs',
+          fromProject:    fromProjectName,
+          toProject:      toProjectName,
+          fuelLevel:      tcDetails.fuelLevel      || '',
+          condition:      tcDetails.condition      || 'Good',
+          conditionNotes: tcDetails.conditionNotes || '',
+          fromIncharge:   tcDetails.fromIncharge   || '',
+          fromDesig:      tcDetails.fromDesig      || '',
+          toIncharge:     tcDetails.toIncharge     || '',
+          toDesig:        tcDetails.toDesig        || '',
+          authorizedBy:   tcDetails.authorizedBy   || userProfile?.full_name || '',
         }
-        toast.success('Equipment transferred — click to download TC', {
-          duration: 8000,
-          onClick: () => downloadTransferCertificate(company, tcData),
-        })
+        await downloadTransferCertificate(company, tcData)
+        toast.success(`TC generated — ${fromProjectName} → ${toProjectName}`)
       } else {
-        toast.success('Equipment deployed — rate card saved')
+        toast.success('Equipment deployed successfully')
       }
     } catch (err) { toast.error(err.message || 'Failed to deploy')
     } finally { setDeploySaving(false) }
@@ -3224,6 +3250,18 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
       )}
       {modal === 'fuel'     && <FuelModal     equipment={equipment} companyId={companyId} onClose={() => setModal(null)} />}
       {modal === 'incident' && <IncidentModal equipment={equipment} companyId={companyId} onClose={() => setModal(null)} />}
+      {showTCModal && tcPending && (
+        <TCCaptureModal
+          fromProject={tcPending.fromProject}
+          toProject={tcPending.toProject}
+          equipment={equipment}
+          meterReading={deployHourMeter || equipment.current_meter_reading || ''}
+          authorizedBy={userProfile?.full_name || ''}
+          deploySaving={deploySaving}
+          onConfirm={(tcDetails) => completeDeploy(tcDetails, tcPending.fromProject, tcPending.fromDepId)}
+          onCancel={() => { setShowTCModal(false); setTcPending(null) }}
+        />
+      )}
     </>
   )
 }
@@ -4915,6 +4953,136 @@ function IncidentsTab({ companyId }) {
 }
 
 // ── Hired In Tab ──────────────────────────────────────────────────────────────
+// ── Transfer Certificate Capture Modal ────────────────────────────────────────
+// Shown when a machine transfer is detected — captures fuel level, condition,
+// and incharge signatures before generating the TC PDF.
+function TCCaptureModal({ fromProject, toProject, equipment, meterReading, authorizedBy, deploySaving, onConfirm, onCancel }) {
+  const FUEL_LEVELS  = ['Full', '3/4 Full', 'Half', '1/4 Full', 'Empty']
+  const CONDITIONS   = [
+    { value: 'Good',    label: 'Good',    color: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' },
+    { value: 'Fair',    label: 'Fair',    color: 'bg-amber-500/15 text-amber-300 border-amber-500/30' },
+    { value: 'Damaged', label: 'Damaged', color: 'bg-red-500/15 text-red-400 border-red-500/30' },
+  ]
+
+  const [form, setForm] = useState({
+    meterReading:   meterReading || '',
+    fuelLevel:      'Half',
+    condition:      'Good',
+    conditionNotes: '',
+    fromIncharge:   '',
+    fromDesig:      '',
+    toIncharge:     '',
+    toDesig:        '',
+    authorizedBy:   authorizedBy || '',
+  })
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+
+  const inp = 'w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500 placeholder-slate-500'
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+      <div className="bg-dark-900 border border-dark-700 rounded-2xl w-full max-w-lg max-h-[92vh] flex flex-col shadow-2xl">
+
+        {/* Header */}
+        <div className="px-5 py-4 border-b border-dark-700 shrink-0">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-amber-500/15 border border-amber-500/30 flex items-center justify-center shrink-0">
+              <ArrowLeftRight className="w-4 h-4 text-amber-400" />
+            </div>
+            <div>
+              <h3 className="text-base font-semibold text-slate-100">Transfer Certificate</h3>
+              <p className="text-xs text-slate-500 mt-0.5">{fromProject} → {toProject}</p>
+            </div>
+          </div>
+          <div className="mt-3 bg-amber-500/5 border border-amber-500/20 rounded-xl px-3 py-2.5">
+            <p className="text-xs text-amber-300 font-medium">{equipment.name}{equipment.equipment_number ? ` · ${equipment.equipment_number}` : ''}</p>
+            {equipment.registration_number && <p className="text-xs text-slate-500 mt-0.5">{equipment.registration_number}</p>}
+          </div>
+        </div>
+
+        <div className="overflow-y-auto p-5 space-y-4 flex-1">
+
+          {/* Meter + fuel */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-slate-400 mb-1.5">Meter at Handover ({equipment.meter_type === 'km' ? 'km' : 'hrs'})</label>
+              <input className={inp} type="number" value={form.meterReading} onChange={e => set('meterReading', e.target.value)} placeholder="Current reading" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-400 mb-1.5">Fuel Level</label>
+              <select className={inp + ' appearance-none'} value={form.fuelLevel} onChange={e => set('fuelLevel', e.target.value)}>
+                {FUEL_LEVELS.map(l => <option key={l} value={l}>{l}</option>)}
+              </select>
+            </div>
+          </div>
+
+          {/* Condition */}
+          <div>
+            <label className="block text-xs font-medium text-slate-400 mb-2">Machine Condition</label>
+            <div className="flex gap-2">
+              {CONDITIONS.map(c => (
+                <button key={c.value} onClick={() => set('condition', c.value)}
+                  className={`flex-1 py-2 rounded-xl border text-sm font-semibold transition-all ${form.condition === c.value ? c.color : 'border-dark-600 text-slate-500 bg-dark-800'}`}>
+                  {c.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Condition notes */}
+          <div>
+            <label className="block text-xs font-medium text-slate-400 mb-1.5">Condition Notes <span className="text-slate-600">(optional)</span></label>
+            <textarea className={inp + ' resize-none'} rows={2}
+              value={form.conditionNotes} onChange={e => set('conditionNotes', e.target.value)}
+              placeholder="Any damage, defects, or remarks to note…" />
+          </div>
+
+          {/* Signatures */}
+          <div className="rounded-xl border border-dark-700 bg-dark-800/40 p-3 space-y-3">
+            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Incharge Details <span className="text-slate-600 normal-case font-normal">(printed on TC)</span></p>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-slate-500 mb-1">Outgoing Incharge</label>
+                <input className={inp} value={form.fromIncharge} onChange={e => set('fromIncharge', e.target.value)} placeholder="Name" />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-500 mb-1">Designation</label>
+                <input className={inp} value={form.fromDesig} onChange={e => set('fromDesig', e.target.value)} placeholder="Site Engineer" />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-500 mb-1">Incoming Incharge</label>
+                <input className={inp} value={form.toIncharge} onChange={e => set('toIncharge', e.target.value)} placeholder="Name" />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-500 mb-1">Designation</label>
+                <input className={inp} value={form.toDesig} onChange={e => set('toDesig', e.target.value)} placeholder="Project Manager" />
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs text-slate-500 mb-1">Authorized By</label>
+              <input className={inp} value={form.authorizedBy} onChange={e => set('authorizedBy', e.target.value)} placeholder="Signatory name" />
+            </div>
+          </div>
+
+        </div>
+
+        {/* Footer */}
+        <div className="px-5 py-4 border-t border-dark-700 shrink-0 flex gap-2">
+          <button onClick={onCancel} disabled={deploySaving}
+            className="flex-1 py-2.5 rounded-xl border border-dark-600 text-slate-400 text-sm hover:text-slate-200 transition-colors disabled:opacity-40">
+            Cancel
+          </button>
+          <button onClick={() => onConfirm(form)} disabled={deploySaving}
+            className="flex-1 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-sm font-semibold transition-colors flex items-center justify-center gap-2 disabled:opacity-40">
+            {deploySaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowLeftRight className="w-4 h-4" />}
+            {deploySaving ? 'Transferring…' : 'Confirm Transfer + Download TC'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function HiredInModal({ companyId, contract, projects, onClose, onSaved }) {
   const { role } = useAuth()
   const isAdmin  = ['admin', 'manager'].includes(role)
@@ -5190,7 +5358,8 @@ function HiredInTab({ companyId }) {
   const { role } = useAuth()
   const isAdmin  = ['admin', 'manager'].includes(role)
   const qc       = useQueryClient()
-  const [modal,       setModal]       = useState(null)   // null | {} (new) | contract (edit)
+  const [modal,        setModal]        = useState(null)   // null | {} (new) | contract (edit)
+  const [returnModal,  setReturnModal]  = useState(null)   // null | contract
   const [statusFilter, setStatusFilter] = useState('active')
   const [search,       setSearch]       = useState('')
 
@@ -5243,14 +5412,8 @@ function HiredInTab({ companyId }) {
     cancelled: 'bg-red-500/15 text-red-400 border-red-500/30',
   }
 
-  const handleReturn = async (contract) => {
-    if (!window.confirm(`Mark "${contract.machine_type} (${contract.vendor_name})" as returned?`)) return
-    await supabase.from('inward_hire_contracts')
-      .update({ status: 'returned', actual_demob_date: new Date().toISOString().slice(0, 10) })
-      .eq('id', contract.id)
-    qc.invalidateQueries(['inward_hire', companyId])
-    toast.success('Marked as returned')
-  }
+  // Opened from card — shows return condition modal
+  const openReturn = (contract) => setReturnModal(contract)
 
   return (
     <div className="p-4 space-y-3 overflow-y-auto h-full">
@@ -5344,7 +5507,7 @@ function HiredInTab({ companyId }) {
                       <Edit2 className="w-3 h-3" /> Edit
                     </button>
                     {c.status === 'active' && (
-                      <button onClick={() => handleReturn(c)}
+                      <button onClick={() => openReturn(c)}
                         className="flex items-center gap-1 text-xs text-amber-400 hover:text-amber-300 transition-colors ml-2">
                         <ArrowLeftRight className="w-3 h-3" /> Mark Returned
                       </button>
@@ -5366,6 +5529,108 @@ function HiredInTab({ companyId }) {
           onSaved={() => {}}
         />
       )}
+      {returnModal && (
+        <HiredInReturnModal
+          contract={returnModal}
+          companyId={companyId}
+          onClose={() => setReturnModal(null)}
+        />
+      )}
+    </div>
+  )
+}
+
+// ── Hired-In Return Condition Modal ────────────────────────────────────────────
+function HiredInReturnModal({ contract, companyId, onClose }) {
+  const qc = useQueryClient()
+  const [saving, setSaving] = useState(false)
+  const [form, setForm] = useState({
+    actual_demob_date:  new Date().toISOString().slice(0, 10),
+    return_meter_reading: '',
+    return_condition:   'Good',
+    return_notes:       '',
+  })
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+
+  const CONDITIONS = [
+    { value: 'Good',    label: 'Good',    color: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' },
+    { value: 'Fair',    label: 'Fair',    color: 'bg-amber-500/15 text-amber-300 border-amber-500/30' },
+    { value: 'Damaged', label: 'Damaged', color: 'bg-red-500/15 text-red-400 border-red-500/30' },
+  ]
+
+  const inp = 'w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500 placeholder-slate-500'
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      await supabase.from('inward_hire_contracts')
+        .update({
+          status:               'returned',
+          actual_demob_date:    form.actual_demob_date || new Date().toISOString().slice(0, 10),
+          return_meter_reading: form.return_meter_reading ? Number(form.return_meter_reading) : null,
+          return_condition:     form.return_condition,
+          return_notes:         form.return_notes || null,
+        })
+        .eq('id', contract.id)
+      qc.invalidateQueries(['inward_hire', companyId])
+      toast.success('Machine marked as returned')
+      onClose()
+    } catch (err) { toast.error(err.message || 'Failed to update')
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+      <div className="bg-dark-900 border border-dark-700 rounded-2xl w-full max-w-md shadow-2xl">
+        <div className="px-5 py-4 border-b border-dark-700">
+          <h3 className="text-base font-semibold text-slate-100">Return Machine</h3>
+          <p className="text-xs text-slate-500 mt-0.5">{contract.machine_type} · {contract.vendor_name}</p>
+        </div>
+        <div className="p-5 space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-slate-400 mb-1.5">Return Date</label>
+              <input className={inp} type="date" value={form.actual_demob_date} onChange={e => set('actual_demob_date', e.target.value)} />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-400 mb-1.5">
+                Meter at Return {contract.registration_number ? `· ${contract.registration_number}` : ''}
+              </label>
+              <input className={inp} type="number" value={form.return_meter_reading} onChange={e => set('return_meter_reading', e.target.value)} placeholder="hrs / km" />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-slate-400 mb-2">Return Condition</label>
+            <div className="flex gap-2">
+              {CONDITIONS.map(c => (
+                <button key={c.value} onClick={() => set('return_condition', c.value)}
+                  className={`flex-1 py-2 rounded-xl border text-sm font-semibold transition-all ${form.return_condition === c.value ? c.color : 'border-dark-600 text-slate-500 bg-dark-800'}`}>
+                  {c.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-slate-400 mb-1.5">Remarks / Damage Notes</label>
+            <textarea className={inp + ' resize-none'} rows={3}
+              value={form.return_notes} onChange={e => set('return_notes', e.target.value)}
+              placeholder="Note any defects, missing parts, or pending payments…" />
+          </div>
+        </div>
+        <div className="px-5 py-4 border-t border-dark-700 flex gap-2">
+          <button onClick={onClose} disabled={saving}
+            className="flex-1 py-2.5 rounded-xl border border-dark-600 text-slate-400 text-sm hover:text-slate-200 transition-colors disabled:opacity-40">
+            Cancel
+          </button>
+          <button onClick={handleSave} disabled={saving}
+            className="flex-1 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-white text-sm font-semibold transition-colors flex items-center justify-center gap-2 disabled:opacity-40">
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
+            {saving ? 'Saving…' : 'Confirm Return'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
