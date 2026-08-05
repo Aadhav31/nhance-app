@@ -1317,14 +1317,24 @@ function BillsTab({ companyId, session }) {
     enabled: !!companyId,
   })
 
-  // Use a unique key so this query never collides with other tabs' vendors_list cache
   const { data: vendors = [] } = useQuery({
-    queryKey: ['vendors_for_bills', companyId],
+    queryKey: ['vendors_list', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('vendors').select('id, name, gstin, vendor_type').eq('company_id', companyId).order('name')
+      const { data } = await supabase.from('vendors').select('id, name, gstin').eq('company_id', companyId).order('name')
       return data || []
     },
     enabled: !!companyId,
+  })
+
+  // Separate lightweight query: check if selected vendor is a fuel supplier
+  const { data: selectedVendorMeta } = useQuery({
+    queryKey: ['vendor_meta', form.vendor_id],
+    queryFn: async () => {
+      const { data } = await supabase.from('vendors').select('vendor_type').eq('id', form.vendor_id).single()
+      return data
+    },
+    enabled: !!form.vendor_id,
+    staleTime: 60_000,
   })
 
   // Inventory items + stores for the inward-type link
@@ -1426,7 +1436,7 @@ function BillsTab({ companyId, session }) {
 
   const isTax = form.is_tax_invoice !== false
   const selectedVendorObj = vendors.find(v => v.id === form.vendor_id)
-  const isFuelVendor = selectedVendorObj?.vendor_type === 'fuel'
+  const isFuelVendor = selectedVendorMeta?.vendor_type === 'fuel'
 
   // Fuel tanks — load only for fuel vendors when checkbox is ticked
   const { data: fuelTanks = [] } = useQuery({
@@ -1886,7 +1896,7 @@ function BillsTab({ companyId, session }) {
               <Field label="Vendor *">
                 <select className={inp()} value={form.vendor_id} onChange={e => {
                   const v = vendors.find(x => x.id === e.target.value)
-                  if (v?.vendor_type !== 'fuel') { setAddToTank(false); setFuelTankId('') }
+                  setAddToTank(false); setFuelTankId('')
                   setForm(p => ({ ...p, vendor_id: e.target.value, vendor_gstin: v?.gstin || 'URP' }))
                 }}>
                   <option value="">-- Select vendor --</option>
