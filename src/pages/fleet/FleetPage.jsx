@@ -1396,6 +1396,273 @@ function IncidentModal({ equipment, companyId, onClose }) {
   )
 }
 
+// ── Equipment P&L Tab (inline, single-machine) ────────────────────────────────
+const DIESEL_LPL = 95 // ₹/litre fallback rate
+
+function EquipmentPLTab({ equipment, companyId }) {
+  const today = new Date()
+  const defFrom = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-01`
+  const defTo   = today.toISOString().slice(0,10)
+  const [from, setFrom] = useState(defFrom)
+  const [to,   setTo]   = useState(defTo)
+
+  const fmtM = n => `₹${Math.round(n).toLocaleString('en-IN')}`
+
+  // 1. Daily operations — hours + fuel consumed
+  const { data: ops = [], isLoading: opsLoad } = useQuery({
+    queryKey: ['eq_pl_ops', equipment.id, from, to],
+    queryFn: async () => {
+      const { data } = await supabase.from('daily_operations')
+        .select('ops_date, running_hours, fuel_consumed, status')
+        .eq('equipment_id', equipment.id)
+        .gte('ops_date', from).lte('ops_date', to)
+      return data || []
+    },
+  })
+
+  // 2. Fuel issues — what was actually issued (litres)
+  const { data: fuelIssues = [] } = useQuery({
+    queryKey: ['eq_pl_fuel', equipment.id, from, to],
+    queryFn: async () => {
+      const { data } = await supabase.from('fuel_issues')
+        .select('qty_liters, rate_per_litre')
+        .eq('equipment_id', equipment.id)
+        .gte('issue_date', from).lte('issue_date', to)
+      return data || []
+    },
+  })
+
+  // 3. Deployment (most recent overlapping) — for revenue
+  const { data: deployment } = useQuery({
+    queryKey: ['eq_pl_depl', equipment.id, from, to],
+    queryFn: async () => {
+      const { data } = await supabase.from('equipment_deployments')
+        .select('billing_basis, rate_per_hour, rate_per_day, rate_per_month, rate_unit, rental_rate, max_hours_per_day, fuel_by_client, project:project_id(name)')
+        .eq('equipment_id', equipment.id)
+        .lte('deployed_date', to)
+        .or(`withdrawn_date.is.null,withdrawn_date.gte.${from}`)
+        .order('deployed_date', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      return data
+    },
+  })
+
+  // 4. Job cards (maintenance) closed in period
+  const { data: jobCards = [] } = useQuery({
+    queryKey: ['eq_pl_jobs', equipment.id, from, to],
+    queryFn: async () => {
+      const { data } = await supabase.from('job_cards')
+        .select('total_cost, jc_type, description')
+        .eq('equipment_id', equipment.id)
+        .eq('status', 'closed')
+        .gte('closed_at', from).lte('closed_at', to)
+      return data || []
+    },
+  })
+
+  // 5. Expenses + bills tagged to this equipment
+  const { data: taggedExp = [] } = useQuery({
+    queryKey: ['eq_pl_exp', equipment.id, from, to],
+    queryFn: async () => {
+      const { data } = await supabase.from('expenses')
+        .select('total_amount, category')
+        .eq('equipment_id', equipment.id)
+        .eq('company_id', companyId)
+        .gte('expense_date', from).lte('expense_date', to)
+      return data || []
+    },
+  })
+
+  const { data: taggedBills = [] } = useQuery({
+    queryKey: ['eq_pl_bills', equipment.id, from, to],
+    queryFn: async () => {
+      const { data } = await supabase.from('bills')
+        .select('total_amount')
+        .eq('equipment_id', equipment.id)
+        .eq('company_id', companyId)
+        .neq('status', 'cancelled')
+        .gte('bill_date', from).lte('bill_date', to)
+      return data || []
+    },
+  })
+
+  const pl = useMemo(() => {
+    const workedOps    = ops.filter(o => o.status !== 'breakdown')
+    const totalHrs     = workedOps.reduce((s, o) => s + Number(o.running_hours || 0), 0)
+    const workedDays   = new Set(workedOps.map(o => o.ops_date)).size
+    const fuelConsumed = workedOps.reduce((s, o) => s + Number(o.fuel_consumed || 0), 0)
+    const brkDays      = new Set(ops.filter(o => o.status === 'breakdown').map(o => o.ops_date)).size
+
+    // Fuel cost: use issued qty × rate (or fallback DIESEL_LPL)
+    const fuelIssuedL = fuelIssues.reduce((s, f) => s + Number(f.qty_liters || 0), 0)
+    const fuelCostRaw = fuelIssues.reduce((s, f) => s + (Number(f.qty_liters || 0) * (Number(f.rate_per_litre || 0) || DIESEL_LPL)), 0)
+    const fuelCost    = fuelCostRaw
+
+    // Maintenance cost
+    const maintCost = jobCards.reduce((s, j) => s + Number(j.total_cost || 0), 0)
+
+    // Other expenses
+    const otherCost = taggedExp.reduce((s, e) => s + Number(e.total_amount || 0), 0)
+    const billCost  = taggedBills.reduce((s, b) => s + Number(b.total_amount || 0), 0)
+
+    const totalExp = fuelCost + maintCost + otherCost + billCost
+
+    // Revenue from deployment rate + daily_operations
+    let revenue = 0
+    let rateLabel = null
+    if (deployment) {
+      const basis = deployment.billing_basis || deployment.rate_unit || 'hourly'
+      if ((basis === 'hourly' || basis === 'short_term_hourly') && (deployment.rate_per_hour || deployment.rental_rate)) {
+        const rate = Number(deployment.rate_per_hour || deployment.rental_rate)
+        revenue = rate * totalHrs
+        rateLabel = `₹${rate.toLocaleString('en-IN')}/hr × ${totalHrs.toFixed(1)} hrs`
+      } else if (basis === 'daily' && deployment.rate_per_day) {
+        const rate = Number(deployment.rate_per_day)
+        revenue = rate * workedDays
+        rateLabel = `₹${rate.toLocaleString('en-IN')}/day × ${workedDays} days`
+      } else if (basis === 'monthly' && deployment.rate_per_month) {
+        // pro-rate: (workedDays / 26) × monthly rate
+        const rate = Number(deployment.rate_per_month)
+        revenue = (workedDays / 26) * rate
+        rateLabel = `₹${rate.toLocaleString('en-IN')}/mo (pro-rated ${workedDays} days)`
+      }
+    }
+
+    const netPL = revenue - totalExp
+
+    // Fuel alert
+    const stdLph = equipment.specific_consumption_lph ? Number(equipment.specific_consumption_lph) : null
+    let fuelAlert = null
+    if (stdLph && totalHrs > 0 && fuelConsumed > 0) {
+      const expected  = stdLph * totalHrs
+      const excessPct = ((fuelConsumed - expected) / expected) * 100
+      if (excessPct > 10) fuelAlert = { actual: fuelConsumed, expected: Math.round(expected), excessPct: Math.round(excessPct) }
+    }
+
+    return { totalHrs: Math.round(totalHrs*10)/10, workedDays, brkDays, fuelIssuedL: Math.round(fuelIssuedL), fuelConsumed: Math.round(fuelConsumed), fuelCost: Math.round(fuelCost), maintCost: Math.round(maintCost), otherCost: Math.round(otherCost), billCost: Math.round(billCost), totalExp: Math.round(totalExp), revenue: Math.round(revenue), netPL: Math.round(netPL), rateLabel, fuelAlert }
+  }, [ops, fuelIssues, deployment, jobCards, taggedExp, taggedBills, equipment])
+
+  const inp = 'bg-dark-700 border border-dark-600 rounded-lg px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-primary-500'
+
+  return (
+    <div className="space-y-4 pt-1">
+      {/* Date range picker */}
+      <div className="flex items-center gap-3 flex-wrap bg-dark-800/60 border border-dark-700 rounded-xl px-3 py-2.5">
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] text-slate-500">From</span>
+          <input type="date" className={inp} value={from} onChange={e => setFrom(e.target.value)} />
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] text-slate-500">To</span>
+          <input type="date" className={inp} value={to} onChange={e => setTo(e.target.value)} />
+        </div>
+        {/* Quick selectors */}
+        {[
+          { l: 'This Month', f: defFrom, t: defTo },
+          { l: 'Last Month', f: (() => { const d=new Date(today.getFullYear(), today.getMonth()-1,1); return d.toISOString().slice(0,10) })(), t: (() => { const d=new Date(today.getFullYear(), today.getMonth(),0); return d.toISOString().slice(0,10) })() },
+          { l: 'This Year',  f: `${today.getFullYear()}-01-01`, t: defTo },
+        ].map(({ l, f, t }) => (
+          <button key={l} onClick={() => { setFrom(f); setTo(t) }}
+            className={`text-[10px] px-2 py-1 rounded-md border transition-colors ${from===f&&to===t?'bg-primary-600 border-primary-500 text-white':'border-dark-600 text-slate-500 hover:text-slate-300'}`}>
+            {l}
+          </button>
+        ))}
+        {opsLoad && <span className="text-[10px] text-slate-500 ml-auto">Loading…</span>}
+      </div>
+
+      {/* Fuel alert */}
+      {pl.fuelAlert && (
+        <div className="flex items-start gap-2.5 bg-amber-500/10 border border-amber-500/25 rounded-xl px-3 py-2.5">
+          <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+          <div>
+            <p className="text-xs font-semibold text-amber-300">Over-consumption alert</p>
+            <p className="text-[11px] text-amber-400 mt-0.5">
+              Consumed {pl.fuelAlert.actual} L vs standard {pl.fuelAlert.expected} L — <b>+{pl.fuelAlert.excessPct}% over benchmark</b>. Check for idling or leaks.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Revenue source info */}
+      {deployment && (
+        <div className="flex items-center gap-2 text-[11px] text-slate-500 bg-dark-800/40 rounded-lg px-3 py-1.5">
+          <span className="text-primary-400">⚡</span>
+          <span>Revenue: {deployment.project?.name || 'Active deployment'}</span>
+          {pl.rateLabel && <span className="ml-1 text-slate-600">· {pl.rateLabel}</span>}
+        </div>
+      )}
+      {!deployment && (
+        <div className="text-[11px] text-slate-500 bg-dark-800/40 rounded-lg px-3 py-1.5">
+          No active deployment rate card — revenue shown as ₹0. Add a rate card in the Deployment tab.
+        </div>
+      )}
+
+      {/* KPI grid */}
+      <div className="grid grid-cols-3 gap-3">
+        <div className="bg-dark-800 border border-dark-700 rounded-xl p-3 text-center">
+          <p className="text-[10px] text-slate-500 mb-0.5">Revenue</p>
+          <p className="text-lg font-bold text-green-400">{fmtM(pl.revenue)}</p>
+        </div>
+        <div className="bg-dark-800 border border-dark-700 rounded-xl p-3 text-center">
+          <p className="text-[10px] text-slate-500 mb-0.5">Total Expenses</p>
+          <p className="text-lg font-bold text-red-400">{fmtM(pl.totalExp)}</p>
+        </div>
+        <div className={`rounded-xl p-3 text-center border ${pl.netPL >= 0 ? 'bg-green-500/10 border-green-500/25' : 'bg-red-500/10 border-red-500/25'}`}>
+          <p className="text-[10px] text-slate-500 mb-0.5">Net P&L</p>
+          <p className={`text-lg font-bold ${pl.netPL >= 0 ? 'text-green-400' : 'text-red-400'}`}>{fmtM(pl.netPL)}</p>
+        </div>
+      </div>
+
+      {/* Ops summary row */}
+      <div className="grid grid-cols-4 gap-2">
+        {[
+          { l: 'Hours Worked', v: `${pl.totalHrs} hrs` },
+          { l: 'Working Days', v: `${pl.workedDays}d` },
+          { l: 'Breakdown Days', v: `${pl.brkDays}d`, red: pl.brkDays > 0 },
+          { l: 'Fuel Issued', v: `${pl.fuelIssuedL} L` },
+        ].map(({ l, v, red }) => (
+          <div key={l} className="bg-dark-800/60 border border-dark-700/60 rounded-xl p-2.5 text-center">
+            <p className="text-[9px] text-slate-500 mb-0.5">{l}</p>
+            <p className={`text-sm font-bold ${red ? 'text-red-400' : 'text-slate-300'}`}>{v}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Expense breakdown */}
+      <div className="bg-dark-800/60 border border-dark-700 rounded-xl overflow-hidden">
+        <div className="px-3 py-2 border-b border-dark-700/60">
+          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Expense Breakdown</p>
+        </div>
+        {[
+          { l: 'Fuel Cost',    v: pl.fuelCost,  sub: pl.fuelIssuedL > 0 ? `${pl.fuelIssuedL} L issued` : 'no issues logged', col: 'text-amber-400' },
+          { l: 'Maintenance',  v: pl.maintCost, sub: `${jobCards.length} job card${jobCards.length !== 1 ? 's' : ''} closed`, col: 'text-orange-400' },
+          { l: 'Other Expenses', v: pl.otherCost, sub: `${taggedExp.length} expense record${taggedExp.length !== 1 ? 's' : ''}`, col: 'text-slate-400' },
+          { l: 'Vendor Bills',   v: pl.billCost,  sub: `${taggedBills.length} bill${taggedBills.length !== 1 ? 's' : ''} tagged`, col: 'text-slate-400' },
+        ].map(({ l, v, sub, col }) => (
+          <div key={l} className="flex items-center justify-between px-3 py-2.5 border-b border-dark-700/40 last:border-b-0">
+            <div>
+              <p className="text-xs text-slate-300">{l}</p>
+              <p className="text-[10px] text-slate-600 mt-0.5">{sub}</p>
+            </div>
+            <span className={`text-sm font-semibold ${v > 0 ? col : 'text-slate-600'}`}>{fmtM(v)}</span>
+          </div>
+        ))}
+        <div className="flex items-center justify-between px-3 py-2.5 bg-dark-900/40">
+          <span className="text-xs font-semibold text-slate-300">Total Expenses</span>
+          <span className="text-sm font-bold text-red-400">{fmtM(pl.totalExp)}</span>
+        </div>
+      </div>
+
+      {pl.totalHrs === 0 && pl.totalExp === 0 && (
+        <div className="text-center py-8 text-slate-500 text-xs">
+          No operations or expenses recorded for this period.
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Equipment Detail ──────────────────────────────────────────────────────────
 function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavigate }) {
   const [modal,         setModal]         = useState(null)
@@ -3424,13 +3691,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
 
         {/* ── EQUIPMENT P&L TAB ── */}
         {detailTab === 'pl' && (
-          <div className="pt-1 bg-dark-700/50 rounded-xl border border-dark-600 p-8 text-center">
-            <Activity className="w-10 h-10 text-primary-400 mx-auto mb-3" />
-            <p className="text-sm font-semibold text-slate-300 mb-1">Equipment P&amp;L</p>
-            <p className="text-xs text-slate-500">
-              Revenue vs. expenses tracking for {equipment.name} is available in the Fleet module's P&amp;L section.
-            </p>
-          </div>
+          <EquipmentPLTab equipment={equipment} companyId={companyId} />
         )}
 
         {/* ── REMARKS TAB ── */}
