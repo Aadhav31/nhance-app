@@ -1425,9 +1425,10 @@ function EquipmentPLTab({ equipment, companyId }) {
     queryKey: ['eq_pl_fuel', equipment.id, from, to],
     queryFn: async () => {
       const { data } = await supabase.from('fuel_issues')
-        .select('qty_liters, rate_per_litre')
+        .select('id, issue_date, qty_liters, rate_per_litre, issued_by, notes')
         .eq('equipment_id', equipment.id)
         .gte('issue_date', from).lte('issue_date', to)
+        .order('issue_date', { ascending: false })
       return data || []
     },
   })
@@ -1453,10 +1454,11 @@ function EquipmentPLTab({ equipment, companyId }) {
     queryKey: ['eq_pl_jobs', equipment.id, from, to],
     queryFn: async () => {
       const { data } = await supabase.from('job_cards')
-        .select('total_cost, jc_type, description')
+        .select('id, jc_number, jc_type, description, total_cost, opened_at, closed_at, status')
         .eq('equipment_id', equipment.id)
         .eq('status', 'closed')
         .gte('closed_at', from).lte('closed_at', to)
+        .order('closed_at', { ascending: false })
       return data || []
     },
   })
@@ -1466,10 +1468,11 @@ function EquipmentPLTab({ equipment, companyId }) {
     queryKey: ['eq_pl_exp', equipment.id, from, to],
     queryFn: async () => {
       const { data } = await supabase.from('expenses')
-        .select('total_amount, category')
+        .select('id, expense_date, category, description, total_amount, vendor_name, payment_mode')
         .eq('equipment_id', equipment.id)
         .eq('company_id', companyId)
         .gte('expense_date', from).lte('expense_date', to)
+        .order('expense_date', { ascending: false })
       return data || []
     },
   })
@@ -1478,11 +1481,12 @@ function EquipmentPLTab({ equipment, companyId }) {
     queryKey: ['eq_pl_bills', equipment.id, from, to],
     queryFn: async () => {
       const { data } = await supabase.from('bills')
-        .select('total_amount')
+        .select('id, bill_number, bill_date, vendor_name, description, total_amount, status')
         .eq('equipment_id', equipment.id)
         .eq('company_id', companyId)
         .neq('status', 'cancelled')
         .gte('bill_date', from).lte('bill_date', to)
+        .order('bill_date', { ascending: false })
       return data || []
     },
   })
@@ -1542,6 +1546,9 @@ function EquipmentPLTab({ equipment, companyId }) {
 
     return { totalHrs: Math.round(totalHrs*10)/10, workedDays, brkDays, fuelIssuedL: Math.round(fuelIssuedL), fuelConsumed: Math.round(fuelConsumed), fuelCost: Math.round(fuelCost), maintCost: Math.round(maintCost), otherCost: Math.round(otherCost), billCost: Math.round(billCost), totalExp: Math.round(totalExp), revenue: Math.round(revenue), netPL: Math.round(netPL), rateLabel, fuelAlert }
   }, [ops, fuelIssues, deployment, jobCards, taggedExp, taggedBills, equipment])
+
+  const [drilldown, setDrilldown] = useState(null) // 'fuel' | 'maintenance' | 'expenses' | 'bills'
+  const toggleDrill = key => setDrilldown(d => d === key ? null : key)
 
   const inp = 'bg-dark-700 border border-dark-600 rounded-lg px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-primary-500'
 
@@ -1634,21 +1641,200 @@ function EquipmentPLTab({ equipment, companyId }) {
         <div className="px-3 py-2 border-b border-dark-700/60">
           <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Expense Breakdown</p>
         </div>
-        {[
-          { l: 'Fuel Cost',    v: pl.fuelCost,  sub: pl.fuelIssuedL > 0 ? `${pl.fuelIssuedL} L issued` : 'no issues logged', col: 'text-amber-400' },
-          { l: 'Maintenance',  v: pl.maintCost, sub: `${jobCards.length} job card${jobCards.length !== 1 ? 's' : ''} closed`, col: 'text-orange-400' },
-          { l: 'Other Expenses', v: pl.otherCost, sub: `${taggedExp.length} expense record${taggedExp.length !== 1 ? 's' : ''}`, col: 'text-slate-400' },
-          { l: 'Vendor Bills',   v: pl.billCost,  sub: `${taggedBills.length} bill${taggedBills.length !== 1 ? 's' : ''} tagged`, col: 'text-slate-400' },
-        ].map(({ l, v, sub, col }) => (
-          <div key={l} className="flex items-center justify-between px-3 py-2.5 border-b border-dark-700/40 last:border-b-0">
-            <div>
-              <p className="text-xs text-slate-300">{l}</p>
-              <p className="text-[10px] text-slate-600 mt-0.5">{sub}</p>
+
+        {/* ── Fuel Cost ── */}
+        <div className="border-b border-dark-700/40">
+          <button onClick={() => toggleDrill('fuel')}
+            className="w-full flex items-center justify-between px-3 py-2.5 hover:bg-dark-700/30 transition-colors text-left">
+            <div className="flex items-center gap-2">
+              <ChevronRight className={`w-3 h-3 text-slate-500 transition-transform ${drilldown === 'fuel' ? 'rotate-90' : ''}`} />
+              <div>
+                <p className="text-xs text-slate-300">Fuel Cost</p>
+                <p className="text-[10px] text-slate-600 mt-0.5">{pl.fuelIssuedL > 0 ? `${pl.fuelIssuedL} L issued` : 'no issues logged'}</p>
+              </div>
             </div>
-            <span className={`text-sm font-semibold ${v > 0 ? col : 'text-slate-600'}`}>{fmtM(v)}</span>
-          </div>
-        ))}
-        <div className="flex items-center justify-between px-3 py-2.5 bg-dark-900/40">
+            <span className={`text-sm font-semibold ${pl.fuelCost > 0 ? 'text-amber-400' : 'text-slate-600'}`}>{fmtM(pl.fuelCost)}</span>
+          </button>
+          {drilldown === 'fuel' && (
+            <div className="border-t border-dark-700/40 bg-dark-900/40 px-3 py-2">
+              {fuelIssues.length === 0 ? (
+                <p className="text-[11px] text-slate-600 py-1">No fuel issues in this period.</p>
+              ) : (
+                <table className="w-full text-[11px]">
+                  <thead>
+                    <tr className="text-slate-500 border-b border-dark-700/40">
+                      <th className="text-left pb-1.5 font-medium">Date</th>
+                      <th className="text-right pb-1.5 font-medium">Qty (L)</th>
+                      <th className="text-right pb-1.5 font-medium">Rate</th>
+                      <th className="text-right pb-1.5 font-medium">Amount</th>
+                      <th className="text-left pb-1.5 font-medium pl-3">Notes</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {fuelIssues.map(f => {
+                      const rate = Number(f.rate_per_litre || 0) || DIESEL_LPL
+                      const amt  = Number(f.qty_liters || 0) * rate
+                      return (
+                        <tr key={f.id} className="border-b border-dark-700/20 last:border-b-0">
+                          <td className="py-1.5 text-slate-400">{f.issue_date}</td>
+                          <td className="py-1.5 text-right text-slate-300">{Number(f.qty_liters || 0).toFixed(1)}</td>
+                          <td className="py-1.5 text-right text-slate-500">₹{rate}/L</td>
+                          <td className="py-1.5 text-right text-amber-400 font-medium">{fmtM(amt)}</td>
+                          <td className="py-1.5 pl-3 text-slate-600">{f.notes || f.issued_by || '—'}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* ── Maintenance ── */}
+        <div className="border-b border-dark-700/40">
+          <button onClick={() => toggleDrill('maintenance')}
+            className="w-full flex items-center justify-between px-3 py-2.5 hover:bg-dark-700/30 transition-colors text-left">
+            <div className="flex items-center gap-2">
+              <ChevronRight className={`w-3 h-3 text-slate-500 transition-transform ${drilldown === 'maintenance' ? 'rotate-90' : ''}`} />
+              <div>
+                <p className="text-xs text-slate-300">Maintenance</p>
+                <p className="text-[10px] text-slate-600 mt-0.5">{jobCards.length} job card{jobCards.length !== 1 ? 's' : ''} closed</p>
+              </div>
+            </div>
+            <span className={`text-sm font-semibold ${pl.maintCost > 0 ? 'text-orange-400' : 'text-slate-600'}`}>{fmtM(pl.maintCost)}</span>
+          </button>
+          {drilldown === 'maintenance' && (
+            <div className="border-t border-dark-700/40 bg-dark-900/40 px-3 py-2">
+              {jobCards.length === 0 ? (
+                <p className="text-[11px] text-slate-600 py-1">No closed job cards in this period.</p>
+              ) : (
+                <table className="w-full text-[11px]">
+                  <thead>
+                    <tr className="text-slate-500 border-b border-dark-700/40">
+                      <th className="text-left pb-1.5 font-medium">JC #</th>
+                      <th className="text-left pb-1.5 font-medium">Type</th>
+                      <th className="text-left pb-1.5 font-medium">Description</th>
+                      <th className="text-right pb-1.5 font-medium">Closed</th>
+                      <th className="text-right pb-1.5 font-medium">Cost</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {jobCards.map(j => (
+                      <tr key={j.id} className="border-b border-dark-700/20 last:border-b-0">
+                        <td className="py-1.5 text-primary-400 font-medium">{j.jc_number || '—'}</td>
+                        <td className="py-1.5 text-slate-400 capitalize">{j.jc_type || '—'}</td>
+                        <td className="py-1.5 text-slate-500 max-w-[140px] truncate">{j.description || '—'}</td>
+                        <td className="py-1.5 text-right text-slate-400">{j.closed_at ? j.closed_at.slice(0,10) : '—'}</td>
+                        <td className="py-1.5 text-right text-orange-400 font-medium">{fmtM(Number(j.total_cost || 0))}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* ── Other Expenses ── */}
+        <div className="border-b border-dark-700/40">
+          <button onClick={() => toggleDrill('expenses')}
+            className="w-full flex items-center justify-between px-3 py-2.5 hover:bg-dark-700/30 transition-colors text-left">
+            <div className="flex items-center gap-2">
+              <ChevronRight className={`w-3 h-3 text-slate-500 transition-transform ${drilldown === 'expenses' ? 'rotate-90' : ''}`} />
+              <div>
+                <p className="text-xs text-slate-300">Other Expenses</p>
+                <p className="text-[10px] text-slate-600 mt-0.5">{taggedExp.length} expense record{taggedExp.length !== 1 ? 's' : ''}</p>
+              </div>
+            </div>
+            <span className={`text-sm font-semibold ${pl.otherCost > 0 ? 'text-slate-300' : 'text-slate-600'}`}>{fmtM(pl.otherCost)}</span>
+          </button>
+          {drilldown === 'expenses' && (
+            <div className="border-t border-dark-700/40 bg-dark-900/40 px-3 py-2">
+              {taggedExp.length === 0 ? (
+                <p className="text-[11px] text-slate-600 py-1">No expenses tagged to this machine in this period.</p>
+              ) : (
+                <table className="w-full text-[11px]">
+                  <thead>
+                    <tr className="text-slate-500 border-b border-dark-700/40">
+                      <th className="text-left pb-1.5 font-medium">Date</th>
+                      <th className="text-left pb-1.5 font-medium">Category</th>
+                      <th className="text-left pb-1.5 font-medium">Description</th>
+                      <th className="text-left pb-1.5 font-medium">Vendor</th>
+                      <th className="text-right pb-1.5 font-medium">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {taggedExp.map(e => (
+                      <tr key={e.id} className="border-b border-dark-700/20 last:border-b-0">
+                        <td className="py-1.5 text-slate-400">{e.expense_date}</td>
+                        <td className="py-1.5 text-slate-400 capitalize">{e.category || '—'}</td>
+                        <td className="py-1.5 text-slate-500 max-w-[120px] truncate">{e.description || '—'}</td>
+                        <td className="py-1.5 text-slate-500 max-w-[100px] truncate">{e.vendor_name || '—'}</td>
+                        <td className="py-1.5 text-right text-slate-300 font-medium">{fmtM(Number(e.total_amount || 0))}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* ── Vendor Bills ── */}
+        <div>
+          <button onClick={() => toggleDrill('bills')}
+            className="w-full flex items-center justify-between px-3 py-2.5 hover:bg-dark-700/30 transition-colors text-left">
+            <div className="flex items-center gap-2">
+              <ChevronRight className={`w-3 h-3 text-slate-500 transition-transform ${drilldown === 'bills' ? 'rotate-90' : ''}`} />
+              <div>
+                <p className="text-xs text-slate-300">Vendor Bills</p>
+                <p className="text-[10px] text-slate-600 mt-0.5">{taggedBills.length} bill{taggedBills.length !== 1 ? 's' : ''} tagged</p>
+              </div>
+            </div>
+            <span className={`text-sm font-semibold ${pl.billCost > 0 ? 'text-slate-300' : 'text-slate-600'}`}>{fmtM(pl.billCost)}</span>
+          </button>
+          {drilldown === 'bills' && (
+            <div className="border-t border-dark-700/40 bg-dark-900/40 px-3 py-2">
+              {taggedBills.length === 0 ? (
+                <p className="text-[11px] text-slate-600 py-1">No bills tagged to this machine in this period.</p>
+              ) : (
+                <table className="w-full text-[11px]">
+                  <thead>
+                    <tr className="text-slate-500 border-b border-dark-700/40">
+                      <th className="text-left pb-1.5 font-medium">Bill #</th>
+                      <th className="text-left pb-1.5 font-medium">Date</th>
+                      <th className="text-left pb-1.5 font-medium">Vendor</th>
+                      <th className="text-left pb-1.5 font-medium">Description</th>
+                      <th className="text-left pb-1.5 font-medium">Status</th>
+                      <th className="text-right pb-1.5 font-medium">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {taggedBills.map(b => (
+                      <tr key={b.id} className="border-b border-dark-700/20 last:border-b-0">
+                        <td className="py-1.5 text-primary-400 font-medium">{b.bill_number || '—'}</td>
+                        <td className="py-1.5 text-slate-400">{b.bill_date}</td>
+                        <td className="py-1.5 text-slate-500 max-w-[100px] truncate">{b.vendor_name || '—'}</td>
+                        <td className="py-1.5 text-slate-500 max-w-[120px] truncate">{b.description || '—'}</td>
+                        <td className="py-1.5">
+                          <span className={`px-1.5 py-0.5 rounded text-[9px] font-medium ${
+                            b.status === 'paid' ? 'bg-green-500/20 text-green-400' :
+                            b.status === 'partial' ? 'bg-amber-500/20 text-amber-400' :
+                            'bg-slate-700 text-slate-400'
+                          }`}>{b.status}</span>
+                        </td>
+                        <td className="py-1.5 text-right text-slate-300 font-medium">{fmtM(Number(b.total_amount || 0))}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center justify-between px-3 py-2.5 bg-dark-900/40 border-t border-dark-700/60">
           <span className="text-xs font-semibold text-slate-300">Total Expenses</span>
           <span className="text-sm font-bold text-red-400">{fmtM(pl.totalExp)}</span>
         </div>
