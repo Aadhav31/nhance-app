@@ -11,7 +11,7 @@ import {
   ArrowUpCircle, RefreshCcw, Wallet, Search, ChevronRight,
   CheckCircle, User, Phone, Mail, MapPin, Hash, Upload, ExternalLink,
   Pencil, Trash2, Ban, FileDown, Sheet, ShieldOff,
-  Paperclip, Camera, Eye, Link2, Unlink, FolderOpen, Wrench, Truck,
+  Paperclip, Camera, Eye, Link2, Unlink, FolderOpen, Wrench, Truck, Fuel,
 } from 'lucide-react'
 import VehiclesTab from '../../components/vehicles/VehiclesTab'
 import toast from 'react-hot-toast'
@@ -1072,6 +1072,9 @@ function BillsTab({ companyId, session }) {
   const [addToInv, setAddToInv] = useState(false)
   const [invCategory, setInvCategory] = useState('')
   const [invStore, setInvStore] = useState('')
+  // Fuel tank receipt
+  const [addToTank, setAddToTank] = useState(false)
+  const [fuelTankId, setFuelTankId] = useState('')
   const [editing, setEditing] = useState(null)
   const [attachFile, setAttachFile] = useState(null)
   const [attachPreview, setAttachPreview] = useState(null)
@@ -1092,12 +1095,14 @@ function BillsTab({ companyId, session }) {
   const closeModal = () => {
     setShowCreate(false); setEditing(null); setForm(blankForm())
     setLines([blankLine()]); setAddToInv(false); setInvCategory(''); setInvStore('')
+    setAddToTank(false); setFuelTankId('')
     clearAttach(); setAttachUrl(null)
   }
 
   const openCreate = () => {
     setEditing(null); setForm(blankForm()); setLines([blankLine()])
     setAddToInv(false); setInvCategory(''); setInvStore('')
+    setAddToTank(false); setFuelTankId('')
     clearAttach(); setAttachUrl(null); setShowCreate(true)
   }
 
@@ -1315,7 +1320,7 @@ function BillsTab({ companyId, session }) {
   const { data: vendors = [] } = useQuery({
     queryKey: ['vendors_list', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('vendors').select('id, name, gstin').eq('company_id', companyId).order('name')
+      const { data } = await supabase.from('vendors').select('id, name, gstin, vendor_type').eq('company_id', companyId).order('name')
       return data || []
     },
     enabled: !!companyId,
@@ -1420,11 +1425,28 @@ function BillsTab({ companyId, session }) {
 
   const isTax = form.is_tax_invoice !== false
 
+  // Derive whether the selected vendor is a fuel supplier
+  const selectedVendorObj = vendors.find(v => v.id === form.vendor_id)
+  const isFuelVendor = selectedVendorObj?.vendor_type === 'fuel'
+
+  // Fuel tanks — only load when a fuel vendor is selected
+  const { data: fuelTanks = [] } = useQuery({
+    queryKey: ['fuel_tanks_for_bill', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('fuel_tanks')
+        .select('id, name, tank_type, location, current_stock, capacity_liters, equipment:equipment_id(registration_number)')
+        .eq('company_id', companyId).eq('is_active', true).order('tank_type').order('name')
+      return data || []
+    },
+    enabled: !!companyId && isFuelVendor,
+  })
+
   const save = async () => {
     if (!form.vendor_id) return toast.error('Select a vendor')
     if (lines.every(l => !l.description.trim())) return toast.error('Add at least one line item')
     if (!editing && addToInv && !invCategory) return toast.error('Select an inventory category')
     if (!editing && addToInv && !invStore) return toast.error('Select a store / location')
+    if (!editing && addToTank && !fuelTankId) return toast.error('Select a tank to receive fuel into')
     setSaving(true)
     try {
       const validLines = lines.filter(l => l.description.trim())
@@ -1579,6 +1601,35 @@ function BillsTab({ companyId, session }) {
         qc.invalidateQueries(['purchase-pending-receipts', companyId])
         qc.invalidateQueries(['pending-stock-bills', companyId])
         qc.invalidateQueries(['stxn_in', companyId])
+      }
+
+      // Auto-create fuel tank replenishment if tank was selected
+      if (addToTank && fuelTankId) {
+        const totalLitres = validLines.reduce((s, l) => s + (parseFloat(l.quantity) || 0), 0)
+        const ratePerL    = totalLitres > 0 ? parseFloat(total) / totalLitres : null
+        const tank        = fuelTanks.find(t => t.id === fuelTankId)
+        const { error: repErr } = await supabase.from('fuel_tank_replenishments').insert({
+          company_id:       companyId,
+          tank_id:          fuelTankId,
+          bill_id:          id,
+          replenish_date:   form.bill_date,
+          quantity_liters:  totalLitres,
+          vendor_id:        form.vendor_id || null,
+          vendor_name:      selectedVendorObj?.name || null,
+          invoice_ref:      blNum,
+          rate_per_liter:   ratePerL ? parseFloat(ratePerL.toFixed(2)) : null,
+          total_amount:     parseFloat(total),
+          received_by:      session.user.id,
+          received_by_name: userProfile?.full_name || null,
+          notes:            `Auto-receipt from Bill ${blNum}`,
+        })
+        if (repErr) toast.error(`Tank stock update failed: ${repErr.message}`)
+        else {
+          const tankLabel = tank ? `${tank.name}${tank.location ? ` (${tank.location})` : ''}` : 'tank'
+          toast.success(`${totalLitres.toFixed(0)} L received into ${tankLabel}`)
+        }
+        qc.invalidateQueries(['fuel_tanks', companyId])
+        qc.invalidateQueries(['fuel_tanks_for_bill', companyId])
       }
 
       closeModal()
@@ -1988,6 +2039,54 @@ function BillsTab({ companyId, session }) {
                   <CheckCircle className="w-3.5 h-3.5 shrink-0" />
                   All line items will be auto-added to inventory on save under the selected category and store.
                 </div>
+              </div>
+            )}
+          </div>
+          )}
+
+          {/* ── Receive Fuel Into Tank — only for fuel vendors, create only ── */}
+          {!editing && isFuelVendor && (
+          <div className={`rounded-xl border p-3 transition-colors ${addToTank ? 'border-orange-700/50 bg-orange-500/5' : 'border-dark-700 bg-dark-800/40'}`}>
+            <label className="flex items-center gap-2.5 cursor-pointer select-none">
+              <input type="checkbox" checked={addToTank} onChange={e => { setAddToTank(e.target.checked); if (!e.target.checked) setFuelTankId('') }}
+                className="w-4 h-4 rounded accent-orange-500 cursor-pointer" />
+              <Fuel className="w-4 h-4 text-orange-400" />
+              <span className="text-sm font-semibold text-slate-200">Receive fuel into tank / bowser</span>
+              {addToTank && <span className="text-[10px] px-2 py-0.5 rounded-full bg-orange-600/20 text-orange-400 font-medium">Active</span>}
+            </label>
+            {addToTank && (
+              <div className="mt-3 space-y-2">
+                <select className={inp()} value={fuelTankId} onChange={e => setFuelTankId(e.target.value)}>
+                  <option value="">-- Select destination tank / bowser *</option>
+                  {fuelTanks.map(t => {
+                    const label = t.tank_type === 'bowser'
+                      ? `🚛 ${t.name}${t.equipment?.registration_number ? ` [${t.equipment.registration_number}]` : ''}`
+                      : t.tank_type === 'drum'
+                      ? `🛢 ${t.name}${t.location ? ` @ ${t.location}` : ''}`
+                      : `⛽ ${t.name}${t.location ? ` @ ${t.location}` : ''}`
+                    const stock = `${Number(t.current_stock || 0).toFixed(0)} L`
+                    const cap   = t.capacity_liters ? ` / ${t.capacity_liters} L cap` : ''
+                    return <option key={t.id} value={t.id}>{label} — {stock}{cap}</option>
+                  })}
+                </select>
+                {fuelTankId && (() => {
+                  const tank = fuelTanks.find(t => t.id === fuelTankId)
+                  const incomingL = lines.reduce((s, l) => s + (parseFloat(l.quantity) || 0), 0)
+                  if (!tank || incomingL <= 0) return null
+                  const newStock = Number(tank.current_stock || 0) + incomingL
+                  const overCap  = tank.capacity_liters && newStock > tank.capacity_liters
+                  return (
+                    <div className={`text-[11px] flex items-center gap-1.5 px-2 py-1.5 rounded-lg ${overCap ? 'bg-red-500/10 text-red-400' : 'bg-orange-500/10 text-orange-400'}`}>
+                      <Fuel className="w-3 h-3 shrink-0" />
+                      {Number(tank.current_stock || 0).toFixed(0)} L + {incomingL.toFixed(0)} L = <strong>{newStock.toFixed(0)} L</strong>
+                      {overCap && <span className="text-red-400 font-semibold ml-1">⚠ Exceeds capacity ({tank.capacity_liters} L)</span>}
+                    </div>
+                  )
+                })()}
+                <p className="text-[11px] text-orange-600/70 flex items-center gap-1.5">
+                  <CheckCircle className="w-3.5 h-3.5 shrink-0" />
+                  Total quantity from line items will be added to the selected tank's stock on save.
+                </p>
               </div>
             )}
           </div>

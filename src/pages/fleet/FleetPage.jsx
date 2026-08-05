@@ -3802,6 +3802,7 @@ function FuelTab({ companyId }) {
   const [showAddTank,     setShowAddTank]     = useState(false)
   const [replenishTankId, setReplenishTankId] = useState(null) // tank id to replenish, or null
   const [filterMonth,     setFilterMonth]     = useState(format(new Date(), 'yyyy-MM'))
+  const [expandedTankId,  setExpandedTankId]  = useState(null) // tank id whose receipt log is shown
 
   const canIssueFuel = ['admin', 'manager'].includes(role)
 
@@ -3865,6 +3866,20 @@ function FuelTab({ companyId }) {
     },
   })
 
+  // Replenishment receipts — all tanks for this company, most recent first
+  const { data: allReplenishments = [] } = useQuery({
+    queryKey: ['fuel_replenishments', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('fuel_tank_replenishments')
+        .select('id,tank_id,replenish_date,quantity_liters,vendor_name,invoice_ref,rate_per_liter,total_amount,notes,bill_id,bill:bill_id(bill_number)')
+        .eq('company_id', companyId)
+        .order('replenish_date', { ascending: false })
+        .order('created_at',     { ascending: false })
+        .limit(200)
+      return data || []
+    },
+  })
+
   const totalIssued   = issues.reduce((s, i) => s + Number(i.quantity_liters || 0), 0)
   const totalFilled   = fills.reduce((s, f) => s + Number(f.quantity_liters || 0), 0)
   const totalConsumed = consumed.reduce((s, c) => s + Number(c.fuel_consumed || 0), 0)
@@ -3881,7 +3896,10 @@ function FuelTab({ companyId }) {
 
   const isListLoading = subTab === 'issues' ? issuesLoading : subTab === 'filled' ? fillsLoading : tanksLoading
 
-  const refetchTanks = () => qc.invalidateQueries({ queryKey: ['fuel_tanks', companyId] })
+  const refetchTanks = () => {
+    qc.invalidateQueries({ queryKey: ['fuel_tanks', companyId] })
+    qc.invalidateQueries({ queryKey: ['fuel_replenishments', companyId] })
+  }
 
   return (
     <div className="flex flex-col h-full">
@@ -4064,6 +4082,53 @@ function FuelTab({ companyId }) {
                       </div>
                     )}
                     {tank.notes && <p className="text-xs text-slate-500 mt-2 italic">{tank.notes}</p>}
+                    {/* Receipt History toggle */}
+                    {(() => {
+                      const tankRecs = allReplenishments.filter(r => r.tank_id === tank.id)
+                      const isExpanded = expandedTankId === tank.id
+                      if (tankRecs.length === 0 && !isExpanded) return null
+                      return (
+                        <div className="mt-3">
+                          <button
+                            onClick={() => setExpandedTankId(isExpanded ? null : tank.id)}
+                            className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-200 transition-colors w-full"
+                          >
+                            <span className={`transition-transform ${isExpanded ? 'rotate-90' : ''}`}>▶</span>
+                            Receipt History ({tankRecs.length})
+                          </button>
+                          {isExpanded && (
+                            <div className="mt-2 space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                              {tankRecs.length === 0 && (
+                                <p className="text-xs text-slate-600 text-center py-3">No receipts yet</p>
+                              )}
+                              {tankRecs.map(r => (
+                                <div key={r.id} className="bg-dark-700/60 rounded-lg px-2.5 py-2 flex items-start justify-between gap-2">
+                                  <div className="min-w-0">
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      <span className="text-xs font-semibold text-cyan-400">+{Number(r.quantity_liters).toFixed(0)} L</span>
+                                      {r.bill?.bill_number && (
+                                        <span className="text-[10px] font-mono text-primary-400 bg-primary-500/10 px-1.5 py-0.5 rounded">{r.bill.bill_number}</span>
+                                      )}
+                                      {r.invoice_ref && !r.bill?.bill_number && (
+                                        <span className="text-[10px] text-slate-500">{r.invoice_ref}</span>
+                                      )}
+                                    </div>
+                                    <div className="flex items-center gap-2 mt-0.5 text-[10px] text-slate-500 flex-wrap">
+                                      <span>{r.replenish_date}</span>
+                                      {r.vendor_name && <span>· {r.vendor_name}</span>}
+                                      {r.rate_per_liter && <span>· ₹{Number(r.rate_per_liter).toFixed(2)}/L</span>}
+                                    </div>
+                                  </div>
+                                  {r.total_amount && (
+                                    <span className="text-xs font-semibold text-green-400 shrink-0">₹{Number(r.total_amount).toLocaleString('en-IN')}</span>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })()}
                     {canIssueFuel && (
                       <div className="mt-3 flex justify-end">
                         <button onClick={() => setReplenishTankId(tank.id)}
