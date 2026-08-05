@@ -356,7 +356,7 @@ function useEmployeeData(companyId) {
     queryKey: ['dash_employees', companyId],
     queryFn: async () => {
       const { data } = await supabase.from('hr_employees')
-        .select('id,name,designation,department,is_active,employment_type').eq('company_id', companyId)
+        .select('id,name,designation,department,status,employment_type').eq('company_id', companyId)
       return data || []
     },
     staleTime: 120_000, enabled: !!companyId,
@@ -567,7 +567,7 @@ function EquipmentHoursChart({ shifts }) {
 
 // Attendance Ring Donut
 function AttendanceRing({ attendance, employees }) {
-  const active = employees.filter(e => e.is_active).length
+  const active = employees.filter(e => e.status === 'active').length
   const present   = attendance.filter(a => a.status === 'present').length
   const absent    = attendance.filter(a => a.status === 'absent').length
   const onLeave   = attendance.filter(a => a.status === 'leave').length
@@ -1064,7 +1064,7 @@ function HRSection({ companyId, range, onNavigate }) {
     staleTime: 60_000, enabled: !!companyId,
   })
 
-  const active  = employees.filter(e => e.is_active)
+  const active  = employees.filter(e => e.status === 'active')
   const present = attendance.filter(a => a.status === 'present')
   const absent  = attendance.filter(a => a.status === 'absent')
   const onLeave = attendance.filter(a => a.status === 'leave')
