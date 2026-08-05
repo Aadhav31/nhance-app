@@ -5,7 +5,7 @@
 create table if not exists equipment_utilization_targets (
   id           uuid primary key default gen_random_uuid(),
   company_id   uuid not null references companies(id) on delete cascade,
-  equipment_id uuid not null references equipment_registry(id) on delete cascade,
+  equipment_id uuid not null references equipment(id) on delete cascade,
   year         integer not null,
   month        integer not null check (month between 1 and 12),
   planned_days integer not null check (planned_days between 0 and 31),
