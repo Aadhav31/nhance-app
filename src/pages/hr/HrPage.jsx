@@ -8,7 +8,8 @@ import {
   Users, Plus, X, Loader2, Save, Trash2, Edit2,
   Phone, Calendar, CreditCard, FileText,
   CheckCircle, Banknote, BarChart2, Search, Mail, UserPlus, Link, Copy,
-  ChevronLeft, ChevronRight, RefreshCw, AlertTriangle
+  ChevronLeft, ChevronRight, RefreshCw, AlertTriangle, Shield, Award,
+  TrendingUp, Gauge, Zap, Clock, Activity
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format, getDaysInMonth, parseISO } from 'date-fns'
@@ -1385,6 +1386,16 @@ function EmployeeDetailModal({ emp, companyId, onClose, onEdit }) {
         </>
       )}
 
+      {/* ── Certifications (operator/driver only) ── */}
+      {(emp.designation || '').toLowerCase().includes('operator') || (emp.designation || '').toLowerCase().includes('driver') ? (
+        <OperatorCertificationsSection emp={emp} companyId={companyId} role={role} />
+      ) : null}
+
+      {/* ── Operator Performance (operator/driver only) ── */}
+      {(emp.designation || '').toLowerCase().includes('operator') || (emp.designation || '').toLowerCase().includes('driver') ? (
+        <OperatorPerformanceSection emp={emp} companyId={companyId} />
+      ) : null}
+
       {/* Attendance Calendar */}
       <div className="h-px bg-dark-600" />
       <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Attendance</p>
@@ -1393,6 +1404,253 @@ function EmployeeDetailModal({ emp, companyId, onClose, onEdit }) {
         <p className="text-[10px] text-slate-600 italic">Tap a day to edit its attendance record.</p>
       )}
     </Modal>
+  )
+}
+
+// ── Operator Certifications Section ───────────────────────────────────────────
+const EQUIPMENT_CATEGORIES_FOR_CERT = [
+  'Excavator','Crane','Grader','Dozer','Paver','Roller','Loader','Backhoe',
+  'Dumper / Tipper','Concrete Pump','Batching Plant','Tower Crane','Hydra',
+  'Compactor','Transit Mixer','Drilling Rig','Pile Driver','Scraper',
+  'Tractor','Forklift','Trailer','Other'
+]
+
+function OperatorCertificationsSection({ emp, companyId, role }) {
+  const qc = useQueryClient()
+  const canEdit = ['admin','manager','hr','pm_manager'].includes(role)
+  const [showForm, setShowForm] = useState(false)
+  const [editCert, setEditCert] = useState(null)
+  const [saving, setSaving] = useState(false)
+  const [form, setForm] = useState({
+    equipment_category: '', cert_name: '', cert_number: '',
+    issued_date: '', expiry_date: '', notes: ''
+  })
+
+  const { data: certs = [], refetch } = useQuery({
+    queryKey: ['operator_certs', emp.id],
+    queryFn: async () => {
+      const { data } = await supabase.from('operator_certifications')
+        .select('*').eq('employee_id', emp.id).order('equipment_category')
+      return data || []
+    },
+  })
+
+  const openAdd = () => {
+    setForm({ equipment_category: '', cert_name: '', cert_number: '', issued_date: '', expiry_date: '', notes: '' })
+    setEditCert(null); setShowForm(true)
+  }
+  const openEdit = (c) => {
+    setForm({ equipment_category: c.equipment_category, cert_name: c.cert_name, cert_number: c.cert_number || '',
+      issued_date: c.issued_date || '', expiry_date: c.expiry_date || '', notes: c.notes || '' })
+    setEditCert(c); setShowForm(true)
+  }
+  const handleSave = async () => {
+    if (!form.equipment_category || !form.cert_name) { toast.error('Category and cert name required'); return }
+    setSaving(true)
+    try {
+      const payload = { company_id: companyId, employee_id: emp.id, ...form,
+        issued_date: form.issued_date || null, expiry_date: form.expiry_date || null,
+        cert_number: form.cert_number || null, notes: form.notes || null }
+      if (editCert) {
+        const { error } = await supabase.from('operator_certifications').update(payload).eq('id', editCert.id)
+        if (error) throw error
+      } else {
+        const { error } = await supabase.from('operator_certifications').insert(payload)
+        if (error) throw error
+      }
+      toast.success(editCert ? 'Certification updated' : 'Certification added')
+      refetch(); qc.invalidateQueries(['operator_certs_by_emp', companyId])
+      setShowForm(false)
+    } catch (err) { toast.error(err.message)
+    } finally { setSaving(false) }
+  }
+  const handleDelete = async (id) => {
+    const { error } = await supabase.from('operator_certifications').delete().eq('id', id)
+    if (error) { toast.error(error.message); return }
+    toast.success('Removed'); refetch()
+    qc.invalidateQueries(['operator_certs_by_emp', companyId])
+  }
+
+  const today = new Date().toISOString().slice(0, 10)
+  const warn30 = new Date(); warn30.setDate(warn30.getDate() + 30)
+  const warn30Str = warn30.toISOString().slice(0, 10)
+
+  const certStatus = (c) => {
+    if (!c.expiry_date) return { label: 'Lifetime', color: 'text-blue-400', bg: 'bg-blue-500/10 border-blue-500/20' }
+    if (c.expiry_date < today) return { label: 'Expired', color: 'text-red-400', bg: 'bg-red-500/10 border-red-500/30' }
+    if (c.expiry_date <= warn30Str) return { label: 'Expiring Soon', color: 'text-amber-400', bg: 'bg-amber-500/10 border-amber-500/30' }
+    return { label: 'Valid', color: 'text-green-400', bg: 'bg-green-500/10 border-green-500/20' }
+  }
+
+  const inp = 'w-full bg-dark-700 border border-dark-600 rounded-lg px-2.5 py-1.5 text-xs text-slate-100 focus:outline-none focus:border-primary-500'
+
+  return (
+    <>
+      <div className="h-px bg-dark-600" />
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Shield className="w-3.5 h-3.5 text-primary-400" />
+          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Certifications & Licenses</p>
+        </div>
+        {canEdit && (
+          <button onClick={openAdd} className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-lg bg-primary-600/20 text-primary-400 hover:bg-primary-600/30 border border-primary-700/30 transition-colors">
+            <Plus className="w-3 h-3" /> Add
+          </button>
+        )}
+      </div>
+
+      {certs.length === 0 && !showForm && (
+        <p className="text-xs text-slate-600 text-center py-3">No certifications recorded</p>
+      )}
+
+      <div className="space-y-2">
+        {certs.map(c => {
+          const st = certStatus(c)
+          return (
+            <div key={c.id} className={`rounded-xl border p-3 ${st.bg}`}>
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs font-semibold text-slate-200">{c.cert_name}</span>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full border ${st.bg} ${st.color}`}>{st.label}</span>
+                  </div>
+                  <p className="text-[10px] text-slate-500 mt-0.5">{c.equipment_category}{c.cert_number ? ` · ${c.cert_number}` : ''}</p>
+                  <p className="text-[10px] text-slate-600 mt-0.5">
+                    {c.issued_date ? `Issued: ${c.issued_date}` : ''}
+                    {c.issued_date && c.expiry_date ? ' · ' : ''}
+                    {c.expiry_date ? `Expires: ${c.expiry_date}` : ''}
+                  </p>
+                  {c.notes && <p className="text-[10px] text-slate-600 mt-0.5 italic">{c.notes}</p>}
+                </div>
+                {canEdit && (
+                  <div className="flex gap-1 shrink-0">
+                    <button onClick={() => openEdit(c)} className="p-1 text-slate-500 hover:text-slate-200 transition-colors"><Edit2 className="w-3 h-3" /></button>
+                    <button onClick={() => handleDelete(c.id)} className="p-1 text-slate-500 hover:text-red-400 transition-colors"><Trash2 className="w-3 h-3" /></button>
+                  </div>
+                )}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+
+      {showForm && (
+        <div className="bg-dark-750 border border-dark-600 rounded-xl p-3 space-y-2.5">
+          <p className="text-xs font-semibold text-slate-300">{editCert ? 'Edit Certification' : 'Add Certification'}</p>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-[10px] text-slate-500 mb-1">Equipment Category *</label>
+              <select className={inp} value={form.equipment_category} onChange={e => setForm(f => ({ ...f, equipment_category: e.target.value }))}>
+                <option value="">— Select —</option>
+                {EQUIPMENT_CATEGORIES_FOR_CERT.map(c => <option key={c}>{c}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-[10px] text-slate-500 mb-1">Certificate Name *</label>
+              <input className={inp} value={form.cert_name} onChange={e => setForm(f => ({ ...f, cert_name: e.target.value }))} placeholder="e.g. HEMM License" />
+            </div>
+            <div>
+              <label className="block text-[10px] text-slate-500 mb-1">Certificate No.</label>
+              <input className={inp} value={form.cert_number} onChange={e => setForm(f => ({ ...f, cert_number: e.target.value }))} placeholder="Optional" />
+            </div>
+            <div>
+              <label className="block text-[10px] text-slate-500 mb-1">Issued Date</label>
+              <input type="date" className={inp} value={form.issued_date} onChange={e => setForm(f => ({ ...f, issued_date: e.target.value }))} />
+            </div>
+            <div>
+              <label className="block text-[10px] text-slate-500 mb-1">Expiry Date <span className="text-slate-600">(blank = lifetime)</span></label>
+              <input type="date" className={inp} value={form.expiry_date} onChange={e => setForm(f => ({ ...f, expiry_date: e.target.value }))} />
+            </div>
+            <div>
+              <label className="block text-[10px] text-slate-500 mb-1">Notes</label>
+              <input className={inp} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} placeholder="Optional" />
+            </div>
+          </div>
+          <div className="flex gap-2 pt-1">
+            <button onClick={() => setShowForm(false)} className="flex-1 py-1.5 rounded-lg border border-dark-500 text-xs text-slate-400 hover:text-slate-200 transition-colors">Cancel</button>
+            <button onClick={handleSave} disabled={saving} className="flex-1 py-1.5 rounded-lg bg-primary-600 hover:bg-primary-500 text-white text-xs font-medium disabled:opacity-40 flex items-center justify-center gap-1">
+              {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
+
+// ── Operator Performance Section ───────────────────────────────────────────────
+function OperatorPerformanceSection({ emp, companyId }) {
+  const thirtyDaysAgo = (() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().slice(0, 10) })()
+  const ninetyDaysAgo = (() => { const d = new Date(); d.setDate(d.getDate() - 90); return d.toISOString().slice(0, 10) })()
+
+  const { data: perfData } = useQuery({
+    queryKey: ['operator_perf', emp.id, emp.name, ninetyDaysAgo],
+    queryFn: async () => {
+      const { data } = await supabase.from('daily_operations')
+        .select('ops_date, status, running_hours, fuel_consumed, equipment_id')
+        .eq('company_id', companyId)
+        .eq('operator_name', emp.name)
+        .gte('ops_date', ninetyDaysAgo)
+        .order('ops_date', { ascending: false })
+      return data || []
+    },
+  })
+
+  if (!perfData) return null
+  if (perfData.length === 0) return (
+    <>
+      <div className="h-px bg-dark-600" />
+      <div className="flex items-center gap-2">
+        <TrendingUp className="w-3.5 h-3.5 text-amber-400" />
+        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Performance (90 days)</p>
+      </div>
+      <p className="text-xs text-slate-600 text-center py-3">No operational data found for this operator</p>
+    </>
+  )
+
+  const last30 = perfData.filter(r => r.ops_date >= thirtyDaysAgo)
+  const totalShifts = perfData.length
+  const shiftsLast30 = last30.length
+  const totalHours = perfData.reduce((s, r) => s + (Number(r.running_hours) || 0), 0)
+  const totalFuel  = perfData.reduce((s, r) => s + (Number(r.fuel_consumed) || 0), 0)
+  const avgFuelPerHr = totalHours > 0 ? (totalFuel / totalHours) : 0
+  const breakdowns = perfData.filter(r => r.status === 'breakdown').length
+  const uniqueMachines = new Set(perfData.map(r => r.equipment_id)).size
+
+  const stats = [
+    { label: 'Shifts (90d)', value: totalShifts, sub: `${shiftsLast30} last 30d`, icon: <Clock className="w-3.5 h-3.5 text-primary-400" /> },
+    { label: 'Running Hrs', value: totalHours.toFixed(1), sub: 'total logged', icon: <Gauge className="w-3.5 h-3.5 text-blue-400" /> },
+    { label: 'Fuel/Hr', value: avgFuelPerHr > 0 ? `${avgFuelPerHr.toFixed(1)} L` : '—', sub: 'avg consumption', icon: <Zap className="w-3.5 h-3.5 text-amber-400" /> },
+    { label: 'Breakdowns', value: breakdowns, sub: `${uniqueMachines} machine${uniqueMachines !== 1 ? 's' : ''}`, icon: <Activity className="w-3.5 h-3.5 text-red-400" /> },
+  ]
+
+  return (
+    <>
+      <div className="h-px bg-dark-600" />
+      <div className="flex items-center gap-2">
+        <TrendingUp className="w-3.5 h-3.5 text-amber-400" />
+        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Performance (90 days)</p>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        {stats.map(s => (
+          <div key={s.label} className="bg-dark-700 rounded-xl p-3 flex items-start gap-2.5">
+            <div className="mt-0.5 shrink-0">{s.icon}</div>
+            <div className="min-w-0">
+              <p className="text-[10px] text-slate-500 uppercase tracking-wider">{s.label}</p>
+              <p className="text-lg font-bold text-slate-100 leading-tight">{s.value}</p>
+              <p className="text-[10px] text-slate-600">{s.sub}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+      {breakdowns > 0 && (
+        <div className="flex items-center gap-2 bg-red-500/8 border border-red-500/20 rounded-lg px-3 py-2">
+          <AlertTriangle className="w-3.5 h-3.5 text-red-400 shrink-0" />
+          <p className="text-[11px] text-red-300">{breakdowns} breakdown shift{breakdowns > 1 ? 's' : ''} recorded in last 90 days — review with P&M manager</p>
+        </div>
+      )}
+    </>
   )
 }
 
