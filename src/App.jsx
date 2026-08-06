@@ -290,7 +290,7 @@ function AppShell() {
       case 'fleet':
         return hasModule(MODULES.FLEET) ? (
           <Suspense fallback={<LoadingScreen message="Loading fleet…" />}>
-            <FleetPage onNavigate={handleNavigate} />
+            <FleetPage onNavigate={handleNavigate} unloggedIds={navExtra.filterUnloggedIds || null} />
           </Suspense>
         ) : <ModuleNotActive page={page} />
       case 'operations':

@@ -1476,7 +1476,7 @@ function useAlerts(companyId) {
     }
     // Deployed machines not logged today
     if (unloggedAlerts.length > 0) {
-      items.push({ level: 'info', title: `${unloggedAlerts.length} deployed machine${unloggedAlerts.length > 1 ? 's' : ''} not logged today`, sub: unloggedAlerts.slice(0, 3).map(e => e.name).join(', '), nav: 'fleet', id: 'unlogged-ops' })
+      items.push({ level: 'info', title: `${unloggedAlerts.length} deployed machine${unloggedAlerts.length > 1 ? 's' : ''} not logged today`, sub: unloggedAlerts.slice(0, 3).map(e => e.name).join(', '), nav: 'fleet', navExtra: { filterUnloggedIds: unloggedAlerts.map(e => e.id) }, id: 'unlogged-ops' })
     }
 
     return items
@@ -1530,7 +1530,7 @@ function AlertStrip({ alerts, onNavigate }) {
           {alerts.map(alert => {
             const s = LEVEL_CFG[alert.level]
             return (
-              <button key={alert.id} onClick={() => onNavigate?.(alert.nav)}
+              <button key={alert.id} onClick={() => onNavigate?.(alert.nav, alert.navExtra || {})}
                 className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-dark-700/30 transition-colors group">
                 <span className={`w-1.5 h-1.5 rounded-full shrink-0 mt-0.5 ${s.dot}`} />
                 <div className="flex-1 min-w-0">

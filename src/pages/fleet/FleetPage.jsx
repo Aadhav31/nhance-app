@@ -4175,7 +4175,7 @@ function EquipmentCard({ equipment, onClick }) {
 }
 
 // ── Fleet Tab ─────────────────────────────────────────────────────────────────
-function FleetTab({ companyId, showAdd, setShowAdd, onNavigate }) {
+function FleetTab({ companyId, showAdd, setShowAdd, onNavigate, unloggedIds = null }) {
   const [selected,        setSelected]        = useState(null)
   const [search,          setSearch]          = useState('')
   const [filterStatus,    setFilterStatus]    = useState('all')
@@ -4183,6 +4183,9 @@ function FleetTab({ companyId, showAdd, setShowAdd, onNavigate }) {
   const [viewMode,        setViewMode]        = useState('grid')    // 'grid' | 'site' | 'utilization' | 'cost'
   const [alertDismissed,  setAlertDismissed]  = useState(false)
   const [gateDismissed,   setGateDismissed]   = useState(false)
+  // Deep-link filter from dashboard alert — dismissed when user taps ×
+  const [unloggedFilter,  setUnloggedFilter]  = useState(unloggedIds)
+  useEffect(() => { setUnloggedFilter(unloggedIds) }, [unloggedIds])
   const [costGroupBy,     setCostGroupBy]     = useState('project') // 'project' | 'machine'
   // Shared month state for utilization grid + cost allocation
   const [gridMonth, setGridMonth] = useState(() => { const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), 1) })
@@ -4398,7 +4401,11 @@ function FleetTab({ companyId, showAdd, setShowAdd, onNavigate }) {
 
   const MONTH_NAMES_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 
+  const unloggedSet = unloggedFilter?.length ? new Set(unloggedFilter) : null
+
   const filtered = equipment.filter(e =>
+    // If deep-linked from "not logged today" alert, restrict to those machines only
+    (!unloggedSet || unloggedSet.has(e.id)) &&
     (!search || e.name.toLowerCase().includes(search.toLowerCase()) ||
       (e.registration_number || '').toLowerCase().includes(search.toLowerCase()) ||
       (e.category || '').toLowerCase().includes(search.toLowerCase())) &&
@@ -4502,6 +4509,21 @@ function FleetTab({ companyId, showAdd, setShowAdd, onNavigate }) {
               </button>
             )
           })}
+        </div>
+      )}
+
+      {/* ── "Not logged today" filter banner — shown when deep-linked from dashboard alert ── */}
+      {unloggedSet && (
+        <div className="mx-4 mb-2 shrink-0 bg-amber-500/10 border border-amber-500/40 rounded-xl px-3 py-2 flex items-center justify-between gap-2">
+          <p className="text-amber-300 text-xs font-semibold">
+            ⚠️ Showing {unloggedSet.size} machine{unloggedSet.size !== 1 ? 's' : ''} not logged today
+          </p>
+          <button
+            onClick={() => setUnloggedFilter(null)}
+            className="text-amber-400 hover:text-amber-200 text-xs font-medium shrink-0"
+          >
+            Clear filter ×
+          </button>
         </div>
       )}
 
@@ -7297,7 +7319,7 @@ function LedgerTab({ companyId }) {
 }
 
 // ── Main FleetPage ────────────────────────────────────────────────────────────
-export default function FleetPage({ onNavigate }) {
+export default function FleetPage({ onNavigate, unloggedIds = null }) {
   const { companyId } = useAuth()
   const [activeTab,  setActiveTab]  = useState('fleet')
   const [showAdd,    setShowAdd]    = useState(false)
@@ -7337,7 +7359,7 @@ export default function FleetPage({ onNavigate }) {
         })}
       </div>
       <div className="flex-1 overflow-hidden">
-        {activeTab === 'fleet'     && <FleetTab     companyId={companyId} showAdd={showAdd} setShowAdd={setShowAdd} onNavigate={onNavigate} />}
+        {activeTab === 'fleet'     && <FleetTab     companyId={companyId} showAdd={showAdd} setShowAdd={setShowAdd} onNavigate={onNavigate} unloggedIds={unloggedIds} />}
         {activeTab === 'fuel'      && <FuelTab      companyId={companyId} />}
         {activeTab === 'incidents' && <IncidentsTab companyId={companyId} />}
         {activeTab === 'history'   && <HistoryTab   companyId={companyId} />}
