@@ -1268,9 +1268,7 @@ function ShiftModule({ companyId, operatorId, employeeId, employeeName, lang, sh
 function AttendanceModule({ companyId, operatorId, employeeId, lang }) {
   const L = LANGS[lang]
   const qc = useQueryClient()
-  const [leaveOpen,    setLeaveOpen]    = useState(false)
-  const [clearChecked, setClearChecked] = useState(false)
-  const [clearing,     setClearing]     = useState(false)
+  const [leaveOpen, setLeaveOpen] = useState(false)
   const todayStr = today()
   const now = new Date()
   const month = now.getMonth() + 1
@@ -1334,20 +1332,10 @@ function AttendanceModule({ companyId, operatorId, employeeId, lang }) {
   // Orphaned attendance: record exists but the shift was deleted by admin
   const orphanedAtt = todayAtt && !todayShift
 
-  const handleClearOrphanedAtt = async () => {
-    if (!todayAtt || !clearChecked) return
-    setClearing(true)
-    await supabase.from('hr_attendance').delete().eq('id', todayAtt.id)
-    qc.invalidateQueries({ queryKey: ['op_attendance_today', employeeId, todayStr] })
-    qc.invalidateQueries({ queryKey: ['op_attendance_month', employeeId, year, month] })
-    setClearing(false)
-    setClearChecked(false)
-  }
-
   return (
     <div className="space-y-4">
 
-      {/* ── Orphaned-attendance warning ─────────────────────────────────────── */}
+      {/* ── Orphaned-attendance notice (read-only for operator) ─────────────── */}
       {orphanedAtt && (
         <div className="bg-amber-900/30 border border-amber-500/50 rounded-2xl p-4">
           <div className="flex items-start gap-3">
@@ -1357,29 +1345,9 @@ function AttendanceModule({ companyId, operatorId, employeeId, lang }) {
               <p className="text-amber-200/70 text-xs mt-1 leading-relaxed">
                 An attendance record (<strong className="text-amber-200 capitalize">
                   {todayAtt.status.replace('_', ' ')}
-                </strong>) exists for today, but the shift it belongs to has been removed.
-                This record may be incorrect.
+                </strong>) exists for today but the shift it belongs to has been removed.
+                Please contact your supervisor to correct this.
               </p>
-              <label className="flex items-center gap-2 mt-3 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={clearChecked}
-                  onChange={e => setClearChecked(e.target.checked)}
-                  className="w-4 h-4 rounded accent-red-500 cursor-pointer"
-                />
-                <span className="text-amber-200 text-xs">
-                  Clear all data for this deleted shift
-                </span>
-              </label>
-              {clearChecked && (
-                <button
-                  onClick={handleClearOrphanedAtt}
-                  disabled={clearing}
-                  className="mt-3 w-full bg-red-700 active:bg-red-600 disabled:opacity-50 text-white text-xs font-bold py-2.5 rounded-xl transition-colors"
-                >
-                  {clearing ? 'Removing…' : 'Confirm — Remove Attendance Record'}
-                </button>
-              )}
             </div>
           </div>
         </div>
