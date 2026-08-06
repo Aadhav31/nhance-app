@@ -2446,12 +2446,23 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
     }
 
     for (const inc of incidentLog) {
-      if (inc.incident_type === 'breakdown') continue
+      const isBreakdown = inc.incident_type === 'breakdown'
+      // For breakdown incidents: only show from shift_incidents if there's no matching breakdown_alerts entry
+      // (i.e. pre-RLS-fix records that never made it into breakdown_alerts)
+      if (isBreakdown) {
+        const alreadyCovered = breakdownLog.some(b => {
+          const diff = Math.abs(new Date(b.reported_at) - new Date(inc.created_at))
+          return diff < 60_000 // within 1 minute = same breakdown
+        })
+        if (alreadyCovered) continue
+      }
       events.push({
-        type: 'incident', ts: inc.created_at, color: 'amber',
-        label: `⚠️ Incident — ${inc.incident_type || 'General'}`,
+        type: isBreakdown ? 'breakdown_reported' : 'incident',
+        ts: inc.created_at,
+        color: isBreakdown ? 'red' : 'amber',
+        label: isBreakdown ? '🔧 Breakdown Reported' : `⚠️ Incident — ${inc.incident_type || 'General'}`,
         sub: inc.description || null,
-        meta: inc.resolved ? 'Resolved' : 'Open',
+        meta: isBreakdown ? null : (inc.resolved ? 'Resolved' : 'Open'),
       })
     }
 
