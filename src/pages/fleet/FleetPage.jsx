@@ -1262,6 +1262,18 @@ function IncidentModal({ equipment, companyId, onClose }) {
     description: '', action_taken: '', breakdown_cause: '',
     rectification_needed: '', damage_cause: '', what_needs_to_be_done: '', severity: 'medium',
   })
+
+  // Fetch project contacts for breakdown escalation chain
+  const { data: incidentProject } = useQuery({
+    queryKey: ['incident_project_contacts', equipment.current_project_id],
+    queryFn: async () => {
+      const { data } = await supabase.from('projects')
+        .select('id, our_supervisors, our_pnm_contacts, our_managers, our_pm_name, our_pm_phone, our_pm_email')
+        .eq('id', equipment.current_project_id).single()
+      return data
+    },
+    enabled: !!equipment.current_project_id,
+  })
   const [saving, setSaving] = useState(false)
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
 
@@ -1295,6 +1307,39 @@ function IncidentModal({ equipment, companyId, onClose }) {
       if (error) throw error
       if (incidentType === 'breakdown') {
         await supabase.from('equipment').update({ status: 'breakdown' }).eq('id', equipment.id)
+
+        // Build escalation notify chain from project contacts
+        const chain = []
+        let lvl = 1
+        const proj = incidentProject
+        // Level 1 — Site Supervisors
+        const sups = proj?.our_supervisors?.length > 0 ? proj.our_supervisors : []
+        sups.forEach(s => { if (s.name) chain.push({ level: 1, role: 'Site Supervisor', name: s.name, phone: s.phone || null, email: s.email || null }) })
+        if (sups.length === 0) lvl++ // bump if no supervisors configured
+        // Level 2 — P&M Incharge
+        const pnms = proj?.our_pnm_contacts?.length > 0 ? proj.our_pnm_contacts : []
+        pnms.forEach(p => { if (p.name) chain.push({ level: 2, role: 'P&M Incharge', name: p.name, phone: p.phone || null, email: p.email || null }) })
+        // Level 3 — Managers
+        const mgrs = proj?.our_managers?.length > 0 ? proj.our_managers : []
+        mgrs.forEach(m => { if (m.name) chain.push({ level: 3, role: 'Manager', name: m.name, phone: m.phone || null, email: m.email || null }) })
+        // Level 4 — Project Manager
+        if (proj?.our_pm_name) chain.push({ level: 4, role: 'Project Manager', name: proj.our_pm_name, phone: proj.our_pm_phone || null, email: proj.our_pm_email || null })
+
+        const { data: incidentRow } = await supabase.from('shift_incidents')
+          .select('id').eq('equipment_id', equipment.id).order('created_at', { ascending: false }).limit(1).single()
+
+        await supabase.from('breakdown_alerts').insert({
+          company_id:     companyId,
+          equipment_id:   equipment.id,
+          incident_id:    incidentRow?.id || null,
+          equipment_name: equipment.name,
+          project_id:     equipment.current_project_id || null,
+          breakdown_cause: form.breakdown_cause || form.description,
+          reported_at:    entryTs,
+          notify_chain:   chain,
+        })
+        qc.invalidateQueries(['breakdown_alarms', companyId])
+        qc.invalidateQueries(['equipment_breakdown_log', equipment.id])
       } else if (['regular_maintenance', 'unscheduled_maintenance'].includes(incidentType)) {
         await supabase.from('equipment').update({ status: 'maintenance' }).eq('id', equipment.id)
       }
@@ -2180,6 +2225,20 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
       return data || []
     },
     staleTime: 60_000,
+  })
+
+  // Breakdown alert history for this equipment
+  const { data: breakdownLog = [] } = useQuery({
+    queryKey: ['equipment_breakdown_log', equipment.id],
+    queryFn: async () => {
+      const { data } = await supabase.from('breakdown_alerts')
+        .select('*')
+        .eq('equipment_id', equipment.id)
+        .order('reported_at', { ascending: false })
+        .limit(20)
+      return data || []
+    },
+    staleTime: 30_000,
   })
 
   // Fuel stats
@@ -3626,6 +3685,53 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
                       )}
                     </div>
                   ))}
+                </div>
+              )}
+            </div>
+
+            {/* ── Breakdown Alert History ───────────────────────────────── */}
+            <div>
+              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Breakdown Alerts</p>
+              {breakdownLog.length === 0 ? (
+                <div className="bg-dark-700/50 rounded-xl border border-dashed border-dark-600 p-6 text-center">
+                  <Wrench className="w-7 h-7 text-slate-600 mx-auto mb-2" />
+                  <p className="text-sm text-slate-500">No breakdown alerts recorded</p>
+                </div>
+              ) : (
+                <div className="divide-y divide-dark-600 rounded-xl overflow-hidden border border-dark-700">
+                  {breakdownLog.map(b => {
+                    const isOpen = !b.acknowledged_at
+                    return (
+                      <div key={b.id} className={`px-4 py-3 ${isOpen ? 'bg-red-950/30' : 'bg-dark-700/40'}`}>
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className={`w-2 h-2 rounded-full shrink-0 ${isOpen ? 'bg-red-500 animate-pulse' : 'bg-emerald-500'}`} />
+                              <span className={`text-xs font-semibold ${isOpen ? 'text-red-300' : 'text-slate-200'}`}>
+                                {isOpen ? '🚨 Active' : '✅ Resolved'}
+                              </span>
+                              <span className="text-[10px] text-slate-500">
+                                {format(new Date(b.reported_at), 'dd MMM yyyy, HH:mm')}
+                              </span>
+                            </div>
+                            {b.breakdown_cause && (
+                              <p className="text-xs text-slate-400 mt-1 ml-4 line-clamp-2">{b.breakdown_cause}</p>
+                            )}
+                            {b.acknowledged_at && (
+                              <p className="text-[10px] text-emerald-500/80 mt-1 ml-4">
+                                Ack'd by {b.acknowledged_by_name} · Level {b.acknowledged_level} · {format(new Date(b.acknowledged_at), 'HH:mm')}
+                              </p>
+                            )}
+                          </div>
+                          {b.notify_chain?.length > 0 && (
+                            <div className="text-right shrink-0">
+                              <p className="text-[10px] text-slate-500">{b.notify_chain.length} notified</p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
                 </div>
               )}
             </div>

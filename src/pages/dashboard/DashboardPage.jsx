@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useState, useMemo, useEffect, useRef } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import {
@@ -10,8 +10,9 @@ import {
   TrendingUp, Truck, Users, FileText, ShoppingCart,
   Clock, AlertCircle, CheckCircle, Activity, Wallet, Receipt,
   Calendar, Wrench, Package, BarChart3,
-  X, ChevronRight,
+  X, ChevronRight, Phone, Mail, ChevronDown, ChevronUp,
 } from 'lucide-react'
+import toast from 'react-hot-toast'
 import { ROLES } from '../../lib/constants'
 
 // ── Chart Palette ──────────────────────────────────────────────────────────────
@@ -1282,6 +1283,174 @@ const DOC_LABEL = {
   purchase_invoice: 'Purchase Invoice',
 }
 
+// ── Breakdown Alarm ───────────────────────────────────────────────────────────
+// Escalation thresholds (minutes from reported_at)
+const ESCALATION_MINS = { 1: 0, 2: 10, 3: 20, 4: 30 }
+const LEVEL_LABEL = { 1: 'Site Supervisor', 2: 'P&M Incharge', 3: 'Manager', 4: 'Project Manager' }
+
+function getAlarmLevel(reportedAt) {
+  const mins = (Date.now() - new Date(reportedAt).getTime()) / 60000
+  if (mins >= 30) return 4
+  if (mins >= 20) return 3
+  if (mins >= 10) return 2
+  return 1
+}
+
+function timeAgo(ts) {
+  const mins = Math.floor((Date.now() - new Date(ts).getTime()) / 60000)
+  if (mins < 1)  return 'just now'
+  if (mins < 60) return `${mins}m ago`
+  return `${Math.floor(mins / 60)}h ${mins % 60}m ago`
+}
+
+function BreakdownAlarm({ companyId, userProfile }) {
+  const qc = useQueryClient()
+  const [expanded, setExpanded] = useState(true)
+  const [acking,   setAcking]   = useState(null) // id of alarm being acked
+  const [tick,     setTick]     = useState(0)    // force re-render every minute
+  const audioRef = useRef(null)
+
+  // Tick every 60 s to keep elapsed time + escalation level current
+  useEffect(() => {
+    const t = setInterval(() => setTick(n => n + 1), 60_000)
+    return () => clearInterval(t)
+  }, [])
+
+  const { data: alarms = [] } = useQuery({
+    queryKey: ['breakdown_alarms', companyId],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('breakdown_alerts')
+        .select('*')
+        .eq('company_id', companyId)
+        .is('acknowledged_at', null)
+        .order('reported_at', { ascending: true })
+      return data || []
+    },
+    enabled: !!companyId,
+    refetchInterval: 30_000,
+  })
+
+  if (!alarms.length) return null
+
+  const handleAcknowledge = async (alarm) => {
+    setAcking(alarm.id)
+    try {
+      const level = getAlarmLevel(alarm.reported_at)
+      const { error } = await supabase.from('breakdown_alerts').update({
+        acknowledged_at:       new Date().toISOString(),
+        acknowledged_by_name:  userProfile?.full_name || userProfile?.email || 'Admin',
+        acknowledged_level:    level,
+      }).eq('id', alarm.id)
+      if (error) throw error
+      qc.invalidateQueries(['breakdown_alarms', companyId])
+      toast.success(`Breakdown acknowledged — ${alarm.equipment_name}`)
+    } catch (err) {
+      toast.error('Failed to acknowledge')
+    } finally {
+      setAcking(null)
+    }
+  }
+
+  return (
+    <div className="rounded-xl border-2 border-red-500/70 overflow-hidden shadow-xl shadow-red-500/20 mb-2">
+      {/* ── Alarm Header (always visible) ── */}
+      <button
+        onClick={() => setExpanded(o => !o)}
+        className="w-full flex items-center gap-3 px-4 py-3 bg-red-600/90 text-left">
+        {/* Pulsing dot */}
+        <span className="relative flex h-3 w-3 shrink-0">
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-60" />
+          <span className="relative inline-flex rounded-full h-3 w-3 bg-white" />
+        </span>
+        <span className="text-white font-bold text-sm tracking-wide flex-1">
+          🚨 BREAKDOWN ALERT — {alarms.length} unacknowledged
+        </span>
+        {expanded
+          ? <ChevronUp className="w-4 h-4 text-red-200 shrink-0" />
+          : <ChevronDown className="w-4 h-4 text-red-200 shrink-0" />}
+      </button>
+
+      {/* ── Alarm Cards ── */}
+      {expanded && (
+        <div className="bg-red-950/40 divide-y divide-red-900/50">
+          {alarms.map(alarm => {
+            const level   = getAlarmLevel(alarm.reported_at)
+            const chain   = alarm.notify_chain || []
+            const current = chain.filter(c => c.level === level)
+            const isAcking = acking === alarm.id
+
+            return (
+              <div key={alarm.id} className="p-4 space-y-3">
+                {/* Equipment + time */}
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <p className="text-red-100 font-bold text-sm">{alarm.equipment_name}</p>
+                    <p className="text-red-300/70 text-[11px] mt-0.5">{timeAgo(alarm.reported_at)}</p>
+                  </div>
+                  {/* Escalation level badge */}
+                  <div className="text-right shrink-0">
+                    <span className="text-[10px] font-bold bg-red-700/60 text-red-200 px-2 py-0.5 rounded-full">
+                      Level {level} — {LEVEL_LABEL[level]}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Cause */}
+                {alarm.breakdown_cause && (
+                  <p className="text-xs text-red-200/80 bg-red-900/40 rounded-lg px-3 py-2">
+                    {alarm.breakdown_cause}
+                  </p>
+                )}
+
+                {/* Escalation chain */}
+                {chain.length > 0 && (
+                  <div className="space-y-1">
+                    <p className="text-[10px] font-semibold text-red-300/70 uppercase tracking-wider">Notify Chain</p>
+                    {chain.map((c, i) => {
+                      const isCurrentLevel = c.level === level
+                      const isPast         = c.level < level
+                      return (
+                        <div key={i} className={`flex items-center gap-2 text-xs rounded-lg px-2.5 py-1.5
+                          ${isCurrentLevel ? 'bg-red-700/50 text-red-100' : isPast ? 'bg-dark-800/50 text-slate-500' : 'bg-dark-800/30 text-slate-600'}`}>
+                          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isCurrentLevel ? 'bg-red-400 animate-pulse' : isPast ? 'bg-slate-600' : 'bg-dark-600'}`} />
+                          <span className="font-medium">{c.role}</span>
+                          <span className="text-slate-400">—</span>
+                          <span className="truncate">{c.name}</span>
+                          {c.phone && (
+                            <a href={`tel:${c.phone}`} onClick={e => e.stopPropagation()}
+                              className="ml-auto shrink-0 text-red-300 hover:text-red-100">
+                              <Phone className="w-3.5 h-3.5" />
+                            </a>
+                          )}
+                        </div>
+                      )
+                    })}
+                    {/* Escalation timing note */}
+                    {level < 4 && (
+                      <p className="text-[10px] text-red-400/60 text-center pt-1">
+                        Escalates to {LEVEL_LABEL[level + 1]} if not acknowledged within {ESCALATION_MINS[level + 1] - ESCALATION_MINS[level]} min
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {/* Acknowledge button */}
+                <button
+                  onClick={() => handleAcknowledge(alarm)}
+                  disabled={isAcking}
+                  className="w-full bg-red-600 hover:bg-red-500 disabled:opacity-60 text-white font-bold text-sm py-2.5 rounded-xl transition-colors">
+                  {isAcking ? 'Acknowledging…' : '🛑 Stop Alarm — I am Aware'}
+                </button>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function useAlerts(companyId) {
   const today = new Date().toISOString().slice(0, 10)
   const in7   = new Date(Date.now() +  7 * 86_400_000).toISOString().slice(0, 10)
@@ -1655,6 +1824,11 @@ export default function DashboardPage({ onNavigate }) {
           ))}
         </div>
       </div>
+
+      {/* Breakdown alarm — pulsing red, must acknowledge (admin + supervisor) */}
+      {(isAdmin || isSupervisor) && (
+        <BreakdownAlarm companyId={companyId} userProfile={userProfile} />
+      )}
 
       {/* Smart alert strip — floats above sections for admin/supervisor */}
       {(isAdmin || isSupervisor) && <AlertStrip alerts={alerts} onNavigate={onNavigate} />}

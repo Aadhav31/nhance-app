@@ -487,6 +487,9 @@ function AddEditModal({ project, clients, onClose, onSaved }) {
   const [pnmContacts, setPnmContacts] = useState(() =>
     initList(project?.our_pnm_contacts, project?.our_pnm_name, project?.our_pnm_phone)
   )
+  const [managers, setManagers] = useState(() =>
+    initList(project?.our_managers, null, null)
+  )
 
   // Optional client contacts
   const [showClientPnM, setShowClientPnM]             = useState(!!project?.client_pnm_name)
@@ -601,6 +604,7 @@ function AddEditModal({ project, clients, onClose, onSaved }) {
         our_pm_email:          form.our_pm_email          || null,
         our_supervisors:  supervisors.filter(s => s.name.trim()).map(({name, phone}) => ({name, phone})),
         our_pnm_contacts: pnmContacts.filter(p => p.name.trim()).map(({name, phone}) => ({name, phone})),
+        our_managers:     managers.filter(m => m.name.trim()).map(({name, phone}) => ({name, phone})),
         // keep legacy columns in sync with first entry for backward compat
         our_supervisor_name:   supervisors[0]?.name  || null,
         our_supervisor_phone:  supervisors[0]?.phone || null,
@@ -863,6 +867,31 @@ function AddEditModal({ project, clients, onClose, onSaved }) {
             onClick={() => setPnmContacts(list => [...list, mkContact()])}
             className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-primary-400 transition-colors">
             <UserPlus className="w-3.5 h-3.5"/> Add P&M In-charge
+          </button>
+        </div>
+
+        {/* Managers — escalation level 3 */}
+        <div className="space-y-2">
+          <p className="text-xs font-medium text-slate-400">Manager(s) <span className="text-slate-600">(breakdown escalation level 3)</span></p>
+          {managers.map((m, i) => (
+            <div key={m._k} className="flex gap-2 items-center">
+              <input className={inp('text-xs flex-1')} value={m.name}
+                onChange={e => setManagers(list => list.map((x,j)=>j===i?{...x,name:e.target.value}:x))}
+                placeholder="Name"/>
+              <input className={inp('text-xs w-36 shrink-0')} value={m.phone || ''}
+                onChange={e => setManagers(list => list.map((x,j)=>j===i?{...x,phone:e.target.value}:x))}
+                placeholder="Mobile"/>
+              <button type="button"
+                onClick={() => setManagers(list => list.filter((_,j)=>j!==i))}
+                className="text-slate-500 hover:text-red-400 shrink-0 p-1">
+                <Trash2 className="w-3.5 h-3.5"/>
+              </button>
+            </div>
+          ))}
+          <button type="button"
+            onClick={() => setManagers(list => [...list, mkContact()])}
+            className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-primary-400 transition-colors">
+            <UserPlus className="w-3.5 h-3.5"/> Add Manager
           </button>
         </div>
       </div>
