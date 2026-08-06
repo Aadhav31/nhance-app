@@ -558,8 +558,10 @@ function SlideToEnd({ onEnd }) {
 
   const hot = progress >= 0.55
   // Thumb CSS position: p=0 → right side, p=1 → left side
-  // left = (1-p) * (100% - THUMB - 2*PAD) + PAD  ← CSS calc with unitless scalar
   const thumbLeft = `calc(${(1 - progress).toFixed(4)} * (100% - ${THUMB + PAD * 2}px) + ${PAD}px)`
+
+  // Track fill grows from left as knob slides left
+  const fillWidth = `calc(${(1 - progress).toFixed(4)} * (100% - ${THUMB + PAD * 2}px) + ${PAD}px)`
 
   return (
     <div
@@ -573,26 +575,43 @@ function SlideToEnd({ onEnd }) {
       onMouseLeave={() => { if (active) { setActive(false); setProgress(0) } }}
       className="relative select-none touch-none rounded-full overflow-hidden"
       style={{
-        height: '72px',
+        height: '76px',
         background: hot
-          ? `rgba(220, 38, 38, ${0.25 + progress * 0.55})`
-          : 'rgba(120, 20, 20, 0.35)',
-        border: `2px solid ${hot ? 'rgba(239,68,68,0.55)' : 'rgba(153,27,27,0.35)'}`,
+          ? `rgba(185, 28, 28, ${0.80 + progress * 0.18})`   // bright red when hot
+          : 'rgba(127, 29, 29, 0.92)',                        // deep solid dark-red at rest
+        border: `2px solid ${hot ? 'rgba(252,100,100,0.75)' : 'rgba(220,80,80,0.55)'}`,
+        boxShadow: '0 4px 18px rgba(0,0,0,0.35)',
         cursor: active ? 'grabbing' : 'grab',
         transition: 'background 0.1s, border-color 0.1s',
       }}
     >
-      {/* Track label */}
-      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+      {/* Bright fill strip that sweeps left as knob moves */}
+      <div
+        className="absolute inset-y-0 right-0 pointer-events-none"
+        style={{
+          width: fillWidth,
+          background: 'rgba(239,68,68,0.18)',
+          transition: active ? 'none' : 'width 0.35s cubic-bezier(.4,0,.2,1)',
+        }}
+      />
+
+      {/* Track label — bright white, always legible */}
+      <div className="absolute inset-0 flex items-center justify-center pointer-events-none"
+        style={{ paddingRight: `${THUMB + PAD * 2 + 8}px` }}   // stay left of knob
+      >
         <span
-          className="text-xs font-black tracking-[0.2em] uppercase pointer-events-none"
-          style={{ color: `rgba(252,165,165,${0.25 + (1 - progress) * 0.65})` }}
+          className="text-sm font-black tracking-[0.18em] uppercase pointer-events-none"
+          style={{
+            color: `rgba(255,255,255,${0.90 - progress * 0.80})`,
+            textShadow: '0 1px 4px rgba(0,0,0,0.6)',
+            letterSpacing: '0.18em',
+          }}
         >
           ← Slide to End Shift
         </span>
       </div>
 
-      {/* Knob — the "ON→OFF" toggle ball */}
+      {/* Knob */}
       <div
         className="absolute flex items-center justify-center rounded-full pointer-events-none"
         style={{
@@ -601,12 +620,10 @@ function SlideToEnd({ onEnd }) {
           top: '50%',
           transform: 'translateY(-50%)',
           left: thumbLeft,
-          background: hot
-            ? `rgba(239, 68, 68, ${0.85 + progress * 0.15})`
-            : '#f1f5f9',
+          background: hot ? '#ef4444' : '#ffffff',
           boxShadow: hot
-            ? `0 0 0 3px rgba(239,68,68,0.35), 0 4px 20px rgba(0,0,0,0.55)`
-            : '0 4px 20px rgba(0,0,0,0.55)',
+            ? `0 0 0 4px rgba(252,100,100,0.40), 0 6px 24px rgba(0,0,0,0.60)`
+            : `0 0 0 2px rgba(255,255,255,0.25), 0 6px 24px rgba(0,0,0,0.60)`,
           transition: active
             ? 'none'
             : 'left 0.35s cubic-bezier(.4,0,.2,1), background 0.2s, box-shadow 0.2s',
