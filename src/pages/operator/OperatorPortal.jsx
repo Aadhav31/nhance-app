@@ -1126,10 +1126,10 @@ function ShiftCompletedView({ shift, equipment, project, enforcement, onContinue
 
       {/* Continue section */}
       {canCont ? (
-        <div className="bg-amber-900/20 border border-amber-600/40 rounded-2xl p-4 space-y-3">
-          <p className="text-amber-300 font-bold text-sm">More work to log?</p>
-          <p className="text-amber-200/65 text-xs leading-relaxed">
-            Tapping <strong className="text-amber-200">Continue Shift</strong> reopens your existing shift record.
+        <div className="bg-amber-50 border-2 border-amber-400 rounded-2xl p-4 space-y-3">
+          <p className="text-amber-800 font-bold text-sm">More work to log?</p>
+          <p className="text-amber-900 text-xs leading-relaxed">
+            Tapping <strong>Continue Shift</strong> reopens your existing shift record.
             Your original start time and meter reading are preserved — the final
             attendance and hours will be calculated when you end the shift again.
             No duplicate records are created.
@@ -1137,15 +1137,15 @@ function ShiftCompletedView({ shift, equipment, project, enforcement, onContinue
           <button
             onClick={onContinue}
             disabled={continuing}
-            className="w-full bg-amber-700/60 active:bg-amber-600 disabled:opacity-50 text-amber-100 font-bold py-3.5 rounded-xl text-sm transition-colors"
+            className="w-full bg-amber-600 active:bg-amber-700 disabled:opacity-50 text-white font-bold py-3.5 rounded-xl text-sm transition-colors"
           >
             {continuing ? 'Reopening…' : '↩  Continue Shift'}
           </button>
         </div>
       ) : (
-        <div className="bg-dark-800 border border-dark-600 rounded-2xl p-4 text-center space-y-1">
-          <p className="text-slate-400 text-sm font-semibold">Shift window has closed</p>
-          <p className="text-slate-600 text-xs">Additional work cannot be logged for today's shift</p>
+        <div className="bg-slate-100 border border-slate-300 rounded-2xl p-4 text-center space-y-1">
+          <p className="text-slate-600 text-sm font-semibold">Shift window has closed</p>
+          <p className="text-slate-400 text-xs">Additional work cannot be logged for today's shift</p>
         </div>
       )}
     </div>
