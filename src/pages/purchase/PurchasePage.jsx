@@ -38,6 +38,7 @@ const STATUS_COLORS = {
   partial:             'bg-yellow-500/10 text-yellow-400 border-yellow-700/40',
   overdue:             'bg-red-500/10 text-red-400 border-red-700/40',
   cancelled:           'bg-red-500/10 text-red-400 border-red-700/40',
+  pending_approval:    'bg-orange-500/15 text-orange-400 border-orange-600/50',
   confirmed:           'bg-emerald-500/10 text-emerald-400 border-emerald-700/40',
   partially_received:  'bg-yellow-500/10 text-yellow-400 border-yellow-700/40',
   received:            'bg-emerald-500/10 text-emerald-400 border-emerald-700/40',
@@ -58,6 +59,7 @@ const STATUS_LABELS = {
   partially_received:  'Part Received',
   issued:              'Issued',
   applied:             'Applied',
+  pending_approval:    '⚠ Needs Approval',
 }
 
 function StatusBadge({ status }) {
@@ -103,7 +105,14 @@ const INV_CATEGORIES = [
 
 const LINE_UNITS = UOM_LIST
 
-function LineItemsEditor({ lines, setLines, isTax }) {
+function LineItemsEditor({ lines, setLines, isTax, catalog = [] }) {
+  // Build catalog lookup map (description is already lowercased in DB)
+  const catalogMap = useMemo(() => {
+    const m = new Map()
+    for (const c of catalog) m.set(c.description, c)
+    return m
+  }, [catalog])
+
   const update = (id, key, val) => setLines(p => p.map(l => {
     if (l._id !== id) return l
     const u = { ...l, [key]: val }
@@ -216,6 +225,25 @@ function LineItemsEditor({ lines, setLines, isTax }) {
               {/* Rate */}
               <div className="w-24 shrink-0">
                 <input className={`${inp()} text-xs text-right px-2`} type="number" value={l.rate} onChange={e => update(l._id, 'rate', e.target.value)} placeholder="0.00" step="0.01" />
+                {/* Price intelligence badge */}
+                {(() => {
+                  const key = l.description.toLowerCase().trim()
+                  const match = key ? catalogMap.get(key) : null
+                  if (!match) return null
+                  const ref = match.benchmark_price || match.avg_purchase_price
+                  if (!ref) return null
+                  const rate = parseFloat(l.rate) || 0
+                  if (!rate) return <p className="text-[9px] text-slate-500 text-right mt-0.5">Avg {fmtINR(ref)}</p>
+                  const pct = (rate - ref) / ref * 100
+                  const threshold = match.overpay_threshold || 20
+                  const isOver = pct > threshold
+                  const isWarn = pct > 10 && !isOver
+                  return (
+                    <p className={`text-[9px] text-right mt-0.5 font-semibold leading-tight ${isOver ? 'text-red-400' : isWarn ? 'text-amber-400' : 'text-emerald-500'}`}>
+                      {isOver ? '⚠' : isWarn ? '~' : '✓'} avg {fmtINR(ref)}{pct !== 0 ? ` (${pct > 0 ? '+' : ''}${pct.toFixed(0)}%)` : ''}
+                    </p>
+                  )
+                })()}
               </div>
               {/* Amount */}
               <div className="w-20 shrink-0 text-right">
@@ -1065,6 +1093,22 @@ function BillDetailPanel({ bill: b, companyId, onClose, onEdit, onPDF, onXLSX })
     enabled: !!b.id,
   })
 
+  // Price catalog — used to show overpay indicators per line item
+  const { data: catalog = [] } = useQuery({
+    queryKey: ['item_price_catalog', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('item_price_catalog').select('*').eq('company_id', companyId)
+      return data || []
+    },
+    enabled: !!companyId,
+    staleTime: 5 * 60_000,
+  })
+  const catalogMap = useMemo(() => {
+    const m = new Map()
+    for (const c of catalog) m.set(c.description, c)
+    return m
+  }, [catalog])
+
   // Fetch payments linked to this bill
   const { data: payments = [] } = useQuery({
     queryKey: ['bill_payments', b.id],
@@ -1176,20 +1220,42 @@ function BillDetailPanel({ bill: b, companyId, onClose, onEdit, onPDF, onXLSX })
                   <span className="text-right">Rate</span>
                   <span className="text-right">Amount</span>
                 </div>
-                {lines.map((l, i) => (
-                  <div key={l.id || i} className="px-3 py-2.5 border-b border-dark-700/50 last:border-0">
-                    <div className="grid grid-cols-[1fr_52px_52px_72px] gap-1 items-start">
-                      <div>
-                        <p className="text-xs font-medium text-slate-200 leading-snug">{l.description || '—'}</p>
-                        {l.hsn_sac && <p className="text-[10px] text-slate-600 mt-0.5">HSN/SAC: {l.hsn_sac}</p>}
-                        {l.gst_rate > 0 && <p className="text-[10px] text-slate-600">GST {l.gst_rate}%</p>}
+                {lines.map((l, i) => {
+                  const key = (l.description || '').toLowerCase().trim()
+                  const match = key ? catalogMap.get(key) : null
+                  const ref = match?.benchmark_price || match?.avg_purchase_price
+                  const pct = ref && l.rate > 0 ? ((l.rate - ref) / ref * 100) : null
+                  const threshold = match?.overpay_threshold || 20
+                  const isOver = pct !== null && pct > threshold
+                  const isWarn = pct !== null && pct > 10 && !isOver
+                  return (
+                    <div key={l.id || i} className={`px-3 py-2.5 border-b border-dark-700/50 last:border-0 ${isOver ? 'bg-red-950/20' : ''}`}>
+                      <div className="grid grid-cols-[1fr_52px_52px_72px] gap-1 items-start">
+                        <div>
+                          <p className="text-xs font-medium text-slate-200 leading-snug">{l.description || '—'}</p>
+                          {l.hsn_sac && <p className="text-[10px] text-slate-600 mt-0.5">HSN/SAC: {l.hsn_sac}</p>}
+                          {l.gst_rate > 0 && <p className="text-[10px] text-slate-600">GST {l.gst_rate}%</p>}
+                        </div>
+                        <p className="text-xs text-slate-400 text-right">{l.quantity} <span className="text-[10px] text-slate-600">{l.unit || ''}</span></p>
+                        <div className="text-right">
+                          <p className="text-xs text-slate-400">{fmtINR(l.rate || 0)}</p>
+                          {pct !== null && (
+                            <p className={`text-[9px] font-bold leading-tight ${isOver ? 'text-red-400' : isWarn ? 'text-amber-400' : 'text-emerald-500'}`}>
+                              {isOver ? '⚠' : isWarn ? '~' : '✓'}{pct > 0 ? '+' : ''}{pct.toFixed(0)}%
+                            </p>
+                          )}
+                        </div>
+                        <p className="text-xs font-semibold text-slate-100 text-right">{fmtINR(l.amount || 0)}</p>
                       </div>
-                      <p className="text-xs text-slate-400 text-right">{l.quantity} <span className="text-[10px] text-slate-600">{l.unit || ''}</span></p>
-                      <p className="text-xs text-slate-400 text-right">{fmtINR(l.rate || 0)}</p>
-                      <p className="text-xs font-semibold text-slate-100 text-right">{fmtINR(l.amount || 0)}</p>
+                      {isOver && ref && (
+                        <p className="text-[10px] text-red-400 mt-1 leading-snug">
+                          ⚠ You're paying {pct.toFixed(0)}% above avg — Avg {fmtINR(ref)}{match?.benchmark_price ? ` · Benchmark ${fmtINR(match.benchmark_price)}` : ''}
+                          {match?.purchase_count > 1 ? ` (${match.purchase_count} purchases)` : ''}
+                        </p>
+                      )}
                     </div>
-                  </div>
-                ))}
+                  )
+                })}
                 {/* Tax + Total footer */}
                 <div className="px-3 py-2 border-t border-dark-600 bg-dark-750/30 space-y-1">
                   <div className="flex justify-between text-[11px] text-slate-500">
@@ -1527,6 +1593,22 @@ function BillsTab({ companyId, session, initialStockTxnId }) {
     enabled: !!companyId,
   })
 
+  // Price catalog — for benchmark checks in line items editor & approval gate
+  const { data: priceCatalog = [] } = useQuery({
+    queryKey: ['item_price_catalog', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('item_price_catalog').select('*').eq('company_id', companyId)
+      return data || []
+    },
+    enabled: !!companyId,
+    staleTime: 5 * 60_000,
+  })
+  const priceCatalogMap = useMemo(() => {
+    const m = new Map()
+    for (const c of priceCatalog) m.set(c.description, c)
+    return m
+  }, [priceCatalog])
+
   const { data: vendors = [] } = useQuery({
     queryKey: ['vendors_list', companyId],
     queryFn: async () => {
@@ -1690,8 +1772,20 @@ function BillsTab({ companyId, session, initialStockTxnId }) {
           cgst_rate: 0, sgst_rate: 0, igst_rate: 0,
           cgst_amount: cgst_amt, sgst_amount: sgst_amt, igst_amount: igst_amt,
           total_amount: total, balance_due: Math.max(0, total - (Number(editing.paid_amount) || 0)),
-          // Promote draft → pending when user explicitly saves (verifies) the bill
-          status: editing.status === 'draft' ? 'pending' : editing.status,
+          // Promote draft → pending (or pending_approval if any line exceeds price threshold)
+          status: (() => {
+            if (!['draft','pending','pending_approval'].includes(editing.status)) return editing.status
+            const overpriced = validLines.some(l => {
+              const rate = parseFloat(l.rate) || 0
+              const key  = l.description.toLowerCase().trim()
+              const cat  = priceCatalogMap.get(key)
+              if (!cat) return false
+              const ref = cat.benchmark_price || cat.avg_purchase_price
+              if (!ref) return false
+              return (rate - ref) / ref * 100 > (cat.overpay_threshold || 20)
+            })
+            return overpriced ? 'pending_approval' : 'pending'
+          })(),
           notes: form.notes || null,
           // Facility: loading point for crusher, equipment for others
           equipment_id:     isCrusher ? null : (form.equipment_id || null),
@@ -1738,7 +1832,20 @@ function BillsTab({ companyId, session, initialStockTxnId }) {
         total_amount: total,
         paid_amount: 0,
         balance_due: total,
-        status: 'pending',
+        status: (() => {
+          // Approval gate: if any line item rate exceeds the catalog benchmark by more than threshold → pending_approval
+          const overpriced = validLines.some(l => {
+            const rate = parseFloat(l.rate) || 0
+            const key  = l.description.toLowerCase().trim()
+            const cat  = priceCatalogMap.get(key)
+            if (!cat) return false
+            const ref = cat.benchmark_price || cat.avg_purchase_price
+            if (!ref) return false
+            const pct = (rate - ref) / ref * 100
+            return pct > (cat.overpay_threshold || 20)
+          })
+          return overpriced ? 'pending_approval' : 'pending'
+        })(),
         notes: form.notes || null, created_by: session.user.id,
         // Facility: loading point for crusher, equipment for others
         equipment_id:     isCrusher ? null : (form.equipment_id || null),
@@ -1872,10 +1979,13 @@ function BillsTab({ companyId, session, initialStockTxnId }) {
   const isApproachingEOD = currentHour >= 17
   const draftBillsToday = bills.filter(b => b.status === 'draft' && b.bill_date === todayISO)
 
+  const pendingApprovalBills = bills.filter(b => b.status === 'pending_approval')
+
   const filteredBills = bills.filter(b => {
-    if (billFilter === 'today')   return b.bill_date === todayISO
-    if (billFilter === 'action')  return b.status === 'draft'
-    if (billFilter === 'unpaid')  return b.status === 'pending'
+    if (billFilter === 'today')    return b.bill_date === todayISO
+    if (billFilter === 'action')   return b.status === 'draft'
+    if (billFilter === 'approval') return b.status === 'pending_approval'
+    if (billFilter === 'unpaid')   return b.status === 'pending'
     if (billFilter === 'overdue') {
       const dueD = b.due_date ? new Date(b.due_date + 'T00:00:00') : null
       const today = new Date(); today.setHours(0,0,0,0)
@@ -1885,11 +1995,12 @@ function BillsTab({ companyId, session, initialStockTxnId }) {
   })
 
   const BILL_FILTERS = [
-    { id: 'all',     label: 'All' },
-    { id: 'action',  label: `Needs Action${draftBillsToday.length ? ` (${draftBillsToday.length})` : ''}`, warn: draftBillsToday.length > 0 },
-    { id: 'today',   label: 'Today' },
-    { id: 'unpaid',  label: 'Unpaid' },
-    { id: 'overdue', label: 'Overdue' },
+    { id: 'all',      label: 'All' },
+    { id: 'action',   label: `Needs Action${draftBillsToday.length ? ` (${draftBillsToday.length})` : ''}`, warn: draftBillsToday.length > 0 },
+    { id: 'approval', label: `Approval${pendingApprovalBills.length ? ` (${pendingApprovalBills.length})` : ''}`, warn: pendingApprovalBills.length > 0, color: 'red' },
+    { id: 'today',    label: 'Today' },
+    { id: 'unpaid',   label: 'Unpaid' },
+    { id: 'overdue',  label: 'Overdue' },
   ]
 
   return (
@@ -1906,10 +2017,14 @@ function BillsTab({ companyId, session, initialStockTxnId }) {
             onClick={() => setBillFilter(f.id)}
             className={`shrink-0 text-[11px] font-semibold px-3 py-1 rounded-full border transition-colors whitespace-nowrap ${
               billFilter === f.id
-                ? f.warn ? 'bg-amber-500/20 border-amber-500/60 text-amber-300' : 'bg-primary-600/20 border-primary-500/60 text-primary-300'
-                : f.warn ? 'bg-amber-500/10 border-amber-700/40 text-amber-400 hover:border-amber-500/60' : 'bg-dark-800 border-dark-700 text-slate-400 hover:text-slate-200 hover:border-dark-600'
+                ? f.color === 'red' ? 'bg-red-500/20 border-red-500/60 text-red-300'
+                  : f.warn ? 'bg-amber-500/20 border-amber-500/60 text-amber-300'
+                  : 'bg-primary-600/20 border-primary-500/60 text-primary-300'
+                : f.color === 'red' && f.warn ? 'bg-red-500/10 border-red-700/40 text-red-400 hover:border-red-500/60'
+                  : f.warn ? 'bg-amber-500/10 border-amber-700/40 text-amber-400 hover:border-amber-500/60'
+                  : 'bg-dark-800 border-dark-700 text-slate-400 hover:text-slate-200 hover:border-dark-600'
             }`}>
-            {f.warn && billFilter !== f.id && <span className="mr-1">⚠</span>}{f.label}
+            {f.warn && billFilter !== f.id && <span className="mr-1">{f.color === 'red' ? '🔴' : '⚠'}</span>}{f.label}
           </button>
         ))}
       </div>
@@ -2008,7 +2123,13 @@ function BillsTab({ companyId, session, initialStockTxnId }) {
                 </div>
                 <div className="flex items-center gap-1">
                   {/* Draft bills: show Initiate Bill CTA; others: show pencil edit */}
-                  {b.status === 'draft' ? (
+                  {b.status === 'pending_approval' ? (
+                    <button
+                      onClick={e => { e.stopPropagation(); updateStatus(b.id, 'pending') }}
+                      className="flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 bg-orange-600 hover:bg-orange-500 text-white rounded-lg transition-colors whitespace-nowrap">
+                      Approve Bill ✓
+                    </button>
+                  ) : b.status === 'draft' ? (
                     <button
                       onClick={e => { e.stopPropagation(); openEdit(b) }}
                       className="flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 bg-primary-600 hover:bg-primary-500 text-white rounded-lg transition-colors whitespace-nowrap">
@@ -2235,7 +2356,7 @@ function BillsTab({ companyId, session, initialStockTxnId }) {
               )}
             </div>
           </div>
-          <LineItemsEditor lines={lines} setLines={setLines} isTax={isTax} />
+          <LineItemsEditor lines={lines} setLines={setLines} isTax={isTax} catalog={priceCatalog} />
 
           {/* ── On Save — Additional Actions (create only) ── */}
           {!editing && (
