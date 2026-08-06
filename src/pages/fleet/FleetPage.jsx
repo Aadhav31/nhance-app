@@ -2226,15 +2226,15 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
     },
   })
 
-  // Operator shift log — last 20 shifts on this machine
+  // Operator shift log — last 30 shifts on this machine (include timestamps for timeline)
   const { data: shiftLog = [] } = useQuery({
     queryKey: ['equipment_shift_log', equipment.id],
     queryFn: async () => {
       const { data } = await supabase.from('shifts')
-        .select('id, shift_date, shift_type, operator_name, working_hours, idle_hours, status')
+        .select('id, shift_date, shift_type, operator_name, working_hours, idle_hours, status, created_at, updated_at')
         .eq('equipment_id', equipment.id)
-        .order('shift_date', { ascending: false })
-        .limit(20)
+        .order('created_at', { ascending: false })
+        .limit(30)
       return data || []
     },
     staleTime: 60_000,
@@ -2248,10 +2248,24 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
         .select('*')
         .eq('equipment_id', equipment.id)
         .order('reported_at', { ascending: false })
-        .limit(20)
+        .limit(30)
       return data || []
     },
     staleTime: 30_000,
+  })
+
+  // Incident log for this equipment
+  const { data: incidentLog = [] } = useQuery({
+    queryKey: ['equipment_incident_log', equipment.id],
+    queryFn: async () => {
+      const { data } = await supabase.from('shift_incidents')
+        .select('*')
+        .eq('equipment_id', equipment.id)
+        .order('created_at', { ascending: false })
+        .limit(30)
+      return data || []
+    },
+    staleTime: 60_000,
   })
 
   // Fuel stats
@@ -2281,6 +2295,106 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
     enabled: !!equipment.current_project_id,
     staleTime: 60_000,
   })
+
+  // ── Unified Activity Timeline ─────────────────────────────────────────────
+  const activityEvents = useMemo(() => {
+    const events = []
+    const shiftEmoji = t => t === 'night' ? '🌙' : t === 'mid' ? '🌅' : '☀️'
+    const shiftLabel = t => t === 'night' ? 'Night' : t === 'mid' ? 'Mid' : 'Day'
+
+    // Shifts — each shift generates a "started" event (created_at) and optionally an "ended" event (updated_at)
+    for (const s of shiftLog) {
+      const startTs = s.created_at || s.shift_date + 'T06:00:00'
+      events.push({
+        type: 'shift_start',
+        ts: startTs,
+        color: 'blue',
+        dot: 'bg-blue-400',
+        label: `${shiftEmoji(s.shift_type)} ${shiftLabel(s.shift_type)} Shift Started`,
+        sub: s.operator_name || null,
+        meta: null,
+      })
+      if (s.status === 'closed' && s.updated_at) {
+        const hrs = Number(s.working_hours || 0)
+        events.push({
+          type: 'shift_end',
+          ts: s.updated_at,
+          color: 'emerald',
+          dot: 'bg-emerald-400',
+          label: `${shiftEmoji(s.shift_type)} ${shiftLabel(s.shift_type)} Shift Ended`,
+          sub: s.operator_name || null,
+          meta: hrs > 0 ? `${hrs.toFixed(1)} hrs${s.idle_hours > 0 ? ` · ${Number(s.idle_hours).toFixed(1)} idle` : ''}` : null,
+        })
+      }
+    }
+
+    // Fuel entries
+    for (const f of recentFuel) {
+      events.push({
+        type: 'fuel',
+        ts: f.created_at,
+        color: 'yellow',
+        dot: 'bg-yellow-400',
+        label: `⛽ Fuel — ${f.quantity_liters} L`,
+        sub: f.delivered_by_name ? `By ${f.delivered_by_name}` : (f.vendor_name || null),
+        meta: f.total_amount > 0 ? `₹${Number(f.total_amount).toLocaleString('en-IN')}` : null,
+      })
+    }
+
+    // Breakdown events — each alert can generate up to 3 events
+    for (const b of breakdownLog) {
+      events.push({
+        type: 'breakdown_reported',
+        ts: b.reported_at,
+        color: 'red',
+        dot: 'bg-red-500 animate-pulse',
+        label: '🔧 Breakdown Reported',
+        sub: b.breakdown_cause || null,
+        meta: b.notify_chain?.length > 0 ? `${b.notify_chain.length} contacts notified` : null,
+      })
+      if (b.acknowledged_at) {
+        events.push({
+          type: 'breakdown_ack',
+          ts: b.acknowledged_at,
+          color: 'amber',
+          dot: 'bg-amber-400',
+          label: '📋 Alert Acknowledged',
+          sub: b.acknowledged_by_name ? `By ${b.acknowledged_by_name}${b.acknowledged_level ? ` (Level ${b.acknowledged_level})` : ''}` : null,
+          meta: null,
+        })
+      }
+      if (b.resolved_at) {
+        events.push({
+          type: 'breakdown_resolved',
+          ts: b.resolved_at,
+          color: 'emerald',
+          dot: 'bg-emerald-500',
+          label: '✅ Breakdown Resolved',
+          sub: b.resolved_by_name ? `By ${b.resolved_by_name}` : null,
+          meta: null,
+        })
+      }
+    }
+
+    // Incidents (non-breakdown)
+    for (const inc of incidentLog) {
+      // Skip if this is a breakdown incident (already covered above via breakdown_alerts)
+      if (inc.incident_type === 'breakdown') continue
+      events.push({
+        type: 'incident',
+        ts: inc.created_at,
+        color: 'amber',
+        dot: 'bg-amber-400',
+        label: `⚠️ Incident — ${inc.incident_type || 'General'}`,
+        sub: inc.description || null,
+        meta: inc.resolved ? 'Resolved' : 'Open',
+      })
+    }
+
+    // Sort newest first
+    events.sort((a, b) => new Date(b.ts) - new Date(a.ts))
+    return events
+  }, [shiftLog, recentFuel, breakdownLog, incidentLog])
 
   // Derived availability status
   const availStatus = (() => {
@@ -3588,167 +3702,92 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
           </div>
         )}
 
-        {/* ── LOG TAB ── */}
+        {/* ── LOG TAB — Unified Activity Timeline ── */}
         {detailTab === 'operator_log' && (
-          <div className="space-y-5 pt-1">
+          <div className="pt-1">
 
-            {/* ── Operator Attendance Log ─────────────────────────────── */}
-            <div>
-              <div className="flex items-center justify-between mb-3">
-                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Operator Shifts</p>
-                {onNavigate && (
-                  <button
-                    onClick={() => { onClose(); onNavigate('hr') }}
-                    className="flex items-center gap-1 text-[11px] text-primary-400 hover:text-primary-300 transition-colors"
-                  >
-                    View in HR &amp; Attendance <ChevronRight className="w-3 h-3" />
-                  </button>
-                )}
-              </div>
-              {shiftLog.length === 0 ? (
-                <div className="bg-dark-700/50 rounded-xl border border-dashed border-dark-600 p-6 text-center">
-                  <User className="w-7 h-7 text-slate-600 mx-auto mb-2" />
-                  <p className="text-sm text-slate-500">No shift records yet</p>
+            {/* Stats strip */}
+            {(fuelStats && Number(fuelStats.totalLitres) > 0) && (
+              <div className="grid grid-cols-2 gap-2 mb-4">
+                <div className="bg-dark-700 rounded-xl px-3 py-2.5">
+                  <p className="text-[10px] text-slate-500">Total Fuel</p>
+                  <p className="text-base font-bold text-yellow-400">{fuelStats.totalLitres} <span className="text-xs font-normal text-slate-400">L</span></p>
                 </div>
-              ) : (
-                <div className="divide-y divide-dark-600 rounded-xl overflow-hidden border border-dark-700">
-                  {shiftLog.map(s => {
-                    const shiftLabel = s.shift_type === 'night' ? '🌙 Night'
-                      : s.shift_type === 'mid' ? '🌅 Mid' : '☀️ Day'
-                    const hrs = Number(s.working_hours || 0)
-                    const idleHrs = Number(s.idle_hours || 0)
-                    const statusDot = s.status === 'closed' ? 'bg-emerald-400' : s.status === 'open' ? 'bg-blue-400 animate-pulse' : 'bg-slate-500'
-                    return (
-                      <div key={s.id} className="px-4 py-3 bg-dark-700/40 flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${statusDot}`} />
-                            <span className="text-xs font-semibold text-slate-200 truncate">
-                              {s.operator_name || '—'}
-                            </span>
-                            <span className="text-[10px] text-slate-500">{shiftLabel}</span>
-                          </div>
-                          <p className="text-[10px] text-slate-500 mt-0.5 ml-3.5">
-                            {format(new Date(s.shift_date), 'dd MMM yyyy')}
-                          </p>
-                        </div>
-                        <div className="text-right shrink-0">
-                          <p className="text-xs font-semibold text-slate-200">{hrs.toFixed(1)} hrs</p>
-                          {idleHrs > 0 && (
-                            <p className="text-[10px] text-amber-500">{idleHrs.toFixed(1)} idle</p>
-                          )}
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-            </div>
-
-            {/* ── Fuel Log ────────────────────────────────────────────── */}
-            <div>
-              <div className="flex items-center justify-between mb-3">
-                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Fuel Entries</p>
-                {onNavigate && (
-                  <button
-                    onClick={() => { onClose(); onNavigate('operations', { tab: 'fuel', equipmentId: equipment.id, equipmentName: equipment.name }) }}
-                    className="flex items-center gap-1 text-[11px] text-primary-400 hover:text-primary-300 transition-colors"
-                  >
-                    View in Site Operations <ChevronRight className="w-3 h-3" />
-                  </button>
-                )}
-              </div>
-              {fuelStats && Number(fuelStats.totalLitres) > 0 && (
-                <div className="grid grid-cols-2 gap-2 mb-3">
+                {fuelStats.totalAmount > 0 && (
                   <div className="bg-dark-700 rounded-xl px-3 py-2.5">
-                    <p className="text-[10px] text-slate-500">Total Consumed</p>
-                    <p className="text-lg font-bold text-yellow-400">{fuelStats.totalLitres} <span className="text-xs font-normal text-slate-400">L</span></p>
+                    <p className="text-[10px] text-slate-500">Fuel Cost</p>
+                    <p className="text-base font-bold text-primary-300">₹{Number(fuelStats.totalAmount).toLocaleString('en-IN')}</p>
                   </div>
-                  {fuelStats.totalAmount > 0 && (
-                    <div className="bg-dark-700 rounded-xl px-3 py-2.5">
-                      <p className="text-[10px] text-slate-500">Total Cost</p>
-                      <p className="text-lg font-bold text-primary-300">₹{Number(fuelStats.totalAmount).toLocaleString('en-IN')}</p>
-                    </div>
-                  )}
-                </div>
-              )}
-              {recentFuel.length === 0 ? (
-                <div className="bg-dark-700/50 rounded-xl border border-dashed border-dark-600 p-6 text-center">
-                  <Fuel className="w-7 h-7 text-slate-600 mx-auto mb-2" />
-                  <p className="text-sm text-slate-500">No fuel entries yet</p>
-                </div>
-              ) : (
-                <div className="divide-y divide-dark-600 rounded-xl overflow-hidden border border-dark-700">
-                  {recentFuel.map(f => (
-                    <div key={f.id} className="px-4 py-3 bg-dark-700/40 flex items-center justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-xs font-semibold text-slate-200">{f.quantity_liters} L</span>
-                          {f.vendor_name && <span className="text-[10px] text-slate-500">· {f.vendor_name}</span>}
-                        </div>
-                        <p className="text-[10px] text-slate-500 mt-0.5">
-                          {f.delivered_by_name ? `By ${f.delivered_by_name} · ` : ''}
-                          {f.created_at ? format(new Date(f.created_at), 'dd MMM yyyy') : ''}
-                        </p>
-                      </div>
-                      {f.total_amount > 0 && (
-                        <span className="text-xs font-semibold text-yellow-400 shrink-0">
-                          ₹{Number(f.total_amount).toLocaleString('en-IN')}
-                        </span>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+                )}
+              </div>
+            )}
 
-            {/* ── Breakdown Alert History ───────────────────────────────── */}
-            <div>
-              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Breakdown Alerts</p>
-              {breakdownLog.length === 0 ? (
-                <div className="bg-dark-700/50 rounded-xl border border-dashed border-dark-600 p-6 text-center">
-                  <Wrench className="w-7 h-7 text-slate-600 mx-auto mb-2" />
-                  <p className="text-sm text-slate-500">No breakdown alerts recorded</p>
-                </div>
-              ) : (
-                <div className="divide-y divide-dark-600 rounded-xl overflow-hidden border border-dark-700">
-                  {breakdownLog.map(b => {
-                    const isOpen = !b.acknowledged_at
-                    return (
-                      <div key={b.id} className={`px-4 py-3 ${isOpen ? 'bg-red-950/30' : 'bg-dark-700/40'}`}>
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span className={`w-2 h-2 rounded-full shrink-0 ${isOpen ? 'bg-red-500 animate-pulse' : 'bg-emerald-500'}`} />
-                              <span className={`text-xs font-semibold ${isOpen ? 'text-red-300' : 'text-slate-200'}`}>
-                                {isOpen ? '🚨 Active' : '✅ Resolved'}
-                              </span>
-                              <span className="text-[10px] text-slate-500">
-                                {format(new Date(b.reported_at), 'dd MMM yyyy, HH:mm')}
-                              </span>
-                            </div>
-                            {b.breakdown_cause && (
-                              <p className="text-xs text-slate-400 mt-1 ml-4 line-clamp-2">{b.breakdown_cause}</p>
-                            )}
-                            {b.acknowledged_at && (
-                              <p className="text-[10px] text-emerald-500/80 mt-1 ml-4">
-                                Ack'd by {b.acknowledged_by_name} · Level {b.acknowledged_level} · {format(new Date(b.acknowledged_at), 'HH:mm')}
-                              </p>
-                            )}
-                          </div>
-                          {b.notify_chain?.length > 0 && (
-                            <div className="text-right shrink-0">
-                              <p className="text-[10px] text-slate-500">{b.notify_chain.length} notified</p>
+            {activityEvents.length === 0 ? (
+              <div className="bg-dark-700/50 rounded-xl border border-dashed border-dark-600 p-8 text-center">
+                <History className="w-8 h-8 text-slate-600 mx-auto mb-2" />
+                <p className="text-sm text-slate-500">No activity recorded yet</p>
+                <p className="text-[11px] text-slate-600 mt-1">Shifts, fuel, and incidents will appear here</p>
+              </div>
+            ) : (() => {
+              // Group events by date for section headers
+              let lastDate = null
+              return (
+                <div className="relative">
+                  {/* Vertical guide line */}
+                  <div className="absolute left-[11px] top-2 bottom-2 w-px bg-dark-600" />
+                  <div className="space-y-0">
+                    {activityEvents.map((ev, i) => {
+                      const evDate = ev.ts ? format(new Date(ev.ts), 'dd MMM yyyy') : '—'
+                      const showDateHeader = evDate !== lastDate
+                      lastDate = evDate
+                      const timeStr = ev.ts ? format(new Date(ev.ts), 'HH:mm') : ''
+
+                      // Dot color classes
+                      const dotClass = {
+                        blue:    'bg-blue-400',
+                        emerald: 'bg-emerald-400',
+                        yellow:  'bg-yellow-400',
+                        red:     'bg-red-500',
+                        amber:   'bg-amber-400',
+                      }[ev.color] || 'bg-slate-500'
+
+                      const labelClass = {
+                        blue:    'text-blue-300',
+                        emerald: 'text-emerald-300',
+                        yellow:  'text-yellow-300',
+                        red:     'text-red-300',
+                        amber:   'text-amber-300',
+                      }[ev.color] || 'text-slate-200'
+
+                      return (
+                        <div key={i}>
+                          {showDateHeader && (
+                            <div className="flex items-center gap-2 pt-4 pb-2 pl-7">
+                              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">{evDate}</p>
                             </div>
                           )}
+                          <div className="flex items-start gap-3 py-2">
+                            {/* Dot */}
+                            <div className="relative z-10 mt-1 shrink-0">
+                              <span className={`flex w-[9px] h-[9px] rounded-full ${ev.type === 'breakdown_reported' ? 'bg-red-500 ring-2 ring-red-500/30' : dotClass} ${ev.type === 'shift_start' && 'ring-2 ring-blue-500/30'}`} />
+                            </div>
+                            {/* Content */}
+                            <div className="flex-1 min-w-0 pb-1 border-b border-dark-700/60 last:border-0">
+                              <div className="flex items-start justify-between gap-2">
+                                <p className={`text-xs font-semibold leading-snug ${labelClass}`}>{ev.label}</p>
+                                <span className="text-[10px] text-slate-600 shrink-0 mt-0.5">{timeStr}</span>
+                              </div>
+                              {ev.sub && <p className="text-[11px] text-slate-400 mt-0.5 truncate">{ev.sub}</p>}
+                              {ev.meta && <p className="text-[10px] text-slate-500 mt-0.5">{ev.meta}</p>}
+                            </div>
+                          </div>
                         </div>
-                      </div>
-                    )
-                  })}
+                      )
+                    })}
+                  </div>
                 </div>
-              )}
-            </div>
-
+              )
+            })()}
           </div>
         )}
 
