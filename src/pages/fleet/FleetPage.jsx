@@ -2296,106 +2296,6 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
     staleTime: 60_000,
   })
 
-  // ── Unified Activity Timeline ─────────────────────────────────────────────
-  const activityEvents = useMemo(() => {
-    const events = []
-    const shiftEmoji = t => t === 'night' ? '🌙' : t === 'mid' ? '🌅' : '☀️'
-    const shiftLabel = t => t === 'night' ? 'Night' : t === 'mid' ? 'Mid' : 'Day'
-
-    // Shifts — each shift generates a "started" event (created_at) and optionally an "ended" event (updated_at)
-    for (const s of shiftLog) {
-      const startTs = s.created_at || s.shift_date + 'T06:00:00'
-      events.push({
-        type: 'shift_start',
-        ts: startTs,
-        color: 'blue',
-        dot: 'bg-blue-400',
-        label: `${shiftEmoji(s.shift_type)} ${shiftLabel(s.shift_type)} Shift Started`,
-        sub: s.operator_name || null,
-        meta: null,
-      })
-      if (s.status === 'closed' && s.updated_at) {
-        const hrs = Number(s.working_hours || 0)
-        events.push({
-          type: 'shift_end',
-          ts: s.updated_at,
-          color: 'emerald',
-          dot: 'bg-emerald-400',
-          label: `${shiftEmoji(s.shift_type)} ${shiftLabel(s.shift_type)} Shift Ended`,
-          sub: s.operator_name || null,
-          meta: hrs > 0 ? `${hrs.toFixed(1)} hrs${s.idle_hours > 0 ? ` · ${Number(s.idle_hours).toFixed(1)} idle` : ''}` : null,
-        })
-      }
-    }
-
-    // Fuel entries
-    for (const f of recentFuel) {
-      events.push({
-        type: 'fuel',
-        ts: f.created_at,
-        color: 'yellow',
-        dot: 'bg-yellow-400',
-        label: `⛽ Fuel — ${f.quantity_liters} L`,
-        sub: f.delivered_by_name ? `By ${f.delivered_by_name}` : (f.vendor_name || null),
-        meta: f.total_amount > 0 ? `₹${Number(f.total_amount).toLocaleString('en-IN')}` : null,
-      })
-    }
-
-    // Breakdown events — each alert can generate up to 3 events
-    for (const b of breakdownLog) {
-      events.push({
-        type: 'breakdown_reported',
-        ts: b.reported_at,
-        color: 'red',
-        dot: 'bg-red-500 animate-pulse',
-        label: '🔧 Breakdown Reported',
-        sub: b.breakdown_cause || null,
-        meta: b.notify_chain?.length > 0 ? `${b.notify_chain.length} contacts notified` : null,
-      })
-      if (b.acknowledged_at) {
-        events.push({
-          type: 'breakdown_ack',
-          ts: b.acknowledged_at,
-          color: 'amber',
-          dot: 'bg-amber-400',
-          label: '📋 Alert Acknowledged',
-          sub: b.acknowledged_by_name ? `By ${b.acknowledged_by_name}${b.acknowledged_level ? ` (Level ${b.acknowledged_level})` : ''}` : null,
-          meta: null,
-        })
-      }
-      if (b.resolved_at) {
-        events.push({
-          type: 'breakdown_resolved',
-          ts: b.resolved_at,
-          color: 'emerald',
-          dot: 'bg-emerald-500',
-          label: '✅ Breakdown Resolved',
-          sub: b.resolved_by_name ? `By ${b.resolved_by_name}` : null,
-          meta: null,
-        })
-      }
-    }
-
-    // Incidents (non-breakdown)
-    for (const inc of incidentLog) {
-      // Skip if this is a breakdown incident (already covered above via breakdown_alerts)
-      if (inc.incident_type === 'breakdown') continue
-      events.push({
-        type: 'incident',
-        ts: inc.created_at,
-        color: 'amber',
-        dot: 'bg-amber-400',
-        label: `⚠️ Incident — ${inc.incident_type || 'General'}`,
-        sub: inc.description || null,
-        meta: inc.resolved ? 'Resolved' : 'Open',
-      })
-    }
-
-    // Sort newest first
-    events.sort((a, b) => new Date(b.ts) - new Date(a.ts))
-    return events
-  }, [shiftLog, recentFuel, breakdownLog, incidentLog])
-
   // Derived availability status
   const availStatus = (() => {
     if (equipment.status === 'breakdown')
@@ -2481,10 +2381,83 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
     queryKey: ['fuel', equipment.id],
     queryFn: async () => {
       const { data } = await supabase.from('shift_fuel_entries').select('*')
-        .eq('equipment_id', equipment.id).order('created_at', { ascending: false }).limit(5)
+        .eq('equipment_id', equipment.id).order('created_at', { ascending: false }).limit(30)
       return data || []
     },
   })
+
+  // ── Unified Activity Timeline ─────────────────────────────────────────────
+  // Placed here so all data sources (shiftLog, recentFuel, breakdownLog, incidentLog) are in scope
+  const activityEvents = useMemo(() => {
+    const events = []
+    const shiftEmoji = t => t === 'night' ? '🌙' : t === 'mid' ? '🌅' : '☀️'
+    const shiftLabel = t => t === 'night' ? 'Night' : t === 'mid' ? 'Mid' : 'Day'
+
+    for (const s of shiftLog) {
+      const startTs = s.created_at || s.shift_date + 'T06:00:00'
+      events.push({
+        type: 'shift_start', ts: startTs, color: 'blue',
+        label: `${shiftEmoji(s.shift_type)} ${shiftLabel(s.shift_type)} Shift Started`,
+        sub: s.operator_name || null, meta: null,
+      })
+      if (s.status === 'closed' && s.updated_at) {
+        const hrs = Number(s.working_hours || 0)
+        events.push({
+          type: 'shift_end', ts: s.updated_at, color: 'emerald',
+          label: `${shiftEmoji(s.shift_type)} ${shiftLabel(s.shift_type)} Shift Ended`,
+          sub: s.operator_name || null,
+          meta: hrs > 0 ? `${hrs.toFixed(1)} hrs${Number(s.idle_hours) > 0 ? ` · ${Number(s.idle_hours).toFixed(1)} idle` : ''}` : null,
+        })
+      }
+    }
+
+    for (const f of recentFuel) {
+      events.push({
+        type: 'fuel', ts: f.created_at, color: 'yellow',
+        label: `⛽ Fuel — ${f.quantity_liters} L`,
+        sub: f.delivered_by_name ? `By ${f.delivered_by_name}` : (f.vendor_name || null),
+        meta: f.total_amount > 0 ? `₹${Number(f.total_amount).toLocaleString('en-IN')}` : null,
+      })
+    }
+
+    for (const b of breakdownLog) {
+      events.push({
+        type: 'breakdown_reported', ts: b.reported_at, color: 'red',
+        label: '🔧 Breakdown Reported',
+        sub: b.breakdown_cause || null,
+        meta: b.notify_chain?.length > 0 ? `${b.notify_chain.length} contacts notified` : null,
+      })
+      if (b.acknowledged_at) {
+        events.push({
+          type: 'breakdown_ack', ts: b.acknowledged_at, color: 'amber',
+          label: '📋 Alert Acknowledged',
+          sub: b.acknowledged_by_name ? `By ${b.acknowledged_by_name}${b.acknowledged_level ? ` (Level ${b.acknowledged_level})` : ''}` : null,
+          meta: null,
+        })
+      }
+      if (b.resolved_at) {
+        events.push({
+          type: 'breakdown_resolved', ts: b.resolved_at, color: 'emerald',
+          label: '✅ Breakdown Resolved',
+          sub: b.resolved_by_name ? `By ${b.resolved_by_name}` : null,
+          meta: null,
+        })
+      }
+    }
+
+    for (const inc of incidentLog) {
+      if (inc.incident_type === 'breakdown') continue
+      events.push({
+        type: 'incident', ts: inc.created_at, color: 'amber',
+        label: `⚠️ Incident — ${inc.incident_type || 'General'}`,
+        sub: inc.description || null,
+        meta: inc.resolved ? 'Resolved' : 'Open',
+      })
+    }
+
+    events.sort((a, b) => new Date(b.ts) - new Date(a.ts))
+    return events
+  }, [shiftLog, recentFuel, breakdownLog, incidentLog])
 
   // ── Utilization calendar queries ──────────────────────────────────────────────
   const _calY  = calMonth.getFullYear()

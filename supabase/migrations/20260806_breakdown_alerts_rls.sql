@@ -11,10 +11,10 @@ CREATE POLICY "company_members_breakdown_alerts"
 ON breakdown_alerts
 FOR ALL
 USING (
-  company_id IN (SELECT company_id FROM profiles WHERE id = auth.uid())
+  company_id IN (SELECT company_id FROM user_profiles WHERE id = auth.uid())
 )
 WITH CHECK (
-  company_id IN (SELECT company_id FROM profiles WHERE id = auth.uid())
+  company_id IN (SELECT company_id FROM user_profiles WHERE id = auth.uid())
 );
 
 NOTIFY pgrst, 'reload schema';
