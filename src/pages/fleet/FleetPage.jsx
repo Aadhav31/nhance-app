@@ -4182,7 +4182,6 @@ function FleetTab({ companyId, showAdd, setShowAdd, onNavigate, unloggedIds = nu
   const [filterOwnership, setFilterOwnership] = useState('all')
   const [viewMode,        setViewMode]        = useState('grid')    // 'grid' | 'site' | 'utilization' | 'cost'
   const [alertDismissed,  setAlertDismissed]  = useState(false)
-  const [gateDismissed,   setGateDismissed]   = useState(false)
   // Deep-link filter from dashboard alert — dismissed when user taps ×
   const [unloggedFilter,  setUnloggedFilter]  = useState(unloggedIds)
   useEffect(() => { setUnloggedFilter(unloggedIds) }, [unloggedIds])
@@ -4215,25 +4214,6 @@ function FleetTab({ companyId, showAdd, setShowAdd, onNavigate, unloggedIds = nu
     enabled: !!companyId,
   })
 
-  // Daily Log Gate — deployed machines with no ops record for today
-  const todayDateStr = new Date().toISOString().slice(0, 10)
-  const { data: unloggedToday = [] } = useQuery({
-    queryKey: ['unlogged_today', companyId, todayDateStr],
-    queryFn: async () => {
-      const deployed = equipment.filter(e => !!e.current_project_id)
-      if (deployed.length === 0) return []
-      const deployedIds = deployed.map(e => e.id)
-      const { data: loggedToday } = await supabase.from('daily_operations')
-        .select('equipment_id')
-        .eq('company_id', companyId)
-        .eq('ops_date', todayDateStr)
-        .in('equipment_id', deployedIds)
-      const loggedIds = new Set((loggedToday || []).map(o => o.equipment_id))
-      return deployed.filter(e => !loggedIds.has(e.id))
-    },
-    enabled: equipment.length > 0,
-    staleTime: 5 * 60 * 1000,
-  })
 
   // Fleet utilization grid data
   const _gY  = gridMonth.getFullYear()
@@ -4468,33 +4448,6 @@ function FleetTab({ companyId, showAdd, setShowAdd, onNavigate, unloggedIds = nu
       )}
 
       {/* ── Daily Log Gate Banner ── */}
-      {!gateDismissed && unloggedToday.length > 0 && (
-        <div className="mx-4 mt-2 mb-1 bg-red-900/30 border border-red-700/40 rounded-xl px-3 py-2.5 shrink-0">
-          <div className="flex items-start justify-between gap-2">
-            <div className="flex items-start gap-2 flex-1 min-w-0">
-              <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
-              <div className="flex-1 min-w-0">
-                <p className="text-xs font-semibold text-red-300">
-                  {unloggedToday.length} deployed machine{unloggedToday.length > 1 ? 's' : ''} not logged today
-                </p>
-                <div className="mt-1.5 flex flex-wrap gap-1.5">
-                  {unloggedToday.map(e => (
-                    <button key={e.id}
-                      onClick={() => setSelected(e)}
-                      className="text-[10px] px-2 py-0.5 rounded-full bg-red-800/50 border border-red-700/50 text-red-300 hover:bg-red-700/60 transition-colors">
-                      {e.equipment_number ? `${e.equipment_number} · ` : ''}{e.name}
-                      {e.current_site_name ? ` @ ${e.current_site_name}` : ''} →
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-            <button onClick={() => setGateDismissed(true)} className="p-1 text-red-500 hover:text-red-300 shrink-0">
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* ── Status filter chips ── */}
       {equipment.length > 0 && (
