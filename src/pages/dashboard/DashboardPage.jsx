@@ -1353,83 +1353,85 @@ function BreakdownAlarm({ companyId, userProfile }) {
   }
 
   return (
-    <div className="rounded-xl border-2 border-red-500/70 overflow-hidden shadow-xl shadow-red-500/20 mb-2">
-      {/* ── Alarm Header (always visible) ── */}
+    <div className="rounded-xl border border-red-500/50 overflow-hidden shadow-lg shadow-red-500/10 mb-2">
+      {/* ── Alarm Header ── */}
       <button
         onClick={() => setExpanded(o => !o)}
-        className="w-full flex items-center gap-3 px-4 py-3 bg-red-600/90 text-left">
-        {/* Pulsing dot */}
+        className="w-full flex items-center gap-3 px-4 py-3 bg-red-600 text-left">
         <span className="relative flex h-3 w-3 shrink-0">
-          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-60" />
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75" />
           <span className="relative inline-flex rounded-full h-3 w-3 bg-white" />
         </span>
         <span className="text-white font-bold text-sm tracking-wide flex-1">
           🚨 BREAKDOWN ALERT — {alarms.length} unacknowledged
         </span>
         {expanded
-          ? <ChevronUp className="w-4 h-4 text-red-200 shrink-0" />
-          : <ChevronDown className="w-4 h-4 text-red-200 shrink-0" />}
+          ? <ChevronUp className="w-4 h-4 text-white/80 shrink-0" />
+          : <ChevronDown className="w-4 h-4 text-white/80 shrink-0" />}
       </button>
 
       {/* ── Alarm Cards ── */}
       {expanded && (
-        <div className="bg-red-950/40 divide-y divide-red-900/50">
+        <div className="bg-dark-800 divide-y divide-dark-700">
           {alarms.map(alarm => {
-            const level   = getAlarmLevel(alarm.reported_at)
-            const chain   = alarm.notify_chain || []
-            const current = chain.filter(c => c.level === level)
+            const level    = getAlarmLevel(alarm.reported_at)
+            const chain    = alarm.notify_chain || []
             const isAcking = acking === alarm.id
 
             return (
               <div key={alarm.id} className="p-4 space-y-3">
-                {/* Equipment + time */}
+                {/* Equipment name + level badge */}
                 <div className="flex items-start justify-between gap-2">
                   <div>
-                    <p className="text-red-100 font-bold text-sm">{alarm.equipment_name}</p>
-                    <p className="text-red-300/70 text-[11px] mt-0.5">{timeAgo(alarm.reported_at)}</p>
+                    <div className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse shrink-0" />
+                      <p className="text-white font-bold text-base">{alarm.equipment_name}</p>
+                    </div>
+                    <p className="text-slate-400 text-[11px] mt-0.5 ml-4">{timeAgo(alarm.reported_at)}</p>
                   </div>
-                  {/* Escalation level badge */}
-                  <div className="text-right shrink-0">
-                    <span className="text-[10px] font-bold bg-red-700/60 text-red-200 px-2 py-0.5 rounded-full">
-                      Level {level} — {LEVEL_LABEL[level]}
-                    </span>
-                  </div>
+                  <span className="text-[10px] font-bold bg-red-500/20 text-red-400 border border-red-500/30 px-2 py-0.5 rounded-full shrink-0 whitespace-nowrap">
+                    Level {level} — {LEVEL_LABEL[level]}
+                  </span>
                 </div>
 
                 {/* Cause */}
                 {alarm.breakdown_cause && (
-                  <p className="text-xs text-red-200/80 bg-red-900/40 rounded-lg px-3 py-2">
-                    {alarm.breakdown_cause}
-                  </p>
+                  <div className="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2">
+                    <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-0.5">Cause</p>
+                    <p className="text-sm text-slate-200">{alarm.breakdown_cause}</p>
+                  </div>
                 )}
 
                 {/* Escalation chain */}
                 {chain.length > 0 && (
-                  <div className="space-y-1">
-                    <p className="text-[10px] font-semibold text-red-300/70 uppercase tracking-wider">Notify Chain</p>
+                  <div className="space-y-1.5">
+                    <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Escalation Chain</p>
                     {chain.map((c, i) => {
                       const isCurrentLevel = c.level === level
                       const isPast         = c.level < level
                       return (
-                        <div key={i} className={`flex items-center gap-2 text-xs rounded-lg px-2.5 py-1.5
-                          ${isCurrentLevel ? 'bg-red-700/50 text-red-100' : isPast ? 'bg-dark-800/50 text-slate-500' : 'bg-dark-800/30 text-slate-600'}`}>
-                          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isCurrentLevel ? 'bg-red-400 animate-pulse' : isPast ? 'bg-slate-600' : 'bg-dark-600'}`} />
-                          <span className="font-medium">{c.role}</span>
-                          <span className="text-slate-400">—</span>
-                          <span className="truncate">{c.name}</span>
+                        <div key={i} className={`flex items-center gap-2 text-xs rounded-lg px-3 py-2 border
+                          ${isCurrentLevel
+                            ? 'bg-red-500/10 border-red-500/40 text-white'
+                            : isPast
+                              ? 'bg-dark-700/40 border-dark-600/50 text-slate-500'
+                              : 'bg-dark-700/20 border-dark-700/30 text-slate-600'}`}>
+                          <span className={`w-1.5 h-1.5 rounded-full shrink-0
+                            ${isCurrentLevel ? 'bg-red-400 animate-pulse' : isPast ? 'bg-slate-600' : 'bg-dark-600'}`} />
+                          <span className={`font-medium w-24 shrink-0 ${isCurrentLevel ? 'text-red-300' : ''}`}>{c.role}</span>
+                          <span className="truncate flex-1">{c.name}</span>
                           {c.phone && (
                             <a href={`tel:${c.phone}`} onClick={e => e.stopPropagation()}
-                              className="ml-auto shrink-0 text-red-300 hover:text-red-100">
+                              className="ml-auto shrink-0 text-slate-400 hover:text-white">
                               <Phone className="w-3.5 h-3.5" />
                             </a>
                           )}
                         </div>
                       )
                     })}
-                    {/* Escalation timing note */}
                     {level < 4 && (
-                      <p className="text-[10px] text-red-400/60 text-center pt-1">
-                        Escalates to {LEVEL_LABEL[level + 1]} if not acknowledged within {ESCALATION_MINS[level + 1] - ESCALATION_MINS[level]} min
+                      <p className="text-[10px] text-slate-600 text-center pt-0.5">
+                        Escalates to {LEVEL_LABEL[level + 1]} if unacknowledged within {ESCALATION_MINS[level + 1] - ESCALATION_MINS[level]} min
                       </p>
                     )}
                   </div>
@@ -1439,7 +1441,7 @@ function BreakdownAlarm({ companyId, userProfile }) {
                 <button
                   onClick={() => handleAcknowledge(alarm)}
                   disabled={isAcking}
-                  className="w-full bg-red-600 hover:bg-red-500 disabled:opacity-60 text-white font-bold text-sm py-2.5 rounded-xl transition-colors">
+                  className="w-full bg-red-600 hover:bg-red-500 disabled:opacity-60 text-white font-bold text-sm py-3 rounded-xl transition-colors">
                   {isAcking ? 'Acknowledging…' : '🛑 Stop Alarm — I am Aware'}
                 </button>
               </div>
