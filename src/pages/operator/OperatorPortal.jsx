@@ -513,6 +513,113 @@ function StartShiftFlow({ companyId, operatorId, employeeId, equipment, project,
   )
 }
 
+// ─── SLIDE TO END SHIFT ────────────────────────────────────────────────────────
+
+function SlideToEnd({ onEnd }) {
+  const [progress, setProgress]   = useState(0)
+  const [active,   setActive]     = useState(false)
+  const trackRef  = useRef(null)
+  const startRef  = useRef({ x: 0, w: 300 })
+
+  const THUMB   = 60    // knob diameter px
+  const PAD     = 5     // padding from track edge
+  const TRIGGER = 0.80  // 80% travel = fire
+
+  const calcProgress = (clientX) => {
+    const travel = startRef.current.w - THUMB - PAD * 2
+    if (travel <= 0) return 0
+    // thumb starts on RIGHT → slide LEFT to increase progress
+    const moved = startRef.current.x - clientX
+    return Math.max(0, Math.min(1, moved / travel))
+  }
+
+  const onStart = (clientX) => {
+    startRef.current = {
+      x: clientX,
+      w: trackRef.current?.offsetWidth || 300,
+    }
+    setActive(true)
+  }
+
+  const onMove = (clientX) => {
+    if (!active) return
+    setProgress(calcProgress(clientX))
+  }
+
+  const onRelease = (clientX) => {
+    if (!active) return
+    setActive(false)
+    if (calcProgress(clientX) >= TRIGGER) {
+      navigator.vibrate?.(80)
+      onEnd()
+    }
+    setProgress(0)
+  }
+
+  const hot = progress >= 0.55
+  // Thumb CSS position: p=0 → right side, p=1 → left side
+  // left = (1-p) * (100% - THUMB - 2*PAD) + PAD  ← CSS calc with unitless scalar
+  const thumbLeft = `calc(${(1 - progress).toFixed(4)} * (100% - ${THUMB + PAD * 2}px) + ${PAD}px)`
+
+  return (
+    <div
+      ref={trackRef}
+      onTouchStart={e => onStart(e.touches[0].clientX)}
+      onTouchMove={e => onMove(e.touches[0].clientX)}
+      onTouchEnd={e => onRelease(e.changedTouches[0].clientX)}
+      onMouseDown={e => onStart(e.clientX)}
+      onMouseMove={e => { if (active) onMove(e.clientX) }}
+      onMouseUp={e => onRelease(e.clientX)}
+      onMouseLeave={() => { if (active) { setActive(false); setProgress(0) } }}
+      className="relative select-none touch-none rounded-full overflow-hidden"
+      style={{
+        height: '72px',
+        background: hot
+          ? `rgba(220, 38, 38, ${0.25 + progress * 0.55})`
+          : 'rgba(120, 20, 20, 0.35)',
+        border: `2px solid ${hot ? 'rgba(239,68,68,0.55)' : 'rgba(153,27,27,0.35)'}`,
+        cursor: active ? 'grabbing' : 'grab',
+        transition: 'background 0.1s, border-color 0.1s',
+      }}
+    >
+      {/* Track label */}
+      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+        <span
+          className="text-xs font-black tracking-[0.2em] uppercase pointer-events-none"
+          style={{ color: `rgba(252,165,165,${0.25 + (1 - progress) * 0.65})` }}
+        >
+          ← Slide to End Shift
+        </span>
+      </div>
+
+      {/* Knob — the "ON→OFF" toggle ball */}
+      <div
+        className="absolute flex items-center justify-center rounded-full pointer-events-none"
+        style={{
+          width: `${THUMB}px`,
+          height: `${THUMB}px`,
+          top: '50%',
+          transform: 'translateY(-50%)',
+          left: thumbLeft,
+          background: hot
+            ? `rgba(239, 68, 68, ${0.85 + progress * 0.15})`
+            : '#f1f5f9',
+          boxShadow: hot
+            ? `0 0 0 3px rgba(239,68,68,0.35), 0 4px 20px rgba(0,0,0,0.55)`
+            : '0 4px 20px rgba(0,0,0,0.55)',
+          transition: active
+            ? 'none'
+            : 'left 0.35s cubic-bezier(.4,0,.2,1), background 0.2s, box-shadow 0.2s',
+        }}
+      >
+        <span className="text-2xl select-none pointer-events-none">
+          {hot ? '🏁' : '🔴'}
+        </span>
+      </div>
+    </div>
+  )
+}
+
 // ─── ACTIVE SHIFT VIEW ─────────────────────────────────────────────────────────
 
 function ActiveShiftView({ shift, fuelEntries, lang, onFuel, onIncident, onEnd }) {
@@ -560,24 +667,22 @@ function ActiveShiftView({ shift, fuelEntries, lang, onFuel, onIncident, onEnd }
         </div>
       </div>
 
-      {/* 3 large action buttons */}
-      <div className="grid grid-cols-3 gap-3">
+      {/* 2 action buttons — larger now that End Shift has its own row */}
+      <div className="grid grid-cols-2 gap-3">
         <button onClick={onFuel}
-          className="flex flex-col items-center justify-center gap-2 py-6 rounded-2xl bg-yellow-900/30 border-2 border-yellow-700/30 active:scale-95 transition-all">
-          <span className="text-4xl">⛽</span>
-          <span className="text-yellow-300 text-xs font-bold">{L.fuel}</span>
+          className="flex flex-col items-center justify-center gap-2 py-7 rounded-2xl bg-yellow-900/30 border-2 border-yellow-700/30 active:scale-95 transition-all">
+          <span className="text-5xl">⛽</span>
+          <span className="text-yellow-300 text-sm font-bold">{L.fuel}</span>
         </button>
         <button onClick={onIncident}
-          className="flex flex-col items-center justify-center gap-2 py-6 rounded-2xl bg-orange-900/30 border-2 border-orange-700/30 active:scale-95 transition-all">
-          <span className="text-4xl">⚠️</span>
-          <span className="text-orange-300 text-xs font-bold">{L.problem}</span>
-        </button>
-        <button onClick={onEnd}
-          className="flex flex-col items-center justify-center gap-2 py-6 rounded-2xl bg-red-900/30 border-2 border-red-700/30 active:scale-95 transition-all">
-          <span className="text-4xl">🏁</span>
-          <span className="text-red-300 text-xs font-bold">{L.endShift}</span>
+          className="flex flex-col items-center justify-center gap-2 py-7 rounded-2xl bg-orange-900/30 border-2 border-orange-700/30 active:scale-95 transition-all">
+          <span className="text-5xl">⚠️</span>
+          <span className="text-orange-300 text-sm font-bold">{L.problem}</span>
         </button>
       </div>
+
+      {/* Slide-to-end — full width, prevents accidental taps */}
+      <SlideToEnd onEnd={onEnd} />
 
       {/* Fuel log (compact) */}
       {fuelEntries.length > 0 && (
