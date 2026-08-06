@@ -12,6 +12,7 @@ import {
   CheckCircle, User, Phone, Mail, MapPin, Hash, Upload, ExternalLink,
   Pencil, Trash2, Ban, FileDown, Sheet, ShieldOff,
   Paperclip, Camera, Eye, Link2, Unlink, FolderOpen, Wrench, Truck, Fuel,
+  Package, Tag, ChevronDown, ToggleLeft, ToggleRight,
 } from 'lucide-react'
 import VehiclesTab from '../../components/vehicles/VehiclesTab'
 import toast from 'react-hot-toast'
@@ -92,7 +93,7 @@ function Field({ label, children, required }) {
   )
 }
 
-const blankLine = () => ({ _id: Math.random().toString(36).slice(2), description: '', hsn_sac: '', quantity: 1, unit: 'nos', rate: '', amount: 0, gst_rate: null, _gst_desc: null, _hsn_open: false })
+const blankLine = () => ({ _id: Math.random().toString(36).slice(2), description: '', hsn_sac: '', quantity: 1, unit: 'nos', rate: '', amount: 0, gst_rate: null, _gst_desc: null, _hsn_open: false, _catalogue_id: null, _max_cost: null })
 
 const INV_CATEGORIES = [
   { value: 'raw_material',  label: 'Raw Material' },
@@ -105,13 +106,52 @@ const INV_CATEGORIES = [
 
 const LINE_UNITS = UOM_LIST
 
-function LineItemsEditor({ lines, setLines, isTax, catalog = [] }) {
-  // Build catalog lookup map (description is already lowercased in DB)
+function LineItemsEditor({ lines, setLines, isTax, catalog = [], itemCatalogue = [] }) {
+  // Price catalog map (avg/benchmark from purchase history)
   const catalogMap = useMemo(() => {
     const m = new Map()
     for (const c of catalog) m.set(c.description, c)
     return m
   }, [catalog])
+
+  // Item catalogue picker state
+  const [pickerFor, setPickerFor] = useState(null)    // line._id being picked for
+  const [pickerSearch, setPickerSearch] = useState('')
+
+  const filteredCatalogue = useMemo(() => {
+    const q = pickerSearch.toLowerCase().trim()
+    if (!q) return itemCatalogue.filter(i => i.is_active !== false)
+    return itemCatalogue.filter(i =>
+      i.is_active !== false && (
+        i.item_name.toLowerCase().includes(q) ||
+        (i.brand || '').toLowerCase().includes(q) ||
+        (i.part_number || '').toLowerCase().includes(q) ||
+        (i.compatible_with || '').toLowerCase().includes(q)
+      )
+    )
+  }, [itemCatalogue, pickerSearch])
+
+  const selectCatalogueItem = (lineId, item) => {
+    setLines(p => p.map(l => {
+      if (l._id !== lineId) return l
+      const rate = item.avg_cost || ''
+      const qty = parseFloat(l.quantity) || 1
+      return {
+        ...l,
+        description: item.item_name + (item.brand ? ` (${item.brand})` : '') + (item.part_number ? ` — ${item.part_number}` : ''),
+        unit: item.unit || l.unit,
+        rate,
+        amount: qty * (parseFloat(rate) || 0),
+        hsn_sac: item.hsn_sac || l.hsn_sac,
+        gst_rate: item.gst_rate ?? l.gst_rate,
+        _catalogue_id: item.id,
+        _max_cost: item.max_cost || null,
+        _hsn_open: !!(item.hsn_sac),
+      }
+    }))
+    setPickerFor(null)
+    setPickerSearch('')
+  }
 
   const update = (id, key, val) => setLines(p => p.map(l => {
     if (l._id !== id) return l
@@ -227,12 +267,22 @@ function LineItemsEditor({ lines, setLines, isTax, catalog = [] }) {
                 <input className={`${inp()} text-xs text-right px-2`} type="number" value={l.rate} onChange={e => update(l._id, 'rate', e.target.value)} placeholder="0.00" step="0.01" />
                 {/* Price intelligence badge */}
                 {(() => {
+                  const rate = parseFloat(l.rate) || 0
+                  // Max cost from item catalogue takes priority as ceiling
+                  if (l._max_cost && rate > 0) {
+                    const pct = (rate - l._max_cost) / l._max_cost * 100
+                    if (pct > 0) return (
+                      <p className="text-[9px] text-right mt-0.5 font-semibold text-red-400 leading-tight">
+                        ⚠ exceeds max {fmtINR(l._max_cost)}
+                      </p>
+                    )
+                  }
+                  // Fall back to price history catalog
                   const key = l.description.toLowerCase().trim()
                   const match = key ? catalogMap.get(key) : null
                   if (!match) return null
                   const ref = match.benchmark_price || match.avg_purchase_price
                   if (!ref) return null
-                  const rate = parseFloat(l.rate) || 0
                   if (!rate) return <p className="text-[9px] text-slate-500 text-right mt-0.5">Avg {fmtINR(ref)}</p>
                   const pct = (rate - ref) / ref * 100
                   const threshold = match.overpay_threshold || 20
@@ -249,9 +299,18 @@ function LineItemsEditor({ lines, setLines, isTax, catalog = [] }) {
               <div className="w-20 shrink-0 text-right">
                 <span className="text-xs font-semibold text-slate-200">{fmtINR(l.amount)}</span>
               </div>
-              {/* Delete */}
-              <button type="button" onClick={() => setLines(p => p.length > 1 ? p.filter(x => x._id !== l._id) : p)}
-                className="shrink-0 text-slate-600 hover:text-red-400 pt-1.5"><X className="w-3.5 h-3.5" /></button>
+              {/* Catalogue picker button + Delete */}
+              <div className="shrink-0 flex flex-col gap-1 pt-0.5">
+                {itemCatalogue.length > 0 && (
+                  <button type="button" onClick={() => { setPickerFor(l._id); setPickerSearch('') }}
+                    title="Pick from Item Catalogue"
+                    className="text-slate-500 hover:text-primary-400 transition-colors">
+                    <Package className="w-3.5 h-3.5" />
+                  </button>
+                )}
+                <button type="button" onClick={() => setLines(p => p.length > 1 ? p.filter(x => x._id !== l._id) : p)}
+                  className="text-slate-600 hover:text-red-400"><X className="w-3.5 h-3.5" /></button>
+              </div>
             </div>
           )
         })}
@@ -259,6 +318,70 @@ function LineItemsEditor({ lines, setLines, isTax, catalog = [] }) {
       <div className="flex justify-end mt-2 text-xs text-slate-400">
         Subtotal: <span className="font-bold text-slate-200 ml-1">{fmtINR(total)}</span>
       </div>
+
+      {/* ── Item Catalogue Picker Modal ── */}
+      {pickerFor && (
+        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4" onClick={() => setPickerFor(null)}>
+          <div className="bg-dark-900 border border-dark-700 rounded-2xl w-full max-w-sm max-h-[75vh] flex flex-col shadow-2xl" onClick={e => e.stopPropagation()}>
+            {/* Header */}
+            <div className="px-4 py-3 border-b border-dark-700 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2">
+                <Package className="w-4 h-4 text-primary-400" />
+                <p className="font-bold text-sm text-slate-100">Item Catalogue</p>
+              </div>
+              <button onClick={() => setPickerFor(null)} className="text-slate-500 hover:text-slate-300"><X className="w-4 h-4" /></button>
+            </div>
+            {/* Search */}
+            <div className="px-3 py-2 border-b border-dark-700 shrink-0">
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500 pointer-events-none" />
+                <input
+                  autoFocus
+                  className="w-full bg-dark-800 border border-dark-600 rounded-lg pl-8 pr-3 py-1.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-primary-500"
+                  placeholder="Search name, brand, part number…"
+                  value={pickerSearch}
+                  onChange={e => setPickerSearch(e.target.value)}
+                />
+              </div>
+            </div>
+            {/* List */}
+            <div className="flex-1 overflow-y-auto p-2 space-y-1">
+              {filteredCatalogue.length === 0 ? (
+                <p className="text-center text-xs text-slate-500 py-8">No items found</p>
+              ) : filteredCatalogue.map(item => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => selectCatalogueItem(pickerFor, item)}
+                  className="w-full text-left px-3 py-2.5 rounded-xl bg-dark-800 hover:bg-dark-700 border border-dark-700 hover:border-primary-600/50 transition-colors group">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold text-slate-100 group-hover:text-white leading-snug">
+                        {item.item_name}
+                        {item.brand && <span className="text-slate-400 font-normal ml-1">· {item.brand}</span>}
+                      </p>
+                      <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                        {item.part_number && <span className="text-[10px] text-slate-500 font-mono">#{item.part_number}</span>}
+                        {(item.equipment?.name || item.compatible_with) && (
+                          <span className="text-[10px] text-amber-400/80">
+                            <Wrench className="w-2.5 h-2.5 inline mr-0.5" />
+                            {item.equipment?.name || item.compatible_with}
+                          </span>
+                        )}
+                        <span className="text-[10px] text-slate-600">{item.unit}</span>
+                      </div>
+                    </div>
+                    <div className="text-right shrink-0">
+                      {item.avg_cost != null && <p className="text-xs font-bold text-slate-200">{fmtINR(item.avg_cost)}</p>}
+                      {item.max_cost != null && <p className="text-[10px] text-orange-400">Max {fmtINR(item.max_cost)}</p>}
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -1593,6 +1716,22 @@ function BillsTab({ companyId, session, initialStockTxnId }) {
     enabled: !!companyId,
   })
 
+  // Item catalogue — master list of parts/services for the picker
+  const { data: itemCatalogue = [] } = useQuery({
+    queryKey: ['item_catalogue', companyId],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('item_catalogue')
+        .select('*, equipment(id, name, registration_number)')
+        .eq('company_id', companyId)
+        .eq('is_active', true)
+        .order('item_name')
+      return data || []
+    },
+    enabled: !!companyId,
+    staleTime: 5 * 60_000,
+  })
+
   // Price catalog — for benchmark checks in line items editor & approval gate
   const { data: priceCatalog = [] } = useQuery({
     queryKey: ['item_price_catalog', companyId],
@@ -2356,7 +2495,7 @@ function BillsTab({ companyId, session, initialStockTxnId }) {
               )}
             </div>
           </div>
-          <LineItemsEditor lines={lines} setLines={setLines} isTax={isTax} catalog={priceCatalog} />
+          <LineItemsEditor lines={lines} setLines={setLines} isTax={isTax} catalog={priceCatalog} itemCatalogue={itemCatalogue} />
 
           {/* ── On Save — Additional Actions (create only) ── */}
           {!editing && (
@@ -3164,6 +3303,351 @@ function PaymentsMadeTab({ companyId, session }) {
   )
 }
 
+// ── ITEM CATALOGUE TAB ───────────────────────────────────────────────────────
+const ITEM_CATEGORIES = [
+  { value: 'spare_part',  label: 'Spare Part' },
+  { value: 'consumable',  label: 'Consumable' },
+  { value: 'service',     label: 'Service' },
+  { value: 'fuel',        label: 'Fuel' },
+  { value: 'lubricant',   label: 'Lubricant' },
+  { value: 'tyre',        label: 'Tyre' },
+  { value: 'other',       label: 'Other' },
+]
+
+function ItemCatalogueTab({ companyId, session }) {
+  const qc = useQueryClient()
+  const [search, setSearch] = useState('')
+  const [catFilter, setCatFilter] = useState('all')
+  const [equipFilter, setEquipFilter] = useState('all')
+  const [showForm, setShowForm] = useState(false)
+  const [editing, setEditing] = useState(null)
+  const [saving, setSaving] = useState(false)
+
+  const blankForm = () => ({
+    item_name: '', brand: '', part_number: '', description: '',
+    equipment_id: '', compatible_with: '',
+    category: 'spare_part', unit: 'nos',
+    avg_cost: '', max_cost: '', hsn_sac: '', gst_rate: '',
+  })
+  const [form, setForm] = useState(blankForm())
+  const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
+
+  // ── Queries ──────────────────────────────────────────────────────────────
+  const { data: items = [], isLoading } = useQuery({
+    queryKey: ['item_catalogue', companyId],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('item_catalogue')
+        .select('*, equipment(id, name, registration_number)')
+        .eq('company_id', companyId)
+        .order('item_name')
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+
+  const { data: equipmentList = [] } = useQuery({
+    queryKey: ['equipment_list_simple', companyId],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('equipment')
+        .select('id, name, registration_number')
+        .eq('company_id', companyId)
+        .eq('is_active', true)
+        .order('name')
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+
+  // ── Filter ───────────────────────────────────────────────────────────────
+  const filtered = useMemo(() => {
+    const q = search.toLowerCase().trim()
+    return items.filter(it => {
+      if (catFilter !== 'all' && it.category !== catFilter) return false
+      if (equipFilter !== 'all' && it.equipment_id !== equipFilter) return false
+      if (!q) return true
+      return (
+        it.item_name.toLowerCase().includes(q) ||
+        (it.brand || '').toLowerCase().includes(q) ||
+        (it.part_number || '').toLowerCase().includes(q) ||
+        (it.compatible_with || '').toLowerCase().includes(q)
+      )
+    })
+  }, [items, search, catFilter, equipFilter])
+
+  // ── Save ──────────────────────────────────────────────────────────────────
+  const handleSave = async () => {
+    if (!form.item_name.trim()) { toast.error('Item name is required'); return }
+    setSaving(true)
+    try {
+      const payload = {
+        company_id: companyId,
+        item_name: form.item_name.trim(),
+        brand: form.brand.trim() || null,
+        part_number: form.part_number.trim() || null,
+        description: form.description.trim() || null,
+        equipment_id: form.equipment_id || null,
+        compatible_with: form.compatible_with.trim() || null,
+        category: form.category,
+        unit: form.unit,
+        avg_cost: parseFloat(form.avg_cost) || null,
+        max_cost: parseFloat(form.max_cost) || null,
+        hsn_sac: form.hsn_sac.trim() || null,
+        gst_rate: parseFloat(form.gst_rate) || null,
+        updated_at: new Date().toISOString(),
+      }
+      if (editing) {
+        const { error } = await supabase.from('item_catalogue').update(payload).eq('id', editing.id)
+        if (error) throw error
+        toast.success('Item updated')
+      } else {
+        const { error } = await supabase.from('item_catalogue').insert({ ...payload, created_by: session.user.id })
+        if (error) throw error
+        toast.success('Item added to catalogue')
+      }
+      qc.invalidateQueries(['item_catalogue', companyId])
+      setShowForm(false); setEditing(null); setForm(blankForm())
+    } catch (e) { toast.error(e.message) } finally { setSaving(false) }
+  }
+
+  const openEdit = (it) => {
+    setEditing(it)
+    setForm({
+      item_name: it.item_name || '',
+      brand: it.brand || '',
+      part_number: it.part_number || '',
+      description: it.description || '',
+      equipment_id: it.equipment_id || '',
+      compatible_with: it.compatible_with || '',
+      category: it.category || 'spare_part',
+      unit: it.unit || 'nos',
+      avg_cost: it.avg_cost ?? '',
+      max_cost: it.max_cost ?? '',
+      hsn_sac: it.hsn_sac || '',
+      gst_rate: it.gst_rate ?? '',
+    })
+    setShowForm(true)
+  }
+
+  const toggleActive = async (it) => {
+    await supabase.from('item_catalogue').update({ is_active: !it.is_active }).eq('id', it.id)
+    qc.invalidateQueries(['item_catalogue', companyId])
+  }
+
+  const deleteItem = async (it) => {
+    if (!window.confirm(`Delete "${it.item_name}" from catalogue?`)) return
+    await supabase.from('item_catalogue').delete().eq('id', it.id)
+    qc.invalidateQueries(['item_catalogue', companyId])
+    toast.success('Item deleted')
+  }
+
+  const catLabel = (v) => ITEM_CATEGORIES.find(c => c.value === v)?.label || v
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* Header bar */}
+      <div className="px-4 py-3 border-b border-dark-800 shrink-0 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 flex-1 min-w-0">
+          <div className="relative flex-1 max-w-xs">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500 pointer-events-none" />
+            <input
+              className="w-full bg-dark-700 border border-dark-600 rounded-lg pl-8 pr-3 py-1.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-primary-500"
+              placeholder="Search item, brand, part number…"
+              value={search} onChange={e => setSearch(e.target.value)}
+            />
+          </div>
+          {/* Category filter */}
+          <select
+            className="bg-dark-700 border border-dark-600 rounded-lg px-2 py-1.5 text-xs text-slate-300"
+            value={catFilter} onChange={e => setCatFilter(e.target.value)}>
+            <option value="all">All Categories</option>
+            {ITEM_CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+          </select>
+          {/* Equipment filter */}
+          <select
+            className="bg-dark-700 border border-dark-600 rounded-lg px-2 py-1.5 text-xs text-slate-300"
+            value={equipFilter} onChange={e => setEquipFilter(e.target.value)}>
+            <option value="all">All Equipment</option>
+            {equipmentList.map(e => <option key={e.id} value={e.id}>{e.name || e.registration_number}</option>)}
+          </select>
+        </div>
+        <button onClick={() => { setEditing(null); setForm(blankForm()); setShowForm(true) }} className="btn-primary shrink-0">
+          <Plus className="w-4 h-4" /> Add Item
+        </button>
+      </div>
+
+      {/* Stats bar */}
+      <div className="px-4 py-2 border-b border-dark-800 shrink-0 flex items-center gap-4 text-xs text-slate-500">
+        <span>{items.filter(i => i.is_active).length} active items</span>
+        <span>·</span>
+        <span>{items.filter(i => i.category === 'spare_part').length} spare parts</span>
+        <span>·</span>
+        <span>{filtered.length} shown</span>
+      </div>
+
+      {/* List */}
+      <div className="flex-1 overflow-y-auto px-4 pb-4 pt-3">
+        {isLoading ? (
+          <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-primary-400" /></div>
+        ) : filtered.length === 0 ? (
+          <div className="flex flex-col items-center py-16 gap-3 text-slate-500">
+            <Package className="w-12 h-12 text-slate-700" />
+            <p className="text-sm">{search || catFilter !== 'all' || equipFilter !== 'all' ? 'No items match your filters' : 'No items in catalogue yet'}</p>
+            <button onClick={() => { setEditing(null); setForm(blankForm()); setShowForm(true) }} className="btn-primary text-xs">
+              <Plus className="w-3.5 h-3.5" /> Add First Item
+            </button>
+          </div>
+        ) : (
+          <div className="grid gap-2">
+            {filtered.map(it => (
+              <div key={it.id} className={`bg-dark-800 border rounded-xl p-4 transition-colors ${it.is_active ? 'border-dark-700' : 'border-dark-700/40 opacity-60'}`}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex-1 min-w-0">
+                    {/* Name + brand */}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="font-semibold text-sm text-slate-100">{it.item_name}</p>
+                      {it.brand && <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary-500/10 border border-primary-700/30 text-primary-400">{it.brand}</span>}
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-dark-700 border border-dark-600 text-slate-400">{catLabel(it.category)}</span>
+                      {!it.is_active && <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-500/10 border border-slate-600/40 text-slate-500">Inactive</span>}
+                    </div>
+                    {/* Part number + compatibility */}
+                    <div className="flex items-center gap-3 mt-1 flex-wrap">
+                      {it.part_number && (
+                        <span className="text-xs text-slate-400 font-mono flex items-center gap-1">
+                          <Hash className="w-3 h-3 text-slate-600" />{it.part_number}
+                        </span>
+                      )}
+                      {(it.equipment?.name || it.compatible_with) && (
+                        <span className="text-xs text-amber-400 flex items-center gap-1">
+                          <Wrench className="w-3 h-3" />
+                          Compatible: {it.equipment?.name || it.compatible_with}
+                        </span>
+                      )}
+                      {it.hsn_sac && <span className="text-xs text-slate-500">HSN {it.hsn_sac}</span>}
+                    </div>
+                    {it.description && <p className="text-xs text-slate-500 mt-1 line-clamp-2">{it.description}</p>}
+                  </div>
+                  {/* Pricing */}
+                  <div className="text-right shrink-0">
+                    {it.avg_cost != null && (
+                      <p className="text-sm font-bold text-slate-100">{fmtINR(it.avg_cost)}<span className="text-[10px] text-slate-500 font-normal ml-1">avg</span></p>
+                    )}
+                    {it.max_cost != null && (
+                      <p className="text-xs text-orange-400">Max {fmtINR(it.max_cost)}</p>
+                    )}
+                    <p className="text-[10px] text-slate-600 mt-0.5">{it.unit}</p>
+                  </div>
+                </div>
+                {/* Actions */}
+                <div className="flex items-center justify-end gap-1 mt-3 pt-3 border-t border-dark-700/50">
+                  <button onClick={() => openEdit(it)} className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg text-slate-400 hover:text-blue-400 hover:bg-blue-900/20 transition-colors">
+                    <Pencil className="w-3 h-3" /> Edit
+                  </button>
+                  <button onClick={() => toggleActive(it)} className={`flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg transition-colors ${it.is_active ? 'text-slate-400 hover:text-amber-400 hover:bg-amber-900/20' : 'text-slate-500 hover:text-emerald-400 hover:bg-emerald-900/20'}`}>
+                    {it.is_active ? <ToggleRight className="w-3.5 h-3.5" /> : <ToggleLeft className="w-3.5 h-3.5" />}
+                    {it.is_active ? 'Deactivate' : 'Activate'}
+                  </button>
+                  <button onClick={() => deleteItem(it)} className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-900/20 transition-colors">
+                    <Trash2 className="w-3 h-3" /> Delete
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Create / Edit Modal */}
+      {showForm && (
+        <Modal
+          title={editing ? 'Edit Item' : 'Add to Catalogue'}
+          subtitle={editing ? editing.item_name : 'New spare part, material or service'}
+          onClose={() => { setShowForm(false); setEditing(null); setForm(blankForm()) }}
+          footer={
+            <div className="flex gap-3 justify-end">
+              <button onClick={() => { setShowForm(false); setEditing(null); setForm(blankForm()) }} className="btn-ghost">Cancel</button>
+              <button onClick={handleSave} disabled={saving} className="btn-primary">
+                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                {editing ? 'Save Changes' : 'Add Item'}
+              </button>
+            </div>
+          }>
+          <div className="space-y-4">
+            {/* Name + Brand */}
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Item Name *">
+                <input className={inp()} placeholder="e.g. Air Filter" value={form.item_name} onChange={e => setF('item_name', e.target.value)} />
+              </Field>
+              <Field label="Brand">
+                <input className={inp()} placeholder="e.g. Fleetguard" value={form.brand} onChange={e => setF('brand', e.target.value)} />
+              </Field>
+            </div>
+
+            {/* Part Number + Category */}
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Part Number">
+                <input className={`${inp()} font-mono uppercase`} placeholder="e.g. AF-2631M" value={form.part_number} onChange={e => setF('part_number', e.target.value)} />
+              </Field>
+              <Field label="Category">
+                <select className={inp()} value={form.category} onChange={e => setF('category', e.target.value)}>
+                  {ITEM_CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+                </select>
+              </Field>
+            </div>
+
+            {/* Compatible Equipment */}
+            <Field label="Compatible Equipment">
+              <select className={inp()} value={form.equipment_id} onChange={e => setF('equipment_id', e.target.value)}>
+                <option value="">-- Select equipment (optional) --</option>
+                {equipmentList.map(e => (
+                  <option key={e.id} value={e.id}>{e.name || e.registration_number}</option>
+                ))}
+              </select>
+            </Field>
+            {/* Free-text compatibility note */}
+            <Field label="Compatible With (text note)" hint="e.g. 'All JCB 3DX variants' or 'Any 6-tonne tipper'">
+              <input className={inp()} placeholder="Free-text compatibility description" value={form.compatible_with} onChange={e => setF('compatible_with', e.target.value)} />
+            </Field>
+
+            {/* Unit */}
+            <Field label="Unit of Measure">
+              <select className={inp()} value={form.unit} onChange={e => setF('unit', e.target.value)}>
+                {LINE_UNITS.map(u => <option key={u}>{u}</option>)}
+              </select>
+            </Field>
+
+            {/* Pricing */}
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Average Cost (₹)" hint="Expected / market reference price">
+                <input className={inp()} type="number" step="0.01" placeholder="0.00" value={form.avg_cost} onChange={e => setF('avg_cost', e.target.value)} />
+              </Field>
+              <Field label="Maximum Cost (₹)" hint="Ceiling — anything above flags for approval">
+                <input className={`${inp()} border-orange-700/40 focus:border-orange-500`} type="number" step="0.01" placeholder="0.00" value={form.max_cost} onChange={e => setF('max_cost', e.target.value)} />
+              </Field>
+            </div>
+
+            {/* HSN + GST */}
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="HSN / SAC Code">
+                <input className={`${inp()} font-mono uppercase`} placeholder="e.g. 84139110" value={form.hsn_sac} onChange={e => setF('hsn_sac', e.target.value)} />
+              </Field>
+              <Field label="GST Rate (%)">
+                <input className={inp()} type="number" min="0" max="100" step="0.01" placeholder="18" value={form.gst_rate} onChange={e => setF('gst_rate', e.target.value)} />
+              </Field>
+            </div>
+
+            {/* Description */}
+            <Field label="Description / Notes">
+              <textarea className={`${inp()} resize-none`} rows={3} placeholder="Specs, make, model compatibility notes…" value={form.description} onChange={e => setF('description', e.target.value)} />
+            </Field>
+          </div>
+        </Modal>
+      )}
+    </div>
+  )
+}
+
 // ── MAIN PURCHASE PAGE ────────────────────────────────────────────────────────
 export default function PurchasePage({ initialTab, initialStockTxnId }) {
   const { companyId, session } = useAuth()
@@ -3176,7 +3660,8 @@ export default function PurchasePage({ initialTab, initialStockTxnId }) {
     { id: 'pos',      label: 'Purchase Orders',   icon: ShoppingCart },
     { id: 'vcredits', label: 'Vendor Credits',    icon: RefreshCcw },
     { id: 'payments', label: 'Payments Made',     icon: ArrowUpCircle },
-    { id: 'vehicles', label: 'Vehicles',          icon: Truck },
+    { id: 'vehicles',  label: 'Vehicles',          icon: Truck },
+    { id: 'catalogue', label: 'Item Catalogue',    icon: Package },
   ]
 
   return (
@@ -3216,6 +3701,11 @@ export default function PurchasePage({ initialTab, initialStockTxnId }) {
         {activeTab === 'vehicles' && (
           <div className="flex-1 overflow-y-auto p-4">
             <VehiclesTab context="purchase" />
+          </div>
+        )}
+        {activeTab === 'catalogue' && (
+          <div className="flex-1 overflow-hidden flex flex-col">
+            <ItemCatalogueTab companyId={companyId} session={session} />
           </div>
         )}
       </div>
