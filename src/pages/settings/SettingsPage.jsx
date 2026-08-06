@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Save, Building2, Users, Monitor, CheckCircle, AlertCircle,
          Plus, X, Loader2, Mail, Shield, Trash2, RefreshCw, Send,
-         CreditCard, Eye, EyeOff, Link, Pencil } from 'lucide-react'
+         CreditCard, Eye, EyeOff, Link, Pencil, Clock } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
 import { useDisplayMode } from '../../contexts/DisplayModeContext'
 import { supabase } from '../../lib/supabase'
@@ -922,6 +922,111 @@ function RazorpaySettings({ companyId, isAdmin }) {
   )
 }
 
+// ─── Shift Operations Settings ───────────────────────────────────────────────
+const ENFORCEMENT_OPTIONS = [
+  {
+    value: 'off',
+    label: 'Off',
+    icon: '🔓',
+    desc: 'No time restriction. Operators can start a shift at any time they are assigned to a machine.',
+  },
+  {
+    value: 'flexible',
+    label: 'Flexible',
+    icon: '🕐',
+    desc: 'Operators can start within the project\'s full shift window (e.g. anywhere between 08:00 and 20:00 for a day shift).',
+  },
+  {
+    value: 'strict',
+    label: 'Strict',
+    icon: '🔒',
+    desc: 'Operators must start within the grace period of their scheduled shift start time (e.g. ±30 min of 08:00).',
+  },
+]
+
+function ShiftOperationsSettings({ company, isAdmin }) {
+  const qc = useQueryClient()
+  const [enforcement, setEnforcement] = useState(company?.shift_enforcement || 'flexible')
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    setEnforcement(company?.shift_enforcement || 'flexible')
+  }, [company?.shift_enforcement])
+
+  const dirty = enforcement !== (company?.shift_enforcement || 'flexible')
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      const { error } = await supabase
+        .from('companies')
+        .update({ shift_enforcement: enforcement })
+        .eq('id', company.id)
+      if (error) throw error
+      toast.success('Shift enforcement updated')
+      qc.invalidateQueries(['company'])
+    } catch (err) {
+      toast.error(err.message || 'Failed to save')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-slate-400">
+        Controls whether operators are restricted to a time window when starting a shift.
+        This applies to all operators in your company.
+      </p>
+
+      <div className="space-y-2">
+        {ENFORCEMENT_OPTIONS.map(opt => (
+          <button
+            key={opt.value}
+            onClick={() => isAdmin && setEnforcement(opt.value)}
+            disabled={!isAdmin}
+            className={`w-full text-left rounded-xl border px-4 py-3 transition-all
+              ${enforcement === opt.value
+                ? 'border-primary-500 bg-primary-900/20'
+                : 'border-dark-600 bg-dark-700/40 hover:border-dark-500'}
+              ${!isAdmin ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
+          >
+            <div className="flex items-center gap-3">
+              <span className="text-xl">{opt.icon}</span>
+              <div className="flex-1">
+                <div className="flex items-center gap-2">
+                  <p className={`text-sm font-semibold ${enforcement === opt.value ? 'text-primary-300' : 'text-slate-200'}`}>
+                    {opt.label}
+                  </p>
+                  {enforcement === opt.value && (
+                    <span className="text-[10px] bg-primary-600 text-white px-1.5 py-0.5 rounded-full font-bold">ACTIVE</span>
+                  )}
+                </div>
+                <p className="text-xs text-slate-400 mt-0.5">{opt.desc}</p>
+              </div>
+            </div>
+          </button>
+        ))}
+      </div>
+
+      {isAdmin && dirty && (
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          className="flex items-center gap-1.5 text-sm bg-primary-600 hover:bg-primary-500 text-white px-4 py-2 rounded-xl font-semibold transition-colors disabled:opacity-50"
+        >
+          {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+          Save
+        </button>
+      )}
+
+      {!isAdmin && (
+        <p className="text-xs text-slate-500 italic">Contact your admin to change shift enforcement settings.</p>
+      )}
+    </div>
+  )
+}
+
 // ─── Main ────────────────────────────────────────────────────────────────────
 export default function SettingsPage() {
   const { company, companyId, role, isAdmin } = useAuth()
@@ -949,6 +1054,10 @@ export default function SettingsPage() {
 
         <SectionCard icon={CreditCard} title="Online Payments — Razorpay UPI">
           <RazorpaySettings companyId={companyId} isAdmin={adminAccess} />
+        </SectionCard>
+
+        <SectionCard icon={Clock} title="Operator Shift Enforcement">
+          <ShiftOperationsSettings company={company} isAdmin={adminAccess} />
         </SectionCard>
 
       </div>

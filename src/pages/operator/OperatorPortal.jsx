@@ -81,20 +81,28 @@ async function stampAndUpload(file, label) {
   })
 }
 
-function checkShiftWindow(project, equipment) {
+// enforcement: 'off' | 'flexible' | 'strict'
+//   off      → no restriction, always allowed
+//   flexible → allowed anywhere inside the shift window ± grace (default)
+//   strict   → allowed only within ±grace of the shift START time
+function checkShiftWindow(project, equipment, enforcement = 'flexible') {
   const shiftType = equipment?.default_shift_type || 'day'
 
-  // Substituted operators have already been approved by a manager —
-  // bypass the shift window check entirely so they can start immediately
+  // Substituted operators bypass the window — admin already approved
   if (equipment?.is_substitution) {
     return { allowed: true, reason: null, shiftType, isSubstitution: true }
+  }
+
+  // Off → always open
+  if (enforcement === 'off') {
+    return { allowed: true, reason: null, shiftType }
   }
 
   const start = project?.shift_start_time || null
   const end   = project?.shift_end_time   || null
   const grace = project?.shift_grace_mins ?? 30
 
-  // No window configured → always open
+  // No window configured on the project → always open
   if (!start || !end) return { allowed: true, reason: null, shiftType }
 
   const now = new Date()
@@ -104,25 +112,44 @@ function checkShiftWindow(project, equipment) {
   const dayStart = sh * 60 + sm   // e.g. 480  (08:00)
   const dayEnd   = eh * 60 + em   // e.g. 1200 (20:00)
 
-  // ── Double shift: spans the full day, always open ──────────────────────────
+  // Double shift: spans the full day, always open
   if (shiftType === 'double') {
     return { allowed: true, reason: null, shiftType }
   }
 
-  // ── Night shift: window is dayEnd±grace → midnight → dayStart±grace ────────
-  // e.g. project 08:00–20:00 → night window is 19:30 – 08:30 (crosses midnight)
+  // ── Strict mode: ±grace of the shift START time ────────────────────────────
+  if (enforcement === 'strict') {
+    let shiftStartMins = shiftType === 'night' ? dayEnd : dayStart
+    const windowStart = shiftStartMins - grace
+    const windowEnd   = shiftStartMins + grace
+
+    // Night shift start crosses midnight — check both sides
+    if (shiftType === 'night') {
+      if (nowMins >= windowStart || nowMins <= (grace)) {
+        return { allowed: true, reason: null, shiftType }
+      }
+      return { allowed: false, reason: `Must start within ${grace} min of ${String(eh).padStart(2,'0')}:${String(em).padStart(2,'0')}`, shiftType }
+    }
+
+    if (nowMins < windowStart || nowMins > windowEnd) {
+      return { allowed: false, reason: `Must start within ${grace} min of ${String(sh).padStart(2,'0')}:${String(sm).padStart(2,'0')}`, shiftType }
+    }
+    return { allowed: true, reason: null, shiftType }
+  }
+
+  // ── Flexible mode (default): full shift window ± grace ─────────────────────
+
+  // Night shift: window is dayEnd-grace → midnight → dayStart+grace
   if (shiftType === 'night') {
-    const nightStart = dayEnd - grace   // 19:30 = 1170 mins
-    const nightEnd   = dayStart + grace // 08:30 =  510 mins
-    // allowed if time ≥ nightStart (evening side) OR ≤ nightEnd (morning side)
+    const nightStart = dayEnd - grace   // e.g. 19:30
+    const nightEnd   = dayStart + grace // e.g. 08:30
     if (nowMins >= nightStart || nowMins <= nightEnd) {
       return { allowed: true, reason: null, shiftType }
     }
-    const readyAt = `${String(eh).padStart(2,'0')}:${String(em - grace >= 0 ? em - grace % 60 : 0).padStart(2,'0')}`
     return { allowed: false, reason: `Night shift opens at ${String(eh).padStart(2,'0')}:${String(em).padStart(2,'0')}`, shiftType }
   }
 
-  // ── Day shift: window is dayStart±grace ────────────────────────────────────
+  // Day shift
   const windowStart = dayStart - grace
   const windowEnd   = dayEnd + grace
 
@@ -376,7 +403,7 @@ function OverdueBanner({ elapsedHrs, onEndNow, onDismiss }) {
 
 // ─── START SHIFT FLOW ─────────────────────────────────────────────────────────
 
-function StartShiftFlow({ companyId, operatorId, employeeId, equipment, project, lang, onStarted }) {
+function StartShiftFlow({ companyId, operatorId, employeeId, equipment, project, lang, onStarted, enforcement = 'flexible' }) {
   const L = LANGS[lang]
   const [step, setStep]       = useState(0) // 0=meter, 1=photo, 2=confirm
   const [meter, setMeter]     = useState('')
@@ -384,7 +411,7 @@ function StartShiftFlow({ companyId, operatorId, employeeId, equipment, project,
   const [meterPrev, setPrev]  = useState(null)
   const [saving, setSaving]   = useState(false)
 
-  const check = checkShiftWindow(project, equipment)
+  const check = checkShiftWindow(project, equipment, enforcement)
 
   const handlePhoto = f => { setFile(f); setPrev(URL.createObjectURL(f)) }
 
@@ -924,7 +951,7 @@ function EndShiftSheet({ open, onClose, shift, companyId, employeeId, lang, onEn
 
 // ─── SHIFT MODULE (orchestrator) ───────────────────────────────────────────────
 
-function ShiftModule({ companyId, operatorId, employeeId, employeeName, lang }) {
+function ShiftModule({ companyId, operatorId, employeeId, employeeName, lang, shiftEnforcement = 'flexible' }) {
   const qc = useQueryClient()
   const [fuelOpen, setFuelOpen] = useState(false)
   const [incOpen,  setIncOpen]  = useState(false)
@@ -1019,7 +1046,7 @@ function ShiftModule({ companyId, operatorId, employeeId, employeeName, lang }) 
           fireNotification('🚨 Shift Overdue', `Running ${hrs.toFixed(1)} hrs — close now!`, 'shift-overdue')
         } else { setAlarmType(null) }
       } else if (assignedEq && project) {
-        const { allowed } = checkShiftWindow(project, assignedEq)
+        const { allowed } = checkShiftWindow(project, assignedEq, shiftEnforcement)
         if (allowed) {
           if (!alarmDismiss) setAlarmType('login_reminder')
           fireNotification('⏰ Shift Reminder', 'Window open — start your shift!', 'shift-login-reminder')
@@ -1106,6 +1133,7 @@ function ShiftModule({ companyId, operatorId, employeeId, employeeName, lang }) 
           <StartShiftFlow
             companyId={companyId} operatorId={operatorId} employeeId={employeeId}
             equipment={assignedEq} project={project} lang={lang} onStarted={refetchShift}
+            enforcement={shiftEnforcement}
           />
         )}
       </div>
@@ -1505,7 +1533,8 @@ export default function OperatorPortal() {
 
   const employeeId   = employee?.id   || null
   const employeeName = employee?.name || null
-  const sharedProps  = { companyId, operatorId: userProfile?.id, employeeId, employeeName, profile: userProfile, lang }
+  const shiftEnforcement = company?.shift_enforcement || 'flexible'
+  const sharedProps  = { companyId, operatorId: userProfile?.id, employeeId, employeeName, profile: userProfile, lang, shiftEnforcement }
 
   return (
     <div className="flex flex-col h-screen bg-dark-900 text-slate-100 max-w-lg mx-auto">
