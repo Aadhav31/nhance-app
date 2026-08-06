@@ -929,7 +929,7 @@ function IncidentSheet({ open, onClose, shift, companyId, lang }) {
 
 // ─── END SHIFT SHEET ──────────────────────────────────────────────────────────
 
-function EndShiftSheet({ open, onClose, shift, companyId, employeeId, lang, onEnded }) {
+function EndShiftSheet({ open, onClose, shift, companyId, employeeId, otThreshold = 12, lang, onEnded }) {
   const L = LANGS[lang]
   const [step, setStep]         = useState(0)
   const [meter, setMeter]       = useState('')
@@ -981,12 +981,19 @@ function EndShiftSheet({ open, onClose, shift, companyId, employeeId, lang, onEn
       if (error) throw error
 
       if (employeeId) {
-        const attStatus = clockHrs >= 4 ? 'present' : clockHrs > 0 ? 'half_day' : 'absent'
+        const attStatus  = clockHrs >= 4 ? 'present' : clockHrs > 0 ? 'half_day' : 'absent'
+        const shiftType  = shift.shift_type || 'day'
+        const otHrs      = Math.max(0, Math.round((clockHrs - otThreshold) * 10) / 10)
         const attPayload = {
-          company_id: companyId, employee_id: employeeId,
-          attendance_date: shift.shift_date, status: attStatus,
-          shift_start_time: shift.start_time, shift_end_time: endTime,
-          notes: `Auto — ${meterHrs.toFixed(1)} meter hrs, ${clockHrs.toFixed(1)} clock hrs`,
+          company_id:       companyId,
+          employee_id:      employeeId,
+          attendance_date:  shift.shift_date,
+          status:           attStatus,
+          shift_type:       shiftType,
+          shift_start_time: shift.start_time,
+          shift_end_time:   endTime,
+          ot_hours:         otHrs > 0 ? otHrs : 0,
+          notes: `Auto — ${meterHrs.toFixed(1)} meter hrs, ${clockHrs.toFixed(1)} clock hrs${otHrs > 0 ? `, ${otHrs}h OT` : ''}`,
         }
         const { data: existing } = await supabase.from('hr_attendance')
           .select('id').eq('employee_id', employeeId).eq('attendance_date', shift.shift_date).maybeSingle()
@@ -997,8 +1004,10 @@ function EndShiftSheet({ open, onClose, shift, companyId, employeeId, lang, onEn
         }
       }
 
+      const otHrsForToast = Math.max(0, Math.round((clockHrs - otThreshold) * 10) / 10)
       const label = clockHrs >= 4 ? '✓ Present' : clockHrs > 0 ? '½ Half Day' : ''
-      toast.success(`🏁 ${meterHrs.toFixed(1)} hrs · ${label}`)
+      const otTag = otHrsForToast > 0 ? ` · +${otHrsForToast}h OT` : ''
+      toast.success(`🏁 ${meterHrs.toFixed(1)} hrs · ${label}${otTag}`)
       onEnded(); reset(); onClose()
     } catch (err) { toast.error(err.message || 'Failed')
     } finally { setSaving(false) }
@@ -1073,7 +1082,7 @@ function EndShiftSheet({ open, onClose, shift, companyId, employeeId, lang, onEn
 
 // ─── SHIFT MODULE (orchestrator) ───────────────────────────────────────────────
 
-function ShiftModule({ companyId, operatorId, employeeId, employeeName, lang, shiftEnforcement = 'flexible' }) {
+function ShiftModule({ companyId, operatorId, employeeId, employeeName, otThreshold = 12, lang, shiftEnforcement = 'flexible' }) {
   const qc = useQueryClient()
   const [fuelOpen, setFuelOpen] = useState(false)
   const [incOpen,  setIncOpen]  = useState(false)
@@ -1249,7 +1258,7 @@ function ShiftModule({ companyId, operatorId, employeeId, employeeName, lang, sh
             />
             <FuelSheet    open={fuelOpen} onClose={() => setFuelOpen(false)} shift={activeShift} companyId={companyId} lang={lang} />
             <IncidentSheet open={incOpen}  onClose={() => setIncOpen(false)}  shift={activeShift} companyId={companyId} lang={lang} />
-            <EndShiftSheet open={endOpen}  onClose={() => setEndOpen(false)}  shift={activeShift} companyId={companyId} employeeId={employeeId} lang={lang} onEnded={onEnded} />
+            <EndShiftSheet open={endOpen}  onClose={() => setEndOpen(false)}  shift={activeShift} companyId={companyId} employeeId={employeeId} otThreshold={otThreshold} lang={lang} onEnded={onEnded} />
           </>
         ) : (
           <StartShiftFlow
@@ -1668,17 +1677,18 @@ export default function OperatorPortal() {
     queryKey: ['op_employee_record', userProfile?.id],
     queryFn: async () => {
       const { data } = await supabase.from('hr_employees')
-        .select('id,name,employee_number,designation,department')
+        .select('id,name,employee_number,designation,department,ot_threshold_hours')
         .eq('user_id', userProfile.id).maybeSingle()
       return data || null
     },
     enabled: !!userProfile?.id,
   })
 
-  const employeeId   = employee?.id   || null
-  const employeeName = employee?.name || null
+  const employeeId    = employee?.id   || null
+  const employeeName  = employee?.name || null
+  const otThreshold   = Number(employee?.ot_threshold_hours ?? 12)
   const shiftEnforcement = company?.shift_enforcement || 'flexible'
-  const sharedProps  = { companyId, operatorId: userProfile?.id, employeeId, employeeName, profile: userProfile, lang, shiftEnforcement }
+  const sharedProps  = { companyId, operatorId: userProfile?.id, employeeId, employeeName, otThreshold, profile: userProfile, lang, shiftEnforcement }
 
   return (
     <div className="flex flex-col h-screen bg-dark-900 text-slate-100 max-w-lg mx-auto">
