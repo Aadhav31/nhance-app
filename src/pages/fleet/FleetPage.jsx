@@ -4334,6 +4334,7 @@ function FleetTab({ companyId, showAdd, setShowAdd, onNavigate, unloggedIds = nu
       if (error) throw error
       return data
     },
+    refetchInterval: 60_000, // keep breakdown/status badges fresh
   })
 
   // Also fetch equipment_documents expiry alerts

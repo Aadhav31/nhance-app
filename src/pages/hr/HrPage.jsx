@@ -2011,6 +2011,21 @@ function AttendanceTab({ companyId }) {
     enabled: !!companyId,
   })
 
+  // Fetch shifts that exist for this date — used to detect orphaned attendance records
+  const { data: shiftsOnDate = [] } = useQuery({
+    queryKey: ['hr_shifts_on_date', companyId, date],
+    queryFn: async () => {
+      const { data } = await supabase.from('shifts')
+        .select('operator_id').eq('company_id', companyId).eq('shift_date', date)
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+  const shiftEmpSet = useMemo(
+    () => new Set(shiftsOnDate.map(s => s.operator_id).filter(Boolean)),
+    [shiftsOnDate]
+  )
+
   const { data: monthAttendance = [], refetch: refetchMonth } = useQuery({
     queryKey: ['hr_attendance_month', companyId, year, month],
     queryFn: async () => {
@@ -2308,6 +2323,8 @@ function AttendanceTab({ companyId }) {
             const status     = att?.status || null
             const isShift    = isShiftWorker(emp)
             const isAuto     = att?.source === 'shift_auto'
+            // Orphaned: shift worker has attendance but no shift exists for this date
+            const isOrphaned = isShift && !!att && !shiftEmpSet.has(emp.id)
             const otHours    = Number(att?.ot_hours || 0)
             const extraShifts = Number(att?.extra_shifts || 0)
             const subs       = Array.isArray(att?.substitutions_given) ? att.substitutions_given : []
@@ -2483,8 +2500,27 @@ function AttendanceTab({ companyId }) {
                   ))}
                 </div>
 
+                {/* Orphaned attendance warning — shift was deleted but record remains */}
+                {isOrphaned && isAdmin && (
+                  <div className="mt-2.5 bg-amber-900/25 border border-amber-600/40 rounded-lg px-3 py-2.5 flex items-start gap-2">
+                    <span className="text-base mt-0.5">⚠️</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-amber-300 text-xs font-bold">Shift Deleted</p>
+                      <p className="text-amber-200/65 text-[11px] mt-0.5 leading-snug">
+                        This attendance record exists but the corresponding shift was deleted.
+                        Clear it to remove the incorrect record.
+                      </p>
+                      <button
+                        onClick={() => unmarkAttendance(emp)}
+                        className="mt-2 text-[11px] bg-red-700/70 hover:bg-red-600 text-red-100 font-semibold px-3 py-1 rounded-lg flex items-center gap-1 transition-colors">
+                        <X className="w-3 h-3" /> Clear Attendance Record
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 {/* Unmark — clear the attendance record entirely */}
-                {status && isAdmin && (
+                {status && isAdmin && !isOrphaned && (
                   <div className="mt-2 flex justify-end">
                     <button
                       onClick={() => unmarkAttendance(emp)}
@@ -2585,6 +2621,15 @@ function PayslipModal({ item, month, year, onClose }) {
       <SectionHeader label="Earnings" />
       <div className="space-y-1.5 text-xs">
         {basic > 0 && <div className="flex justify-between"><span className="text-slate-400">Basic / Wage</span><span className="text-slate-200">₹{fmt(basic)}</span></div>}
+        {/* Shift-type breakdown — only shown for shift workers when data exists */}
+        {item.shift_breakdown && (() => {
+          const sb = item.shift_breakdown
+          return (<>
+            {sb.day_shifts    > 0 && <div className="flex justify-between pl-3"><span className="text-slate-500">Day shifts ({sb.day_shifts})</span><span className="text-slate-400">included above</span></div>}
+            {sb.night_shifts  > 0 && <div className="flex justify-between pl-3"><span className="text-sky-400">Night shifts ({sb.night_shifts})</span><span className="text-slate-400">included above</span></div>}
+            {sb.double_shifts > 0 && <div className="flex justify-between pl-3"><span className="text-violet-400">Double shifts ({sb.double_shifts})</span><span className="text-slate-400">included above</span></div>}
+          </>)
+        })()}
         {hra   > 0 && <div className="flex justify-between"><span className="text-slate-400">HRA</span><span className="text-slate-200">₹{fmt(hra)}</span></div>}
         {allow > 0 && <div className="flex justify-between"><span className="text-slate-400">Allowances</span><span className="text-slate-200">₹{fmt(allow)}</span></div>}
         {ot    > 0 && (
@@ -2861,7 +2906,26 @@ function PayrollTab({ companyId }) {
         } else if (emp.employment_type === 'daily') {
           basicEarned = Math.round(daysPresent * Number(sal.daily_rate || 0))
         } else if (emp.employment_type === 'shift') {
-          basicEarned = Math.round(daysPresent * Number(sal.day_shift_rate || 0))
+          // Count shifts separately by type so the correct rate is applied
+          const dayRate    = Number(sal.day_shift_rate    || 0)
+          const nightRate  = Number(sal.night_shift_rate  || sal.day_shift_rate || 0)
+          const doubleRate = Number(sal.double_shift_rate || sal.day_shift_rate || 0)
+
+          const countByType = (type) =>
+            attArr
+              .filter(a => (a.shift_type || 'day') === type)
+              .reduce((s, a) =>
+                s + (a.status === 'present' ? 1 : a.status === 'half_day' ? 0.5 : 0), 0)
+
+          const dayCount    = countByType('day')
+          const nightCount  = countByType('night')
+          const doubleCount = countByType('double')
+
+          basicEarned = Math.round(
+            dayCount    * dayRate +
+            nightCount  * nightRate +
+            doubleCount * doubleRate
+          )
         }
 
         const otAmount    = Math.round(otHours * Number(sal.ot_rate_per_hour || 0))
@@ -2884,6 +2948,13 @@ function PayrollTab({ companyId }) {
         totalGross += grossPay; totalDed += totalDeductions; totalNet += netPay
         totalPfEmp += pfEmployer; totalEsiEmp += esiEmployer
 
+        // Build shift-type breakdown for shift workers (stored for payslip display)
+        const shiftBreakdown = emp.employment_type === 'shift' ? {
+          day_shifts:    attArr.filter(a => (a.shift_type || 'day') === 'day'    && ['present','half_day'].includes(a.status)).reduce((s,a) => s + (a.status==='present'?1:0.5), 0),
+          night_shifts:  attArr.filter(a => (a.shift_type || 'day') === 'night'  && ['present','half_day'].includes(a.status)).reduce((s,a) => s + (a.status==='present'?1:0.5), 0),
+          double_shifts: attArr.filter(a => (a.shift_type || 'day') === 'double' && ['present','half_day'].includes(a.status)).reduce((s,a) => s + (a.status==='present'?1:0.5), 0),
+        } : null
+
         await supabase.from('hr_payroll_items').upsert({
           company_id: companyId, payroll_id: payrollId, employee_id: emp.id,
           total_working_days: daysInMonth, days_present: daysPresent,
@@ -2894,6 +2965,7 @@ function PayrollTab({ companyId }) {
           pf_employee: pfEmployee, pf_employer: pfEmployer,
           esi_employee: esiEmployee, esi_employer: esiEmployer,
           professional_tax: pt, total_deductions: totalDeductions, net_pay: netPay,
+          ...(shiftBreakdown ? { shift_breakdown: shiftBreakdown } : {}),
         }, { onConflict: 'payroll_id,employee_id' })
       }
 

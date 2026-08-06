@@ -639,7 +639,7 @@ function SlideToEnd({ onEnd }) {
 
 // ─── ACTIVE SHIFT VIEW ─────────────────────────────────────────────────────────
 
-function ActiveShiftView({ shift, fuelEntries, lang, onFuel, onIncident, onEnd }) {
+function ActiveShiftView({ shift, fuelEntries, lang, onFuel, onIncident, onEnd, activeBreakdown, onResolveBreakdown, resolving }) {
   const L = LANGS[lang]
   const [sh, sm] = (shift.start_time || '00:00').split(':').map(Number)
   const now = new Date()
@@ -650,8 +650,39 @@ function ActiveShiftView({ shift, fuelEntries, lang, onFuel, onIncident, onEnd }
 
   return (
     <div className="space-y-4">
+
+      {/* ── BREAKDOWN ACTIVE BANNER ── */}
+      {activeBreakdown && (
+        <div className="rounded-2xl border-2 border-red-500/70 bg-red-950/50 overflow-hidden">
+          {/* Header strip */}
+          <div className="bg-red-600/80 px-4 py-2.5 flex items-center gap-2">
+            <span className="relative flex h-2.5 w-2.5 shrink-0">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-60" />
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-white" />
+            </span>
+            <span className="text-white font-black text-sm tracking-wide">🔧 BREAKDOWN ACTIVE</span>
+          </div>
+          {/* Cause */}
+          <div className="px-4 py-3 space-y-3">
+            {activeBreakdown.breakdown_cause && (
+              <p className="text-red-200 text-sm">{activeBreakdown.breakdown_cause}</p>
+            )}
+            <p className="text-red-400/70 text-[11px]">
+              Reported {Math.floor((Date.now() - new Date(activeBreakdown.reported_at).getTime()) / 60000)} min ago · Management notified
+            </p>
+            {/* Resolve button */}
+            <button
+              onClick={onResolveBreakdown}
+              disabled={resolving}
+              className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-sm py-3 rounded-xl active:scale-95 transition-all">
+              {resolving ? 'Resolving…' : '✅ Breakdown Rectified — Resume Work'}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Big status card */}
-      <div className={`rounded-3xl p-5 border-2 ${isFullDay ? 'bg-green-900/20 border-green-700/30' : 'bg-amber-900/20 border-amber-700/30'}`}>
+      <div className={`rounded-3xl p-5 border-2 ${activeBreakdown ? 'bg-red-900/20 border-red-700/30' : isFullDay ? 'bg-green-900/20 border-green-700/30' : 'bg-amber-900/20 border-amber-700/30'}`}>
         <div className="flex items-center justify-between mb-4">
           <div>
             <p className="text-xs text-slate-500 uppercase tracking-widest">Active</p>
@@ -659,11 +690,11 @@ function ActiveShiftView({ shift, fuelEntries, lang, onFuel, onIncident, onEnd }
             <p className="text-slate-500 text-xs font-mono">{shift.equipment?.equipment_number}</p>
           </div>
           <div className="text-center">
-            <p className={`text-5xl font-black leading-none ${isFullDay ? 'text-green-400' : 'text-amber-400'}`}>
+            <p className={`text-5xl font-black leading-none ${activeBreakdown ? 'text-red-400' : isFullDay ? 'text-green-400' : 'text-amber-400'}`}>
               {elapsedHrs.toFixed(1)}
             </p>
-            <p className={`text-xs font-bold mt-1 ${isFullDay ? 'text-green-400' : 'text-amber-400'}`}>
-              {isFullDay ? L.fullDay : L.halfDay}
+            <p className={`text-xs font-bold mt-1 ${activeBreakdown ? 'text-red-400' : isFullDay ? 'text-green-400' : 'text-amber-400'}`}>
+              {activeBreakdown ? '🔧 Breakdown' : isFullDay ? L.fullDay : L.halfDay}
             </p>
           </div>
         </div>
@@ -813,7 +844,7 @@ const SEV_ICONS = [
   { val: 'critical', icon: '🚨', label: 'Critical' },
 ]
 
-function IncidentSheet({ open, onClose, shift, companyId, lang }) {
+function IncidentSheet({ open, onClose, shift, equipment, companyId, lang }) {
   const L = LANGS[lang]
   const [step, setStep]       = useState(0)
   const [type, setType]       = useState(null)
@@ -837,14 +868,58 @@ function IncidentSheet({ open, onClose, shift, companyId, lang }) {
         const { url } = await stampAndUpload(photoFile, 'Incident Photo')
         photoUrls = [url]
       }
-      await supabase.from('shift_incidents').insert({
+      const { data: incRow, error: incErr } = await supabase.from('shift_incidents').insert({
         company_id: companyId, shift_id: shift.id, equipment_id: shift.equipment_id,
         incident_type: type, severity: sev,
         description: desc || `${type} reported by operator`,
         reported_by: shift.operator_id, photo_urls: photoUrls,
         incident_time: new Date().toISOString(),
-      })
-      toast.success('⚠️ Incident reported')
+      }).select('id').single()
+      if (incErr) throw incErr
+
+      // ── Breakdown: update equipment status + fire alert ──────────────────────
+      if (type === 'breakdown') {
+        // 1. Mark equipment as breakdown
+        await supabase.from('equipment')
+          .update({ status: 'breakdown' })
+          .eq('id', shift.equipment_id)
+
+        // 2. Build notify_chain from project contacts (or empty → admin sees in-app alarm)
+        const chain = []
+        const projId = equipment?.current_project_id
+        if (projId) {
+          const { data: proj } = await supabase.from('projects')
+            .select('our_supervisors, our_pnm_contacts, our_managers, our_pm_name, our_pm_phone, our_pm_email')
+            .eq('id', projId).single()
+          if (proj) {
+            ;(proj.our_supervisors  || []).forEach(s => { if (s.name) chain.push({ level: 1, role: 'Site Supervisor',   name: s.name, phone: s.phone || null, email: s.email || null }) })
+            ;(proj.our_pnm_contacts || []).forEach(p => { if (p.name) chain.push({ level: 2, role: 'P&M Incharge',      name: p.name, phone: p.phone || null, email: p.email || null }) })
+            ;(proj.our_managers     || []).forEach(m => { if (m.name) chain.push({ level: 3, role: 'Manager',            name: m.name, phone: m.phone || null, email: m.email || null }) })
+            if (proj.our_pm_name) chain.push({ level: 4, role: 'Project Manager', name: proj.our_pm_name, phone: proj.our_pm_phone || null, email: proj.our_pm_email || null })
+          }
+        }
+        // chain may be empty — dashboard alarm still fires for all admins/supervisors
+
+        // 3. Insert breakdown_alert
+        await supabase.from('breakdown_alerts').insert({
+          company_id:     companyId,
+          equipment_id:   shift.equipment_id,
+          incident_id:    incRow?.id || null,
+          equipment_name: equipment?.name || shift.equipment?.name || 'Equipment',
+          project_id:     equipment?.current_project_id || null,
+          breakdown_cause: desc || 'Breakdown reported by operator',
+          reported_at:    new Date().toISOString(),
+          notify_chain:   chain,
+        })
+
+        // 4. Invalidate so dashboard alarm + fleet badge update
+        qc.invalidateQueries({ queryKey: ['breakdown_alarms', companyId] })
+        qc.invalidateQueries({ queryKey: ['equipment', companyId] })
+        qc.invalidateQueries({ queryKey: ['fleet_today_shifts', companyId] })
+        qc.invalidateQueries({ queryKey: ['op_active_breakdown', shift.equipment_id] })
+      }
+
+      toast.success(type === 'breakdown' ? '🚨 Breakdown reported — management notified' : '⚠️ Incident reported')
       qc.invalidateQueries(['op_incidents', shift.id])
       reset(); onClose()
     } catch (err) { toast.error(err.message)
@@ -1226,6 +1301,45 @@ function ShiftModule({ companyId, operatorId, employeeId, employeeName, otThresh
     refetchIntervalInBackground: true,
   })
 
+  // Active (unresolved) breakdown for this equipment — shown in shift view
+  const equipId = activeShift?.equipment_id
+  const { data: activeBreakdown } = useQuery({
+    queryKey: ['op_active_breakdown', equipId],
+    queryFn: async () => {
+      const { data } = await supabase.from('breakdown_alerts')
+        .select('*')
+        .eq('equipment_id', equipId)
+        .is('resolved_at', null)
+        .order('reported_at', { ascending: false })
+        .limit(1).maybeSingle()
+      return data || null
+    },
+    enabled: !!equipId,
+    refetchInterval: 30_000,
+  })
+
+  const [resolving, setResolving] = useState(false)
+  const handleResolveBreakdown = async () => {
+    if (!activeBreakdown || !equipId) return
+    setResolving(true)
+    try {
+      const now = new Date().toISOString()
+      await supabase.from('breakdown_alerts').update({
+        resolved_at:      now,
+        resolved_by_name: 'Operator',
+      }).eq('id', activeBreakdown.id)
+      await supabase.from('equipment').update({ status: 'active' }).eq('id', equipId)
+      qc.invalidateQueries({ queryKey: ['op_active_breakdown', equipId] })
+      qc.invalidateQueries({ queryKey: ['equipment', companyId] })
+      qc.invalidateQueries({ queryKey: ['fleet_today_shifts', companyId] })
+      toast.success('✅ Breakdown resolved — resuming work')
+    } catch (err) {
+      toast.error(err.message || 'Failed to resolve')
+    } finally {
+      setResolving(false)
+    }
+  }
+
   // Today's most recent CLOSED shift — used to block re-start and offer "Continue"
   const { data: closedShift } = useQuery({
     queryKey: ['op_closed_shift', employeeId, today()],
@@ -1365,9 +1479,12 @@ function ShiftModule({ companyId, operatorId, employeeId, employeeName, otThresh
               onFuel={() => setFuelOpen(true)}
               onIncident={() => setIncOpen(true)}
               onEnd={() => setEndOpen(true)}
+              activeBreakdown={activeBreakdown}
+              onResolveBreakdown={handleResolveBreakdown}
+              resolving={resolving}
             />
             <FuelSheet     open={fuelOpen} onClose={() => setFuelOpen(false)} shift={activeShift} companyId={companyId} lang={lang} />
-            <IncidentSheet open={incOpen}  onClose={() => setIncOpen(false)}  shift={activeShift} companyId={companyId} lang={lang} />
+            <IncidentSheet open={incOpen}  onClose={() => setIncOpen(false)}  shift={activeShift} equipment={assignedEq} companyId={companyId} lang={lang} />
             <EndShiftSheet open={endOpen}  onClose={() => setEndOpen(false)}  shift={activeShift} companyId={companyId} employeeId={employeeId} otThreshold={otThreshold} lang={lang} onEnded={onEnded} />
           </>
         ) : closedShift ? (
