@@ -872,7 +872,8 @@ function IncidentSheet({ open, onClose, shift, equipment, companyId, lang }) {
         company_id: companyId, shift_id: shift.id, equipment_id: shift.equipment_id,
         incident_type: type, severity: sev,
         description: desc || `${type} reported by operator`,
-        reported_by: shift.operator_id, photo_urls: photoUrls,
+        // reported_by omitted — FK references user_profiles, operators don't have those rows
+        photo_urls: photoUrls,
         incident_time: new Date().toISOString(),
       }).select('id').single()
       if (incErr) throw incErr
