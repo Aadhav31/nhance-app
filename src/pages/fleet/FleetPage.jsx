@@ -1254,6 +1254,7 @@ const INCIDENT_OPTIONS = [
 
 function IncidentModal({ equipment, companyId, onClose }) {
   const qc = useQueryClient()
+  const { company } = useAuth()
   const { location, loading: gpsLoading } = useGPS()
   const todayDate = new Date().toISOString().split('T')[0]
   const [incidentType, setIncidentType] = useState('')
@@ -1338,6 +1339,18 @@ function IncidentModal({ equipment, companyId, onClose }) {
           reported_at:    entryTs,
           notify_chain:   chain,
         })
+
+        // Fire email alerts — non-blocking
+        supabase.functions.invoke('send-breakdown-email', {
+          body: {
+            equipmentName:  equipment.name,
+            breakdownCause: form.breakdown_cause || form.description,
+            reportedAt:     entryTs,
+            companyName:    company?.name || null,
+            chain,
+          },
+        }).catch(err => console.warn('Email alert failed (non-blocking):', err))
+
         qc.invalidateQueries(['breakdown_alarms', companyId])
         qc.invalidateQueries(['equipment_breakdown_log', equipment.id])
       } else if (['regular_maintenance', 'unscheduled_maintenance'].includes(incidentType)) {

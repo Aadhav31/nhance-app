@@ -901,6 +901,7 @@ function IncidentSheet({ open, onClose, shift, equipment, companyId, lang }) {
         // chain may be empty — dashboard alarm still fires for all admins/supervisors
 
         // 3. Insert breakdown_alert
+        const reportedAt = new Date().toISOString()
         await supabase.from('breakdown_alerts').insert({
           company_id:     companyId,
           equipment_id:   shift.equipment_id,
@@ -908,11 +909,22 @@ function IncidentSheet({ open, onClose, shift, equipment, companyId, lang }) {
           equipment_name: equipment?.name || shift.equipment?.name || 'Equipment',
           project_id:     equipment?.current_project_id || null,
           breakdown_cause: desc || 'Breakdown reported by operator',
-          reported_at:    new Date().toISOString(),
+          reported_at:    reportedAt,
           notify_chain:   chain,
         })
 
-        // 4. Invalidate so dashboard alarm + fleet badge update
+        // 4. Fire email alerts — fire-and-forget, don't block the UI
+        supabase.functions.invoke('send-breakdown-email', {
+          body: {
+            equipmentName:  equipment?.name || shift.equipment?.name || 'Equipment',
+            breakdownCause: desc || 'Breakdown reported by operator',
+            reportedAt,
+            companyName:    null, // not available in operator context
+            chain,
+          },
+        }).catch(err => console.warn('Email alert failed (non-blocking):', err))
+
+        // 5. Invalidate so dashboard alarm + fleet badge update
         qc.invalidateQueries({ queryKey: ['breakdown_alarms', companyId] })
         qc.invalidateQueries({ queryKey: ['equipment', companyId] })
         qc.invalidateQueries({ queryKey: ['fleet_today_shifts', companyId] })

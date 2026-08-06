@@ -822,20 +822,25 @@ function AddEditModal({ project, clients, onClose, onSaved }) {
 
         {/* Site Supervisors — dynamic list */}
         <div className="space-y-2">
-          <p className="text-xs font-medium text-slate-400">Site Supervisor(s)</p>
+          <p className="text-xs font-medium text-slate-400">Site Supervisor(s) <span className="text-slate-600">— Level 1 alert</span></p>
           {supervisors.map((s, i) => (
-            <div key={s._k} className="flex gap-2 items-center">
-              <input className={inp('text-xs flex-1')} value={s.name}
-                onChange={e => setSupervisors(list => list.map((x,j)=>j===i?{...x,name:e.target.value}:x))}
-                placeholder="Name"/>
-              <input className={inp('text-xs w-36 shrink-0')} value={s.phone}
-                onChange={e => setSupervisors(list => list.map((x,j)=>j===i?{...x,phone:e.target.value}:x))}
-                placeholder="Mobile"/>
-              <button type="button"
-                onClick={() => setSupervisors(list => list.filter((_,j)=>j!==i))}
-                className="text-slate-500 hover:text-red-400 shrink-0 p-1">
-                <Trash2 className="w-3.5 h-3.5"/>
-              </button>
+            <div key={s._k} className="bg-dark-700/50 rounded-lg p-2 space-y-1.5">
+              <div className="flex gap-2 items-center">
+                <input className={inp('text-xs flex-1')} value={s.name}
+                  onChange={e => setSupervisors(list => list.map((x,j)=>j===i?{...x,name:e.target.value}:x))}
+                  placeholder="Name"/>
+                <input className={inp('text-xs w-32 shrink-0')} value={s.phone || ''}
+                  onChange={e => setSupervisors(list => list.map((x,j)=>j===i?{...x,phone:e.target.value}:x))}
+                  placeholder="Mobile"/>
+                <button type="button"
+                  onClick={() => setSupervisors(list => list.filter((_,j)=>j!==i))}
+                  className="text-slate-500 hover:text-red-400 shrink-0 p-1">
+                  <Trash2 className="w-3.5 h-3.5"/>
+                </button>
+              </div>
+              <input className={inp('text-xs w-full')} value={s.email || ''}
+                onChange={e => setSupervisors(list => list.map((x,j)=>j===i?{...x,email:e.target.value}:x))}
+                placeholder="Email (for breakdown alerts)" type="email"/>
             </div>
           ))}
           <button type="button"
@@ -847,20 +852,25 @@ function AddEditModal({ project, clients, onClose, onSaved }) {
 
         {/* P&M In-charges — dynamic list */}
         <div className="space-y-2">
-          <p className="text-xs font-medium text-slate-400">P&M In-charge(s)</p>
+          <p className="text-xs font-medium text-slate-400">P&M In-charge(s) <span className="text-slate-600">— Level 2 alert</span></p>
           {pnmContacts.map((p, i) => (
-            <div key={p._k} className="flex gap-2 items-center">
-              <input className={inp('text-xs flex-1')} value={p.name}
-                onChange={e => setPnmContacts(list => list.map((x,j)=>j===i?{...x,name:e.target.value}:x))}
-                placeholder="Name"/>
-              <input className={inp('text-xs w-36 shrink-0')} value={p.phone}
-                onChange={e => setPnmContacts(list => list.map((x,j)=>j===i?{...x,phone:e.target.value}:x))}
-                placeholder="Mobile"/>
-              <button type="button"
-                onClick={() => setPnmContacts(list => list.filter((_,j)=>j!==i))}
-                className="text-slate-500 hover:text-red-400 shrink-0 p-1">
-                <Trash2 className="w-3.5 h-3.5"/>
-              </button>
+            <div key={p._k} className="bg-dark-700/50 rounded-lg p-2 space-y-1.5">
+              <div className="flex gap-2 items-center">
+                <input className={inp('text-xs flex-1')} value={p.name}
+                  onChange={e => setPnmContacts(list => list.map((x,j)=>j===i?{...x,name:e.target.value}:x))}
+                  placeholder="Name"/>
+                <input className={inp('text-xs w-32 shrink-0')} value={p.phone || ''}
+                  onChange={e => setPnmContacts(list => list.map((x,j)=>j===i?{...x,phone:e.target.value}:x))}
+                  placeholder="Mobile"/>
+                <button type="button"
+                  onClick={() => setPnmContacts(list => list.filter((_,j)=>j!==i))}
+                  className="text-slate-500 hover:text-red-400 shrink-0 p-1">
+                  <Trash2 className="w-3.5 h-3.5"/>
+                </button>
+              </div>
+              <input className={inp('text-xs w-full')} value={p.email || ''}
+                onChange={e => setPnmContacts(list => list.map((x,j)=>j===i?{...x,email:e.target.value}:x))}
+                placeholder="Email (for breakdown alerts)" type="email"/>
             </div>
           ))}
           <button type="button"
@@ -872,20 +882,25 @@ function AddEditModal({ project, clients, onClose, onSaved }) {
 
         {/* Managers — escalation level 3 */}
         <div className="space-y-2">
-          <p className="text-xs font-medium text-slate-400">Manager(s) <span className="text-slate-600">(breakdown escalation level 3)</span></p>
+          <p className="text-xs font-medium text-slate-400">Manager(s) <span className="text-slate-600">— Level 3 alert</span></p>
           {managers.map((m, i) => (
-            <div key={m._k} className="flex gap-2 items-center">
-              <input className={inp('text-xs flex-1')} value={m.name}
-                onChange={e => setManagers(list => list.map((x,j)=>j===i?{...x,name:e.target.value}:x))}
-                placeholder="Name"/>
-              <input className={inp('text-xs w-36 shrink-0')} value={m.phone || ''}
-                onChange={e => setManagers(list => list.map((x,j)=>j===i?{...x,phone:e.target.value}:x))}
-                placeholder="Mobile"/>
-              <button type="button"
-                onClick={() => setManagers(list => list.filter((_,j)=>j!==i))}
-                className="text-slate-500 hover:text-red-400 shrink-0 p-1">
-                <Trash2 className="w-3.5 h-3.5"/>
-              </button>
+            <div key={m._k} className="bg-dark-700/50 rounded-lg p-2 space-y-1.5">
+              <div className="flex gap-2 items-center">
+                <input className={inp('text-xs flex-1')} value={m.name}
+                  onChange={e => setManagers(list => list.map((x,j)=>j===i?{...x,name:e.target.value}:x))}
+                  placeholder="Name"/>
+                <input className={inp('text-xs w-32 shrink-0')} value={m.phone || ''}
+                  onChange={e => setManagers(list => list.map((x,j)=>j===i?{...x,phone:e.target.value}:x))}
+                  placeholder="Mobile"/>
+                <button type="button"
+                  onClick={() => setManagers(list => list.filter((_,j)=>j!==i))}
+                  className="text-slate-500 hover:text-red-400 shrink-0 p-1">
+                  <Trash2 className="w-3.5 h-3.5"/>
+                </button>
+              </div>
+              <input className={inp('text-xs w-full')} value={m.email || ''}
+                onChange={e => setManagers(list => list.map((x,j)=>j===i?{...x,email:e.target.value}:x))}
+                placeholder="Email (for breakdown alerts)" type="email"/>
             </div>
           ))}
           <button type="button"
