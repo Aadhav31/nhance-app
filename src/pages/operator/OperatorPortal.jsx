@@ -1082,6 +1082,78 @@ function EndShiftSheet({ open, onClose, shift, companyId, employeeId, otThreshol
 
 // ─── SHIFT MODULE (orchestrator) ───────────────────────────────────────────────
 
+// ─── SHIFT COMPLETED VIEW ─────────────────────────────────────────────────────
+// Shown when today's shift is closed. Blocks a re-start. Offers "Continue"
+// only if the shift window is still open — reopen the SAME shift row so
+// attendance & OT accumulate on one record rather than creating a duplicate.
+
+function ShiftCompletedView({ shift, equipment, project, enforcement, onContinue, continuing, lang }) {
+  const check   = checkShiftWindow(project, equipment, enforcement)
+  const canCont = check.allowed
+
+  const [sh, sm] = (shift.start_time || '00:00').split(':').map(Number)
+  const [eh, em] = (shift.end_time   || '00:00').split(':').map(Number)
+  let endMins = eh * 60 + em
+  if (endMins < sh * 60 + sm) endMins += 24 * 60   // cross-midnight
+  const clockHrs = Math.max(0, (endMins - (sh * 60 + sm)) / 60)
+
+  return (
+    <div className="space-y-4">
+      {/* Hero */}
+      <div className="bg-dark-800 border border-dark-600 rounded-3xl p-6 flex flex-col items-center gap-3 text-center">
+        <div className="w-20 h-20 bg-green-900/40 border-2 border-green-600/40 rounded-full flex items-center justify-center text-4xl">✅</div>
+        <p className="text-green-400 font-bold text-xl">Shift Complete</p>
+        <p className="text-slate-400 text-sm">
+          {shift.equipment?.name} · {shift.equipment?.equipment_number}
+        </p>
+      </div>
+
+      {/* Summary strip */}
+      <div className="bg-dark-800 border border-dark-600 rounded-2xl p-4 grid grid-cols-3 gap-3 text-center text-xs">
+        <div>
+          <p className="text-slate-500 mb-1">Started</p>
+          <p className="text-slate-100 font-bold text-base">{(shift.start_time || '—').slice(0,5)}</p>
+        </div>
+        <div>
+          <p className="text-slate-500 mb-1">Ended</p>
+          <p className="text-slate-100 font-bold text-base">{(shift.end_time || '—').slice(0,5)}</p>
+        </div>
+        <div>
+          <p className="text-slate-500 mb-1">Hours</p>
+          <p className="text-green-400 font-bold text-base">{clockHrs.toFixed(1)}h</p>
+        </div>
+      </div>
+
+      {/* Continue section */}
+      {canCont ? (
+        <div className="bg-amber-900/20 border border-amber-600/40 rounded-2xl p-4 space-y-3">
+          <p className="text-amber-300 font-bold text-sm">More work to log?</p>
+          <p className="text-amber-200/65 text-xs leading-relaxed">
+            Tapping <strong className="text-amber-200">Continue Shift</strong> reopens your existing shift record.
+            Your original start time and meter reading are preserved — the final
+            attendance and hours will be calculated when you end the shift again.
+            No duplicate records are created.
+          </p>
+          <button
+            onClick={onContinue}
+            disabled={continuing}
+            className="w-full bg-amber-700/60 active:bg-amber-600 disabled:opacity-50 text-amber-100 font-bold py-3.5 rounded-xl text-sm transition-colors"
+          >
+            {continuing ? 'Reopening…' : '↩  Continue Shift'}
+          </button>
+        </div>
+      ) : (
+        <div className="bg-dark-800 border border-dark-600 rounded-2xl p-4 text-center space-y-1">
+          <p className="text-slate-400 text-sm font-semibold">Shift window has closed</p>
+          <p className="text-slate-600 text-xs">Additional work cannot be logged for today's shift</p>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── SHIFT MODULE ─────────────────────────────────────────────────────────────
+
 function ShiftModule({ companyId, operatorId, employeeId, employeeName, otThreshold = 12, lang, shiftEnforcement = 'flexible' }) {
   const qc = useQueryClient()
   const [fuelOpen, setFuelOpen] = useState(false)
@@ -1154,12 +1226,49 @@ function ShiftModule({ companyId, operatorId, employeeId, employeeName, otThresh
     refetchIntervalInBackground: true,
   })
 
+  // Today's most recent CLOSED shift — used to block re-start and offer "Continue"
+  const { data: closedShift } = useQuery({
+    queryKey: ['op_closed_shift', employeeId, today()],
+    queryFn: async () => {
+      const { data } = await supabase.from('shifts')
+        .select('*, equipment:equipment_id(name,equipment_number,category)')
+        .eq('company_id', companyId).eq('operator_id', employeeId)
+        .eq('shift_date', today()).eq('status', 'closed')
+        .order('created_at', { ascending: false }).limit(1).maybeSingle()
+      return data || null
+    },
+    enabled: !!companyId && !!employeeId,
+  })
+
+  const [continuing, setContinuing] = useState(false)
+
+  const handleContinueShift = async () => {
+    if (!closedShift) return
+    setContinuing(true)
+    try {
+      const { error } = await supabase.from('shifts').update({
+        status: 'open',
+        end_time: null, end_meter: null,
+        end_meter_photo: null, logout_photo_url: null, end_location: null,
+      }).eq('id', closedShift.id)
+      if (error) throw error
+      await refetchShift()
+      qc.invalidateQueries({ queryKey: ['op_closed_shift', employeeId, today()] })
+      toast.success('Shift reopened — continue logging work')
+    } catch (err) {
+      toast.error(err.message || 'Failed to reopen shift')
+    } finally { setContinuing(false) }
+  }
+
   useEffect(() => {
     if (!companyId || !employeeId) return
     const channel = supabase
       .channel(`op_shift_${employeeId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'shifts', filter: `operator_id=eq.${employeeId}` },
-        () => qc.invalidateQueries(['op_active_shift', employeeId, today()])
+        () => {
+          qc.invalidateQueries({ queryKey: ['op_active_shift', employeeId, today()] })
+          qc.invalidateQueries({ queryKey: ['op_closed_shift', employeeId, today()] })
+        }
       ).subscribe()
     return () => { supabase.removeChannel(channel) }
   }, [companyId, employeeId])
@@ -1201,10 +1310,11 @@ function ShiftModule({ companyId, operatorId, employeeId, employeeName, otThresh
 
   const onEnded = () => {
     refetchShift()
-    qc.invalidateQueries(['op_active_shift', employeeId, today()])
-    qc.invalidateQueries(['op_attendance_today', employeeId, today()])
-    qc.invalidateQueries(['op_attendance_month', employeeId])
-    qc.invalidateQueries(['op_live_salary', operatorId])
+    qc.invalidateQueries({ queryKey: ['op_active_shift',   employeeId, today()] })
+    qc.invalidateQueries({ queryKey: ['op_closed_shift',   employeeId, today()] })
+    qc.invalidateQueries({ queryKey: ['op_attendance_today', employeeId, today()] })
+    qc.invalidateQueries({ queryKey: ['op_attendance_month', employeeId] })
+    qc.invalidateQueries({ queryKey: ['op_live_salary', operatorId] })
   }
 
   const handleDismissAlarm = () => {
@@ -1256,10 +1366,21 @@ function ShiftModule({ companyId, operatorId, employeeId, employeeName, otThresh
               onIncident={() => setIncOpen(true)}
               onEnd={() => setEndOpen(true)}
             />
-            <FuelSheet    open={fuelOpen} onClose={() => setFuelOpen(false)} shift={activeShift} companyId={companyId} lang={lang} />
+            <FuelSheet     open={fuelOpen} onClose={() => setFuelOpen(false)} shift={activeShift} companyId={companyId} lang={lang} />
             <IncidentSheet open={incOpen}  onClose={() => setIncOpen(false)}  shift={activeShift} companyId={companyId} lang={lang} />
             <EndShiftSheet open={endOpen}  onClose={() => setEndOpen(false)}  shift={activeShift} companyId={companyId} employeeId={employeeId} otThreshold={otThreshold} lang={lang} onEnded={onEnded} />
           </>
+        ) : closedShift ? (
+          /* Shift already ended today — block re-start, offer continue within window */
+          <ShiftCompletedView
+            shift={closedShift}
+            equipment={assignedEq}
+            project={project}
+            enforcement={shiftEnforcement}
+            onContinue={handleContinueShift}
+            continuing={continuing}
+            lang={lang}
+          />
         ) : (
           <StartShiftFlow
             companyId={companyId} operatorId={operatorId} employeeId={employeeId}
