@@ -1375,6 +1375,8 @@ function useAlerts(companyId) {
   })
 
   // 7. Deployed machines missing today's ops log
+  // A machine is considered "logged" if it has EITHER a daily_operations entry
+  // OR an operator shift (open or closed) for today.
   const { data: unloggedAlerts = [] } = useQuery({
     queryKey: ['alerts_unlogged', companyId, today],
     queryFn: async () => {
@@ -1384,12 +1386,27 @@ function useAlerts(companyId) {
         .eq('status', 'active')
         .not('current_project_id', 'is', null)
       if (!deployed?.length) return []
-      const { data: logged } = await supabase.from('daily_operations')
+
+      const equipIds = deployed.map(e => e.id)
+
+      // Check daily_operations (admin-entered ops log)
+      const { data: opsLogged } = await supabase.from('daily_operations')
         .select('equipment_id')
         .eq('company_id', companyId)
         .eq('ops_date', today)
-        .in('equipment_id', deployed.map(e => e.id))
-      const loggedIds = new Set((logged || []).map(l => l.equipment_id))
+        .in('equipment_id', equipIds)
+
+      // Check operator shifts for today (any status — open or closed both count)
+      const { data: shiftLogged } = await supabase.from('shifts')
+        .select('equipment_id')
+        .eq('company_id', companyId)
+        .eq('shift_date', today)
+        .in('equipment_id', equipIds)
+
+      const loggedIds = new Set([
+        ...(opsLogged   || []).map(l => l.equipment_id),
+        ...(shiftLogged || []).map(l => l.equipment_id),
+      ])
       return deployed.filter(e => !loggedIds.has(e.id))
     },
     staleTime: 30_000, refetchInterval: 300_000, enabled: !!companyId,
