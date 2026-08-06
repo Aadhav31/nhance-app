@@ -1370,9 +1370,9 @@ function BreakdownAlarm({ companyId, userProfile }) {
           : <ChevronDown className="w-4 h-4 text-white/80 shrink-0" />}
       </button>
 
-      {/* ── Alarm Cards ── */}
+      {/* ── Alarm Cards — always dark regardless of app theme ── */}
       {expanded && (
-        <div className="bg-dark-800 divide-y divide-dark-700">
+        <div className="divide-y divide-white/10" style={{ background: '#0f172a' }}>
           {alarms.map(alarm => {
             const level    = getAlarmLevel(alarm.reported_at)
             const chain    = alarm.notify_chain || []
@@ -1384,45 +1384,45 @@ function BreakdownAlarm({ companyId, userProfile }) {
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <div className="flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse shrink-0" />
-                      <p className="text-white font-bold text-base">{alarm.equipment_name}</p>
+                      <span className="w-2 h-2 rounded-full bg-red-400 animate-pulse shrink-0" />
+                      <p className="font-bold text-base" style={{ color: '#f1f5f9' }}>{alarm.equipment_name}</p>
                     </div>
-                    <p className="text-slate-400 text-[11px] mt-0.5 ml-4">{timeAgo(alarm.reported_at)}</p>
+                    <p className="text-[11px] mt-0.5 ml-4" style={{ color: '#94a3b8' }}>{timeAgo(alarm.reported_at)}</p>
                   </div>
-                  <span className="text-[10px] font-bold bg-red-500/20 text-red-400 border border-red-500/30 px-2 py-0.5 rounded-full shrink-0 whitespace-nowrap">
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 whitespace-nowrap border"
+                    style={{ background: 'rgba(239,68,68,0.15)', color: '#fca5a5', borderColor: 'rgba(239,68,68,0.3)' }}>
                     Level {level} — {LEVEL_LABEL[level]}
                   </span>
                 </div>
 
                 {/* Cause */}
                 {alarm.breakdown_cause && (
-                  <div className="bg-dark-700 border border-dark-600 rounded-lg px-3 py-2">
-                    <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-0.5">Cause</p>
-                    <p className="text-sm text-slate-200">{alarm.breakdown_cause}</p>
+                  <div className="rounded-lg px-3 py-2" style={{ background: '#1e293b', border: '1px solid #334155' }}>
+                    <p className="text-[10px] uppercase tracking-wider mb-0.5" style={{ color: '#64748b' }}>Cause</p>
+                    <p className="text-sm" style={{ color: '#e2e8f0' }}>{alarm.breakdown_cause}</p>
                   </div>
                 )}
 
                 {/* Escalation chain */}
                 {chain.length > 0 && (
                   <div className="space-y-1.5">
-                    <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Escalation Chain</p>
+                    <p className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: '#64748b' }}>Escalation Chain</p>
                     {chain.map((c, i) => {
                       const isCurrentLevel = c.level === level
                       const isPast         = c.level < level
                       return (
-                        <div key={i} className={`flex items-center gap-2 text-xs rounded-lg px-3 py-2 border
-                          ${isCurrentLevel
-                            ? 'bg-red-500/10 border-red-500/40 text-white'
-                            : isPast
-                              ? 'bg-dark-700/40 border-dark-600/50 text-slate-500'
-                              : 'bg-dark-700/20 border-dark-700/30 text-slate-600'}`}>
-                          <span className={`w-1.5 h-1.5 rounded-full shrink-0
-                            ${isCurrentLevel ? 'bg-red-400 animate-pulse' : isPast ? 'bg-slate-600' : 'bg-dark-600'}`} />
-                          <span className={`font-medium w-24 shrink-0 ${isCurrentLevel ? 'text-red-300' : ''}`}>{c.role}</span>
-                          <span className="truncate flex-1">{c.name}</span>
+                        <div key={i} className="flex items-center gap-2 text-xs rounded-lg px-3 py-2"
+                          style={{
+                            background: isCurrentLevel ? 'rgba(239,68,68,0.12)' : isPast ? 'rgba(255,255,255,0.03)' : 'rgba(255,255,255,0.02)',
+                            border: isCurrentLevel ? '1px solid rgba(239,68,68,0.35)' : '1px solid rgba(255,255,255,0.06)',
+                            color: isCurrentLevel ? '#fecaca' : isPast ? '#475569' : '#374151',
+                          }}>
+                          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isCurrentLevel ? 'bg-red-400 animate-pulse' : 'bg-slate-600'}`} />
+                          <span className="font-medium w-24 shrink-0" style={{ color: isCurrentLevel ? '#fca5a5' : 'inherit' }}>{c.role}</span>
+                          <span className="truncate flex-1" style={{ color: isCurrentLevel ? '#f1f5f9' : '#64748b' }}>{c.name}</span>
                           {c.phone && (
                             <a href={`tel:${c.phone}`} onClick={e => e.stopPropagation()}
-                              className="ml-auto shrink-0 text-slate-400 hover:text-white">
+                              className="ml-auto shrink-0 hover:opacity-100 opacity-60" style={{ color: '#94a3b8' }}>
                               <Phone className="w-3.5 h-3.5" />
                             </a>
                           )}
@@ -1430,7 +1430,7 @@ function BreakdownAlarm({ companyId, userProfile }) {
                       )
                     })}
                     {level < 4 && (
-                      <p className="text-[10px] text-slate-600 text-center pt-0.5">
+                      <p className="text-[10px] text-center pt-0.5" style={{ color: '#475569' }}>
                         Escalates to {LEVEL_LABEL[level + 1]} if unacknowledged within {ESCALATION_MINS[level + 1] - ESCALATION_MINS[level]} min
                       </p>
                     )}
@@ -1441,7 +1441,10 @@ function BreakdownAlarm({ companyId, userProfile }) {
                 <button
                   onClick={() => handleAcknowledge(alarm)}
                   disabled={isAcking}
-                  className="w-full bg-red-600 hover:bg-red-500 disabled:opacity-60 text-white font-bold text-sm py-3 rounded-xl transition-colors">
+                  className="w-full font-bold text-sm py-3 rounded-xl transition-all disabled:opacity-60"
+                  style={{ background: '#dc2626', color: '#ffffff' }}
+                  onMouseEnter={e => e.currentTarget.style.background = '#ef4444'}
+                  onMouseLeave={e => e.currentTarget.style.background = '#dc2626'}>
                   {isAcking ? 'Acknowledging…' : '🛑 Stop Alarm — I am Aware'}
                 </button>
               </div>
