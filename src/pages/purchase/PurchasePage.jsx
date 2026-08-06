@@ -1054,6 +1054,17 @@ function ExpensesTab({ companyId, session }) {
 
 // ── BILL DETAIL PANEL ─────────────────────────────────────────────────────────
 function BillDetailPanel({ bill: b, companyId, onClose, onEdit, onPDF, onXLSX }) {
+  // Fetch line items
+  const { data: lines = [] } = useQuery({
+    queryKey: ['bill_line_items', b.id],
+    queryFn: async () => {
+      const { data } = await supabase.from('bill_line_items')
+        .select('*').eq('bill_id', b.id).order('sort_order')
+      return data || []
+    },
+    enabled: !!b.id,
+  })
+
   // Fetch payments linked to this bill
   const { data: payments = [] } = useQuery({
     queryKey: ['bill_payments', b.id],
@@ -1071,7 +1082,6 @@ function BillDetailPanel({ bill: b, companyId, onClose, onEdit, onPDF, onXLSX })
   const dueD = b.due_date ? new Date(b.due_date + 'T00:00:00') : null
   const daysLeft = dueD ? Math.ceil((dueD - today) / 86400000) : null
   const isOverdue = dueD && dueD < today && !['paid','cancelled'].includes(b.status)
-  const lines = b.line_items || []
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
@@ -1151,38 +1161,54 @@ function BillDetailPanel({ bill: b, companyId, onClose, onEdit, onPDF, onXLSX })
           )}
 
           {/* Line items */}
-          {lines.length > 0 && (
-            <div>
-              <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Items</p>
+          <div>
+            <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Items / Services</p>
+            {lines.length === 0 ? (
+              <div className="bg-dark-800 border border-dashed border-dark-600 rounded-xl p-4 text-center">
+                <p className="text-xs text-slate-500">No line items recorded</p>
+              </div>
+            ) : (
               <div className="bg-dark-800 border border-dark-700 rounded-xl overflow-hidden">
-                <div className="grid grid-cols-[1fr_60px_80px] px-3 py-1.5 border-b border-dark-700 text-[10px] text-slate-500 uppercase tracking-wider">
-                  <span>Description</span><span className="text-right">Qty</span><span className="text-right">Amount</span>
+                {/* Header */}
+                <div className="grid grid-cols-[1fr_52px_52px_72px] px-3 py-1.5 border-b border-dark-700 text-[10px] text-slate-500 uppercase tracking-wider gap-1">
+                  <span>Description</span>
+                  <span className="text-right">Qty</span>
+                  <span className="text-right">Rate</span>
+                  <span className="text-right">Amount</span>
                 </div>
                 {lines.map((l, i) => (
-                  <div key={i} className="grid grid-cols-[1fr_60px_80px] px-3 py-2.5 border-b border-dark-700/50 last:border-0">
-                    <div>
-                      <p className="text-xs text-slate-200">{l.description || l.item_name || '—'}</p>
-                      {l.hsn_code && <p className="text-[10px] text-slate-600">HSN: {l.hsn_code}</p>}
+                  <div key={l.id || i} className="px-3 py-2.5 border-b border-dark-700/50 last:border-0">
+                    <div className="grid grid-cols-[1fr_52px_52px_72px] gap-1 items-start">
+                      <div>
+                        <p className="text-xs font-medium text-slate-200 leading-snug">{l.description || '—'}</p>
+                        {l.hsn_sac && <p className="text-[10px] text-slate-600 mt-0.5">HSN/SAC: {l.hsn_sac}</p>}
+                        {l.gst_rate > 0 && <p className="text-[10px] text-slate-600">GST {l.gst_rate}%</p>}
+                      </div>
+                      <p className="text-xs text-slate-400 text-right">{l.quantity} <span className="text-[10px] text-slate-600">{l.unit || ''}</span></p>
+                      <p className="text-xs text-slate-400 text-right">{fmtINR(l.rate || 0)}</p>
+                      <p className="text-xs font-semibold text-slate-100 text-right">{fmtINR(l.amount || 0)}</p>
                     </div>
-                    <p className="text-xs text-slate-400 text-right">{l.quantity} {l.unit || ''}</p>
-                    <p className="text-xs font-semibold text-slate-200 text-right">{fmtINR((l.quantity || 1) * (l.unit_price || l.rate || 0))}</p>
                   </div>
                 ))}
-                {/* Tax summary */}
-                {(b.cgst_amount > 0 || b.igst_amount > 0) && (
-                  <div className="px-3 py-2 border-t border-dark-600 space-y-1 bg-dark-750/50">
-                    {b.cgst_amount > 0 && <>
-                      <div className="flex justify-between text-[11px] text-slate-400"><span>CGST</span><span>{fmtINR(b.cgst_amount)}</span></div>
-                      <div className="flex justify-between text-[11px] text-slate-400"><span>SGST</span><span>{fmtINR(b.sgst_amount)}</span></div>
-                    </>}
-                    {b.igst_amount > 0 && <div className="flex justify-between text-[11px] text-slate-400"><span>IGST</span><span>{fmtINR(b.igst_amount)}</span></div>}
-                    {b.discount_amount > 0 && <div className="flex justify-between text-[11px] text-red-400"><span>Discount</span><span>-{fmtINR(b.discount_amount)}</span></div>}
-                    <div className="flex justify-between text-xs font-bold text-slate-100 border-t border-dark-600 pt-1 mt-1"><span>Total</span><span>{fmtINR(b.total_amount)}</span></div>
+                {/* Tax + Total footer */}
+                <div className="px-3 py-2 border-t border-dark-600 bg-dark-750/30 space-y-1">
+                  <div className="flex justify-between text-[11px] text-slate-500">
+                    <span>Subtotal</span>
+                    <span>{fmtINR(lines.reduce((s, l) => s + (l.amount || 0), 0))}</span>
                   </div>
-                )}
+                  {b.cgst_amount > 0 && <>
+                    <div className="flex justify-between text-[11px] text-slate-500"><span>CGST</span><span>{fmtINR(b.cgst_amount)}</span></div>
+                    <div className="flex justify-between text-[11px] text-slate-500"><span>SGST</span><span>{fmtINR(b.sgst_amount)}</span></div>
+                  </>}
+                  {b.igst_amount > 0 && <div className="flex justify-between text-[11px] text-slate-500"><span>IGST</span><span>{fmtINR(b.igst_amount)}</span></div>}
+                  {b.discount_amount > 0 && <div className="flex justify-between text-[11px] text-red-400"><span>Discount</span><span>−{fmtINR(b.discount_amount)}</span></div>}
+                  <div className="flex justify-between text-sm font-bold text-slate-100 border-t border-dark-600 pt-1.5 mt-1">
+                    <span>Total</span><span>{fmtINR(b.total_amount)}</span>
+                  </div>
+                </div>
               </div>
-            </div>
-          )}
+            )}
+          </div>
 
           {/* Attachment */}
           {b.attachment_url && (
