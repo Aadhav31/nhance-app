@@ -1858,9 +1858,9 @@ function ShiftDetailModal({ shift, onClose, isAdmin, onEdit, onDelete }) {
             <div>
               <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-2">Photos</p>
               <div className="grid grid-cols-3 gap-2">
-                <PhotoThumb url={shift.meter_photo_url}     label="Opening Meter" onView={setLightboxUrl} />
-                <PhotoThumb url={shift.meter_photo_url_end} label="Closing Meter" onView={setLightboxUrl} />
-                <PhotoThumb url={shift.logsheet_photo_url}  label="Log Sheet"     onView={setLightboxUrl} />
+                <PhotoThumb url={shift.start_meter_photo || shift.meter_photo_url}     label="Opening Meter" onView={setLightboxUrl} />
+                <PhotoThumb url={shift.end_meter_photo   || shift.meter_photo_url_end} label="Closing Meter" onView={setLightboxUrl} />
+                <PhotoThumb url={shift.logsheet_photo_url}                             label="Log Sheet"     onView={setLightboxUrl} />
               </div>
             </div>
 
