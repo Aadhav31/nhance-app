@@ -1268,7 +1268,9 @@ function ShiftModule({ companyId, operatorId, employeeId, employeeName, lang, sh
 function AttendanceModule({ companyId, operatorId, employeeId, lang }) {
   const L = LANGS[lang]
   const qc = useQueryClient()
-  const [leaveOpen, setLeaveOpen] = useState(false)
+  const [leaveOpen,    setLeaveOpen]    = useState(false)
+  const [clearChecked, setClearChecked] = useState(false)
+  const [clearing,     setClearing]     = useState(false)
   const todayStr = today()
   const now = new Date()
   const month = now.getMonth() + 1
@@ -1329,8 +1331,60 @@ function AttendanceModule({ companyId, operatorId, employeeId, lang }) {
   const daysAbsent  = monthAtt.filter(a => a.status === 'absent').length
   const daysLeave   = monthAtt.filter(a => a.status === 'on_leave').length
 
+  // Orphaned attendance: record exists but the shift was deleted by admin
+  const orphanedAtt = todayAtt && !todayShift
+
+  const handleClearOrphanedAtt = async () => {
+    if (!todayAtt || !clearChecked) return
+    setClearing(true)
+    await supabase.from('hr_attendance').delete().eq('id', todayAtt.id)
+    qc.invalidateQueries({ queryKey: ['op_attendance_today', employeeId, todayStr] })
+    qc.invalidateQueries({ queryKey: ['op_attendance_month', employeeId, year, month] })
+    setClearing(false)
+    setClearChecked(false)
+  }
+
   return (
     <div className="space-y-4">
+
+      {/* ── Orphaned-attendance warning ─────────────────────────────────────── */}
+      {orphanedAtt && (
+        <div className="bg-amber-900/30 border border-amber-500/50 rounded-2xl p-4">
+          <div className="flex items-start gap-3">
+            <span className="text-xl mt-0.5">⚠️</span>
+            <div className="flex-1">
+              <p className="text-amber-300 font-bold text-sm">Shift Deleted by Admin</p>
+              <p className="text-amber-200/70 text-xs mt-1 leading-relaxed">
+                An attendance record (<strong className="text-amber-200 capitalize">
+                  {todayAtt.status.replace('_', ' ')}
+                </strong>) exists for today, but the shift it belongs to has been removed.
+                This record may be incorrect.
+              </p>
+              <label className="flex items-center gap-2 mt-3 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={clearChecked}
+                  onChange={e => setClearChecked(e.target.checked)}
+                  className="w-4 h-4 rounded accent-red-500 cursor-pointer"
+                />
+                <span className="text-amber-200 text-xs">
+                  Clear all data for this deleted shift
+                </span>
+              </label>
+              {clearChecked && (
+                <button
+                  onClick={handleClearOrphanedAtt}
+                  disabled={clearing}
+                  className="mt-3 w-full bg-red-700 active:bg-red-600 disabled:opacity-50 text-white text-xs font-bold py-2.5 rounded-xl transition-colors"
+                >
+                  {clearing ? 'Removing…' : 'Confirm — Remove Attendance Record'}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Today status — big visual */}
       <div className="bg-dark-800 border border-dark-600 rounded-3xl p-5">
         <p className="text-xs text-slate-500 text-center uppercase tracking-widest mb-4">
@@ -1357,17 +1411,17 @@ function AttendanceModule({ companyId, operatorId, employeeId, lang }) {
         </div>
       </div>
 
-      {/* Month summary — 4 big circles */}
+      {/* Month summary — 4 stat cards */}
       <div className="grid grid-cols-4 gap-2">
         {[
-          [daysPresent, 'bg-green-600', L.present.slice(0,3)],
-          [daysHalf,    'bg-yellow-600', '½'],
-          [daysAbsent,  'bg-red-600',   L.absent.slice(0,3)],
-          [daysLeave,   'bg-blue-600',  L.leave.slice(0,3)],
+          [daysPresent, 'bg-green-600',  L.present],
+          [daysHalf,    'bg-yellow-600', L.halfDay],
+          [daysAbsent,  'bg-red-600',    L.absent],
+          [daysLeave,   'bg-blue-600',   L.leave],
         ].map(([n, bg, lbl], i) => (
-          <div key={i} className={`${bg} rounded-2xl py-4 text-center`}>
+          <div key={i} className={`${bg} rounded-2xl py-3 px-1 text-center`}>
             <p className="text-white font-black text-3xl">{n}</p>
-            <p className="text-white/70 text-[10px] font-semibold mt-1">{lbl}</p>
+            <p className="text-white/80 text-[11px] font-semibold mt-1 leading-tight">{lbl}</p>
           </div>
         ))}
       </div>
