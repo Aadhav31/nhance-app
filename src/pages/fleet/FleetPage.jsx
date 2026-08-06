@@ -4105,7 +4105,7 @@ function LifecycleBar({ equipment, compact = false }) {
   )
 }
 
-function EquipmentCard({ equipment, onClick }) {
+function EquipmentCard({ equipment, onClick, todayShiftMap = {}, projectShiftMap = {} }) {
   const st         = STATUS_COLORS[equipment.status] || STATUS_COLORS.active
   const alert      = hasExpiryAlert(equipment)
   const ownerBadge = equipment.ownership_type === 'hired'
@@ -4114,11 +4114,37 @@ function EquipmentCard({ equipment, onClick }) {
     ? { label: 'Client', color: 'text-purple-400 bg-purple-500/10 border-purple-500/30' }
     : null
 
+  // ── Shift status badge (top-right corner) ──────────────────────────────────
+  // Priority: breakdown > shift started today > past-buffer warning > nothing
+  const shiftBadge = (() => {
+    if (equipment.status === 'breakdown') {
+      return { icon: <Wrench className="w-3.5 h-3.5" />, color: 'bg-red-500/20 border-red-500/60 text-red-400', title: 'Breakdown' }
+    }
+    if (todayShiftMap[equipment.id]) {
+      return { icon: <CheckCircle className="w-3.5 h-3.5" />, color: 'bg-emerald-500/20 border-emerald-500/60 text-emerald-400', title: 'Shift started today' }
+    }
+    // Warning: deployed + no shift today + past shift_start + 30-min buffer
+    if (equipment.current_project_id) {
+      const proj = projectShiftMap[equipment.current_project_id]
+      if (proj?.shift_start_time) {
+        const now = new Date()
+        const [hh, mm] = proj.shift_start_time.split(':').map(Number)
+        const shiftStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hh, mm, 0)
+        const graceMins = Number(proj.shift_grace_mins || 30)
+        const bufferMs  = graceMins * 60 * 1000
+        if (now.getTime() > shiftStart.getTime() + bufferMs) {
+          return { icon: <AlertTriangle className="w-3.5 h-3.5" />, color: 'bg-amber-500/20 border-amber-500/60 text-amber-400', title: 'Shift not started' }
+        }
+      }
+    }
+    return null
+  })()
+
   return (
     <button onClick={onClick}
       className="w-full text-left bg-dark-800 border border-dark-700 hover:border-dark-500 rounded-xl p-4 transition-all active:scale-[0.98]">
 
-      {/* Row 1: name + status */}
+      {/* Row 1: name + status + shift badge */}
       <div className="flex items-start justify-between gap-2">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
@@ -4131,6 +4157,12 @@ function EquipmentCard({ equipment, onClick }) {
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
           {alert && <AlertCircle className="w-3.5 h-3.5 text-orange-400" title="Document expiry within 30 days" />}
+          {shiftBadge && (
+            <span title={shiftBadge.title}
+              className={`flex items-center justify-center w-5 h-5 rounded-full border ${shiftBadge.color}`}>
+              {shiftBadge.icon}
+            </span>
+          )}
           <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${st.bg} ${st.text} ${st.border}`}>{st.label}</span>
         </div>
       </div>
@@ -4213,6 +4245,44 @@ function FleetTab({ companyId, showAdd, setShowAdd, onNavigate, unloggedIds = nu
     },
     enabled: !!companyId,
   })
+
+  // Today's shifts — used for tile status badges (green tick / warning)
+  const todayDate = new Date().toISOString().split('T')[0]
+  const { data: todayShifts = [] } = useQuery({
+    queryKey: ['fleet_today_shifts', companyId, todayDate],
+    queryFn: async () => {
+      const { data } = await supabase.from('shifts')
+        .select('equipment_id, status')
+        .eq('company_id', companyId)
+        .eq('shift_date', todayDate)
+      return data || []
+    },
+    enabled: !!companyId,
+    refetchInterval: 60_000, // refresh every minute so badges stay current
+  })
+  // Build map: equipment_id → true (has any shift today)
+  const todayShiftMap = useMemo(() => {
+    const m = {}
+    for (const s of todayShifts) m[s.equipment_id] = true
+    return m
+  }, [todayShifts])
+
+  // Projects — for shift_start_time used in the "past buffer" warning
+  const { data: fleetProjects = [] } = useQuery({
+    queryKey: ['fleet_projects', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('projects')
+        .select('id, shift_start_time, shift_grace_mins')
+        .eq('company_id', companyId)
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+  const projectShiftMap = useMemo(() => {
+    const m = {}
+    for (const p of fleetProjects) m[p.id] = p
+    return m
+  }, [fleetProjects])
 
 
   // Fleet utilization grid data
@@ -4522,7 +4592,10 @@ function FleetTab({ companyId, showAdd, setShowAdd, onNavigate, unloggedIds = nu
           </div>
         ) : viewMode === 'grid' ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {filtered.map(eq => <EquipmentCard key={eq.id} equipment={eq} onClick={() => setSelected(eq)} />)}
+            {filtered.map(eq => (
+              <EquipmentCard key={eq.id} equipment={eq} onClick={() => setSelected(eq)}
+                todayShiftMap={todayShiftMap} projectShiftMap={projectShiftMap} />
+            ))}
           </div>
         ) : viewMode === 'site' ? (
           /* Site-grouped view */
@@ -4538,7 +4611,10 @@ function FleetTab({ companyId, showAdd, setShowAdd, onNavigate, unloggedIds = nu
                   <div className="flex-1 h-px bg-dark-700" />
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {items.map(eq => <EquipmentCard key={eq.id} equipment={eq} onClick={() => setSelected(eq)} />)}
+                  {items.map(eq => (
+                    <EquipmentCard key={eq.id} equipment={eq} onClick={() => setSelected(eq)}
+                      todayShiftMap={todayShiftMap} projectShiftMap={projectShiftMap} />
+                  ))}
                 </div>
               </div>
             ))}
