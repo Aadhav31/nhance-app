@@ -9,10 +9,11 @@ import {
   Package, Plus, X, Loader2, Search, ChevronRight, AlertTriangle,
   ArrowDownCircle, ArrowUpCircle, RefreshCcw, Shuffle, Store,
   LayoutDashboard, Edit2, Trash2, TrendingDown, IndianRupee,
-  Wrench, Droplets, Box, Layers, CheckCircle, Fuel,
+  Wrench, Droplets, Box, Layers, CheckCircle, Fuel, BookOpen,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format } from 'date-fns'
+import ItemCatalogueTab from './ItemCatalogueTab'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const todayStr = () => new Date().toISOString().split('T')[0]
@@ -316,9 +317,45 @@ function ItemsTab({ companyId, session }) {
   const [search, setSearch]         = useState('')
   const [filterCat, setFilterCat]   = useState('all')
   const [saving, setSaving]         = useState(false)
-  const blank = { item_code:'', item_name:'', category:'raw_material', sub_category:'', brand:'', unit:'nos', description:'', hsn_code:'', min_stock_level:'', reorder_qty:'', avg_unit_cost:'', grade_id: null }
+  const blank = { item_code:'', item_name:'', category:'raw_material', sub_category:'', brand:'', unit:'nos', description:'', hsn_code:'', min_stock_level:'', reorder_qty:'', avg_unit_cost:'', grade_id: null, catalogue_id: null }
+  const [catSearch, setCatSearch] = useState('')
   const [form, setForm] = useState(blank)
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
+
+  // Fetch item catalogue for auto-fill
+  const { data: catalogue = [] } = useQuery({
+    queryKey: ['item_catalogue_active', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('item_catalogue').select('*').eq('company_id', companyId).eq('is_active', true).order('item_name')
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+
+  // Category mapping: catalogue → inventory
+  const CAT_REMAP = { spare_part: 'spare_part', consumable: 'consumable', fuel: 'fuel', lubricant: 'lubricant', tyre: 'spare_part', service: 'raw_material', other: 'consumable' }
+
+  const fillFromCatalogue = (item) => {
+    setF('item_name',     item.item_name  || '')
+    setF('brand',         item.brand      || '')
+    setF('unit',          item.unit       || 'nos')
+    setF('hsn_code',      item.hsn_sac    || '')
+    setF('avg_unit_cost', item.avg_cost   ? String(item.avg_cost) : '')
+    setF('category',      CAT_REMAP[item.category] || 'consumable')
+    setF('description',   item.description || '')
+    setF('catalogue_id',  item.id)
+    setCatSearch('')
+  }
+
+  const filteredCatalogue = useMemo(() => {
+    const q = catSearch.toLowerCase().trim()
+    if (!q) return catalogue
+    return catalogue.filter(i =>
+      i.item_name.toLowerCase().includes(q) ||
+      (i.brand || '').toLowerCase().includes(q) ||
+      (i.part_number || '').toLowerCase().includes(q)
+    )
+  }, [catalogue, catSearch])
 
   // Fetch crusher grades for auto-fill
   const { data: grades = [] } = useQuery({
@@ -400,6 +437,7 @@ function ItemsTab({ companyId, session }) {
         reorder_qty: parseFloat(form.reorder_qty) || 0,
         avg_unit_cost: parseFloat(form.avg_unit_cost) || 0,
         grade_id: form.grade_id || null,
+        catalogue_id: form.catalogue_id || null,
         updated_at: new Date().toISOString(),
       }
       if (editing) {
@@ -467,6 +505,7 @@ function ItemsTab({ companyId, session }) {
                     {item.item_code && <span className="text-[10px] font-mono text-primary-500 shrink-0">{item.item_code}</span>}
                     <span className="font-semibold text-sm text-slate-100 truncate">{item.item_name}</span>
                     <CategoryBadge cat={item.category} />
+                    {item.catalogue_id && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-teal-500/10 text-teal-400 border border-teal-700/40 shrink-0">📦 Catalogue</span>}
                     {!item.is_active && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-700/50 text-slate-400 border border-slate-600/50 shrink-0">Inactive</span>}
                     {low && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-500/10 text-red-400 border border-red-700/30 shrink-0">⚠ Low</span>}
                   </div>
@@ -510,6 +549,47 @@ function ItemsTab({ companyId, session }) {
       {showCreate && (
         <Modal title={editing ? 'Edit Item' : 'Add Item to Catalog'} onClose={() => { setShowCreate(false); setEditing(null) }} wide
           footer={<><button onClick={() => { setShowCreate(false); setEditing(null) }} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : editing ? 'Save Changes' : 'Add Item'}</button></>}>
+
+          {/* Item Catalogue quick-fill — only on create */}
+          {!editing && catalogue.length > 0 && (
+            <div className="bg-teal-500/10 border border-teal-600/30 rounded-xl p-3 mb-1">
+              <p className="text-[11px] font-semibold text-teal-400 mb-1.5">📦 Pick from Item Catalogue</p>
+              <input
+                className={inp('text-xs mb-2')}
+                placeholder="Search catalogue by name, brand, part#…"
+                value={catSearch}
+                onChange={e => setCatSearch(e.target.value)}
+              />
+              {catSearch.trim() && (
+                <div className="max-h-40 overflow-y-auto space-y-1">
+                  {filteredCatalogue.length === 0 ? (
+                    <p className="text-xs text-slate-600 px-2 py-1">No matches</p>
+                  ) : filteredCatalogue.slice(0, 10).map(item => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => fillFromCatalogue(item)}
+                      className={`w-full text-left px-3 py-2 rounded-lg text-xs transition-colors border ${
+                        form.catalogue_id === item.id
+                          ? 'bg-teal-500/20 border-teal-600/50 text-teal-200'
+                          : 'bg-dark-700 border-dark-600 text-slate-300 hover:border-teal-600/40 hover:bg-teal-500/10'
+                      }`}
+                    >
+                      <span className="font-semibold">{item.item_name}</span>
+                      {item.brand && <span className="text-slate-500 ml-1">· {item.brand}</span>}
+                      {item.part_number && <span className="text-slate-500 ml-1">· #{item.part_number}</span>}
+                      {item.avg_cost > 0 && <span className="text-teal-400 ml-1 float-right">₹{Number(item.avg_cost).toLocaleString('en-IN')}/{item.unit}</span>}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {form.catalogue_id && !catSearch.trim() && (
+                <p className="text-[10px] text-teal-400/70 mt-1">
+                  ✓ Linked to catalogue — fields auto-filled. Edit below if needed.
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Material Master quick-fill — only on create */}
           {!editing && grades.length > 0 && (
@@ -2053,13 +2133,14 @@ export default function InventoryPage({ onNavigate: onNavigatePage }) {
   const [activeTab, setActiveTab] = useState('overview')
 
   const tabs = [
-    { id: 'overview',     label: 'Overview',      icon: LayoutDashboard },
-    { id: 'items',        label: 'Items',          icon: Package },
-    { id: 'stores',       label: 'Stores',         icon: Store },
-    { id: 'stock_in',     label: 'Stock In',       icon: ArrowDownCircle },
-    { id: 'stock_out',    label: 'Stock Out',      icon: ArrowUpCircle },
-    { id: 'transfers',    label: 'Transfers',      icon: Shuffle },
-    { id: 'adjustments',  label: 'Adjustments',   icon: RefreshCcw },
+    { id: 'overview',     label: 'Overview',       icon: LayoutDashboard },
+    { id: 'items',        label: 'Items',           icon: Package },
+    { id: 'catalogue',    label: 'Item Catalogue',  icon: BookOpen },
+    { id: 'stores',       label: 'Stores',          icon: Store },
+    { id: 'stock_in',     label: 'Stock In',        icon: ArrowDownCircle },
+    { id: 'stock_out',    label: 'Stock Out',       icon: ArrowUpCircle },
+    { id: 'transfers',    label: 'Transfers',       icon: Shuffle },
+    { id: 'adjustments',  label: 'Adjustments',    icon: RefreshCcw },
   ]
 
   return (
@@ -2089,9 +2170,10 @@ export default function InventoryPage({ onNavigate: onNavigatePage }) {
 
       {/* Tab content */}
       <div className="flex-1 overflow-hidden">
-        {activeTab === 'overview'    && <OverviewTab     companyId={companyId} onNavigate={setActiveTab} onNavigatePage={onNavigatePage} />}
-        {activeTab === 'items'       && <ItemsTab        companyId={companyId} session={session} />}
-        {activeTab === 'stores'      && <StoresTab       companyId={companyId} session={session} />}
+        {activeTab === 'overview'    && <OverviewTab        companyId={companyId} onNavigate={setActiveTab} onNavigatePage={onNavigatePage} />}
+        {activeTab === 'items'       && <ItemsTab           companyId={companyId} session={session} />}
+        {activeTab === 'catalogue'   && <ItemCatalogueTab   companyId={companyId} session={session} />}
+        {activeTab === 'stores'      && <StoresTab          companyId={companyId} session={session} />}
         {activeTab === 'stock_in'    && <StockInTab      companyId={companyId} session={session} />}
         {activeTab === 'stock_out'   && <StockOutTab     companyId={companyId} session={session} />}
         {activeTab === 'transfers'   && <TransfersTab    companyId={companyId} session={session} />}

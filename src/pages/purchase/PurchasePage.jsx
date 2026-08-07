@@ -3322,6 +3322,9 @@ function ItemCatalogueTab({ companyId, session }) {
   const [showForm, setShowForm] = useState(false)
   const [editing, setEditing] = useState(null)
   const [saving, setSaving] = useState(false)
+  const [expandedZones, setExpandedZones] = useState(null) // catalogue_id
+  const [zoneForm, setZoneForm] = useState({ zone: '', avg_cost: '', max_cost: '' })
+  const [savingZone, setSavingZone] = useState(false)
 
   const blankForm = () => ({
     item_name: '', brand: '', part_number: '', description: '',
@@ -3345,6 +3348,29 @@ function ItemCatalogueTab({ companyId, session }) {
     },
     enabled: !!companyId,
   })
+
+  const { data: zonePrices = [] } = useQuery({
+    queryKey: ['item_catalogue_prices', companyId],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('item_catalogue_prices')
+        .select('*')
+        .eq('company_id', companyId)
+        .order('zone')
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+
+  // Group zone prices by catalogue_id
+  const zonePriceMap = useMemo(() => {
+    const m = {}
+    for (const p of zonePrices) {
+      if (!m[p.catalogue_id]) m[p.catalogue_id] = []
+      m[p.catalogue_id].push(p)
+    }
+    return m
+  }, [zonePrices])
 
   const { data: equipmentList = [] } = useQuery({
     queryKey: ['equipment_list_simple', companyId],
@@ -3376,7 +3402,7 @@ function ItemCatalogueTab({ companyId, session }) {
     })
   }, [items, search, catFilter, equipFilter])
 
-  // ── Save ──────────────────────────────────────────────────────────────────
+  // ── Item Save ─────────────────────────────────────────────────────────────
   const handleSave = async () => {
     if (!form.item_name.trim()) { toast.error('Item name is required'); return }
     setSaving(true)
@@ -3406,9 +3432,36 @@ function ItemCatalogueTab({ companyId, session }) {
         if (error) throw error
         toast.success('Item added to catalogue')
       }
-      qc.invalidateQueries(['item_catalogue', companyId])
+      qc.invalidateQueries({ queryKey: ['item_catalogue', companyId] })
       setShowForm(false); setEditing(null); setForm(blankForm())
     } catch (e) { toast.error(e.message) } finally { setSaving(false) }
+  }
+
+  // ── Zone Price CRUD ───────────────────────────────────────────────────────
+  const saveZonePrice = async (catalogueId) => {
+    if (!zoneForm.zone.trim()) { toast.error('Zone / state name required'); return }
+    if (!zoneForm.avg_cost && !zoneForm.max_cost) { toast.error('Enter at least avg or max cost'); return }
+    setSavingZone(true)
+    try {
+      const { error } = await supabase.from('item_catalogue_prices').upsert({
+        catalogue_id: catalogueId,
+        company_id: companyId,
+        zone: zoneForm.zone.trim(),
+        avg_cost: parseFloat(zoneForm.avg_cost) || null,
+        max_cost: parseFloat(zoneForm.max_cost) || null,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'catalogue_id,zone' })
+      if (error) throw error
+      qc.invalidateQueries({ queryKey: ['item_catalogue_prices', companyId] })
+      setZoneForm({ zone: '', avg_cost: '', max_cost: '' })
+      toast.success('Zone price saved')
+    } catch (e) { toast.error(e.message) } finally { setSavingZone(false) }
+  }
+
+  const deleteZonePrice = async (id) => {
+    await supabase.from('item_catalogue_prices').delete().eq('id', id)
+    qc.invalidateQueries({ queryKey: ['item_catalogue_prices', companyId] })
+    toast.success('Zone price removed')
   }
 
   const openEdit = (it) => {
@@ -3432,13 +3485,14 @@ function ItemCatalogueTab({ companyId, session }) {
 
   const toggleActive = async (it) => {
     await supabase.from('item_catalogue').update({ is_active: !it.is_active }).eq('id', it.id)
-    qc.invalidateQueries(['item_catalogue', companyId])
+    qc.invalidateQueries({ queryKey: ['item_catalogue', companyId] })
   }
 
   const deleteItem = async (it) => {
     if (!window.confirm(`Delete "${it.item_name}" from catalogue?`)) return
     await supabase.from('item_catalogue').delete().eq('id', it.id)
-    qc.invalidateQueries(['item_catalogue', companyId])
+    qc.invalidateQueries({ queryKey: ['item_catalogue', companyId] })
+    qc.invalidateQueries({ queryKey: ['item_catalogue_prices', companyId] })
     toast.success('Item deleted')
   }
 
@@ -3457,14 +3511,12 @@ function ItemCatalogueTab({ companyId, session }) {
               value={search} onChange={e => setSearch(e.target.value)}
             />
           </div>
-          {/* Category filter */}
           <select
             className="bg-dark-700 border border-dark-600 rounded-lg px-2 py-1.5 text-xs text-slate-300"
             value={catFilter} onChange={e => setCatFilter(e.target.value)}>
             <option value="all">All Categories</option>
             {ITEM_CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
           </select>
-          {/* Equipment filter */}
           <select
             className="bg-dark-700 border border-dark-600 rounded-lg px-2 py-1.5 text-xs text-slate-300"
             value={equipFilter} onChange={e => setEquipFilter(e.target.value)}>
@@ -3484,6 +3536,8 @@ function ItemCatalogueTab({ companyId, session }) {
         <span>{items.filter(i => i.category === 'spare_part').length} spare parts</span>
         <span>·</span>
         <span>{filtered.length} shown</span>
+        <span>·</span>
+        <span>{zonePrices.length} zone prices</span>
       </div>
 
       {/* List */}
@@ -3500,60 +3554,145 @@ function ItemCatalogueTab({ companyId, session }) {
           </div>
         ) : (
           <div className="grid gap-2">
-            {filtered.map(it => (
-              <div key={it.id} className={`bg-dark-800 border rounded-xl p-4 transition-colors ${it.is_active ? 'border-dark-700' : 'border-dark-700/40 opacity-60'}`}>
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex-1 min-w-0">
-                    {/* Name + brand */}
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <p className="font-semibold text-sm text-slate-100">{it.item_name}</p>
-                      {it.brand && <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary-500/10 border border-primary-700/30 text-primary-400">{it.brand}</span>}
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-dark-700 border border-dark-600 text-slate-400">{catLabel(it.category)}</span>
-                      {!it.is_active && <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-500/10 border border-slate-600/40 text-slate-500">Inactive</span>}
+            {filtered.map(it => {
+              const zones = zonePriceMap[it.id] || []
+              const isZoneOpen = expandedZones === it.id
+              return (
+                <div key={it.id} className={`bg-dark-800 border rounded-xl overflow-hidden transition-colors ${it.is_active ? 'border-dark-700' : 'border-dark-700/40 opacity-60'}`}>
+                  <div className="p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        {/* Name + brand + badges */}
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="font-semibold text-sm text-slate-100">{it.item_name}</p>
+                          {it.brand && <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary-500/10 border border-primary-700/30 text-primary-400">{it.brand}</span>}
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-dark-700 border border-dark-600 text-slate-400">{catLabel(it.category)}</span>
+                          {zones.length > 0 && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-500/10 border border-violet-700/30 text-violet-400">
+                              🌐 {zones.length} zone{zones.length > 1 ? 's' : ''}
+                            </span>
+                          )}
+                          {!it.is_active && <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-500/10 border border-slate-600/40 text-slate-500">Inactive</span>}
+                        </div>
+                        {/* Part number + compatibility */}
+                        <div className="flex items-center gap-3 mt-1 flex-wrap">
+                          {it.part_number && (
+                            <span className="text-xs text-slate-400 font-mono flex items-center gap-1">
+                              <Hash className="w-3 h-3 text-slate-600" />{it.part_number}
+                            </span>
+                          )}
+                          {(it.equipment?.name || it.compatible_with) && (
+                            <span className="text-xs text-amber-400 flex items-center gap-1">
+                              <Wrench className="w-3 h-3" />
+                              Compatible: {it.equipment?.name || it.compatible_with}
+                            </span>
+                          )}
+                          {it.hsn_sac && <span className="text-xs text-slate-500">HSN {it.hsn_sac}</span>}
+                        </div>
+                        {it.description && <p className="text-xs text-slate-500 mt-1 line-clamp-2">{it.description}</p>}
+                      </div>
+                      {/* Base pricing */}
+                      <div className="text-right shrink-0">
+                        <p className="text-[9px] text-slate-600 uppercase tracking-wider">Base Price</p>
+                        {it.avg_cost != null ? (
+                          <p className="text-sm font-bold text-slate-100">{fmtINR(it.avg_cost)}<span className="text-[10px] text-slate-500 font-normal ml-1">avg</span></p>
+                        ) : <p className="text-xs text-slate-600 italic">—</p>}
+                        {it.max_cost != null && (
+                          <p className="text-xs text-orange-400">Max {fmtINR(it.max_cost)}</p>
+                        )}
+                        <p className="text-[10px] text-slate-600 mt-0.5">{it.unit}</p>
+                      </div>
                     </div>
-                    {/* Part number + compatibility */}
-                    <div className="flex items-center gap-3 mt-1 flex-wrap">
-                      {it.part_number && (
-                        <span className="text-xs text-slate-400 font-mono flex items-center gap-1">
-                          <Hash className="w-3 h-3 text-slate-600" />{it.part_number}
-                        </span>
-                      )}
-                      {(it.equipment?.name || it.compatible_with) && (
-                        <span className="text-xs text-amber-400 flex items-center gap-1">
-                          <Wrench className="w-3 h-3" />
-                          Compatible: {it.equipment?.name || it.compatible_with}
-                        </span>
-                      )}
-                      {it.hsn_sac && <span className="text-xs text-slate-500">HSN {it.hsn_sac}</span>}
+
+                    {/* Actions */}
+                    <div className="flex items-center justify-between gap-1 mt-3 pt-3 border-t border-dark-700/50">
+                      <button
+                        onClick={() => { setExpandedZones(isZoneOpen ? null : it.id); setZoneForm({ zone: '', avg_cost: '', max_cost: '' }) }}
+                        className={`flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg transition-colors ${isZoneOpen ? 'bg-violet-900/30 text-violet-400 border border-violet-700/40' : 'text-slate-400 hover:text-violet-400 hover:bg-violet-900/20'}`}>
+                        <ChevronDown className={`w-3 h-3 transition-transform ${isZoneOpen ? 'rotate-180' : ''}`} />
+                        Zone Prices {zones.length > 0 ? `(${zones.length})` : ''}
+                      </button>
+                      <div className="flex items-center gap-1">
+                        <button onClick={() => openEdit(it)} className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg text-slate-400 hover:text-blue-400 hover:bg-blue-900/20 transition-colors">
+                          <Pencil className="w-3 h-3" /> Edit
+                        </button>
+                        <button onClick={() => toggleActive(it)} className={`flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg transition-colors ${it.is_active ? 'text-slate-400 hover:text-amber-400 hover:bg-amber-900/20' : 'text-slate-500 hover:text-emerald-400 hover:bg-emerald-900/20'}`}>
+                          {it.is_active ? <ToggleRight className="w-3.5 h-3.5" /> : <ToggleLeft className="w-3.5 h-3.5" />}
+                          {it.is_active ? 'Deactivate' : 'Activate'}
+                        </button>
+                        <button onClick={() => deleteItem(it)} className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-900/20 transition-colors">
+                          <Trash2 className="w-3 h-3" /> Delete
+                        </button>
+                      </div>
                     </div>
-                    {it.description && <p className="text-xs text-slate-500 mt-1 line-clamp-2">{it.description}</p>}
                   </div>
-                  {/* Pricing */}
-                  <div className="text-right shrink-0">
-                    {it.avg_cost != null && (
-                      <p className="text-sm font-bold text-slate-100">{fmtINR(it.avg_cost)}<span className="text-[10px] text-slate-500 font-normal ml-1">avg</span></p>
-                    )}
-                    {it.max_cost != null && (
-                      <p className="text-xs text-orange-400">Max {fmtINR(it.max_cost)}</p>
-                    )}
-                    <p className="text-[10px] text-slate-600 mt-0.5">{it.unit}</p>
-                  </div>
+
+                  {/* Zone Prices Panel */}
+                  {isZoneOpen && (
+                    <div className="border-t border-dark-700 bg-dark-900/50 px-4 py-3">
+                      <p className="text-[10px] font-bold text-violet-400 uppercase tracking-wider mb-2">🌐 Zone / State-based Prices</p>
+
+                      {/* Existing zone prices */}
+                      {zones.length > 0 && (
+                        <div className="space-y-1.5 mb-3">
+                          {zones.map(z => (
+                            <div key={z.id} className="flex items-center gap-2 bg-dark-700/50 border border-dark-600/50 rounded-lg px-3 py-2">
+                              <p className="text-xs font-semibold text-slate-200 flex-1">{z.zone}</p>
+                              {z.avg_cost != null && <span className="text-xs text-slate-300 font-bold">{fmtINR(z.avg_cost)}<span className="text-[10px] text-slate-500 ml-1">avg</span></span>}
+                              {z.max_cost != null && <span className="text-xs text-orange-400">Max {fmtINR(z.max_cost)}</span>}
+                              <button onClick={() => deleteZonePrice(z.id)} className="text-slate-600 hover:text-red-400 transition-colors ml-1">
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Add zone price form */}
+                      <div className="flex gap-2 items-end flex-wrap">
+                        <div className="flex-1 min-w-[140px]">
+                          <p className="text-[10px] text-slate-500 mb-1">Zone / State *</p>
+                          <input
+                            className="w-full bg-dark-700 border border-dark-600 rounded-lg px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-violet-500 placeholder-slate-600"
+                            placeholder="e.g. Tamil Nadu"
+                            value={zoneForm.zone}
+                            onChange={e => setZoneForm(p => ({ ...p, zone: e.target.value }))}
+                          />
+                        </div>
+                        <div className="w-28">
+                          <p className="text-[10px] text-slate-500 mb-1">Avg Cost ₹</p>
+                          <input
+                            type="number" step="0.01"
+                            className="w-full bg-dark-700 border border-dark-600 rounded-lg px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-violet-500 placeholder-slate-600"
+                            placeholder="0.00"
+                            value={zoneForm.avg_cost}
+                            onChange={e => setZoneForm(p => ({ ...p, avg_cost: e.target.value }))}
+                          />
+                        </div>
+                        <div className="w-28">
+                          <p className="text-[10px] text-slate-500 mb-1">Max Cost ₹</p>
+                          <input
+                            type="number" step="0.01"
+                            className="w-full bg-dark-700 border border-dark-600 rounded-lg px-2 py-1.5 text-xs text-orange-300 focus:outline-none focus:border-orange-500 border-orange-700/30 placeholder-slate-600"
+                            placeholder="0.00"
+                            value={zoneForm.max_cost}
+                            onChange={e => setZoneForm(p => ({ ...p, max_cost: e.target.value }))}
+                          />
+                        </div>
+                        <button
+                          onClick={() => saveZonePrice(it.id)}
+                          disabled={savingZone}
+                          className="flex items-center gap-1 text-xs font-semibold px-3 py-1.5 bg-violet-600 hover:bg-violet-500 text-white rounded-lg transition-colors">
+                          {savingZone ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                          Add Zone
+                        </button>
+                      </div>
+                      <p className="text-[10px] text-slate-600 mt-2">Zone prices override the base price when billing from this zone. They appear as selectable options in the bill line picker.</p>
+                    </div>
+                  )}
                 </div>
-                {/* Actions */}
-                <div className="flex items-center justify-end gap-1 mt-3 pt-3 border-t border-dark-700/50">
-                  <button onClick={() => openEdit(it)} className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg text-slate-400 hover:text-blue-400 hover:bg-blue-900/20 transition-colors">
-                    <Pencil className="w-3 h-3" /> Edit
-                  </button>
-                  <button onClick={() => toggleActive(it)} className={`flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg transition-colors ${it.is_active ? 'text-slate-400 hover:text-amber-400 hover:bg-amber-900/20' : 'text-slate-500 hover:text-emerald-400 hover:bg-emerald-900/20'}`}>
-                    {it.is_active ? <ToggleRight className="w-3.5 h-3.5" /> : <ToggleLeft className="w-3.5 h-3.5" />}
-                    {it.is_active ? 'Deactivate' : 'Activate'}
-                  </button>
-                  <button onClick={() => deleteItem(it)} className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-900/20 transition-colors">
-                    <Trash2 className="w-3 h-3" /> Delete
-                  </button>
-                </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         )}
       </div>
@@ -3605,26 +3744,28 @@ function ItemCatalogueTab({ companyId, session }) {
                 ))}
               </select>
             </Field>
-            {/* Free-text compatibility note */}
-            <Field label="Compatible With (text note)" hint="e.g. 'All JCB 3DX variants' or 'Any 6-tonne tipper'">
-              <input className={inp()} placeholder="Free-text compatibility description" value={form.compatible_with} onChange={e => setF('compatible_with', e.target.value)} />
+            <Field label="Compatible With (text note)">
+              <input className={inp()} placeholder="e.g. All JCB 3DX variants" value={form.compatible_with} onChange={e => setF('compatible_with', e.target.value)} />
             </Field>
 
-            {/* Unit */}
             <Field label="Unit of Measure">
               <select className={inp()} value={form.unit} onChange={e => setF('unit', e.target.value)}>
                 {LINE_UNITS.map(u => <option key={u}>{u}</option>)}
               </select>
             </Field>
 
-            {/* Pricing */}
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Average Cost (₹)" hint="Expected / market reference price">
-                <input className={inp()} type="number" step="0.01" placeholder="0.00" value={form.avg_cost} onChange={e => setF('avg_cost', e.target.value)} />
-              </Field>
-              <Field label="Maximum Cost (₹)" hint="Ceiling — anything above flags for approval">
-                <input className={`${inp()} border-orange-700/40 focus:border-orange-500`} type="number" step="0.01" placeholder="0.00" value={form.max_cost} onChange={e => setF('max_cost', e.target.value)} />
-              </Field>
+            {/* Base Pricing */}
+            <div className="bg-dark-700/50 border border-dark-600 rounded-xl p-3">
+              <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-2">Base Price (Nationwide / Default)</p>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Average Cost (₹)">
+                  <input className={inp()} type="number" step="0.01" placeholder="0.00" value={form.avg_cost} onChange={e => setF('avg_cost', e.target.value)} />
+                </Field>
+                <Field label="Maximum Cost (₹)">
+                  <input className={`${inp()} border-orange-700/40 focus:border-orange-500`} type="number" step="0.01" placeholder="0.00" value={form.max_cost} onChange={e => setF('max_cost', e.target.value)} />
+                </Field>
+              </div>
+              <p className="text-[10px] text-slate-600 mt-1.5">Zone-specific prices can be added after saving — click "Zone Prices" on the item card.</p>
             </div>
 
             {/* HSN + GST */}
@@ -3661,7 +3802,6 @@ export default function PurchasePage({ initialTab, initialStockTxnId }) {
     { id: 'vcredits', label: 'Vendor Credits',    icon: RefreshCcw },
     { id: 'payments', label: 'Payments Made',     icon: ArrowUpCircle },
     { id: 'vehicles',  label: 'Vehicles',          icon: Truck },
-    { id: 'catalogue', label: 'Item Catalogue',    icon: Package },
   ]
 
   return (
@@ -3701,11 +3841,6 @@ export default function PurchasePage({ initialTab, initialStockTxnId }) {
         {activeTab === 'vehicles' && (
           <div className="flex-1 overflow-y-auto p-4">
             <VehiclesTab context="purchase" />
-          </div>
-        )}
-        {activeTab === 'catalogue' && (
-          <div className="flex-1 overflow-hidden flex flex-col">
-            <ItemCatalogueTab companyId={companyId} session={session} />
           </div>
         )}
       </div>
