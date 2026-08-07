@@ -267,11 +267,6 @@ export default function StickyNotes() {
         }`}
         title="Quick Notes">
         <StickyNote className="w-5 h-5" />
-        {noteCount > 0 && !open && (
-          <span className="absolute -top-1 -right-1 w-4.5 h-4.5 min-w-[18px] rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center leading-none px-1">
-            {noteCount > 99 ? '99+' : noteCount}
-          </span>
-        )}
       </button>
 
       {/* ── Panel ── */}
