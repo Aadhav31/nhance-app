@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { DisplayModeProvider } from './contexts/DisplayModeContext'
 import { ThemeProvider } from './contexts/ThemeContext'
 import LoadingScreen from './components/shared/LoadingScreen'
+import StickyNotes from './components/shared/StickyNotes'
 import LoginPage from './pages/auth/LoginPage'
 import Sidebar from './components/layout/Sidebar'
 import TopBar from './components/layout/TopBar'
@@ -427,6 +428,9 @@ function AppShell() {
             onNavigate={handleNavigate}
           />
         )}
+
+        {/* Global sticky notes — floats above all content */}
+        {!isSuperAdmin() && <StickyNotes />}
       </div>
     </DisplayModeProvider>
   )
