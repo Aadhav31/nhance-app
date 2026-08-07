@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
+import toast from 'react-hot-toast'
 import {
   StickyNote, Plus, X, Pin, PinOff, Trash2,
   ChevronLeft, Search, Palette,
@@ -171,15 +172,20 @@ export default function StickyNotes() {
   const { data: notes = [] } = useQuery({
     queryKey: ['sticky_notes', session?.user?.id],
     queryFn: async () => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('sticky_notes')
         .select('*')
         .eq('user_id', session.user.id)
         .order('pinned', { ascending: false })
         .order('updated_at', { ascending: false })
+      if (error) {
+        // Table likely not created yet — run migration in Supabase SQL editor
+        console.warn('[StickyNotes] query error:', error.message)
+        return []
+      }
       return data || []
     },
-    enabled: !!session?.user?.id && open,
+    enabled: !!session?.user?.id,
     staleTime: 30_000,
   })
 
@@ -196,32 +202,47 @@ export default function StickyNotes() {
   const unpinned = filtered.filter(n => !n.pinned)
 
   // ── CRUD ───────────────────────────────────────────────────────────────────
-  const invalidate = () => qc.invalidateQueries(['sticky_notes', session?.user?.id])
+  const invalidate = () => qc.invalidateQueries({ queryKey: ['sticky_notes', session?.user?.id] })
 
   const handleSave = async ({ title, content, color }) => {
-    if (editing && editing !== 'new') {
-      await supabase.from('sticky_notes').update({
-        title: title || null, content, color, updated_at: new Date().toISOString(),
-      }).eq('id', editing.id)
-    } else {
-      await supabase.from('sticky_notes').insert({
-        company_id: companyId, user_id: session.user.id,
-        title: title || null, content, color,
-      })
+    try {
+      let err
+      if (editing && editing !== 'new') {
+        const { error } = await supabase.from('sticky_notes').update({
+          title: title || null, content, color, updated_at: new Date().toISOString(),
+        }).eq('id', editing.id)
+        err = error
+      } else {
+        const { error } = await supabase.from('sticky_notes').insert({
+          company_id: companyId, user_id: session.user.id,
+          title: title || null, content, color,
+        })
+        err = error
+      }
+      if (err) throw err
+      invalidate()
+      setEditing(null)
+    } catch (e) {
+      console.error('[StickyNotes] save error:', e)
+      if (e.message?.includes('does not exist') || e.code === '42P01') {
+        toast.error('Notes table missing — run the sticky_notes migration in Supabase SQL editor first.')
+      } else {
+        toast.error('Could not save note: ' + e.message)
+      }
     }
-    invalidate()
-    setEditing(null)
   }
 
   const handlePin = async (note) => {
-    await supabase.from('sticky_notes').update({ pinned: !note.pinned }).eq('id', note.id)
-    invalidate()
+    const { error } = await supabase.from('sticky_notes').update({ pinned: !note.pinned }).eq('id', note.id)
+    if (!error) invalidate()
   }
 
   const handleDelete = async (note) => {
-    await supabase.from('sticky_notes').delete().eq('id', note.id)
-    invalidate()
-    if (editing && editing !== 'new' && editing.id === note.id) setEditing(null)
+    const { error } = await supabase.from('sticky_notes').delete().eq('id', note.id)
+    if (!error) {
+      invalidate()
+      if (editing && editing !== 'new' && editing.id === note.id) setEditing(null)
+    }
   }
 
   // Close with Escape
