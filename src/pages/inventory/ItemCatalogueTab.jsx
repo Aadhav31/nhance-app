@@ -111,8 +111,10 @@ export default function ItemCatalogueTab({ companyId, session }) {
     queryFn: async () => {
       const { data } = await supabase
         .from('equipment')
-        .select('id, name, registration_number')
-        .eq('company_id', companyId).eq('is_active', true).order('name')
+        .select('id, name, registration_number, equipment_number')
+        .eq('company_id', companyId)
+        .not('status', 'eq', 'disposed')
+        .order('name')
       return data || []
     },
     enabled: !!companyId,
@@ -251,7 +253,7 @@ export default function ItemCatalogueTab({ companyId, session }) {
           <select className="bg-dark-700 border border-dark-600 rounded-lg px-2 py-1.5 text-xs text-slate-300"
             value={equipFilter} onChange={e => setEquipFilter(e.target.value)}>
             <option value="all">All Equipment</option>
-            {equipmentList.map(e => <option key={e.id} value={e.id}>{e.name || e.registration_number}</option>)}
+            {equipmentList.map(e => <option key={e.id} value={e.id}>{e.name || e.equipment_number || e.registration_number}</option>)}
           </select>
         </div>
         <button onClick={() => { setEditing(null); setForm(blankForm()); setShowForm(true) }}
@@ -454,7 +456,7 @@ export default function ItemCatalogueTab({ companyId, session }) {
             <Field label="Compatible Equipment">
               <select className={inp()} value={form.equipment_id} onChange={e => setF('equipment_id', e.target.value)}>
                 <option value="">-- Select equipment (optional) --</option>
-                {equipmentList.map(e => <option key={e.id} value={e.id}>{e.name || e.registration_number}</option>)}
+                {equipmentList.map(e => <option key={e.id} value={e.id}>{e.name || e.equipment_number || e.registration_number}</option>)}
               </select>
             </Field>
             <Field label="Compatible With (free text)">
