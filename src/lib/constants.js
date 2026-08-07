@@ -173,6 +173,8 @@ export const NAV_ITEMS = [
         roles: [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
       { key: 'projects', label: 'Projects', icon: 'FolderOpen',   module: MODULES.CLIENTS_PROJECTS,
         roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
+      { key: 'boq',      label: 'BOQ',      icon: 'ClipboardList', module: MODULES.CLIENTS_PROJECTS,
+        roles: [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
     ],
   },
   {

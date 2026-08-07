@@ -28,6 +28,9 @@ export const DOC_TYPES = {
   stock_adjustment: { prefix: 'ADJ', yearBased: true,  pad: 4 },
   // Hire / Equipment Rental
   hire_invoice:     { prefix: 'HI',  yearBased: true,  pad: 4 },
+  // BOQ & RA Bills
+  boq:              { prefix: 'BOQ', yearBased: true,  pad: 4 },
+  ra_bill:          { prefix: 'RA',  yearBased: true,  pad: 4 },
   // Letters
   letter:           { prefix: 'LTR', yearBased: true,  pad: 4 },
   // Master records (lifetime, never reset)
