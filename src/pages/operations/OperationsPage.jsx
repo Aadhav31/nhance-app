@@ -358,6 +358,24 @@ function StartShiftModal({ equipment, companyId, onClose }) {
     if (meterChanged && !overrideReason.trim()) { toast.error('Please provide reason for meter correction'); return }
     setSaving(true)
     try {
+      // Resolve operator_id so the operator portal (mobile) can find this shift.
+      // When the logged-in user is the operator, myEmployee is already loaded.
+      // When a manager/admin starts the shift, look up the HR employee from the
+      // assignments list (has employee_id), then fall back to a direct HR name lookup.
+      let resolvedOperatorId = myEmployee?.id || null
+      if (!resolvedOperatorId && form.operator_name.trim()) {
+        const matched = assignments.find(
+          a => a.employee_name?.toLowerCase() === form.operator_name.trim().toLowerCase()
+        )
+        resolvedOperatorId = matched?.employee_id || null
+        if (!resolvedOperatorId) {
+          const { data: emp } = await supabase.from('hr_employees')
+            .select('id').eq('company_id', companyId)
+            .ilike('name', form.operator_name.trim()).maybeSingle()
+          resolvedOperatorId = emp?.id || null
+        }
+      }
+
       const { data: shift, error } = await supabase.from('shifts').insert({
         company_id: companyId,
         equipment_id: equipment.id,
@@ -367,7 +385,7 @@ function StartShiftModal({ equipment, companyId, onClose }) {
         shift_date: form.shift_date,
         shift_type: form.shift_type,
         operator_name: form.operator_name,
-        operator_id: myEmployee?.id || null,
+        operator_id: resolvedOperatorId,
         site_incharge_name: form.site_incharge_name || null,
         start_time: form.start_time,
         start_meter: form.start_meter ? Number(form.start_meter) : null,
