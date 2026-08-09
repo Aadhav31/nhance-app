@@ -1374,7 +1374,7 @@ function Row({ label, val, cls = 'text-slate-300' }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Dashboard Tab
 // ─────────────────────────────────────────────────────────────────────────────
-function DashboardTab({ companyId, onNavigate }) {
+function DashboardTab({ companyId, onNavigate, onNavigatePage }) {
   const thisMonth = useMemo(() => {
     const now = new Date()
     return {
@@ -1420,10 +1420,25 @@ function DashboardTab({ companyId, onNavigate }) {
     enabled: !!companyId,
   })
 
+  const { data: raOutstanding = [] } = useQuery({
+    queryKey: ['ra_bills_outstanding_dash', companyId],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('ra_bills')
+        .select('id, ra_number, net_payable, status, bill_date, boq:boq_documents(client_name, title, contract_number)')
+        .eq('company_id', companyId)
+        .in('status', ['submitted', 'approved'])
+        .order('bill_date', { ascending: true })
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+
   const income  = useMemo(() => txns.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0), [txns])
   const expense = useMemo(() => txns.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0), [txns])
   const netPL   = income - expense
   const totalOU = useMemo(() => outstanding.reduce((s, i) => s + i.balance_due, 0), [outstanding])
+  const totalRAOU = useMemo(() => raOutstanding.reduce((s, r) => s + Number(r.net_payable || 0), 0), [raOutstanding])
 
   const catBreakdown = useMemo(() => {
     const map = {}
@@ -1505,6 +1520,64 @@ function DashboardTab({ companyId, onNavigate }) {
               })
           }
         </div>
+      </div>
+
+      {/* RA Bill Receivables */}
+      <div className="bg-dark-800 rounded-xl border border-emerald-700/25 p-4">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-semibold text-slate-300">RA Bill Receivables</h3>
+            {raOutstanding.length > 0 && (
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-700/40">
+                {raOutstanding.length} pending
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-3">
+            {totalRAOU > 0 && (
+              <span className="text-sm font-black text-emerald-400 font-mono">{fmt(totalRAOU)}</span>
+            )}
+            {onNavigatePage && (
+              <button onClick={() => onNavigatePage('ra_billing')} className="text-xs text-primary-400 hover:text-primary-300">
+                View all →
+              </button>
+            )}
+          </div>
+        </div>
+        {raOutstanding.length === 0 ? (
+          <p className="text-xs text-slate-500 text-center py-4">No outstanding RA bills 🎉</p>
+        ) : (
+          <div className="space-y-0">
+            {raOutstanding.slice(0, 6).map(ra => {
+              const isApproved = ra.status === 'approved'
+              return (
+                <div key={ra.id} className="flex items-center justify-between py-2.5 border-b border-dark-700 last:border-0">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <p className="text-xs font-mono text-primary-400">{ra.ra_number}</p>
+                      <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full border ${
+                        isApproved
+                          ? 'bg-emerald-500/10 text-emerald-400 border-emerald-700/40'
+                          : 'bg-amber-500/10 text-amber-400 border-amber-700/40'
+                      }`}>
+                        {isApproved ? 'Approved' : 'Submitted'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-400 truncate mt-0.5">
+                      {ra.boq?.client_name || '—'} · {ra.boq?.title || ''}
+                    </p>
+                  </div>
+                  <p className="font-mono text-sm font-bold text-emerald-400 shrink-0 ml-3">{fmt(ra.net_payable)}</p>
+                </div>
+              )
+            })}
+            {raOutstanding.length > 6 && (
+              <p className="text-[11px] text-slate-500 text-center pt-2">
+                +{raOutstanding.length - 6} more — <button onClick={() => onNavigatePage?.('ra_billing')} className="text-primary-400 hover:underline">view all</button>
+              </p>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Recent transactions */}
@@ -4378,7 +4451,7 @@ export default function AccountsPage({ onNavigate }) {
 
       {/* Tab content */}
       <div className="flex-1 flex flex-col overflow-hidden min-h-0">
-        {activeTab === 'dashboard' && <DashboardTab companyId={companyId} onNavigate={setActiveTab} />}
+        {activeTab === 'dashboard' && <DashboardTab companyId={companyId} onNavigate={setActiveTab} onNavigatePage={onNavigate} />}
         {activeTab === 'invoices'  && <InvoicesTab  companyId={companyId} session={session} />}
         {activeTab === 'expenses'  && <ExpensesTab  companyId={companyId} session={session} equipmentList={equipmentList} onNavigate={onNavigate} />}
         {activeTab === 'fixed'     && <FixedExpensesTab companyId={companyId} />}
