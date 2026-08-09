@@ -50,6 +50,7 @@ const RABillingPage           = lazy(() => import('./pages/ra_billing/RABillingP
 const ApprovalCenterPage      = lazy(() => import('./pages/approvals/ApprovalCenterPage'))
 const AuditLogPage            = lazy(() => import('./pages/audit/AuditLogPage'))
 const ChatPage                = lazy(() => import('./pages/chat/ChatPage'))
+const ReimbursementPage       = lazy(() => import('./pages/hr/ReimbursementPage'))
 
 // ── Connectivity hook ─────────────────────────────────────────────────────────
 function useOnlineStatus() {
@@ -404,6 +405,12 @@ function AppShell() {
         return (
           <Suspense fallback={<LoadingScreen message="Loading billing…" />}>
             <UsageBillingPage />
+          </Suspense>
+        )
+      case 'reimbursements':
+        return (
+          <Suspense fallback={<LoadingScreen message="Loading Reimbursements…" />}>
+            <ReimbursementPage />
           </Suspense>
         )
       case 'approval_center':

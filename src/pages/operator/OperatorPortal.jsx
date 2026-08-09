@@ -20,6 +20,7 @@ import toast from 'react-hot-toast'
 import FieldExpensePage from '../fieldexpense/FieldExpensePage'
 import OperatorChatPanel from './OperatorChatPanel'
 import ActiveCallScreen from './ActiveCallScreen'
+import EmployeeReimbursePage from './EmployeeReimbursePage'
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
@@ -2110,6 +2111,7 @@ const TABS = [
   { id: 'attendance', big: '📅',  label: 'attendance' },
   { id: 'pay',        big: '💰',  label: 'pay'        },
   { id: 'expenses',   big: '🧾',  label: 'expenses'   },
+  { id: 'reimburse',  big: '💳',  label: 'reimburse'  },
   { id: 'chat',       big: '💬',  label: 'chat'       },
 ]
 
@@ -2644,6 +2646,13 @@ export default function OperatorPortal() {
       {tab === 'expenses' && (
         <div className="flex-1 overflow-hidden flex flex-col">
           <FieldExpensePage embedded={true} />
+        </div>
+      )}
+
+      {/* Reimbursements tab */}
+      {tab === 'reimburse' && (
+        <div className="flex-1 overflow-hidden flex flex-col">
+          <EmployeeReimbursePage embedded={true} />
         </div>
       )}
 

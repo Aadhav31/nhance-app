@@ -20,6 +20,7 @@ const PAGE_TITLES = {
   settings:    { title: 'Settings',                 subtitle: 'Company configuration' },
   profile:     { title: 'My Profile',               subtitle: 'Personal details & preferences' },
   superadmin:      { title: 'Nhance Admin',             subtitle: 'Platform management' },
+  reimbursements:  { title: 'Reimbursements',           subtitle: 'Employee out-of-pocket expense claims' },
   approval_center: { title: 'Approval Centre',         subtitle: 'Approvals & acknowledgments' },
   audit_log:       { title: 'Audit Log',               subtitle: 'Immutable record of all system actions' },
   chat:            { title: 'Team Chat',               subtitle: 'Channels, direct messages & calls' },
