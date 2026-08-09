@@ -74,21 +74,33 @@ const LABELS = {
 }
 
 // ── Channel list row ──────────────────────────────────────────────────────────
-function ChannelRow({ ch, unread, lastMsg, lastAt, onSelect }) {
+function ChannelRow({ ch, unread, lastMsg, lastAt, lastSender, operatorId, onSelect }) {
+  const isDM   = ch.type === 'direct'
+  const label  = ch.displayName || ch.name
+  const preview = lastMsg
+    ? (lastSender === operatorId ? `You: ${lastMsg}` : `${ch.displayName || ''}: ${lastMsg}`.trimStart())
+    : null
+
   return (
     <button
       onClick={() => onSelect(ch)}
       className="w-full flex items-center gap-3.5 px-4 py-4 active:bg-dark-700 transition-colors border-b border-dark-700/50 text-left"
     >
-      {/* Channel icon */}
-      <div className="w-12 h-12 rounded-2xl bg-primary-600/15 border border-primary-500/30 flex items-center justify-center flex-shrink-0">
-        <span className="text-primary-400 font-black text-2xl leading-none">#</span>
-      </div>
+      {/* Avatar / icon */}
+      {isDM ? (
+        <div className={`w-12 h-12 rounded-full ${aC(label)} flex items-center justify-center flex-shrink-0 font-black text-white text-lg`}>
+          {ini(label)}
+        </div>
+      ) : (
+        <div className="w-12 h-12 rounded-2xl bg-primary-600/15 border border-primary-500/30 flex items-center justify-center flex-shrink-0">
+          <span className="text-primary-400 font-black text-2xl leading-none">#</span>
+        </div>
+      )}
 
       {/* Info */}
       <div className="flex-1 min-w-0">
-        <p className="font-bold text-slate-100 truncate text-base">{ch.name}</p>
-        {lastMsg && <p className="text-xs text-slate-500 truncate mt-0.5">{lastMsg}</p>}
+        <p className="font-bold text-slate-100 truncate text-base">{label}</p>
+        {preview && <p className={`text-xs truncate mt-0.5 ${unread > 0 ? 'text-slate-300 font-medium' : 'text-slate-500'}`}>{preview}</p>}
       </div>
 
       {/* Right: date + unread badge */}
@@ -222,19 +234,26 @@ export default function OperatorChatPanel({
   const { data: channels = [], refetch: refetchChannels } = useQuery({
     queryKey: ['op_channels', companyId, operatorId],
     queryFn: async () => {
-      // Get channel IDs I belong to
+      // Get channel IDs + member names I belong to
       const { data: memberships } = await supabase
         .from('chat_members').select('channel_id').eq('user_id', operatorId)
       const ids = (memberships || []).map(m => m.channel_id)
       if (!ids.length) return []
       const { data } = await supabase
         .from('chat_channels')
-        .select('id,name,description,type,created_at')
+        .select('id,name,description,type,created_at,members:chat_members(user_id,user_name)')
         .in('id', ids)
         .eq('company_id', companyId)
         .eq('is_archived', false)
         .order('created_at')
-      return data || []
+      // For DMs, resolve the display name to the OTHER person
+      return (data || []).map(ch => {
+        if (ch.type === 'direct') {
+          const other = (ch.members || []).find(m => m.user_id !== operatorId)
+          return { ...ch, displayName: other?.user_name || ch.name }
+        }
+        return { ...ch, displayName: ch.name }
+      })
     },
     enabled: !!companyId && !!operatorId,
     refetchInterval: 30_000,
@@ -384,7 +403,7 @@ export default function OperatorChatPanel({
       await Promise.all(channels.map(async ch => {
         const { data } = await supabase
           .from('chat_messages')
-          .select('content,sender_name,created_at,attachments')
+          .select('content,sender_id,sender_name,created_at,attachments')
           .eq('channel_id', ch.id)
           .eq('is_deleted', false)
           .order('created_at', { ascending: false })
@@ -670,6 +689,8 @@ export default function OperatorChatPanel({
                   unread={unreadMap[ch.id] || 0}
                   lastMsg={preview}
                   lastAt={lm?.created_at}
+                  lastSender={lm?.sender_id}
+                  operatorId={operatorId}
                   onSelect={setChannel}
                 />
               )
