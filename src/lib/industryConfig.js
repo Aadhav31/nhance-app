@@ -167,6 +167,8 @@ export const INDUSTRY_NAV = {
     {
       section: 'Admin',
       items: [
+        { key: 'audit_log',      label: 'Audit Log',           icon: 'Shield',          module: MODULES.CORE,
+          roles: [ROLES.ADMIN] },
         { key: 'settings',       label: 'Settings',            icon: 'Settings',        module: MODULES.CORE,
           roles: [ROLES.ADMIN] },
         { key: 'company',        label: 'Company Profile',     icon: 'Building2',       module: MODULES.CORE,

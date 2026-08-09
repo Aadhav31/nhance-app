@@ -32,6 +32,7 @@ import {
 import { useAuth } from '../../contexts/AuthContext'
 import { supabase } from '../../lib/supabase'
 import { fmtDate, fmtDateTime, fmtCurrency } from '../../lib/utils'
+import { logAction } from '../../lib/auditLog'
 
 // ── Module display config ──────────────────────────────────────────────────────
 const MODULE_META = {
@@ -360,6 +361,22 @@ export default function ApprovalCenterPage() {
       queryClient.invalidateQueries({ queryKey: ['ra_bills'] })
       queryClient.invalidateQueries({ queryKey: ['field_expenses'] })
       queryClient.invalidateQueries({ queryKey: ['ra_bills_outstanding_dash'] })
+      queryClient.invalidateQueries({ queryKey: ['audit_logs'] })
+
+      // 4. Audit log
+      const moduleLabel = { ra_bill: 'RA Billing', field_expense: 'Field Expense', hire_contract: 'Hire Contract', purchase_bill: 'Purchase' }
+      const actionLabel = { approved: 'approved', rejected: 'rejected', acknowledged: 'acknowledged' }
+      logAction({
+        companyId,
+        module:      'approvals',
+        action:      action,
+        recordId:    item.record_id,
+        recordRef:   item.record_ref,
+        description: `${moduleLabel[item.module] || item.module} ${item.record_ref || ''} — ${actionLabel[action] || action}${comments ? `: "${comments}"` : ''}`,
+        actorId:     profile?.id,
+        actorName:   userName,
+        actorRole:   userRole,
+      })
     } catch (err) {
       alert('Action failed: ' + err.message)
     } finally {

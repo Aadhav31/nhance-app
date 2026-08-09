@@ -47,6 +47,7 @@ const UsageBillingPage        = lazy(() => import('./pages/hire/UsageBillingPage
 const BOQPage                 = lazy(() => import('./pages/boq/BOQPage'))
 const RABillingPage           = lazy(() => import('./pages/ra_billing/RABillingPage'))
 const ApprovalCenterPage      = lazy(() => import('./pages/approvals/ApprovalCenterPage'))
+const AuditLogPage            = lazy(() => import('./pages/audit/AuditLogPage'))
 
 // ── Connectivity hook ─────────────────────────────────────────────────────────
 function useOnlineStatus() {
@@ -401,6 +402,12 @@ function AppShell() {
         return (
           <Suspense fallback={<LoadingScreen message="Loading Approval Centre…" />}>
             <ApprovalCenterPage />
+          </Suspense>
+        )
+      case 'audit_log':
+        return (
+          <Suspense fallback={<LoadingScreen message="Loading Audit Log…" />}>
+            <AuditLogPage />
           </Suspense>
         )
       case 'showroom':     return <ComingSoon page="Vehicle Stock / Showroom" />

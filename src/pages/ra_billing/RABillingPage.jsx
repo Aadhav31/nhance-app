@@ -20,6 +20,7 @@ import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import { nextDocNumber } from '../../utils/docNumbers'
 import { generateRABillPDF } from '../../lib/raBillPDF'
+import { logAction } from '../../lib/auditLog'
 import toast from 'react-hot-toast'
 import {
   Plus, X, Search, Loader2, ArrowLeft, FileText, Pencil, Trash2,
@@ -270,6 +271,19 @@ function RaiseRABillModal({ companyId, session, onClose, onSaved, preselectedBoq
 
       qc.invalidateQueries({ queryKey: ['ra_bills_global', companyId] })
       qc.invalidateQueries({ queryKey: ['boq_items', selectedBoq.id] })
+
+      logAction({
+        companyId,
+        module:      'ra_billing',
+        action:      'created',
+        recordId:    ra.id,
+        recordRef:   raNum,
+        description: `RA Bill ${raNum} created — ${selectedBoq.client_name || ''} · ${fmtINR(netPayable)}`,
+        actorId:     session?.user?.id,
+        actorName:   session?.user?.email,
+        actorRole:   'unknown', // RaiseRABillModal doesn't receive profile; actorName is enough
+      })
+
       toast.success(`${raNum} raised — Net payable ${fmtINR(netPayable)}`)
       onSaved()
     } catch (e) { toast.error(e.message) } finally { setSaving(false) }
@@ -546,6 +560,25 @@ function RABillDetail({ ra: initialRa, companyId, session, company, profile, onB
         .eq('status', 'pending')
     }
 
+    // Audit log
+    const boq = ra.boq || {}
+    const actionDesc = {
+      submitted: `RA Bill ${ra.ra_number} submitted for manager approval — ${boq.client_name || ''}`,
+      approved:  `RA Bill ${ra.ra_number} approved / certified — ${boq.client_name || ''}`,
+      draft:     `RA Bill ${ra.ra_number} recalled to draft`,
+    }
+    logAction({
+      companyId,
+      module:      'ra_billing',
+      action:      status,
+      recordId:    ra.id,
+      recordRef:   ra.ra_number,
+      description: actionDesc[status] || `RA Bill ${ra.ra_number} marked ${status}`,
+      actorId:     session?.user?.id,
+      actorName:   userName,
+      actorRole:   profile?.role,
+    })
+
     await refreshRa()
     onRefresh()
     qc.invalidateQueries({ queryKey: ['approval_pending'] })
@@ -554,8 +587,20 @@ function RABillDetail({ ra: initialRa, companyId, session, company, profile, onB
 
   const deleteRA = async () => {
     if (!window.confirm(`Delete ${ra.ra_number}? This cannot be undone.`)) return
+    const userName = profile?.full_name || session?.user?.email || 'Unknown'
     await supabase.from('ra_bill_items').delete().eq('ra_bill_id', ra.id)
     await supabase.from('ra_bills').delete().eq('id', ra.id)
+    logAction({
+      companyId,
+      module:      'ra_billing',
+      action:      'deleted',
+      recordId:    ra.id,
+      recordRef:   ra.ra_number,
+      description: `RA Bill ${ra.ra_number} permanently deleted`,
+      actorId:     session?.user?.id,
+      actorName:   userName,
+      actorRole:   profile?.role,
+    })
     onRefresh()
     onBack()
     toast.success('RA Bill deleted')
