@@ -606,11 +606,10 @@ function NewChannelModal({ companyId, session, profile, onClose, onCreated }) {
 }
 
 // ── New DM Modal ───────────────────────────────────────────────────────────────
-function NewDMModal({ companyId, session, profile, allUsers, onClose, onOpened }) {
+function NewDMModal({ companyId, session, profile, myRole, allUsers, onClose, onOpened }) {
   const [search, setSearch] = useState('')
   const myId   = session?.user?.id
   const myName = profile?.full_name || session?.user?.email || ''
-  const myRole = profile?.role || ''
 
   const filtered = allUsers.filter(u =>
     u.id !== myId &&
@@ -883,11 +882,11 @@ function useWebRTCCall({ channel, companyId, session, profile }) {
 
 // ── Main ChatPage ──────────────────────────────────────────────────────────────
 export default function ChatPage() {
-  const { companyId, session, profile } = useAuth()
+  const { companyId, session, profile, role } = useAuth()
   const queryClient = useQueryClient()
   const myId   = session?.user?.id
   const myName = profile?.full_name || session?.user?.email || ''
-  const myRole = profile?.role || ''
+  const myRole = role || ''
 
   const [activeChannel,   setActiveChannel]   = useState(null)
   const [showNewChannel,  setShowNewChannel]   = useState(false)
@@ -895,15 +894,22 @@ export default function ChatPage() {
   const [sidebarOpen,     setSidebarOpen]      = useState(true)
 
   // All company users (for DM picker)
+  // NOTE: role lives in user_roles table, not user_profiles — fetch and merge
   const { data: allUsers = [] } = useQuery({
     queryKey: ['company_users', companyId],
     queryFn: async () => {
-      const { data } = await supabase
-        .from('user_profiles')
-        .select('id, full_name, email, role')
-        .eq('company_id', companyId)
-        .order('full_name')
-      return data || []
+      const [{ data: profiles }, { data: roles }] = await Promise.all([
+        supabase
+          .from('user_profiles')
+          .select('id, full_name, email')
+          .eq('company_id', companyId)
+          .order('full_name'),
+        supabase
+          .from('user_roles')
+          .select('user_id, role'),
+      ])
+      const roleMap = Object.fromEntries((roles || []).map(r => [r.user_id, r.role]))
+      return (profiles || []).map(p => ({ ...p, role: roleMap[p.id] || '' }))
     },
     enabled: !!companyId,
   })
@@ -1121,6 +1127,7 @@ export default function ChatPage() {
       )}
       {showNewDM && (
         <NewDMModal companyId={companyId} session={session} profile={profile}
+          myRole={myRole}
           allUsers={allUsers}
           onClose={() => setShowNewDM(false)} onOpened={handleDMOpened} />
       )}
