@@ -508,22 +508,24 @@ export default function OperatorChatPanel({
   }
 
   const insertCallMsg = async (channelId, content) => {
-    await supabase.from('chat_messages').insert({
-      channel_id: channelId, company_id: companyId,
-      sender_id: operatorId, sender_name: operatorName, sender_role: 'system',
-      content, attachments: [],
-    }).catch(() => {})
+    try {
+      await supabase.from('chat_messages').insert({
+        channel_id: channelId, company_id: companyId,
+        sender_id: operatorId, sender_name: operatorName, sender_role: 'system',
+        content, attachments: [],
+      })
+    } catch {}
     queryClient.invalidateQueries(['op_messages', channelId])
   }
 
   // Send a WebRTC signal via the portal's shared broadcast channel.
   // portalCallChRef is the portal's subscribed nhance-calls-${companyId} channel.
-  // Using a single shared channel avoids duplicate-subscription undefined behavior.
   const bcastSignal = (toUser, channelId, signalType, extra = {}) => {
+    // Use optional chaining all the way through — if channel isn't ready, fail silently
     portalCallChRef?.current?.send({
       type: 'broadcast', event: 'call-signal',
       payload: { to_user: toUser, from_user: operatorId, channel_id: channelId, signal_type: signalType, ...extra },
-    }).catch(() => {})
+    })?.catch?.(() => {})
   }
 
   const buildPC = (channelId, toUserId) => {
@@ -542,7 +544,14 @@ export default function OperatorChatPanel({
   // ── Outgoing call (from operator) ──────────────────────────────────────────
   const startDMCall = async () => {
     if (!channel || channel.type !== 'direct') return
-    // channel.members may be empty if channel was just created — fetch directly
+
+    // Verify broadcast channel is ready before attempting call
+    if (!portalCallChRef?.current) {
+      toast.error('Call channel not ready — please wait a moment and try again')
+      return
+    }
+
+    // Resolve peer from channel.members or DB
     let peer = (channel.members || []).find(m => m.user_id !== operatorId)
     if (!peer) {
       const { data: mems } = await supabase
@@ -551,24 +560,36 @@ export default function OperatorChatPanel({
         .eq('channel_id', channel.id)
       peer = (mems || []).find(m => m.user_id !== operatorId)
     }
-    if (!peer) { console.warn('startDMCall: no peer found in channel', channel.id); return }
+    if (!peer) {
+      toast.error('Could not find the person to call')
+      return
+    }
+
     try {
+      // Ensure mediaDevices is available (requires HTTPS — Capacitor WebView serves from Vercel)
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error('Microphone API not available. Ensure the app is served over HTTPS.')
+      }
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
       localAudRef.current = stream
       const pc = buildPC(channel.id, peer.user_id)
       stream.getTracks().forEach(t => pc.addTrack(t, stream))
       const offer = await pc.createOffer()
       await pc.setLocalDescription(offer)
-      // call-start first so receiver shows overlay, then offer
+      // Send call-start first so receiver shows overlay, then offer 400ms later
       bcastSignal(peer.user_id, channel.id, 'call-start', { name: operatorName, callType: 'audio' })
-      // Small delay so receiver subscribes before offer arrives
       await new Promise(r => setTimeout(r, 400))
       bcastSignal(peer.user_id, channel.id, 'offer', { type: offer.type, sdp: offer.sdp })
-      await insertCallMsg(channel.id, `📞 ${operatorName} started a call`)
       setActiveCall({ peerName: peer.user_name || peer.user_id, peerId: peer.user_id, channelId: channel.id, muted: false, callRecording: false })
       setCallStartTime(Date.now())
+      // Insert call event after state updates — DB failure must not abort the call
+      insertCallMsg(channel.id, `📞 ${operatorName} started a call`)
     } catch (err) {
-      console.error('start call error', err)
+      console.error('startDMCall error', err)
+      toast.error('Call failed: ' + (err.message || 'Mic permission denied or unavailable'))
+      // Cleanup any partial state
+      localAudRef.current?.getTracks().forEach(t => t.stop()); localAudRef.current = null
+      pcRef.current?.close(); pcRef.current = null
     }
   }
 

@@ -801,11 +801,13 @@ function useWebRTCCall({ channel, companyId, session, profile }) {
       await new Promise(r => setTimeout(r, 400))  // let receiver setup
       sendSignal('offer', peer.user_id, { type: offer.type, sdp: offer.sdp })
 
-      await insertCallEvent(channel.id, `📞 ${myName} started a call`)
       setCallState({ status: 'calling', peerId: peer.user_id, peerName: peer.user_name, callType, localStream: stream, remoteStream: null, isScreenSharing: false, channelId: channel.id, startedAt: Date.now() })
     } catch (e) {
       alert('Could not start call: ' + (e.message || 'Permission denied'))
+      return
     }
+    // Insert call event AFTER try/catch so a DB failure doesn't abort the call
+    await insertCallEvent(channel.id, `📞 ${myName} started a call`)
   }
 
   // handleOffer via ref to avoid stale closure
@@ -827,10 +829,11 @@ function useWebRTCCall({ channel, companyId, session, profile }) {
         sendSignal('answer', p.from_user, { type: answer.type, sdp: answer.sdp })
 
         const chId = p.channel_id || channel?.id
-        await insertCallEvent(chId, `📞 Call answered`)
         setCallState({ status: 'connected', peerId: p.from_user, peerName: caller?.user_name || 'Caller', callType: 'audio', localStream: stream, remoteStream: null, isScreenSharing: false, channelId: chId, startedAt: Date.now() })
         setIncomingCall(null)
-      } catch (e) { console.error('handleOffer error', e) }
+      } catch (e) { console.error('handleOffer error', e); return }
+      // insertCallEvent after try/catch to not abort call on DB failure
+      await insertCallEvent(p.channel_id || channel?.id, `📞 Call answered`)
     }
   })
 
@@ -879,12 +882,16 @@ function useWebRTCCall({ channel, companyId, session, profile }) {
   }
 
   // Insert a system call-history pill into the chat
+  // Uses try/catch — Supabase JS v2 PostgrestFilterBuilder doesn't expose .catch() directly
   const insertCallEvent = async (channelId, content) => {
-    await supabase.from('chat_messages').insert({
-      channel_id: channelId, company_id: companyId,
-      sender_id: myId, sender_name: myName, sender_role: 'system',
-      content, attachments: [],
-    }).catch(() => {})
+    if (!channelId) return
+    try {
+      await supabase.from('chat_messages').insert({
+        channel_id: channelId, company_id: companyId,
+        sender_id: myId, sender_name: myName, sender_role: 'system',
+        content, attachments: [],
+      })
+    } catch {}
   }
 
   const endCall = async () => {
