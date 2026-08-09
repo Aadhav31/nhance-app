@@ -1967,96 +1967,163 @@ export default function OperatorPortal() {
   const portalRemRef   = useRef(null) // remote audio element
   const ringRef        = useRingtone()
 
-  // ── Global incoming-call subscription ─────────────────────────────────
+  // ── Broadcast channel ref — used to send signals back to caller ──────────
+  const callChRef    = useRef(null)
+  const portalOfferRef = useRef(null)   // mirror of portalOffer for stale-closure safety
+  const pendingAccept  = useRef(false)  // tapped Accept before offer arrived?
+
+  // Helper: send a signal via broadcast
+  const bcast = (toUser, channelId, signalType, extra = {}) => {
+    callChRef.current?.send({
+      type: 'broadcast', event: 'call-signal',
+      payload: { to_user: toUser, from_user: userProfile?.id, channel_id: channelId, signal_type: signalType, ...extra },
+    }).catch(() => {})
+  }
+
+  // ── Global call subscription via BROADCAST (instant, no WAL/index issues) ─
   useEffect(() => {
     const uid = userProfile?.id
     if (!uid || !companyId) return
-    const sub = supabase.channel(`portal-call-${uid}`)
-      .on('postgres_changes', {
-        event: 'INSERT', schema: 'public', table: 'chat_call_signals',
-        filter: `company_id=eq.${companyId}`,   // indexed column — reliable
-      }, payload => {
-        const sig = payload.new
-        if (sig.to_user !== uid) return          // client-side filter
-        if (sig.signal_type === 'call-start') {
-          setPortalIncoming({ channelId: sig.channel_id, callerId: sig.from_user, callerName: sig.payload?.name || 'Someone' })
-          ringRef.play()
-        } else if (sig.signal_type === 'offer') {
-          setPortalOffer(sig.payload)
-        } else if (sig.signal_type === 'ice-candidate') {
-          portalPcRef.current?.addIceCandidate(new RTCIceCandidate(sig.payload)).catch(() => {})
-        } else if (sig.signal_type === 'call-end' || sig.signal_type === 'busy') {
-          ringRef.stop()
-          portalPcRef.current?.close(); portalPcRef.current = null
-          portalAudRef.current?.getTracks().forEach(t => t.stop()); portalAudRef.current = null
-          portalRemRef.current = null
-          setPortalIncoming(null); setPortalOffer(null); setPortalActive(null)
-        } else if (sig.signal_type === 'answer') {
-          portalPcRef.current?.setRemoteDescription(new RTCSessionDescription(sig.payload)).catch(() => {})
+
+    const cleanupCall = () => {
+      ringRef.stop()
+      portalPcRef.current?.close(); portalPcRef.current = null
+      portalAudRef.current?.getTracks().forEach(t => t.stop()); portalAudRef.current = null
+      if (portalRemRef.current) { portalRemRef.current.srcObject = null; portalRemRef.current = null }
+      setPortalIncoming(null); setPortalOffer(null); setPortalActive(null)
+      portalOfferRef.current = null; pendingAccept.current = false
+    }
+
+    const doAccept = async (incoming, offer) => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+        portalAudRef.current = stream
+        const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }] })
+        portalPcRef.current = pc
+        stream.getTracks().forEach(t => pc.addTrack(t, stream))
+        pc.ontrack = e => {
+          const a = new Audio(); a.srcObject = e.streams[0]; a.play().catch(() => {})
+          portalRemRef.current = a
         }
-      })
-      .subscribe()
-    return () => { supabase.removeChannel(sub); ringRef.stop() }
+        pc.onicecandidate = e => {
+          if (e.candidate) bcast(incoming.callerId, incoming.channelId, 'ice-candidate', { candidate: e.candidate.toJSON() })
+        }
+        await pc.setRemoteDescription(new RTCSessionDescription(offer))
+        const answer = await pc.createAnswer()
+        await pc.setLocalDescription(answer)
+        bcast(incoming.callerId, incoming.channelId, 'answer', { type: answer.type, sdp: answer.sdp })
+        await supabase.from('chat_messages').insert({
+          channel_id: incoming.channelId, company_id: companyId,
+          sender_id: uid, sender_name: userProfile?.full_name || 'Operator', sender_role: 'system',
+          content: '📞 Call answered', attachments: [],
+        }).catch(() => {})
+        setPortalActive({ peerName: incoming.callerName, peerId: incoming.callerId, channelId: incoming.channelId })
+        setPortalIncoming(null); setPortalOffer(null)
+        portalOfferRef.current = null; pendingAccept.current = false
+      } catch { ringRef.stop(); setPortalIncoming(null); setPortalOffer(null) }
+    }
+
+    const ch = supabase.channel(`nhance-calls-${companyId}`, { config: { broadcast: { self: false } } })
+    callChRef.current = ch
+
+    ch.on('broadcast', { event: 'call-signal' }, ({ payload: p }) => {
+      if (p.to_user !== uid) return   // not for me
+
+      if (p.signal_type === 'call-start') {
+        portalOfferRef.current = null
+        pendingAccept.current = false
+        setPortalIncoming({ channelId: p.channel_id, callerId: p.from_user, callerName: p.name || 'Someone' })
+        ringRef.play()
+
+      } else if (p.signal_type === 'offer') {
+        const offer = { type: p.type, sdp: p.sdp }
+        portalOfferRef.current = offer
+        setPortalOffer(offer)
+        // If user already tapped Accept before offer arrived, complete handshake now
+        if (pendingAccept.current) {
+          const incoming = { channelId: p.channel_id, callerId: p.from_user, callerName: p.name || 'Someone' }
+          pendingAccept.current = false
+          doAccept(incoming, offer)
+        }
+
+      } else if (p.signal_type === 'ice-candidate' && portalPcRef.current) {
+        portalPcRef.current.addIceCandidate(new RTCIceCandidate(p.candidate)).catch(() => {})
+
+      } else if (p.signal_type === 'answer' && portalPcRef.current) {
+        // This is a reply to our OUTGOING call — handled by OperatorChatPanel
+        // Only set if we initiated (pcRef in chat panel), skip here
+      } else if (p.signal_type === 'call-end' || p.signal_type === 'busy') {
+        cleanupCall()
+      }
+    })
+    .subscribe()
+
+    return () => { supabase.removeChannel(ch); callChRef.current = null; ringRef.stop() }
   }, [userProfile?.id, companyId])
 
-  const portalAcceptCall = async () => {
-    if (!portalIncoming || !portalOffer) return
+  const portalAcceptCall = () => {
+    if (!portalIncoming) return
     ringRef.stop()
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
-      portalAudRef.current = stream
-      const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] })
-      portalPcRef.current = pc
-      stream.getTracks().forEach(t => pc.addTrack(t, stream))
-      pc.ontrack = e => { const a = new Audio(); a.srcObject = e.streams[0]; a.play().catch(() => {}); portalRemRef.current = a }
-      pc.onicecandidate = async e => {
-        if (e.candidate) await supabase.from('chat_call_signals').insert({
-          channel_id: portalIncoming.channelId, company_id: companyId,
-          from_user: userProfile.id, to_user: portalIncoming.callerId,
-          signal_type: 'ice-candidate', payload: e.candidate,
-        }).catch(() => {})
-      }
-      await pc.setRemoteDescription(new RTCSessionDescription(portalOffer))
-      const answer = await pc.createAnswer()
-      await pc.setLocalDescription(answer)
-      await supabase.from('chat_call_signals').insert({
-        channel_id: portalIncoming.channelId, company_id: companyId,
-        from_user: userProfile.id, to_user: portalIncoming.callerId,
-        signal_type: 'answer', payload: answer,
-      })
-      await supabase.from('chat_messages').insert({
-        channel_id: portalIncoming.channelId, company_id: companyId,
-        sender_id: userProfile.id, sender_name: userProfile.full_name || 'Operator', sender_role: 'system',
-        content: `📞 Call answered`, attachments: [],
-      }).catch(() => {})
-      setPortalActive({ peerName: portalIncoming.callerName, peerId: portalIncoming.callerId, channelId: portalIncoming.channelId })
-      setPortalIncoming(null); setPortalOffer(null)
-    } catch (err) { ringRef.stop(); setPortalIncoming(null); setPortalOffer(null) }
+    if (portalOfferRef.current) {
+      // Offer already received — accept immediately
+      const inc = portalIncoming
+      setPortalIncoming(null)
+      doAcceptRef.current?.(inc, portalOfferRef.current)
+    } else {
+      // Offer not yet received — mark pending; subscription handler will complete it
+      pendingAccept.current = true
+      setPortalIncoming(prev => prev)  // keep overlay showing
+    }
   }
 
-  const portalDeclineCall = async () => {
-    ringRef.stop()
-    if (portalIncoming) {
-      await supabase.from('chat_call_signals').insert({
-        channel_id: portalIncoming.channelId, company_id: companyId,
-        from_user: userProfile.id, to_user: portalIncoming.callerId,
-        signal_type: 'busy', payload: {},
-      }).catch(() => {})
+  // Stable ref to doAccept so it can be called from subscription closure
+  const doAcceptRef = useRef(null)
+  useEffect(() => {
+    doAcceptRef.current = async (incoming, offer) => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+        portalAudRef.current = stream
+        const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }] })
+        portalPcRef.current = pc
+        stream.getTracks().forEach(t => pc.addTrack(t, stream))
+        pc.ontrack = e => {
+          const a = new Audio(); a.srcObject = e.streams[0]; a.play().catch(() => {})
+          portalRemRef.current = a
+        }
+        pc.onicecandidate = e => {
+          if (e.candidate) bcast(incoming.callerId, incoming.channelId, 'ice-candidate', { candidate: e.candidate.toJSON() })
+        }
+        await pc.setRemoteDescription(new RTCSessionDescription(offer))
+        const answer = await pc.createAnswer()
+        await pc.setLocalDescription(answer)
+        bcast(incoming.callerId, incoming.channelId, 'answer', { type: answer.type, sdp: answer.sdp })
+        await supabase.from('chat_messages').insert({
+          channel_id: incoming.channelId, company_id: companyId,
+          sender_id: userProfile?.id, sender_name: userProfile?.full_name || 'Operator', sender_role: 'system',
+          content: '📞 Call answered', attachments: [],
+        }).catch(() => {})
+        setPortalActive({ peerName: incoming.callerName, peerId: incoming.callerId, channelId: incoming.channelId })
+        setPortalIncoming(null); setPortalOffer(null)
+        portalOfferRef.current = null
+      } catch (err) {
+        console.error('portalAcceptCall error', err)
+        ringRef.stop(); setPortalIncoming(null); setPortalOffer(null)
+      }
     }
+  })
+
+  const portalDeclineCall = () => {
+    ringRef.stop()
+    if (portalIncoming) bcast(portalIncoming.callerId, portalIncoming.channelId, 'busy')
+    pendingAccept.current = false; portalOfferRef.current = null
     setPortalIncoming(null); setPortalOffer(null)
   }
 
-  const portalEndCall = async () => {
-    if (portalActive) {
-      await supabase.from('chat_call_signals').insert({
-        channel_id: portalActive.channelId, company_id: companyId,
-        from_user: userProfile.id, to_user: portalActive.peerId,
-        signal_type: 'call-end', payload: {},
-      }).catch(() => {})
-    }
+  const portalEndCall = () => {
+    if (portalActive) bcast(portalActive.peerId, portalActive.channelId, 'call-end')
     portalPcRef.current?.close(); portalPcRef.current = null
     portalAudRef.current?.getTracks().forEach(t => t.stop()); portalAudRef.current = null
-    portalRemRef.current = null
+    if (portalRemRef.current) { portalRemRef.current.srcObject = null; portalRemRef.current = null }
     setPortalActive(null)
   }
 

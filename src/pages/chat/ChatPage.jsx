@@ -698,164 +698,135 @@ function ChannelItem({ channel, active, unread, myId, onClick }) {
   )
 }
 
-// ── WebRTC call hook ───────────────────────────────────────────────────────────
-function useWebRTCCall({ channel, companyId, session, profile, pendingCallRef }) {
+// ── WebRTC call hook (broadcast-based signaling) ──────────────────────────────
+function useWebRTCCall({ channel, companyId, session, profile }) {
   const myId   = session?.user?.id
-  const myName = profile?.full_name || session?.user?.email || 'Me'
-  const [callState, setCallState] = useState(null)  // null | {status, peerName, peerId, callType, ...}
+  const myName = profile?.full_name || (session?.user?.email ? session.user.email.split('@')[0].replace(/[._]/g, ' ') : 'Me')
+  const [callState, setCallState] = useState(null)
   const [incomingCall, setIncomingCall] = useState(null)
-  const pcRef     = useRef(null)
-  const localRef  = useRef(null)
-  const screenRef = useRef(null)
-  // Keep stable ref to handleIncomingSignal for use inside subscription callback
-  const handleSignalRef = useRef(null)
+  const pcRef       = useRef(null)
+  const localRef    = useRef(null)
+  const screenRef   = useRef(null)
+  const callChRef   = useRef(null)   // broadcast channel ref
+  const callStateRef = useRef(null)  // stable ref for stale-closure safety
+  useEffect(() => { callStateRef.current = callState }, [callState])
 
   const iceServers = [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }]
 
-  // Subscribe to incoming signals + drain any buffered signals from global sub
+  // ── Broadcast channel — one per company, persistent ───────────────────────
   useEffect(() => {
-    if (!channel?.id || !myId) return
-    const sub = supabase.channel(`call-signals-${channel.id}`)
-      .on('postgres_changes', {
-        event: 'INSERT', schema: 'public', table: 'chat_call_signals',
-        filter: `channel_id=eq.${channel.id}`,
-      }, (payload) => {
-        const sig = payload.new
-        if (sig.from_user === myId) return  // ignore own signals
-        handleSignalRef.current?.(sig)
-      })
-      .subscribe(status => {
-        // Once subscription is SUBSCRIBED, drain any buffered pending call
-        if (status === 'SUBSCRIBED' && pendingCallRef?.current?.channelId === channel.id) {
-          const pending = pendingCallRef.current
-          pendingCallRef.current = null
-          // Replay call-start
-          handleSignalRef.current?.({ signal_type: 'call-start', from_user: pending.callerId, payload: { name: pending.callerName } })
-          // Replay offer if already received
-          if (pending.offer) {
-            setTimeout(() => {
-              handleSignalRef.current?.({ signal_type: 'offer', from_user: pending.callerId, payload: pending.offer })
-            }, 100)
-          }
-        }
-      })
-    return () => supabase.removeChannel(sub)
-  }, [channel?.id, myId])
+    if (!myId || !companyId) return
+    const ch = supabase.channel(`nhance-calls-${companyId}`, { config: { broadcast: { self: false } } })
+    callChRef.current = ch
 
-  const sendSignal = async (type, payload, toUser = null) => {
-    await supabase.from('chat_call_signals').insert({
-      channel_id: channel.id, company_id: companyId,
-      from_user: myId, to_user: toUser,
-      signal_type: type, payload,
+    ch.on('broadcast', { event: 'call-signal' }, async ({ payload: p }) => {
+      if (p.to_user !== myId) return
+      if (p.from_user === myId) return
+
+      if (p.signal_type === 'call-start') {
+        setIncomingCall({ callerId: p.from_user, callerName: p.name || 'Someone', callType: p.callType || 'audio', channelId: p.channel_id })
+      } else if (p.signal_type === 'offer') {
+        await handleOfferRef.current?.(p)
+      } else if (p.signal_type === 'answer') {
+        await pcRef.current?.setRemoteDescription(new RTCSessionDescription({ type: p.type, sdp: p.sdp }))
+        setCallState(prev => prev ? { ...prev, status: 'connected' } : prev)
+      } else if (p.signal_type === 'ice-candidate') {
+        try { await pcRef.current?.addIceCandidate(new RTCIceCandidate(p.candidate)) } catch {}
+      } else if (p.signal_type === 'call-end') {
+        endCallCleanup()
+      } else if (p.signal_type === 'busy') {
+        setCallState(prev => prev ? { ...prev, status: 'busy' } : prev)
+        setTimeout(endCallCleanup, 2000)
+      }
     })
+    .subscribe()
+
+    return () => { supabase.removeChannel(ch); callChRef.current = null }
+  }, [myId, companyId])
+
+  const sendSignal = (type, toUser, extra = {}) => {
+    callChRef.current?.send({
+      type: 'broadcast', event: 'call-signal',
+      payload: { to_user: toUser, from_user: myId, channel_id: channel?.id, signal_type: type, ...extra },
+    }).catch(() => {})
   }
 
-  const handleIncomingSignal = async (sig) => {
-    if (sig.signal_type === 'call-start') {
-      setIncomingCall({ callerId: sig.from_user, callerName: sig.payload?.name || 'Someone', callType: sig.payload?.callType || 'audio' })
-    } else if (sig.signal_type === 'call-end') {
-      endCallCleanup()
-    } else if (sig.signal_type === 'offer') {
-      await handleOffer(sig.payload, sig.from_user)
-    } else if (sig.signal_type === 'answer') {
-      await pcRef.current?.setRemoteDescription(new RTCSessionDescription(sig.payload))
-      setCallState(prev => ({ ...prev, status: 'connected' }))
-    } else if (sig.signal_type === 'ice-candidate') {
-      try { await pcRef.current?.addIceCandidate(new RTCIceCandidate(sig.payload)) } catch (_) {}
-    } else if (sig.signal_type === 'busy') {
-      setCallState(prev => ({ ...prev, status: 'busy' }))
-      setTimeout(endCallCleanup, 2000)
-    }
-  }
-
-  // Keep handleSignalRef current so subscription callback can call it without stale closure
-  useEffect(() => { handleSignalRef.current = handleIncomingSignal })
+  const handleOfferRef = useRef(null)
 
   const createPeerConnection = (peerId, callType, localStream) => {
     const pc = new RTCPeerConnection({ iceServers })
     localStream.getTracks().forEach(t => pc.addTrack(t, localStream))
-
     pc.onicecandidate = ({ candidate }) => {
-      if (candidate) sendSignal('ice-candidate', candidate.toJSON(), peerId)
+      if (candidate) sendSignal('ice-candidate', peerId, { candidate: candidate.toJSON() })
     }
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === 'connected') {
-        setCallState(prev => ({ ...prev, status: 'connected' }))
+        setCallState(prev => prev ? { ...prev, status: 'connected' } : prev)
       } else if (['disconnected','failed','closed'].includes(pc.connectionState)) {
         endCallCleanup()
       }
     }
-    pc.ontrack = (e) => {
-      setCallState(prev => ({ ...prev, remoteStream: e.streams[0] }))
-    }
+    pc.ontrack = (e) => { setCallState(prev => prev ? { ...prev, remoteStream: e.streams[0] } : prev) }
     pcRef.current = pc
     return pc
   }
 
   const startCall = async (callType) => {
     try {
-      const constraints = { audio: true, video: callType === 'video' }
-      const stream = await navigator.mediaDevices.getUserMedia(constraints)
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: callType === 'video' })
       localRef.current = stream
-
-      // Get other members in channel
       const { data: members } = await supabase
         .from('chat_members').select('*').eq('channel_id', channel.id)
-      const others = members?.filter(m => m.user_id !== myId) || []
-      const peer   = others[0]  // For simplicity, call first other member (1:1)
+      const peer = members?.filter(m => m.user_id !== myId)[0]
       if (!peer) { alert('No one else in this channel to call'); stream.getTracks().forEach(t => t.stop()); return }
 
       const pc = createPeerConnection(peer.user_id, callType, stream)
       const offer = await pc.createOffer()
       await pc.setLocalDescription(offer)
 
-      await sendSignal('call-start', { name: myName, callType }, peer.user_id)
-      await sendSignal('offer', offer, peer.user_id)
+      sendSignal('call-start', peer.user_id, { name: myName, callType })
+      await new Promise(r => setTimeout(r, 400))  // let receiver setup
+      sendSignal('offer', peer.user_id, { type: offer.type, sdp: offer.sdp })
 
-      setCallState({
-        status: 'calling', peerId: peer.user_id, peerName: peer.user_name,
-        callType, localStream: stream, remoteStream: null, isScreenSharing: false,
-        onToggleScreen: toggleScreenShare,
-      })
+      setCallState({ status: 'calling', peerId: peer.user_id, peerName: peer.user_name, callType, localStream: stream, remoteStream: null, isScreenSharing: false })
     } catch (e) {
       alert('Could not start call: ' + (e.message || 'Permission denied'))
     }
   }
 
-  const handleOffer = async (offer, peerId) => {
-    try {
-      const { data: members } = await supabase
-        .from('chat_members').select('*').eq('channel_id', channel.id)
-      const caller = members?.find(m => m.user_id === peerId)
-      if (!caller) return
+  // handleOffer via ref to avoid stale closure
+  useEffect(() => {
+    handleOfferRef.current = async (p) => {
+      try {
+        const { data: members } = await supabase
+          .from('chat_members').select('*').eq('channel_id', p.channel_id || channel?.id)
+        const caller = members?.find(m => m.user_id === p.from_user)
 
-      if (callState) { await sendSignal('busy', {}, peerId); return }
+        if (callStateRef.current) { sendSignal('busy', p.from_user); return }
 
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
-      localRef.current = stream
-      const pc = createPeerConnection(peerId, 'audio', stream)
-      await pc.setRemoteDescription(new RTCSessionDescription(offer))
-      const answer = await pc.createAnswer()
-      await pc.setLocalDescription(answer)
-      await sendSignal('answer', answer, peerId)
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+        localRef.current = stream
+        const pc = createPeerConnection(p.from_user, 'audio', stream)
+        await pc.setRemoteDescription(new RTCSessionDescription({ type: p.type, sdp: p.sdp }))
+        const answer = await pc.createAnswer()
+        await pc.setLocalDescription(answer)
+        sendSignal('answer', p.from_user, { type: answer.type, sdp: answer.sdp })
 
-      setCallState({
-        status: 'connected', peerId, peerName: caller.user_name,
-        callType: 'audio', localStream: stream, remoteStream: null, isScreenSharing: false,
-        onToggleScreen: toggleScreenShare,
-      })
-    } catch (e) { console.error('handleOffer error', e) }
-  }
+        setCallState({ status: 'connected', peerId: p.from_user, peerName: caller?.user_name || 'Caller', callType: 'audio', localStream: stream, remoteStream: null, isScreenSharing: false })
+        setIncomingCall(null)
+      } catch (e) { console.error('handleOffer error', e) }
+    }
+  })
 
   const acceptCall = async () => {
     if (!incomingCall) return
     setIncomingCall(null)
-    // startCall flow handled by offer → already in handleOffer
+    // offer handler fires automatically when offer broadcast arrives — nothing to do here
   }
 
   const declineCall = async () => {
     if (!incomingCall) return
-    await sendSignal('busy', {}, incomingCall.callerId)
+    sendSignal('busy', incomingCall.callerId)
     setIncomingCall(null)
   }
 
@@ -1018,34 +989,8 @@ export default function ChatPage({ navExtra = {} }) {
     refetchInterval: 15_000,
   })
 
-  // ── Global incoming-call subscription ─────────────────────────────────────
-  // Uses company_id filter (indexed) + client-side to_user check (reliable)
-  // Buffers call-start + offer so per-channel sub timing doesn't matter
-  const pendingCallRef = useRef(null)  // { channelId, callerId, callerName, offer }
-  useEffect(() => {
-    if (!myId || !companyId) return
-    const sub = supabase.channel(`desktop-call-${myId}`)
-      .on('postgres_changes', {
-        event: 'INSERT', schema: 'public', table: 'chat_call_signals',
-        filter: `company_id=eq.${companyId}`,   // indexed — reliable
-      }, payload => {
-        const sig = payload.new
-        if (sig.to_user !== myId) return         // client-side filter
-        if (sig.signal_type === 'call-start') {
-          pendingCallRef.current = { channelId: sig.channel_id, callerId: sig.from_user, callerName: sig.payload?.name || 'Someone', offer: null }
-          // Navigate to the DM channel so per-channel sub activates
-          const existingCh = channels.find(c => c.id === sig.channel_id)
-          if (existingCh) setActiveChannel(existingCh)
-        } else if (sig.signal_type === 'offer') {
-          if (pendingCallRef.current && pendingCallRef.current.channelId === sig.channel_id) {
-            pendingCallRef.current = { ...pendingCallRef.current, offer: sig.payload }
-          }
-        }
-      })
-      .subscribe()
-    return () => { supabase.removeChannel(sub) }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [myId, companyId])
+  // Global call subscription now lives inside useWebRTCCall via broadcast channel.
+  // No separate postgres_changes subscription needed.
 
   // Auto-open DM when navigated from HR employee tile
   useEffect(() => {
@@ -1090,7 +1035,7 @@ export default function ChatPage({ navExtra = {} }) {
 
   // WebRTC
   const { callState, incomingCall, startCall, endCall, acceptCall, declineCall } = useWebRTCCall({
-    channel: activeChannel, companyId, session, profile, pendingCallRef,
+    channel: activeChannel, companyId, session, profile,
   })
 
   const totalUnread = Object.values(unreadMap).reduce((s, c) => s + c, 0)

@@ -468,35 +468,38 @@ export default function OperatorChatPanel({
     return () => { supabase.removeChannel(sub) }
   }, [channel?.id, queryClient])
 
-  // NOTE: Incoming-call subscription lives in OperatorPortal (global, any tab).
-  // OperatorChatPanel only handles OUTGOING calls (startDMCall) and call-end/answer
-  // signals that come back to the caller after the other party picks up.
+  // Broadcast channel ref for outgoing call replies
+  const outCallChRef = useRef(null)
+  // Stable ref to activeCall (avoids stale closure in broadcast handler)
+  const activeCallRef = useRef(null)
+  useEffect(() => { activeCallRef.current = activeCall }, [activeCall])
+
+  // NOTE: Incoming calls handled at OperatorPortal level.
+  // This handles REPLIES to our OUTGOING calls via broadcast.
   useEffect(() => {
-    if (!operatorId || !companyId || !activeCall) return
-    const sub = supabase
-      .channel(`op-call-answer-${operatorId}`)
-      .on('postgres_changes', {
-        event: 'INSERT', schema: 'public', table: 'chat_call_signals',
-        filter: `company_id=eq.${companyId}`,
-      }, async payload => {
-        const sig = payload.new
-        if (sig.to_user !== operatorId) return
-        if (sig.signal_type === 'answer') {
-          try { await pcRef.current?.setRemoteDescription(new RTCSessionDescription(sig.payload)) } catch {}
-        } else if (sig.signal_type === 'ice-candidate') {
-          try { await pcRef.current?.addIceCandidate(new RTCIceCandidate(sig.payload)) } catch {}
-        } else if (sig.signal_type === 'call-end' || sig.signal_type === 'busy') {
-          const wasRecording = activeCall?.callRecording
-          if (wasRecording) await stopCallRecord(activeCall.channelId, activeCall.peerId)
-          pcRef.current?.close(); pcRef.current = null
-          localAudRef.current?.getTracks().forEach(t => t.stop()); localAudRef.current = null
-          setActiveCall(null); setCallStartTime(null)
-          await insertCallMsg(activeCall.channelId, sig.signal_type === 'busy' ? '📵 Call declined' : `📞 Call ended`)
-        }
-      })
-      .subscribe()
-    return () => { supabase.removeChannel(sub) }
-  }, [operatorId, companyId, activeCall?.channelId])
+    if (!operatorId || !companyId) return
+    const ch = supabase.channel(`nhance-op-out-${operatorId}`, { config: { broadcast: { self: false } } })
+    outCallChRef.current = ch
+    ch.on('broadcast', { event: 'call-signal' }, async ({ payload: p }) => {
+      if (p.to_user !== operatorId) return
+      if (!pcRef.current) return  // only handle if we initiated a call
+      if (p.signal_type === 'answer') {
+        try { await pcRef.current.setRemoteDescription(new RTCSessionDescription({ type: p.type, sdp: p.sdp })) } catch {}
+      } else if (p.signal_type === 'ice-candidate') {
+        try { await pcRef.current.addIceCandidate(new RTCIceCandidate(p.candidate)) } catch {}
+      } else if (p.signal_type === 'call-end' || p.signal_type === 'busy') {
+        const cur = activeCallRef.current
+        if (!cur) return
+        if (cur.callRecording) await stopCallRecord(cur.channelId, cur.peerId)
+        pcRef.current.close(); pcRef.current = null
+        localAudRef.current?.getTracks().forEach(t => t.stop()); localAudRef.current = null
+        setActiveCall(null); setCallStartTime(null)
+        await insertCallMsg(cur.channelId, p.signal_type === 'busy' ? '📵 Call declined' : '📞 Call ended')
+      }
+    })
+    .subscribe()
+    return () => { supabase.removeChannel(ch); outCallChRef.current = null }
+  }, [operatorId, companyId])
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   const fmtDuration = ms => {
@@ -513,19 +516,24 @@ export default function OperatorChatPanel({
     queryClient.invalidateQueries(['op_messages', channelId])
   }
 
+  // Send a WebRTC signal via broadcast (instant, no WAL/index issues)
+  const bcastSignal = (toUser, channelId, signalType, extra = {}) => {
+    // Use the company broadcast channel; all calls share nhance-calls-${companyId}
+    supabase.channel(`nhance-calls-${companyId}`).send({
+      type: 'broadcast', event: 'call-signal',
+      payload: { to_user: toUser, from_user: operatorId, channel_id: channelId, signal_type: signalType, ...extra },
+    }).catch(() => {})
+  }
+
   const buildPC = (channelId, toUserId) => {
-    const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] })
+    const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }] })
     pcRef.current = pc
     pc.ontrack = e => {
       const audio = new Audio(); audio.srcObject = e.streams[0]; audio.play().catch(() => {})
       remoteAudRef.current = audio
     }
-    pc.onicecandidate = async e => {
-      if (e.candidate) await supabase.from('chat_call_signals').insert({
-        channel_id: channelId, company_id: companyId,
-        from_user: operatorId, to_user: toUserId,
-        signal_type: 'ice-candidate', payload: e.candidate,
-      }).catch(() => {})
+    pc.onicecandidate = e => {
+      if (e.candidate) bcastSignal(toUserId, channelId, 'ice-candidate', { candidate: e.candidate.toJSON() })
     }
     return pc
   }
@@ -550,19 +558,11 @@ export default function OperatorChatPanel({
       stream.getTracks().forEach(t => pc.addTrack(t, stream))
       const offer = await pc.createOffer()
       await pc.setLocalDescription(offer)
-      // Send call-start and offer in sequence (receiver needs call-start first to show overlay)
-      await supabase.from('chat_call_signals').insert({
-        channel_id: channel.id, company_id: companyId,
-        from_user: operatorId, to_user: peer.user_id,
-        signal_type: 'call-start', payload: { name: operatorName, callType: 'audio' },
-      })
-      // Small delay so receiver sets up before offer arrives
-      await new Promise(r => setTimeout(r, 300))
-      await supabase.from('chat_call_signals').insert({
-        channel_id: channel.id, company_id: companyId,
-        from_user: operatorId, to_user: peer.user_id,
-        signal_type: 'offer', payload: offer,
-      })
+      // call-start first so receiver shows overlay, then offer
+      bcastSignal(peer.user_id, channel.id, 'call-start', { name: operatorName, callType: 'audio' })
+      // Small delay so receiver subscribes before offer arrives
+      await new Promise(r => setTimeout(r, 400))
+      bcastSignal(peer.user_id, channel.id, 'offer', { type: offer.type, sdp: offer.sdp })
       await insertCallMsg(channel.id, `📞 ${operatorName} started a call`)
       setActiveCall({ peerName: peer.user_name || peer.user_id, peerId: peer.user_id, channelId: channel.id, muted: false, callRecording: false })
       setCallStartTime(Date.now())
