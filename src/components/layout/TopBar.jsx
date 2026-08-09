@@ -29,14 +29,14 @@ const PAGE_TITLES = {
 }
 
 export default function TopBar({ activePage, onMenuToggle, onNavigate }) {
-  const { company, session, companyId, profile } = useAuth()
+  const { company, session, companyId, role } = useAuth()
   const { mode, setMode }    = useDisplayMode()
   const { theme, toggle }    = useTheme()
   const info  = PAGE_TITLES[activePage] || { title: activePage, subtitle: '' }
   const today = fmtDate(new Date())
 
   // Which roles can the current user act on?
-  const userRole = profile?.role || ''
+  const userRole = role || ''
   const visibleRoles = userRole === 'admin'
     ? ['manager','accounts','admin']
     : userRole === 'manager'

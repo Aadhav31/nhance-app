@@ -271,9 +271,9 @@ function Empty({ message }) {
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function ApprovalCenterPage() {
-  const { companyId, profile } = useAuth()
+  const { companyId, profile, role } = useAuth()
   const queryClient = useQueryClient()
-  const userRole    = profile?.role || 'manager'
+  const userRole    = role || 'manager'
   const userName    = profile?.full_name || profile?.email || 'You'
 
   const [moduleFilter, setModuleFilter] = useState('all')

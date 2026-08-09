@@ -73,12 +73,17 @@ CREATE TRIGGER enforce_audit_immutability
 ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
 
 -- Admins can read all logs for their company
+-- NOTE: role is stored in user_roles table, NOT in user_profiles
 CREATE POLICY "Admins can view audit_logs"
   ON public.audit_logs FOR SELECT
   USING (
     company_id IN (
-      SELECT company_id FROM public.user_profiles
-      WHERE id = auth.uid() AND role = 'admin'
+      SELECT up.company_id FROM public.user_profiles up
+      WHERE up.id = auth.uid()
+    )
+    AND EXISTS (
+      SELECT 1 FROM public.user_roles ur
+      WHERE ur.user_id = auth.uid() AND ur.role = 'admin'
     )
   );
 

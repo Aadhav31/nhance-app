@@ -134,7 +134,7 @@ function LogRow({ log, isLast }) {
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 export default function AuditLogPage() {
-  const { companyId, profile } = useAuth()
+  const { companyId, role } = useAuth()
 
   const [moduleFilter, setModuleFilter] = useState('all')
   const [search,       setSearch]       = useState('')
@@ -144,7 +144,7 @@ export default function AuditLogPage() {
   const [showFilters,  setShowFilters]  = useState(false)
 
   // Admin guard
-  if (profile?.role !== 'admin') {
+  if (role !== 'admin') {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-3 px-8 text-center">
         <Lock className="w-12 h-12 text-slate-600" />
