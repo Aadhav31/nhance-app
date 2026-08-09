@@ -111,6 +111,8 @@ export const INDUSTRY_NAV = {
           roles: [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
         { key: 'boq',            label: 'BOQ',                 icon: 'ClipboardList',   module: MODULES.CLIENTS_PROJECTS,
           roles: [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
+        { key: 'ra_billing',     label: 'RA Billing',          icon: 'Receipt',         module: MODULES.CLIENTS_PROJECTS,
+          roles: [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
       ],
     },
     {

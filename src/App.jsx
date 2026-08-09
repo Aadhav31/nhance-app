@@ -45,6 +45,7 @@ const ActiveDeploymentsPage   = lazy(() => import('./pages/hire/ActiveDeployment
 const AvailabilityPage        = lazy(() => import('./pages/hire/AvailabilityPage'))
 const UsageBillingPage        = lazy(() => import('./pages/hire/UsageBillingPage'))
 const BOQPage                 = lazy(() => import('./pages/boq/BOQPage'))
+const RABillingPage           = lazy(() => import('./pages/ra_billing/RABillingPage'))
 
 // ── Connectivity hook ─────────────────────────────────────────────────────────
 function useOnlineStatus() {
@@ -312,6 +313,12 @@ function AppShell() {
       case 'clients':      return wrap(ClientsPage,        MODULES.CLIENTS_PROJECTS)
       case 'projects':     return wrap(ProjectsPage,       MODULES.CLIENTS_PROJECTS)
       case 'boq':          return wrap(BOQPage,            MODULES.CLIENTS_PROJECTS)
+      case 'ra_billing':
+        return hasModule(MODULES.CLIENTS_PROJECTS) ? (
+          <Suspense fallback={<LoadingScreen message="Loading RA Billing…" />}>
+            <RABillingPage />
+          </Suspense>
+        ) : <ModuleNotActive page="ra_billing" />
       case 'accounts':
         if (hasModule && !hasModule(MODULES.ACCOUNTS)) return isOnline ? <ModuleNotActive page="accounts" /> : <OfflineScreen />
         return (
