@@ -374,11 +374,123 @@ function LangPicker({ lang, onChange }) {
   )
 }
 
-// ─── Notification helpers ─────────────────────────────────────────────────────
+// ─── Permission helpers ───────────────────────────────────────────────────────
 
 function requestNotificationPermission() {
   if (!('Notification' in window)) return
   if (Notification.permission === 'default') Notification.requestPermission()
+}
+
+// Check which permissions are currently granted
+async function checkPermissions() {
+  const result = { camera: false, mic: false, location: false, notification: false }
+  try {
+    if (navigator.permissions) {
+      const [cam, mic, loc] = await Promise.all([
+        navigator.permissions.query({ name: 'camera' }).catch(() => ({ state: 'prompt' })),
+        navigator.permissions.query({ name: 'microphone' }).catch(() => ({ state: 'prompt' })),
+        navigator.permissions.query({ name: 'geolocation' }).catch(() => ({ state: 'prompt' })),
+      ])
+      result.camera   = cam.state === 'granted'
+      result.mic      = mic.state === 'granted'
+      result.location = loc.state === 'granted'
+    }
+    result.notification = ('Notification' in window) && Notification.permission === 'granted'
+  } catch {}
+  return result
+}
+
+// Trigger all browser permission dialogs in sequence
+async function requestAllPermissions() {
+  // Camera + mic via getUserMedia
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+    stream.getTracks().forEach(t => t.stop())
+  } catch {
+    // Try mic-only if camera blocked
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({ audio: true })
+      s.getTracks().forEach(t => t.stop())
+    } catch {}
+  }
+  // Location
+  try { await new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, { timeout: 5000 })) } catch {}
+  // Notifications
+  try { await Notification.requestPermission() } catch {}
+}
+
+// ── Permission gate component ─────────────────────────────────────────────────
+function PermissionGate({ onDone }) {
+  const [status, setStatus] = useState(null)   // null=checking, {}=result
+  const [requesting, setRequesting] = useState(false)
+
+  useEffect(() => {
+    const stored = localStorage.getItem('nhance_perms_granted')
+    if (stored === 'yes') { onDone(); return }
+    checkPermissions().then(s => {
+      if (s.camera && s.mic) { localStorage.setItem('nhance_perms_granted', 'yes'); onDone(); return }
+      setStatus(s)
+    })
+  }, [])
+
+  const handleGrant = async () => {
+    setRequesting(true)
+    await requestAllPermissions()
+    const s = await checkPermissions()
+    setStatus(s)
+    setRequesting(false)
+    // If at least camera or mic is now granted, proceed
+    if (s.camera || s.mic) { localStorage.setItem('nhance_perms_granted', 'yes'); onDone() }
+  }
+
+  if (status === null) return (
+    <div className="flex flex-col items-center justify-center h-screen bg-dark-900">
+      <div className="w-10 h-10 border-2 border-primary-500/30 border-t-primary-500 rounded-full animate-spin" />
+    </div>
+  )
+
+  const items = [
+    { icon: '📷', label: 'Camera', sub: 'Live photos for shift start/end', granted: status.camera },
+    { icon: '🎤', label: 'Microphone', sub: 'Voice calls', granted: status.mic },
+    { icon: '📍', label: 'Location', sub: 'Attendance geo-tag', granted: status.location },
+    { icon: '🔔', label: 'Notifications', sub: 'Incoming call alerts', granted: status.notification },
+  ]
+
+  return (
+    <div className="flex flex-col items-center justify-center h-screen bg-dark-900 px-6 text-center">
+      <div className="w-20 h-20 bg-primary-600/20 border-2 border-primary-500/40 rounded-full flex items-center justify-center text-4xl mb-6">🔐</div>
+      <h1 className="text-white text-2xl font-bold mb-2">Allow Permissions</h1>
+      <p className="text-slate-400 text-sm mb-8 max-w-xs">
+        Nhance needs access to your camera, microphone, and location to work correctly on site.
+      </p>
+
+      <div className="w-full max-w-xs space-y-3 mb-8">
+        {items.map(({ icon, label, sub, granted }) => (
+          <div key={label} className="flex items-center gap-3 bg-dark-800 rounded-2xl px-4 py-3 border border-dark-700">
+            <span className="text-2xl">{icon}</span>
+            <div className="flex-1 text-left">
+              <p className="text-white text-sm font-semibold">{label}</p>
+              <p className="text-slate-500 text-xs">{sub}</p>
+            </div>
+            <span className={`text-xl ${granted ? 'text-green-400' : 'text-slate-600'}`}>
+              {granted ? '✓' : '○'}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      <button
+        onClick={handleGrant}
+        disabled={requesting}
+        className="w-full max-w-xs py-4 bg-primary-600 hover:bg-primary-500 disabled:opacity-50 rounded-2xl text-white font-bold text-base transition-all active:scale-[0.98] flex items-center justify-center gap-2"
+      >
+        {requesting ? <><span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin inline-block" /> Requesting…</> : '✅ Grant All Permissions'}
+      </button>
+      <button onClick={onDone} className="mt-3 text-slate-500 text-sm underline">
+        Skip for now
+      </button>
+    </div>
+  )
 }
 
 function fireNotification(title, body, tag) {
@@ -2127,6 +2239,8 @@ export default function OperatorPortal() {
     setPortalActive(null)
   }
 
+  const [permsGranted, setPermsGranted] = useState(false)
+
   const L = LANGS[lang]
 
   useEffect(() => { requestNotificationPermission() }, [])
@@ -2180,6 +2294,11 @@ export default function OperatorPortal() {
     enabled: !!userProfile?.id && !!companyId && tab !== 'chat',
     refetchInterval: 30_000,
   })
+
+  // ── Show permission gate on first launch ────────────────────────────────
+  if (!permsGranted) {
+    return <PermissionGate onDone={() => setPermsGranted(true)} />
+  }
 
   return (
     <div className="flex flex-col h-screen bg-dark-900 text-slate-100 max-w-lg mx-auto">
