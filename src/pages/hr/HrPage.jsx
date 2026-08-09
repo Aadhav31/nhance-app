@@ -1002,12 +1002,16 @@ function EmployeeCard({ emp, onClick, onChat }) {
         <div className="flex items-center gap-1.5 flex-shrink-0">
           {/* Chat icon — only active if employee has a login account */}
           <button
-            onClick={e => { e.stopPropagation(); hasAccount ? onChat?.(emp) : null }}
+            onClick={e => {
+              e.stopPropagation()
+              if (hasAccount) { onChat?.(emp) }
+              else { toast('No login account linked to this employee. Open the employee record → App Login to create one.', { icon: '🔒', duration: 4000 }) }
+            }}
             title={hasAccount ? `Chat with ${emp.name}` : 'No login account — create one first'}
             className={`w-7 h-7 rounded-lg flex items-center justify-center transition-colors ${
               hasAccount
                 ? 'text-primary-400 hover:bg-primary-500/15 hover:text-primary-300 cursor-pointer'
-                : 'text-slate-700 cursor-not-allowed'
+                : 'text-slate-500 hover:bg-dark-600 cursor-pointer'
             }`}
           >
             <MessageSquare className="w-4 h-4" />

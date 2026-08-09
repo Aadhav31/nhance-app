@@ -244,12 +244,21 @@ export default function OperatorChatPanel({
   const { data: companyUsers = [] } = useQuery({
     queryKey: ['op_company_users', companyId],
     queryFn: async () => {
-      const [{ data: profiles }, { data: roles }] = await Promise.all([
+      const [{ data: profiles }, { data: roles }, { data: hrEmps }] = await Promise.all([
         supabase.from('user_profiles').select('id,full_name,email').eq('company_id', companyId).order('full_name'),
         supabase.from('user_roles').select('user_id,role'),
+        supabase.from('hr_employees').select('user_id,name,designation').eq('company_id', companyId).not('user_id','is',null).eq('status','active'),
       ])
       const roleMap = Object.fromEntries((roles || []).map(r => [r.user_id, r.role]))
-      return (profiles || []).map(p => ({ ...p, role: roleMap[p.id] || '' }))
+      const profileMap = Object.fromEntries((profiles || []).map(p => [p.id, p]))
+      const merged = new Map()
+      ;(hrEmps || []).forEach(e => {
+        if (!e.user_id) return
+        const prof = profileMap[e.user_id]
+        merged.set(e.user_id, { id: e.user_id, full_name: prof?.full_name || e.name, email: prof?.email || '', role: roleMap[e.user_id] || 'operator' })
+      })
+      ;(profiles || []).forEach(p => { if (!merged.has(p.id)) merged.set(p.id, { ...p, role: roleMap[p.id] || '' }) })
+      return Array.from(merged.values()).sort((a, b) => (a.full_name || '').localeCompare(b.full_name || ''))
     },
     enabled: !!companyId && subView === 'dm_picker',
   })
