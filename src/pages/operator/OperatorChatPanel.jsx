@@ -14,8 +14,10 @@
  * Reuses bucket: chat-attachments
  */
 import { useState, useEffect, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
+import ActiveCallScreen from './ActiveCallScreen'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const fmtTime = iso =>
@@ -241,11 +243,14 @@ export default function OperatorChatPanel({
   const [incomingOffer,  setIncomingOffer]  = useState(null) // RTCSessionDescriptionInit
   const [activeCall,     setActiveCall]     = useState(null) // {peerName, peerId, channelId, muted, callRecording}
   const [callStartTime,  setCallStartTime]  = useState(null)
+  const [callDuration,   setCallDuration]   = useState(0)    // live seconds counter
   const pcRef          = useRef(null)
   const localAudRef    = useRef(null)
   const remoteAudRef   = useRef(null)
   const callRecRef     = useRef(null)   // MediaRecorder for call recording
   const callRecChunks  = useRef([])
+  const callDurRef     = useRef(null)   // setInterval handle for duration timer
+  const callStartTimeRef = useRef(null) // stale-closure-safe mirror of callStartTime
 
   const bottomRef   = useRef(null)
   const mediaRecRef = useRef(null)
@@ -472,9 +477,10 @@ export default function OperatorChatPanel({
     return () => { supabase.removeChannel(sub) }
   }, [channel?.id, queryClient])
 
-  // Stable ref to activeCall (avoids stale closure in broadcast handler)
+  // Stable refs to avoid stale closures inside broadcast handler / async fns
   const activeCallRef = useRef(null)
   useEffect(() => { activeCallRef.current = activeCall }, [activeCall])
+  useEffect(() => { callStartTimeRef.current = callStartTime }, [callStartTime])
 
   // Register reply-signal handler with OperatorPortal's subscription.
   // Runs every render so it captures the latest insertCallMsg, activeCallRef etc.
@@ -494,7 +500,8 @@ export default function OperatorChatPanel({
         if (cur.callRecording) await stopCallRecord(cur.channelId, cur.peerId)
         pcRef.current.close(); pcRef.current = null
         localAudRef.current?.getTracks().forEach(t => t.stop()); localAudRef.current = null
-        setActiveCall(null); setCallStartTime(null)
+        if (callDurRef.current) { clearInterval(callDurRef.current); callDurRef.current = null }
+        setActiveCall(null); setCallStartTime(null); setCallDuration(0)
         portalOutSignalRef.current = null
         await insertCallMsg(cur.channelId, p.signal_type === 'busy' ? '📵 Call declined' : '📞 Call ended')
       }
@@ -581,7 +588,12 @@ export default function OperatorChatPanel({
       await new Promise(r => setTimeout(r, 400))
       bcastSignal(peer.user_id, channel.id, 'offer', { type: offer.type, sdp: offer.sdp })
       setActiveCall({ peerName: peer.user_name || peer.user_id, peerId: peer.user_id, channelId: channel.id, muted: false, callRecording: false })
-      setCallStartTime(Date.now())
+      const now = Date.now()
+      setCallStartTime(now); callStartTimeRef.current = now
+      // Start live duration timer
+      setCallDuration(0)
+      if (callDurRef.current) clearInterval(callDurRef.current)
+      callDurRef.current = setInterval(() => setCallDuration(d => d + 1), 1000)
       // Insert call event after state updates — DB failure must not abort the call
       insertCallMsg(channel.id, `📞 ${operatorName} started a call`)
     } catch (err) {
@@ -634,28 +646,37 @@ export default function OperatorChatPanel({
   const endActiveCall = async () => {
     // Stop recording if active
     if (callRecRef.current?.state === 'recording') callRecRef.current.stop()
-    // Send call-end signal via broadcast (not DB — receiver listens on broadcast)
-    if (activeCall?.peerId && activeCall?.channelId) {
-      bcastSignal(activeCall.peerId, activeCall.channelId, 'call-end')
-      const dur = callStartTime ? fmtDuration(Date.now() - callStartTime) : ''
-      await insertCallMsg(activeCall.channelId, `📞 Call ended${dur ? ` — ${dur}` : ''}`)
+    // Use refs for stale-closure safety (may be called from portal overlay)
+    const cur = activeCallRef.current
+    if (cur?.peerId && cur?.channelId) {
+      bcastSignal(cur.peerId, cur.channelId, 'call-end')
+      const dur = callStartTimeRef.current ? fmtDuration(Date.now() - callStartTimeRef.current) : ''
+      await insertCallMsg(cur.channelId, `📞 Call ended${dur ? ` — ${dur}` : ''}`)
     }
     pcRef.current?.close(); pcRef.current = null
     localAudRef.current?.getTracks().forEach(t => t.stop()); localAudRef.current = null
     remoteAudRef.current = null
     callRecRef.current = null; callRecChunks.current = []
-    setActiveCall(null); setCallStartTime(null)
+    // Stop duration timer
+    if (callDurRef.current) { clearInterval(callDurRef.current); callDurRef.current = null }
+    setActiveCall(null); setCallStartTime(null); setCallDuration(0)
   }
 
   // ── Mute / unmute ─────────────────────────────────────────────────────────
   const toggleMute = () => {
-    localAudRef.current?.getAudioTracks().forEach(t => { t.enabled = !t.enabled })
-    setActiveCall(prev => prev ? { ...prev, muted: !prev.muted } : prev)
+    const newMuted = !(activeCallRef.current?.muted ?? false)
+    localAudRef.current?.getAudioTracks().forEach(t => { t.enabled = !newMuted })
+    setActiveCall(prev => prev ? { ...prev, muted: newMuted } : prev)
+  }
+
+  // ── Hold / resume — pause local audio tracks ───────────────────────────────
+  const handleHold = (newHeld) => {
+    localAudRef.current?.getAudioTracks().forEach(t => { t.enabled = !newHeld })
   }
 
   // ── Record call audio ─────────────────────────────────────────────────────
   const toggleCallRecord = async () => {
-    if (!activeCall || !localAudRef.current) return
+    if (!activeCallRef.current || !localAudRef.current) return
     if (callRecRef.current?.state === 'recording') {
       callRecRef.current.stop()
       return
@@ -678,12 +699,12 @@ export default function OperatorChatPanel({
         if (up) {
           const { data: { publicUrl } } = supabase.storage.from('chat-attachments').getPublicUrl(path)
           await supabase.from('chat_messages').insert({
-            channel_id: activeCall.channelId, company_id: companyId,
+            channel_id: activeCallRef.current?.channelId, company_id: companyId,
             sender_id: operatorId, sender_name: operatorName, sender_role: 'operator',
             content: '🎙️ Call recording',
             attachments: [{ url: publicUrl, type: 'audio/webm', name: 'call-recording.webm', size: blob.size }],
           }).catch(() => {})
-          queryClient.invalidateQueries(['op_messages', activeCall.channelId])
+          queryClient.invalidateQueries(['op_messages', activeCallRef.current?.channelId])
         }
         ctx.close().catch(() => {})
         setActiveCall(prev => prev ? { ...prev, callRecording: false } : prev)
@@ -977,28 +998,21 @@ export default function OperatorChatPanel({
         </div>
       )}
 
-      {/* ── Active call bar ── */}
-      {activeCall && (
-        <div className="shrink-0 bg-emerald-900/80 border-b border-emerald-700/50 px-3 py-2 flex items-center gap-2">
-          <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse flex-shrink-0" />
-          <p className="flex-1 text-emerald-300 text-xs font-semibold truncate">📞 {activeCall.peerName}</p>
-          {/* Mute */}
-          <button onClick={toggleMute}
-            className={`w-8 h-8 rounded-lg flex items-center justify-center text-base ${activeCall.muted ? 'bg-red-600/40 text-red-300' : 'bg-dark-700 text-slate-300'}`}>
-            {activeCall.muted ? '🔇' : '🎙️'}
-          </button>
-          {/* Record */}
-          <button onClick={toggleCallRecord}
-            className={`w-8 h-8 rounded-lg flex items-center justify-center text-base ${activeCall.callRecording ? 'bg-red-600 text-white animate-pulse' : 'bg-dark-700 text-slate-400'}`}
-            title={activeCall.callRecording ? 'Stop recording' : 'Record call'}>
-            {activeCall.callRecording ? '⏹' : '⏺'}
-          </button>
-          {/* End call */}
-          <button onClick={endActiveCall}
-            className="w-8 h-8 rounded-lg bg-red-600 flex items-center justify-center text-white text-sm font-bold">
-            ✕
-          </button>
-        </div>
+      {/* ── Active call — full-screen overlay via React Portal ──────────────
+           Renders at document.body so it's visible even when this panel's
+           parent div has display:none (user switches tab mid-call).        */}
+      {activeCall && createPortal(
+        <ActiveCallScreen
+          peerName={activeCall.peerName}
+          duration={callDuration}
+          muted={activeCall.muted}
+          recording={activeCall.callRecording}
+          onToggleMute={toggleMute}
+          onToggleHold={handleHold}
+          onRecord={toggleCallRecord}
+          onEnd={endActiveCall}
+        />,
+        document.body
       )}
 
       {/* Channel header */}

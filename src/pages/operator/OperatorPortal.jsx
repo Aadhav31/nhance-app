@@ -19,6 +19,7 @@ import { useAuth } from '../../contexts/AuthContext'
 import toast from 'react-hot-toast'
 import FieldExpensePage from '../fieldexpense/FieldExpensePage'
 import OperatorChatPanel from './OperatorChatPanel'
+import ActiveCallScreen from './ActiveCallScreen'
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
@@ -2171,10 +2172,14 @@ export default function OperatorPortal() {
   // PeerConnection managed inside OperatorChatPanel.
   const outCallSignalRef = useRef(null)
 
-  // ── Portal mute state (for incoming calls answered at portal level) ────────
-  const [portalMuted, setPortalMuted] = useState(false)
-  const [portalDuration, setPortalDuration] = useState(0)
-  const portalDurRef = useRef(null)
+  // ── Portal mute / hold / record / duration (incoming calls at portal level) ─
+  const [portalMuted,     setPortalMuted]     = useState(false)
+  const [portalHeld,      setPortalHeld]      = useState(false)
+  const [portalRecording, setPortalRecording] = useState(false)
+  const [portalDuration,  setPortalDuration]  = useState(0)
+  const portalDurRef   = useRef(null)
+  const portalRecRef   = useRef(null)   // MediaRecorder for incoming-call recording
+  const portalRecChunks = useRef([])
 
   // Helper: send a signal via broadcast
   const bcast = (toUser, channelId, signalType, extra = {}) => {
@@ -2191,11 +2196,14 @@ export default function OperatorPortal() {
 
     const cleanupCall = () => {
       ringRef.stop()
+      // Stop recording if active
+      if (portalRecRef.current?.state === 'recording') portalRecRef.current.stop()
+      portalRecRef.current = null; portalRecChunks.current = []
       portalPcRef.current?.close(); portalPcRef.current = null
       portalAudRef.current?.getTracks().forEach(t => t.stop()); portalAudRef.current = null
       if (portalRemRef.current) { portalRemRef.current.srcObject = null; portalRemRef.current = null }
       setPortalIncoming(null); setPortalOffer(null); setPortalActive(null)
-      setPortalMuted(false); setPortalDuration(0)
+      setPortalMuted(false); setPortalHeld(false); setPortalRecording(false); setPortalDuration(0)
       if (portalDurRef.current) { clearInterval(portalDurRef.current); portalDurRef.current = null }
       portalOfferRef.current = null; pendingAccept.current = false
     }
@@ -2338,12 +2346,68 @@ export default function OperatorPortal() {
     setPortalIncoming(null); setPortalOffer(null)
   }
 
-  const portalEndCall = () => {
+  const portalEndCall = async () => {
     if (portalActive) bcast(portalActive.peerId, portalActive.channelId, 'call-end')
+    // Stop recording if active
+    if (portalRecRef.current?.state === 'recording') portalRecRef.current.stop()
+    portalRecRef.current = null; portalRecChunks.current = []
     portalPcRef.current?.close(); portalPcRef.current = null
     portalAudRef.current?.getTracks().forEach(t => t.stop()); portalAudRef.current = null
     if (portalRemRef.current) { portalRemRef.current.srcObject = null; portalRemRef.current = null }
-    setPortalActive(null)
+    if (portalDurRef.current) { clearInterval(portalDurRef.current); portalDurRef.current = null }
+    setPortalActive(null); setPortalMuted(false); setPortalHeld(false)
+    setPortalRecording(false); setPortalDuration(0)
+  }
+
+  const togglePortalMute = () => {
+    const nowMuted = !portalMuted
+    portalAudRef.current?.getAudioTracks().forEach(t => { t.enabled = !nowMuted })
+    setPortalMuted(nowMuted)
+  }
+
+  const togglePortalHold = (newHeld) => {
+    portalAudRef.current?.getAudioTracks().forEach(t => { t.enabled = !newHeld })
+    setPortalHeld(newHeld)
+  }
+
+  const togglePortalRecord = async () => {
+    if (!portalActive || !portalAudRef.current) return
+    if (portalRecRef.current?.state === 'recording') {
+      portalRecRef.current.stop()
+      return
+    }
+    try {
+      const ctx = new AudioContext()
+      const dest = ctx.createMediaStreamDestination()
+      ctx.createMediaStreamSource(portalAudRef.current).connect(dest)
+      if (portalRemRef.current?.srcObject) {
+        ctx.createMediaStreamSource(portalRemRef.current.srcObject).connect(dest)
+      }
+      const rec = new MediaRecorder(dest.stream, { mimeType: 'audio/webm' })
+      portalRecChunks.current = []
+      rec.ondataavailable = e => { if (e.data.size > 0) portalRecChunks.current.push(e.data) }
+      rec.onstop = async () => {
+        const blob = new Blob(portalRecChunks.current, { type: 'audio/webm' })
+        const path = `${companyId}/call-rec-${Date.now()}.webm`
+        const { data: up } = await supabase.storage.from('chat-attachments').upload(path, blob)
+        if (up) {
+          const { data: { publicUrl } } = supabase.storage.from('chat-attachments').getPublicUrl(path)
+          try {
+            await supabase.from('chat_messages').insert({
+              channel_id: portalActive?.channelId, company_id: companyId,
+              sender_id: userProfile?.id, sender_name: userProfile?.full_name || 'Operator', sender_role: 'operator',
+              content: '🎙️ Call recording',
+              attachments: [{ url: publicUrl, type: 'audio/webm', name: 'call-recording.webm', size: blob.size }],
+            })
+          } catch {}
+        }
+        ctx.close().catch(() => {})
+        setPortalRecording(false)
+      }
+      rec.start()
+      portalRecRef.current = rec
+      setPortalRecording(true)
+    } catch { setPortalRecording(false) }
   }
 
   const [permsGranted, setPermsGranted] = useState(false)
@@ -2436,46 +2500,25 @@ export default function OperatorPortal() {
         </div>
       )}
 
-      {/* ── ACTIVE CALL PANEL (incoming call answered at portal level) ─────── */}
-      {portalActive && (() => {
-        const dur = portalDuration
-        const fmtDur = `${String(Math.floor(dur/60)).padStart(2,'0')}:${String(dur%60).padStart(2,'0')}`
-        const togglePortalMute = () => {
-          portalAudRef.current?.getAudioTracks().forEach(t => { t.enabled = portalMuted })
-          setPortalMuted(m => !m)
-        }
-        return (
-          <div className="fixed top-0 left-0 right-0 z-[150] max-w-lg mx-auto shadow-2xl"
-               style={{ background: '#14532d', borderBottom: '1px solid #166534' }}>
-            {/* Name + timer row */}
-            <div className="flex items-center gap-2 px-4 pt-2 pb-1">
-              <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse flex-shrink-0" />
-              <span className="text-white text-sm font-bold flex-1 truncate">📞 {portalActive.peerName}</span>
-              <span className="text-green-300 text-xs font-mono">{fmtDur}</span>
-            </div>
-            {/* Controls row */}
-            <div className="flex items-center justify-center gap-4 px-4 pb-2.5">
-              {/* Mute */}
-              <button onPointerUp={togglePortalMute}
-                style={{ background: portalMuted ? '#dc2626' : 'rgba(255,255,255,0.15)', border: 'none', borderRadius: 24, width: 44, height: 44, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, cursor: 'pointer' }}>
-                {portalMuted ? '🔇' : '🎙️'}
-              </button>
-              {/* Speaker / volume indicator */}
-              <div style={{ background: 'rgba(255,255,255,0.1)', borderRadius: 24, width: 44, height: 44, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20 }}>
-                🔊
-              </div>
-              {/* End call — bigger, red */}
-              <button onPointerUp={portalEndCall}
-                style={{ background: '#dc2626', border: 'none', borderRadius: 28, width: 56, height: 44, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}>
-                End
-              </button>
-            </div>
-          </div>
-        )
-      })()}
+      {/* ── ACTIVE CALL SCREEN (incoming call answered at portal level) ──────
+           Full-screen phone-like overlay with minimize → floating chip.
+           Rendered directly (not via portal) since OperatorPortal is always
+           at the top of the React tree.                                     */}
+      {portalActive && (
+        <ActiveCallScreen
+          peerName={portalActive.peerName}
+          duration={portalDuration}
+          muted={portalMuted}
+          recording={portalRecording}
+          onToggleMute={togglePortalMute}
+          onToggleHold={togglePortalHold}
+          onRecord={togglePortalRecord}
+          onEnd={portalEndCall}
+        />
+      )}
 
       {/* Top bar — minimal */}
-      <div className={`shrink-0 bg-dark-800 border-b border-dark-700 px-4 py-2.5 flex items-center gap-2 ${portalActive ? 'mt-9' : ''}`}>
+      <div className="shrink-0 bg-dark-800 border-b border-dark-700 px-4 py-2.5 flex items-center gap-2">
         <div className="flex-1 min-w-0">
           <p className="text-sm font-bold text-slate-100 truncate">{userProfile?.full_name}</p>
           <p className="text-[10px] text-slate-500 truncate">{company?.name}</p>
@@ -2486,24 +2529,32 @@ export default function OperatorPortal() {
         </button>
       </div>
 
-      {/* Content */}
-      {tab === 'expenses' ? (
+      {/* Content — chat is ALWAYS mounted (display:none when inactive) so
+           active calls survive tab switches. The ActiveCallScreen portal
+           renders at document.body and appears regardless of display:none. */}
+
+      {/* Chat tab — always in DOM */}
+      <div className="flex-1 overflow-hidden flex-col" style={{ display: tab === 'chat' ? 'flex' : 'none' }}>
+        <OperatorChatPanel
+          companyId={companyId}
+          operatorId={userProfile?.id}
+          operatorName={employeeName || userProfile?.full_name || 'Operator'}
+          operatorRole="operator"
+          lang={lang}
+          portalCallChRef={callChRef}
+          portalOutSignalRef={outCallSignalRef}
+        />
+      </div>
+
+      {/* Expenses tab */}
+      {tab === 'expenses' && (
         <div className="flex-1 overflow-hidden flex flex-col">
           <FieldExpensePage embedded={true} />
         </div>
-      ) : tab === 'chat' ? (
-        <div className="flex-1 overflow-hidden flex flex-col">
-          <OperatorChatPanel
-            companyId={companyId}
-            operatorId={userProfile?.id}
-            operatorName={employeeName || userProfile?.full_name || 'Operator'}
-            operatorRole="operator"
-            lang={lang}
-            portalCallChRef={callChRef}
-            portalOutSignalRef={outCallSignalRef}
-          />
-        </div>
-      ) : (
+      )}
+
+      {/* Shift / Attendance / Pay tabs */}
+      {(tab === 'shift' || tab === 'attendance' || tab === 'pay') && (
         <div className="flex-1 overflow-y-auto">
           <div className="p-4 pb-6">
             {tab === 'shift'      && <ShiftModule      {...sharedProps} />}
