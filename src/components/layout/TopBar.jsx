@@ -3,6 +3,8 @@ import { useAuth } from '../../contexts/AuthContext'
 import { useDisplayMode } from '../../contexts/DisplayModeContext'
 import { useTheme } from '../../contexts/ThemeContext'
 import { fmtDate } from '../../lib/utils'
+import { useQuery } from '@tanstack/react-query'
+import { supabase } from '../../lib/supabase'
 
 const PAGE_TITLES = {
   dashboard:   { title: 'Dashboard',               subtitle: 'Overview of your operations' },
@@ -17,15 +19,45 @@ const PAGE_TITLES = {
   hr:          { title: 'HR & Payroll',             subtitle: 'Operators, attendance & salary' },
   settings:    { title: 'Settings',                 subtitle: 'Company configuration' },
   profile:     { title: 'My Profile',               subtitle: 'Personal details & preferences' },
-  superadmin:  { title: 'Nhance Admin',             subtitle: 'Platform management' },
+  superadmin:      { title: 'Nhance Admin',             subtitle: 'Platform management' },
+  approval_center: { title: 'Approval Centre',         subtitle: 'Approvals & acknowledgments' },
+  ra_billing:      { title: 'RA Billing',              subtitle: 'Running account bills & payments' },
+  hire_contracts:  { title: 'Hire Contracts',          subtitle: 'Equipment hire agreements' },
+  boq:             { title: 'BOQ',                     subtitle: 'Bill of Quantities' },
 }
 
-export default function TopBar({ activePage, onMenuToggle }) {
-  const { company, session } = useAuth()
+export default function TopBar({ activePage, onMenuToggle, onNavigate }) {
+  const { company, session, companyId, profile } = useAuth()
   const { mode, setMode }    = useDisplayMode()
   const { theme, toggle }    = useTheme()
   const info  = PAGE_TITLES[activePage] || { title: activePage, subtitle: '' }
   const today = fmtDate(new Date())
+
+  // Which roles can the current user act on?
+  const userRole = profile?.role || ''
+  const visibleRoles = userRole === 'admin'
+    ? ['manager','accounts','admin']
+    : userRole === 'manager'
+      ? ['manager']
+      : userRole === 'accounts'
+        ? ['accounts']
+        : []
+
+  const { data: pendingCount = 0 } = useQuery({
+    queryKey: ['approval_badge', companyId, ...visibleRoles],
+    queryFn: async () => {
+      if (visibleRoles.length === 0) return 0
+      const { count } = await supabase
+        .from('approval_requests')
+        .select('id', { count: 'exact', head: true })
+        .eq('company_id', companyId)
+        .eq('status', 'pending')
+        .in('required_role', visibleRoles)
+      return count || 0
+    },
+    enabled: !!companyId && visibleRoles.length > 0,
+    refetchInterval: 30_000,
+  })
 
   return (
     <header className="h-16 bg-dark-800 border-b border-dark-600 flex items-center px-6 gap-4 flex-shrink-0">
@@ -84,13 +116,19 @@ export default function TopBar({ activePage, onMenuToggle }) {
           {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
         </button>
 
-        {/* Notifications */}
+        {/* Notifications / Approval Centre */}
         <button
+          onClick={() => onNavigate?.('approval_center')}
+          title={pendingCount > 0 ? `${pendingCount} pending approval${pendingCount > 1 ? 's' : ''}` : 'Approval Centre'}
           className="relative w-9 h-9 flex items-center justify-center rounded-lg hover:bg-dark-700 transition-all"
           style={{ color: 'rgb(var(--t2))' }}
         >
           <Bell className="w-4 h-4" />
-          <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full" />
+          {pendingCount > 0 && (
+            <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] flex items-center justify-center px-1 rounded-full bg-red-500 text-[10px] font-bold text-white leading-none">
+              {pendingCount > 99 ? '99+' : pendingCount}
+            </span>
+          )}
         </button>
 
         {/* Company badge */}

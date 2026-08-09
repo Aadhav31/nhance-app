@@ -158,6 +158,13 @@ export const INDUSTRY_NAV = {
       ],
     },
     {
+      section: 'Workflow',
+      items: [
+        { key: 'approval_center', label: 'Approval Centre', icon: 'CheckCircle2', module: MODULES.CORE,
+          roles: [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
+      ],
+    },
+    {
       section: 'Admin',
       items: [
         { key: 'settings',       label: 'Settings',            icon: 'Settings',        module: MODULES.CORE,

@@ -463,7 +463,7 @@ function RaiseRABillModal({ companyId, session, onClose, onSaved, preselectedBoq
 }
 
 // ── RA Bill Detail ────────────────────────────────────────────────────────────
-function RABillDetail({ ra: initialRa, companyId, session, company, onBack, onRefresh }) {
+function RABillDetail({ ra: initialRa, companyId, session, company, profile, onBack, onRefresh }) {
   const qc = useQueryClient()
   const [ra, setRa] = useState(initialRa)
   const [showPaymentModal, setShowPaymentModal] = useState(false)
@@ -513,8 +513,42 @@ function RABillDetail({ ra: initialRa, companyId, session, company, onBack, onRe
   const updateStatus = async (status) => {
     if (status === 'paid') { setShowPaymentModal(true); return }
     await supabase.from('ra_bills').update({ status }).eq('id', ra.id)
+
+    // Approval workflow integration
+    const userName = profile?.full_name || session?.user?.email || 'Unknown'
+    if (status === 'submitted') {
+      // Create an approval request — manager must certify before payment
+      const boq = ra.boq || {}
+      await supabase.from('approval_requests').insert({
+        company_id:        companyId,
+        module:            'ra_bill',
+        record_id:         ra.id,
+        record_ref:        ra.ra_number,
+        description:       `RA Bill submitted for approval — ${boq.client_name || ''} · ${boq.title || ''}`,
+        amount:            ra.net_payable,
+        requested_by:      session?.user?.id,
+        requested_by_name: userName,
+        required_role:     'manager',
+        is_blocking:       true,
+        status:            'pending',
+      })
+    } else if (status === 'approved') {
+      // Resolve any pending approval_request for this bill
+      await supabase.from('approval_requests')
+        .update({
+          status:           'approved',
+          reviewed_by_name: userName,
+          review_date:      new Date().toISOString(),
+          review_comments:  'Marked approved directly on bill',
+        })
+        .eq('module', 'ra_bill')
+        .eq('record_id', ra.id)
+        .eq('status', 'pending')
+    }
+
     await refreshRa()
     onRefresh()
+    qc.invalidateQueries({ queryKey: ['approval_pending'] })
     toast.success(`RA Bill marked ${STATUS_CFG[status]?.label || status}`)
   }
 
@@ -984,7 +1018,7 @@ function RABillingList({ companyId, session, company, onSelect }) {
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 export default function RABillingPage() {
-  const { companyId, session, company } = useAuth()
+  const { companyId, session, company, profile } = useAuth()
   const qc = useQueryClient()
   const [selectedRA, setSelectedRA] = useState(null)
 
@@ -1016,6 +1050,7 @@ export default function RABillingPage() {
             companyId={companyId}
             session={session}
             company={company}
+            profile={profile}
             onBack={() => setSelectedRA(null)}
             onRefresh={handleRefresh}
           />

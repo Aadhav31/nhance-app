@@ -46,6 +46,7 @@ const AvailabilityPage        = lazy(() => import('./pages/hire/AvailabilityPage
 const UsageBillingPage        = lazy(() => import('./pages/hire/UsageBillingPage'))
 const BOQPage                 = lazy(() => import('./pages/boq/BOQPage'))
 const RABillingPage           = lazy(() => import('./pages/ra_billing/RABillingPage'))
+const ApprovalCenterPage      = lazy(() => import('./pages/approvals/ApprovalCenterPage'))
 
 // ── Connectivity hook ─────────────────────────────────────────────────────────
 function useOnlineStatus() {
@@ -396,6 +397,12 @@ function AppShell() {
             <UsageBillingPage />
           </Suspense>
         )
+      case 'approval_center':
+        return (
+          <Suspense fallback={<LoadingScreen message="Loading Approval Centre…" />}>
+            <ApprovalCenterPage />
+          </Suspense>
+        )
       case 'showroom':     return <ComingSoon page="Vehicle Stock / Showroom" />
       default:             return <ComingSoon page={page} />
     }
@@ -416,7 +423,7 @@ function AppShell() {
 
         {/* Main area */}
         <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
-          <TopBar activePage={effectivePage} onMenuToggle={() => setSidebarCollapsed(p => !p)} />
+          <TopBar activePage={effectivePage} onMenuToggle={() => setSidebarCollapsed(p => !p)} onNavigate={handleNavigate} />
           {/* Offline banner — shown mid-session when connection drops */}
           {!isOnline && (
             <div className="shrink-0 flex items-center justify-center gap-2 bg-amber-500/20 border-b border-amber-600/40 text-amber-300 text-xs font-semibold py-2 px-4">
