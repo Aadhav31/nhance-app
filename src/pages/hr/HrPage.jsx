@@ -9,7 +9,7 @@ import {
   Phone, Calendar, CreditCard, FileText,
   CheckCircle, Banknote, BarChart2, Search, Mail, UserPlus, Link, Copy,
   ChevronLeft, ChevronRight, RefreshCw, AlertTriangle, Shield, Award,
-  TrendingUp, Gauge, Zap, Clock, Activity
+  TrendingUp, Gauge, Zap, Clock, Activity, MessageSquare
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format, getDaysInMonth, parseISO } from 'date-fns'
@@ -989,26 +989,43 @@ function SetPasswordModal({ emp, onClose, onDone: onDoneProp }) {
 }
 
 // ── Employee Card ──────────────────────────────────────────────────────────────
-function EmployeeCard({ emp, onClick }) {
+function EmployeeCard({ emp, onClick, onChat }) {
   const typeInfo = EMP_TYPES.find(t => t.value === emp.employment_type)
+  const hasAccount = !!emp.user_id
   return (
-    <button onClick={onClick} className="w-full text-left bg-dark-800 border border-dark-700 hover:border-dark-500 rounded-xl p-3.5 transition-all">
+    <div className="w-full bg-dark-800 border border-dark-700 hover:border-dark-500 rounded-xl p-3.5 transition-all">
       <div className="flex items-start justify-between gap-2">
-        <div className="flex-1 min-w-0">
+        <button onClick={onClick} className="flex-1 min-w-0 text-left">
           <p className="font-semibold text-slate-100 text-sm truncate">{emp.name}</p>
           <p className="text-xs text-slate-500 truncate">{emp.designation || '—'}{emp.department ? ` · ${emp.department}` : ''}</p>
+        </button>
+        <div className="flex items-center gap-1.5 flex-shrink-0">
+          {/* Chat icon — only active if employee has a login account */}
+          <button
+            onClick={e => { e.stopPropagation(); hasAccount ? onChat?.(emp) : null }}
+            title={hasAccount ? `Chat with ${emp.name}` : 'No login account — create one first'}
+            className={`w-7 h-7 rounded-lg flex items-center justify-center transition-colors ${
+              hasAccount
+                ? 'text-primary-400 hover:bg-primary-500/15 hover:text-primary-300 cursor-pointer'
+                : 'text-slate-700 cursor-not-allowed'
+            }`}
+          >
+            <MessageSquare className="w-4 h-4" />
+          </button>
+          <span className={`text-xs font-medium px-2 py-0.5 rounded-full border
+            ${emp.status === 'active' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-700/40' : 'bg-dark-700 text-slate-500 border-dark-600'}`}>
+            {emp.status}
+          </span>
         </div>
-        <span className={`shrink-0 text-xs font-medium px-2 py-0.5 rounded-full border
-          ${emp.status === 'active' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-700/40' : 'bg-dark-700 text-slate-500 border-dark-600'}`}>
-          {emp.status}
-        </span>
       </div>
-      <div className="flex items-center gap-3 mt-2 text-xs text-slate-400 flex-wrap">
-        <span className="font-mono text-primary-400">{emp.employee_number}</span>
-        <span>{typeInfo?.icon} {typeInfo?.label}</span>
-        {emp.phone && <span className="flex items-center gap-1"><Phone className="w-3 h-3" />{emp.phone}</span>}
-      </div>
-    </button>
+      <button onClick={onClick} className="w-full text-left">
+        <div className="flex items-center gap-3 mt-2 text-xs text-slate-400 flex-wrap">
+          <span className="font-mono text-primary-400">{emp.employee_number}</span>
+          <span>{typeInfo?.icon} {typeInfo?.label}</span>
+          {emp.phone && <span className="flex items-center gap-1"><Phone className="w-3 h-3" />{emp.phone}</span>}
+        </div>
+      </button>
+    </div>
   )
 }
 
@@ -1947,7 +1964,14 @@ function EmployeesTab({ companyId }) {
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {filtered.map(emp => <EmployeeCard key={emp.id} emp={emp} onClick={() => setSelected(emp)} />)}
+            {filtered.map(emp => (
+              <EmployeeCard
+                key={emp.id}
+                emp={emp}
+                onClick={() => setSelected(emp)}
+                onChat={e => onNavigate?.('chat', { dmUserId: e.user_id, dmUserName: e.name })}
+              />
+            ))}
           </div>
         )}
       </div>
@@ -3658,7 +3682,7 @@ function SubstitutionFormModal({ companyId, userProfile, existing, onClose, onSa
 }
 
 // ── Main HRPage ───────────────────────────────────────────────────────────────
-export default function HRPage() {
+export default function HRPage({ onNavigate }) {
   const { companyId } = useAuth()
   const [activeTab, setActiveTab] = useState('employees')
   const [showAdd, setShowAdd] = useState(false)

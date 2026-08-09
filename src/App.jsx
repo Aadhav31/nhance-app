@@ -353,7 +353,13 @@ function AppShell() {
             <ExpensesPage onNavigate={handleNavigate} />
           </Suspense>
         ) : <ModuleNotActive page="expenses" />
-      case 'hr':           return wrap(HRPage,             MODULES.HR_PAYROLL)
+      case 'hr':
+        if (!hasModule(MODULES.HR_PAYROLL)) return isOnline ? <ModuleNotActive page="hr" /> : <OfflineScreen />
+        return (
+          <Suspense fallback={<LoadingScreen message="Loading HR…" />}>
+            <HRPage onNavigate={handleNavigate} />
+          </Suspense>
+        )
       case 'letters':      return wrap(LettersPage,         MODULES.CORE)
       case 'settings':     return wrap(SettingsPage,       MODULES.CORE)
       case 'profile':      return wrap(ProfilePage,        MODULES.CORE)
@@ -415,7 +421,7 @@ function AppShell() {
       case 'chat':
         return (
           <Suspense fallback={<LoadingScreen message="Loading Chat…" />}>
-            <ChatPage />
+            <ChatPage navExtra={navExtra} />
           </Suspense>
         )
       case 'showroom':     return <ComingSoon page="Vehicle Stock / Showroom" />

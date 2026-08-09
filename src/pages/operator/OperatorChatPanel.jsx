@@ -203,35 +203,121 @@ export default function OperatorChatPanel({
   const L = LABELS[lang] || LABELS.en
   const queryClient = useQueryClient()
 
-  const [channel, setChannel] = useState(null)
-  const [text, setText] = useState('')
-  const [sending, setSending] = useState(false)
+  const [channel,  setChannel]  = useState(null)
+  const [subView,  setSubView]  = useState(null)   // null | 'dm_picker' | 'group_create'
+  const [text,     setText]     = useState('')
+  const [sending,  setSending]  = useState(false)
   const [recording, setRecording] = useState(false)
-  const [recSecs, setRecSecs] = useState(0)
+  const [recSecs,  setRecSecs]  = useState(0)
+  const [dmSearch, setDmSearch] = useState('')
+  const [groupName, setGroupName] = useState('')
+  const [creatingGroup, setCreatingGroup] = useState(false)
 
   const bottomRef   = useRef(null)
   const mediaRecRef = useRef(null)
   const audioChunks = useRef([])
   const recTimer    = useRef(null)
 
-  // ── Load group channels ────────────────────────────────────────────────────
-  const { data: channels = [] } = useQuery({
-    queryKey: ['op_channels', companyId],
+  // ── Load channels I am a member of (group + DM) ───────────────────────────
+  const { data: channels = [], refetch: refetchChannels } = useQuery({
+    queryKey: ['op_channels', companyId, operatorId],
     queryFn: async () => {
+      // Get channel IDs I belong to
+      const { data: memberships } = await supabase
+        .from('chat_members').select('channel_id').eq('user_id', operatorId)
+      const ids = (memberships || []).map(m => m.channel_id)
+      if (!ids.length) return []
       const { data } = await supabase
         .from('chat_channels')
         .select('id,name,description,type,created_at')
+        .in('id', ids)
         .eq('company_id', companyId)
-        .eq('type', 'group')
         .eq('is_archived', false)
-        .order('name')
+        .order('created_at')
       return data || []
     },
-    enabled: !!companyId,
+    enabled: !!companyId && !!operatorId,
     refetchInterval: 30_000,
   })
 
-  // Auto-join operator to all channels (silently)
+  // ── Company users (for DM picker) ─────────────────────────────────────────
+  const { data: companyUsers = [] } = useQuery({
+    queryKey: ['op_company_users', companyId],
+    queryFn: async () => {
+      const [{ data: profiles }, { data: roles }] = await Promise.all([
+        supabase.from('user_profiles').select('id,full_name,email').eq('company_id', companyId).order('full_name'),
+        supabase.from('user_roles').select('user_id,role'),
+      ])
+      const roleMap = Object.fromEntries((roles || []).map(r => [r.user_id, r.role]))
+      return (profiles || []).map(p => ({ ...p, role: roleMap[p.id] || '' }))
+    },
+    enabled: !!companyId && subView === 'dm_picker',
+  })
+
+  // Filtered users for DM picker (exclude self)
+  const filteredUsers = companyUsers.filter(u =>
+    u.id !== operatorId &&
+    (u.full_name || u.email || '').toLowerCase().includes(dmSearch.toLowerCase())
+  )
+
+  // ── Open or create a DM with another user ─────────────────────────────────
+  const openDM = async (other) => {
+    setSending(true)
+    try {
+      // Check if DM already exists between both users
+      const { data: myMem }    = await supabase.from('chat_members').select('channel_id').eq('user_id', operatorId)
+      const { data: otherMem } = await supabase.from('chat_members').select('channel_id').eq('user_id', other.id)
+      const myIds    = new Set((myMem    || []).map(m => m.channel_id))
+      const sharedIds = (otherMem || []).map(m => m.channel_id).filter(id => myIds.has(id))
+      if (sharedIds.length) {
+        const { data: existing } = await supabase.from('chat_channels')
+          .select('*').in('id', sharedIds).eq('type', 'direct').limit(1)
+        if (existing?.[0]) {
+          setChannel(existing[0]); setSubView(null); return
+        }
+      }
+      // Create new DM
+      const { data: ch } = await supabase.from('chat_channels').insert({
+        company_id: companyId,
+        name: other.full_name || other.email,
+        type: 'direct',
+        created_by: operatorId,
+      }).select().single()
+      await supabase.from('chat_members').insert([
+        { channel_id: ch.id, user_id: operatorId, user_name: operatorName, user_role: operatorRole },
+        { channel_id: ch.id, user_id: other.id,   user_name: other.full_name || other.email, user_role: other.role || '' },
+      ])
+      refetchChannels()
+      setChannel(ch)
+      setSubView(null)
+      setDmSearch('')
+    } finally { setSending(false) }
+  }
+
+  // ── Create a group channel ─────────────────────────────────────────────────
+  const createGroup = async () => {
+    const name = groupName.trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
+    if (!name) return
+    setCreatingGroup(true)
+    try {
+      const { data: ch } = await supabase.from('chat_channels').insert({
+        company_id: companyId,
+        name,
+        type: 'group',
+        created_by: operatorId,
+      }).select().single()
+      await supabase.from('chat_members').insert({
+        channel_id: ch.id, user_id: operatorId, user_name: operatorName, user_role: operatorRole,
+      })
+      refetchChannels()
+      setChannel(ch)
+      setSubView(null)
+      setGroupName('')
+    } finally { setCreatingGroup(false) }
+  }
+
+  // ── Placeholder to keep old auto-join removed — no longer auto-seeding ────
+  // (channels are now only joined explicitly via DM/group creation buttons)
   useEffect(() => {
     if (!operatorId || !channels.length) return
     channels.forEach(ch => {
@@ -441,27 +527,126 @@ export default function OperatorChatPanel({
   }
 
   // ══════════════════════════════════════════════════════════════════════════
-  // RENDER: Channel list
+  // RENDER: DM user picker
+  // ══════════════════════════════════════════════════════════════════════════
+  if (subView === 'dm_picker') {
+    return (
+      <div className="flex flex-col h-full">
+        <div className="shrink-0 flex items-center gap-3 px-3 py-3 border-b border-dark-700">
+          <button onClick={() => { setSubView(null); setDmSearch('') }}
+            className="w-11 h-11 rounded-xl bg-dark-700 active:bg-dark-600 flex items-center justify-center flex-shrink-0">
+            <span className="text-slate-300 text-xl">←</span>
+          </button>
+          <p className="font-bold text-slate-100">💬 Start a Chat</p>
+        </div>
+        {/* Search bar */}
+        <div className="shrink-0 px-3 py-2.5 border-b border-dark-700">
+          <input
+            value={dmSearch} onChange={e => setDmSearch(e.target.value)}
+            placeholder="Search by name…"
+            className="w-full bg-dark-700 border border-dark-600 focus:border-primary-500 rounded-2xl px-4 py-3 text-sm text-slate-100 placeholder-slate-600 focus:outline-none"
+            autoFocus
+          />
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          {filteredUsers.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-full gap-3">
+              <span className="text-4xl">🔍</span>
+              <p className="text-slate-500 text-sm">No users found</p>
+            </div>
+          ) : filteredUsers.map(u => (
+            <button key={u.id} onClick={() => openDM(u)} disabled={sending}
+              className="w-full flex items-center gap-3.5 px-4 py-4 active:bg-dark-700 border-b border-dark-700/40 transition-colors text-left">
+              <div className={`w-11 h-11 rounded-full ${aC(u.full_name || u.email)} flex items-center justify-center font-black text-white text-sm flex-shrink-0`}>
+                {ini(u.full_name || u.email)}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-bold text-slate-100 truncate">{u.full_name || u.email}</p>
+                {u.role && <p className="text-xs text-slate-500 uppercase tracking-wide mt-0.5">{u.role}</p>}
+              </div>
+              <span className="text-slate-500 text-lg flex-shrink-0">→</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // RENDER: Group create
+  // ══════════════════════════════════════════════════════════════════════════
+  if (subView === 'group_create') {
+    return (
+      <div className="flex flex-col h-full">
+        <div className="shrink-0 flex items-center gap-3 px-3 py-3 border-b border-dark-700">
+          <button onClick={() => { setSubView(null); setGroupName('') }}
+            className="w-11 h-11 rounded-xl bg-dark-700 active:bg-dark-600 flex items-center justify-center flex-shrink-0">
+            <span className="text-slate-300 text-xl">←</span>
+          </button>
+          <p className="font-bold text-slate-100">👥 Start a Group Chat</p>
+        </div>
+        <div className="flex-1 flex flex-col items-center justify-center px-6 gap-6">
+          <div className="w-20 h-20 rounded-3xl bg-primary-600/20 border-2 border-primary-500/40 flex items-center justify-center">
+            <span className="text-4xl">👥</span>
+          </div>
+          <div className="w-full">
+            <p className="text-xs text-slate-500 mb-2 text-center">Group / channel name</p>
+            <input
+              value={groupName}
+              onChange={e => setGroupName(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && createGroup()}
+              placeholder="e.g. site-b or excavator-team"
+              className="w-full bg-dark-700 border border-dark-600 focus:border-primary-500 rounded-2xl px-4 py-4 text-base text-slate-100 placeholder-slate-600 focus:outline-none text-center"
+              autoFocus
+            />
+            <p className="text-[11px] text-slate-600 mt-1.5 text-center">Letters, numbers and hyphens only</p>
+          </div>
+          <button
+            onClick={createGroup}
+            disabled={!groupName.trim() || creatingGroup}
+            className="w-full py-4 rounded-2xl font-bold text-base bg-primary-600 disabled:opacity-40 active:scale-[0.98] transition-all text-white shadow-lg flex items-center justify-center gap-2"
+          >
+            {creatingGroup
+              ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              : '✓ Create Group'
+            }
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // RENDER: Channel / conversation list
   // ══════════════════════════════════════════════════════════════════════════
   if (!channel) {
     return (
       <div className="flex flex-col h-full">
-        {/* Header */}
-        <div className="shrink-0 px-4 py-3.5 border-b border-dark-700 flex items-center justify-between">
-          <h2 className="text-base font-bold text-slate-100">{L.channels}</h2>
-          {totalUnread > 0 && (
-            <span className="px-2.5 py-0.5 rounded-full bg-primary-500 text-white text-xs font-bold">
-              {totalUnread} {L.newBadge}
-            </span>
-          )}
+        {/* Two action buttons — always at top */}
+        <div className="shrink-0 px-3 py-3 border-b border-dark-700 flex gap-2.5">
+          <button
+            onClick={() => setSubView('dm_picker')}
+            className="flex-1 flex flex-col items-center gap-1.5 py-4 rounded-2xl bg-dark-700 border border-dark-600 active:bg-dark-600 transition-colors"
+          >
+            <span className="text-3xl">💬</span>
+            <span className="text-xs font-bold text-slate-200">Start a Chat</span>
+          </button>
+          <button
+            onClick={() => setSubView('group_create')}
+            className="flex-1 flex flex-col items-center gap-1.5 py-4 rounded-2xl bg-dark-700 border border-dark-600 active:bg-dark-600 transition-colors"
+          >
+            <span className="text-3xl">👥</span>
+            <span className="text-xs font-bold text-slate-200">Group Chat</span>
+          </button>
         </div>
 
-        {/* Channel list */}
+        {/* Existing channels / DMs */}
         <div className="flex-1 overflow-y-auto">
           {channels.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full gap-4 py-16">
-              <span className="text-6xl">💬</span>
-              <p className="text-slate-500 text-sm">{L.noChannels}</p>
+            <div className="flex flex-col items-center justify-center h-full gap-4 pb-8">
+              <span className="text-5xl opacity-40">💬</span>
+              <p className="text-slate-600 text-sm">No conversations yet</p>
+              <p className="text-slate-700 text-xs">Tap the buttons above to start</p>
             </div>
           ) : (
             channels.map(ch => {

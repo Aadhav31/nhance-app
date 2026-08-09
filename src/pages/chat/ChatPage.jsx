@@ -881,7 +881,7 @@ function useWebRTCCall({ channel, companyId, session, profile }) {
 }
 
 // ── Main ChatPage ──────────────────────────────────────────────────────────────
-export default function ChatPage() {
+export default function ChatPage({ navExtra = {} }) {
   const { companyId, session, profile, role } = useAuth()
   const queryClient = useQueryClient()
   const myId   = session?.user?.id
@@ -970,29 +970,32 @@ export default function ChatPage() {
   })
 
   // Seed default channels on first open
+  // Auto-open DM when navigated from HR employee tile
   useEffect(() => {
-    if (!companyId || !myId || channels.length > 0) return
-    seedDefaultChannels()
-  }, [companyId, myId, channels.length])
-
-  const seedDefaultChannels = async () => {
-    const defaults = [
-      { name: 'general',       description: 'Company-wide announcements and updates' },
-      { name: 'team-chat',     description: 'Day-to-day team conversations' },
-      { name: 'site-updates',  description: 'On-site progress, issues and photos' },
-    ]
-    for (const ch of defaults) {
-      const { data: created } = await supabase.from('chat_channels')
-        .insert({ company_id: companyId, ...ch, type: 'group', created_by: myId })
+    const targetId = navExtra?.dmUserId
+    if (!targetId || !myId || !companyId) return
+    // Find or create DM with the target user
+    const openTargetDM = async () => {
+      // Check if DM already exists in our channels
+      const existing = channels.find(ch =>
+        ch.type === 'direct' && ch.members?.some(m => m.user_id === targetId)
+      )
+      if (existing) { setActiveChannel(existing); return }
+      // Create new DM channel
+      const { data: ch } = await supabase.from('chat_channels')
+        .insert({ company_id: companyId, name: navExtra.dmUserName || 'Direct Message', type: 'direct', created_by: myId })
         .select().single()
-      if (created) {
-        await supabase.from('chat_members').insert({
-          channel_id: created.id, user_id: myId, user_name: myName, user_role: myRole,
-        })
-      }
+      if (!ch) return
+      await supabase.from('chat_members').insert([
+        { channel_id: ch.id, user_id: myId, user_name: myName, user_role: myRole },
+        { channel_id: ch.id, user_id: targetId, user_name: navExtra.dmUserName || '', user_role: '' },
+      ])
+      refetchChannels()
+      setActiveChannel({ ...ch, members: [] })
     }
-    refetchChannels()
-  }
+    openTargetDM()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [navExtra?.dmUserId])
 
   const groupChannels = channels.filter(c => c.type === 'group')
   const dmChannels    = channels.filter(c => c.type === 'direct')
