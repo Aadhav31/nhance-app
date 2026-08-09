@@ -885,7 +885,9 @@ export default function ChatPage({ navExtra = {} }) {
   const { companyId, session, profile, role } = useAuth()
   const queryClient = useQueryClient()
   const myId   = session?.user?.id
-  const myName = profile?.full_name || session?.user?.email || ''
+  // Prefer full_name; fall back to email prefix (never show raw email as display name)
+  const myName = profile?.full_name
+    || (session?.user?.email ? session.user.email.split('@')[0].replace(/[._]/g, ' ') : 'Me')
   const myRole = role || ''
 
   const [activeChannel,   setActiveChannel]   = useState(null)

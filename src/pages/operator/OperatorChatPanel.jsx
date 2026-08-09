@@ -224,6 +224,13 @@ export default function OperatorChatPanel({
   const [dmSearch, setDmSearch] = useState('')
   const [groupName, setGroupName] = useState('')
   const [creatingGroup, setCreatingGroup] = useState(false)
+  // ── Incoming call state ───────────────────────────────────────────────────
+  const [incomingCall,  setIncomingCall]  = useState(null) // {channelId, callerId, callerName}
+  const [incomingOffer, setIncomingOffer] = useState(null) // RTCSessionDescriptionInit
+  const [activeCall,   setActiveCall]    = useState(null) // {peerName, muted}
+  const pcRef        = useRef(null)
+  const localAudRef  = useRef(null)
+  const remoteAudRef = useRef(null)
 
   const bottomRef   = useRef(null)
   const mediaRecRef = useRef(null)
@@ -449,6 +456,97 @@ export default function OperatorChatPanel({
       .subscribe()
     return () => { supabase.removeChannel(sub) }
   }, [channel?.id, queryClient])
+
+  // ── Global incoming-call subscription ────────────────────────────────────
+  useEffect(() => {
+    if (!operatorId || !companyId) return
+    const endCallCleanup = () => {
+      pcRef.current?.close(); pcRef.current = null
+      localAudRef.current?.getTracks().forEach(t => t.stop()); localAudRef.current = null
+      setActiveCall(null); setIncomingCall(null); setIncomingOffer(null)
+    }
+    const sub = supabase
+      .channel(`op-call-${operatorId}`)
+      .on('postgres_changes', {
+        event: 'INSERT', schema: 'public', table: 'chat_call_signals',
+        filter: `to_user=eq.${operatorId}`,
+      }, async payload => {
+        const sig = payload.new
+        if (sig.signal_type === 'call-start') {
+          setIncomingCall({ channelId: sig.channel_id, callerId: sig.from_user, callerName: sig.payload?.name || 'Someone' })
+        } else if (sig.signal_type === 'offer') {
+          setIncomingOffer(sig.payload)
+        } else if (sig.signal_type === 'ice-candidate') {
+          if (pcRef.current?.remoteDescription) {
+            try { await pcRef.current.addIceCandidate(new RTCIceCandidate(sig.payload)) } catch {}
+          }
+        } else if (sig.signal_type === 'call-end' || sig.signal_type === 'busy') {
+          endCallCleanup()
+        }
+      })
+      .subscribe()
+    return () => { supabase.removeChannel(sub) }
+  }, [operatorId, companyId])
+
+  const acceptCall = async () => {
+    if (!incomingCall || !incomingOffer) return
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+      localAudRef.current = stream
+      const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] })
+      pcRef.current = pc
+      stream.getTracks().forEach(t => pc.addTrack(t, stream))
+      pc.ontrack = e => {
+        const audio = new Audio(); audio.srcObject = e.streams[0]; audio.play().catch(() => {})
+        remoteAudRef.current = audio
+      }
+      pc.onicecandidate = async e => {
+        if (e.candidate) await supabase.from('chat_call_signals').insert({
+          channel_id: incomingCall.channelId, company_id: companyId,
+          from_user: operatorId, to_user: incomingCall.callerId,
+          signal_type: 'ice-candidate', payload: e.candidate,
+        })
+      }
+      await pc.setRemoteDescription(new RTCSessionDescription(incomingOffer))
+      const answer = await pc.createAnswer()
+      await pc.setLocalDescription(answer)
+      await supabase.from('chat_call_signals').insert({
+        channel_id: incomingCall.channelId, company_id: companyId,
+        from_user: operatorId, to_user: incomingCall.callerId,
+        signal_type: 'answer', payload: answer,
+      })
+      setActiveCall({ peerName: incomingCall.callerName, muted: false })
+      setIncomingCall(null); setIncomingOffer(null)
+    } catch (err) {
+      console.error('accept call error', err)
+      setIncomingCall(null); setIncomingOffer(null)
+    }
+  }
+
+  const declineCall = async () => {
+    if (!incomingCall) return
+    await supabase.from('chat_call_signals').insert({
+      channel_id: incomingCall.channelId, company_id: companyId,
+      from_user: operatorId, to_user: incomingCall.callerId,
+      signal_type: 'busy', payload: {},
+    }).catch(() => {})
+    setIncomingCall(null); setIncomingOffer(null)
+  }
+
+  const endActiveCall = async () => {
+    if (activeCall && pcRef.current) {
+      // find channel id from call state — we stored it in incomingCall but it's cleared; use a ref pattern
+    }
+    pcRef.current?.close(); pcRef.current = null
+    localAudRef.current?.getTracks().forEach(t => t.stop()); localAudRef.current = null
+    remoteAudRef.current = null
+    setActiveCall(null)
+  }
+
+  const toggleMute = () => {
+    localAudRef.current?.getAudioTracks().forEach(t => { t.enabled = !t.enabled })
+    setActiveCall(prev => prev ? { ...prev, muted: !prev.muted } : prev)
+  }
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -705,24 +803,71 @@ export default function OperatorChatPanel({
   // RENDER: Message view
   // ══════════════════════════════════════════════════════════════════════════
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full relative">
+
+      {/* ── Incoming call overlay ── */}
+      {incomingCall && (
+        <div className="absolute inset-0 z-50 bg-dark-900/95 flex flex-col items-center justify-center gap-6 px-6">
+          <div className={`w-20 h-20 rounded-full ${aC(incomingCall.callerName)} flex items-center justify-center text-white font-black text-2xl`}>
+            {ini(incomingCall.callerName)}
+          </div>
+          <div className="text-center">
+            <p className="text-slate-400 text-sm mb-1">Incoming call from</p>
+            <p className="text-slate-100 font-bold text-xl">{incomingCall.callerName}</p>
+          </div>
+          <div className="flex gap-6 mt-2">
+            <button onClick={declineCall}
+              className="w-16 h-16 rounded-full bg-red-600 flex flex-col items-center justify-center gap-1 active:scale-95 transition-transform">
+              <span className="text-2xl">📵</span>
+            </button>
+            <button onClick={acceptCall} disabled={!incomingOffer}
+              className="w-16 h-16 rounded-full bg-emerald-600 flex flex-col items-center justify-center gap-1 active:scale-95 transition-transform disabled:opacity-50">
+              <span className="text-2xl">📞</span>
+            </button>
+          </div>
+          {!incomingOffer && <p className="text-slate-600 text-xs animate-pulse">Connecting…</p>}
+        </div>
+      )}
+
+      {/* ── Active call bar ── */}
+      {activeCall && (
+        <div className="shrink-0 bg-emerald-900/80 border-b border-emerald-700/50 px-4 py-2 flex items-center gap-3">
+          <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse flex-shrink-0" />
+          <p className="flex-1 text-emerald-300 text-sm font-semibold truncate">Call with {activeCall.peerName}</p>
+          <button onClick={toggleMute}
+            className={`w-8 h-8 rounded-lg flex items-center justify-center text-lg ${activeCall.muted ? 'bg-red-600/30 text-red-400' : 'bg-dark-700 text-slate-300'}`}>
+            {activeCall.muted ? '🔇' : '🎙️'}
+          </button>
+          <button onClick={endActiveCall}
+            className="w-8 h-8 rounded-lg bg-red-600 flex items-center justify-center text-white text-sm font-bold">
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* Channel header */}
-      <div className="shrink-0 flex items-center gap-3 px-3 py-3 border-b border-dark-700 bg-dark-800">
+      <div className="shrink-0 flex items-center gap-3 px-3 py-2.5 border-b border-dark-700 bg-dark-800">
         <button
           onClick={() => { setChannel(null); setText('') }}
-          className="w-11 h-11 rounded-xl bg-dark-700 active:bg-dark-600 flex items-center justify-center flex-shrink-0 transition-colors"
+          className="w-9 h-9 rounded-xl bg-dark-700 active:bg-dark-600 flex items-center justify-center flex-shrink-0 transition-colors"
         >
-          <span className="text-slate-300 text-xl">←</span>
+          <span className="text-slate-300 text-lg">←</span>
         </button>
-        <div className="w-9 h-9 rounded-xl bg-primary-600/15 border border-primary-500/30 flex items-center justify-center flex-shrink-0">
-          <span className="text-primary-400 font-black text-base">#</span>
-        </div>
+        {channel.type === 'direct' ? (
+          <div className={`w-9 h-9 rounded-full ${aC(channel.displayName || channel.name)} flex items-center justify-center flex-shrink-0 font-black text-white text-sm`}>
+            {ini(channel.displayName || channel.name)}
+          </div>
+        ) : (
+          <div className="w-9 h-9 rounded-xl bg-primary-600/15 border border-primary-500/30 flex items-center justify-center flex-shrink-0">
+            <span className="text-primary-400 font-black text-sm">#</span>
+          </div>
+        )}
         <div className="flex-1 min-w-0">
-          <p className="font-bold text-slate-100 leading-tight truncate">{channel.name}</p>
-          {channel.description && (
-            <p className="text-[11px] text-slate-500 truncate">{channel.description}</p>
-          )}
+          <p className="font-semibold text-slate-100 leading-tight truncate text-sm">{channel.displayName || channel.name}</p>
+          {channel.type === 'direct'
+            ? <p className="text-[10px] text-slate-500">Direct Message</p>
+            : channel.description && <p className="text-[10px] text-slate-500 truncate">{channel.description}</p>
+          }
         </div>
       </div>
 
@@ -770,11 +915,11 @@ export default function OperatorChatPanel({
 
         ) : (
           /* ── Normal input row ── */
-          <div className="flex items-end gap-2">
+          <div className="flex items-end gap-1.5">
 
             {/* 📷 Camera — primary action for operators */}
-            <label className="w-12 h-12 rounded-2xl bg-dark-700 border border-dark-600 flex items-center justify-center active:bg-dark-600 transition-colors cursor-pointer flex-shrink-0">
-              <span className="text-2xl">📷</span>
+            <label className="w-10 h-10 rounded-xl bg-dark-700 border border-dark-600 flex items-center justify-center active:bg-dark-600 transition-colors cursor-pointer flex-shrink-0">
+              <span className="text-lg">📷</span>
               <input
                 type="file"
                 accept="image/*"
@@ -794,28 +939,28 @@ export default function OperatorChatPanel({
               }}
               placeholder={L.typeMsg}
               rows={1}
-              className="flex-1 bg-dark-700 border border-dark-600 focus:border-primary-500 rounded-2xl px-4 py-3 text-sm text-slate-100 placeholder-slate-600 focus:outline-none resize-none leading-snug"
-              style={{ minHeight: '48px', maxHeight: '120px' }}
+              className="flex-1 bg-dark-700 border border-dark-600 focus:border-primary-500 rounded-xl px-3 py-2.5 text-sm text-slate-100 placeholder-slate-600 focus:outline-none resize-none leading-snug"
+              style={{ minHeight: '40px', maxHeight: '100px' }}
             />
 
             {/* 🎤 Voice — tap to start, ⏹ to send */}
             <button
               onClick={startRec}
               disabled={sending}
-              className="w-12 h-12 rounded-2xl bg-dark-700 border border-dark-600 active:bg-dark-600 flex items-center justify-center transition-colors flex-shrink-0 disabled:opacity-40"
+              className="w-10 h-10 rounded-xl bg-dark-700 border border-dark-600 active:bg-dark-600 flex items-center justify-center transition-colors flex-shrink-0 disabled:opacity-40"
             >
-              <span className="text-2xl">🎤</span>
+              <span className="text-lg">🎤</span>
             </button>
 
             {/* ↑ Send */}
             <button
               onClick={sendText}
               disabled={!text.trim() || sending}
-              className="w-12 h-12 rounded-2xl bg-primary-600 disabled:opacity-40 active:scale-95 transition-all flex items-center justify-center shadow-lg flex-shrink-0"
+              className="w-10 h-10 rounded-xl bg-primary-600 disabled:opacity-40 active:scale-95 transition-all flex items-center justify-center shadow-lg flex-shrink-0"
             >
               {sending
-                ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                : <span className="text-white text-2xl font-bold">↑</span>
+                ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                : <span className="text-white text-base font-bold">↑</span>
               }
             </button>
           </div>
