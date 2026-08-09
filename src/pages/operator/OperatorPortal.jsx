@@ -18,6 +18,7 @@ import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import toast from 'react-hot-toast'
 import FieldExpensePage from '../fieldexpense/FieldExpensePage'
+import OperatorChatPanel from './OperatorChatPanel'
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
@@ -182,6 +183,7 @@ const LANGS = {
     good: 'Good', greeting_morning: 'Morning', greeting_afternoon: 'Afternoon', greeting_evening: 'Evening',
     shiftNotAvail: 'Shift Not Open Yet',
     windowClosed: 'Shift Window Closed',
+    chat: 'Chat',
   },
   ta: {
     flag: '🇮🇳', label: 'தமிழ்',
@@ -200,6 +202,7 @@ const LANGS = {
     good: 'வணக்கம்', greeting_morning: 'காலை', greeting_afternoon: 'மதியம்', greeting_evening: 'மாலை',
     shiftNotAvail: 'ஷிஃப்ட் நேரம் இல்லை',
     windowClosed: 'ஷிஃப்ட் முடிந்தது',
+    chat: 'சாட்',
   },
   hi: {
     flag: '🇮🇳', label: 'हिंदी',
@@ -218,6 +221,7 @@ const LANGS = {
     good: 'नमस्ते', greeting_morning: 'सुबह', greeting_afternoon: 'दोपहर', greeting_evening: 'शाम',
     shiftNotAvail: 'शिफ्ट का समय नहीं',
     windowClosed: 'शिफ्ट बंद है',
+    chat: 'चैट',
   },
   te: {
     flag: '🇮🇳', label: 'తెలుగు',
@@ -236,6 +240,7 @@ const LANGS = {
     good: 'నమస్కారం', greeting_morning: 'ఉదయం', greeting_afternoon: 'మధ్యాహ్నం', greeting_evening: 'సాయంత్రం',
     shiftNotAvail: 'షిఫ్ట్ సమయం కాదు',
     windowClosed: 'షిఫ్ట్ మూసింది',
+    chat: 'చాట్',
   },
 }
 
@@ -1913,6 +1918,7 @@ const TABS = [
   { id: 'attendance', big: '📅',  label: 'attendance' },
   { id: 'pay',        big: '💰',  label: 'pay'        },
   { id: 'expenses',   big: '🧾',  label: 'expenses'   },
+  { id: 'chat',       big: '💬',  label: 'chat'       },
 ]
 
 export default function OperatorPortal() {
@@ -1941,6 +1947,39 @@ export default function OperatorPortal() {
   const shiftEnforcement = company?.shift_enforcement || 'flexible'
   const sharedProps  = { companyId, operatorId: userProfile?.id, employeeId, employeeName, otThreshold, profile: userProfile, lang, shiftEnforcement }
 
+  // ── Chat unread badge (for tab indicator) ────────────────────────────────
+  const { data: chatUnread = 0 } = useQuery({
+    queryKey: ['op_chat_badge', userProfile?.id, companyId],
+    queryFn: async () => {
+      const { data: chans } = await supabase
+        .from('chat_channels')
+        .select('id')
+        .eq('company_id', companyId)
+        .eq('type', 'group')
+      if (!chans?.length) return 0
+      const { data: reads } = await supabase
+        .from('chat_last_read')
+        .select('channel_id,last_read_at')
+        .eq('user_id', userProfile.id)
+      const readMap = Object.fromEntries((reads || []).map(r => [r.channel_id, r.last_read_at]))
+      let total = 0
+      await Promise.all(chans.map(async ch => {
+        const since = readMap[ch.id] || '1970-01-01T00:00:00Z'
+        const { count } = await supabase
+          .from('chat_messages')
+          .select('id', { count: 'exact', head: true })
+          .eq('channel_id', ch.id)
+          .neq('sender_id', userProfile.id)
+          .gt('created_at', since)
+          .eq('is_deleted', false)
+        total += count || 0
+      }))
+      return total
+    },
+    enabled: !!userProfile?.id && !!companyId && tab !== 'chat',
+    refetchInterval: 30_000,
+  })
+
   return (
     <div className="flex flex-col h-screen bg-dark-900 text-slate-100 max-w-lg mx-auto">
       {/* Top bar — minimal */}
@@ -1960,6 +1999,16 @@ export default function OperatorPortal() {
         <div className="flex-1 overflow-hidden flex flex-col pb-16">
           <FieldExpensePage embedded={true} />
         </div>
+      ) : tab === 'chat' ? (
+        <div className="flex-1 overflow-hidden flex flex-col pb-16">
+          <OperatorChatPanel
+            companyId={companyId}
+            operatorId={userProfile?.id}
+            operatorName={employeeName || userProfile?.full_name || 'Operator'}
+            operatorRole="operator"
+            lang={lang}
+          />
+        </div>
       ) : (
         <div className="flex-1 overflow-y-auto">
           <div className="p-4 pb-28">
@@ -1976,10 +2025,19 @@ export default function OperatorPortal() {
           {TABS.map(t => {
             const active = tab === t.id
             const label  = L[t.label] || t.label
+            const badge  = t.id === 'chat' && chatUnread > 0 && !active
             return (
               <button key={t.id} onClick={() => setTab(t.id)}
                 className={`flex-1 flex flex-col items-center py-2.5 gap-0.5 transition-colors ${active ? 'text-primary-400' : 'text-slate-500'}`}>
-                <span className="text-2xl leading-none">{t.big}</span>
+                {/* Icon + optional red badge */}
+                <div className="relative">
+                  <span className="text-2xl leading-none">{t.big}</span>
+                  {badge && (
+                    <span className="absolute -top-1 -right-1.5 min-w-[14px] h-[14px] rounded-full bg-red-500 text-white text-[9px] font-bold flex items-center justify-center px-0.5 leading-none">
+                      {chatUnread > 9 ? '9+' : chatUnread}
+                    </span>
+                  )}
+                </div>
                 <span className="text-[9px] font-semibold truncate max-w-full px-1">{label}</span>
                 {active && <div className="w-1.5 h-1.5 rounded-full bg-primary-400" />}
               </button>
