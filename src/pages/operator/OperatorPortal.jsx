@@ -263,17 +263,88 @@ function Sheet({ open, onClose, children }) {
   )
 }
 
+// ── Inline camera capture (replaces file input — reliable in Android WebView) ──
+// getUserMedia + canvas approach: opens the rear camera directly, no gallery chooser.
+function CameraCapture({ onCapture, onCancel }) {
+  const videoRef = useRef()
+  const streamRef = useRef(null)
+  const [ready, setReady] = useState(false)
+  const [err, setErr] = useState(null)
+
+  useEffect(() => {
+    let cancelled = false
+    navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 960 } },
+      audio: false,
+    }).then(s => {
+      if (cancelled) { s.getTracks().forEach(t => t.stop()); return }
+      streamRef.current = s
+      if (videoRef.current) { videoRef.current.srcObject = s }
+    }).catch(e => { if (!cancelled) setErr(e.message || 'Camera unavailable') })
+    return () => {
+      cancelled = true
+      streamRef.current?.getTracks().forEach(t => t.stop())
+    }
+  }, [])
+
+  const shoot = () => {
+    const vid = videoRef.current
+    if (!vid) return
+    const canvas = document.createElement('canvas')
+    canvas.width = vid.videoWidth || 1280
+    canvas.height = vid.videoHeight || 960
+    canvas.getContext('2d').drawImage(vid, 0, 0)
+    canvas.toBlob(blob => {
+      streamRef.current?.getTracks().forEach(t => t.stop())
+      onCapture(new File([blob], `photo_${Date.now()}.jpg`, { type: 'image/jpeg' }))
+    }, 'image/jpeg', 0.88)
+  }
+
+  // Inline styles — renders correctly regardless of Tailwind dark-mode
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: '#000', zIndex: 9998, display: 'flex', flexDirection: 'column' }}>
+      {err ? (
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#fff', padding: 24, gap: 12 }}>
+          <span style={{ fontSize: 40 }}>📷</span>
+          <p style={{ margin: 0, fontSize: 14, color: '#94a3b8', textAlign: 'center' }}>{err}</p>
+          <button onClick={onCancel} style={{ padding: '10px 24px', background: '#334155', border: 'none', borderRadius: 12, color: '#fff', fontSize: 14 }}>Go back</button>
+        </div>
+      ) : (
+        <>
+          <video
+            ref={videoRef} autoPlay playsInline muted
+            onCanPlay={() => setReady(true)}
+            style={{ flex: 1, width: '100%', objectFit: 'cover', display: 'block' }}
+          />
+          <div style={{ display: 'flex', gap: 24, padding: '20px 32px', justifyContent: 'center', alignItems: 'center', background: '#000' }}>
+            {/* Cancel */}
+            <button onClick={onCancel} style={{ width: 52, height: 52, background: '#334155', border: 'none', borderRadius: '50%', color: '#fff', fontSize: 22, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
+            {/* Shutter */}
+            <button onClick={shoot} disabled={!ready} style={{ width: 72, height: 72, background: '#fff', border: '5px solid #2563eb', borderRadius: '50%', cursor: ready ? 'pointer' : 'default', opacity: ready ? 1 : 0.4 }} />
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 /** Big photo capture button with preview */
 function BigPhoto({ label, sublabel, onCapture, preview, disabled }) {
-  const ref = useRef()
+  const [showCam, setShowCam] = useState(false)
   return (
     <div>
+      {showCam && (
+        <CameraCapture
+          onCapture={file => { setShowCam(false); onCapture(file) }}
+          onCancel={() => setShowCam(false)}
+        />
+      )}
       {label && <p className="text-center text-sm font-semibold text-slate-300 mb-1">{label}</p>}
       {sublabel && <p className="text-center text-xs text-slate-500 mb-3">{sublabel}</p>}
       <button
         type="button"
         disabled={disabled}
-        onClick={() => ref.current?.click()}
+        onClick={() => setShowCam(true)}
         className={`w-full rounded-2xl border-2 border-dashed transition-all active:scale-[0.97] flex flex-col items-center justify-center gap-2 disabled:opacity-40
           ${preview
             ? 'border-green-500 bg-green-900/10 p-2'
@@ -292,8 +363,6 @@ function BigPhoto({ label, sublabel, onCapture, preview, disabled }) {
           </>
         )}
       </button>
-      <input ref={ref} type="file" accept="image/*" capture="environment" className="hidden"
-        onChange={e => e.target.files?.[0] && onCapture(e.target.files[0])} />
     </div>
   )
 }

@@ -468,21 +468,21 @@ export default function OperatorChatPanel({
     return () => { supabase.removeChannel(sub) }
   }, [channel?.id, queryClient])
 
-  // Broadcast channel ref for outgoing call replies
-  const outCallChRef = useRef(null)
+  // Unified broadcast channel — nhance-calls-${companyId}
+  // Used for BOTH sending signals and receiving replies to our outgoing calls.
+  // Must be subscribed before send() is called (unsubscribed channels fail silently).
+  const callChRef = useRef(null)
   // Stable ref to activeCall (avoids stale closure in broadcast handler)
   const activeCallRef = useRef(null)
   useEffect(() => { activeCallRef.current = activeCall }, [activeCall])
 
-  // NOTE: Incoming calls handled at OperatorPortal level.
-  // This handles REPLIES to our OUTGOING calls via broadcast.
   useEffect(() => {
     if (!operatorId || !companyId) return
-    const ch = supabase.channel(`nhance-op-out-${operatorId}`, { config: { broadcast: { self: false } } })
-    outCallChRef.current = ch
+    const ch = supabase.channel(`nhance-calls-${companyId}`, { config: { broadcast: { self: false } } })
+    callChRef.current = ch
     ch.on('broadcast', { event: 'call-signal' }, async ({ payload: p }) => {
       if (p.to_user !== operatorId) return
-      if (!pcRef.current) return  // only handle if we initiated a call
+      if (!pcRef.current) return  // only handle replies to calls WE initiated
       if (p.signal_type === 'answer') {
         try { await pcRef.current.setRemoteDescription(new RTCSessionDescription({ type: p.type, sdp: p.sdp })) } catch {}
       } else if (p.signal_type === 'ice-candidate') {
@@ -498,7 +498,7 @@ export default function OperatorChatPanel({
       }
     })
     .subscribe()
-    return () => { supabase.removeChannel(ch); outCallChRef.current = null }
+    return () => { supabase.removeChannel(ch); callChRef.current = null }
   }, [operatorId, companyId])
 
   // ── Helpers ───────────────────────────────────────────────────────────────
@@ -516,10 +516,10 @@ export default function OperatorChatPanel({
     queryClient.invalidateQueries(['op_messages', channelId])
   }
 
-  // Send a WebRTC signal via broadcast (instant, no WAL/index issues)
+  // Send a WebRTC signal via broadcast
+  // Uses callChRef which is already subscribed — unsubscribed channels silently drop sends.
   const bcastSignal = (toUser, channelId, signalType, extra = {}) => {
-    // Use the company broadcast channel; all calls share nhance-calls-${companyId}
-    supabase.channel(`nhance-calls-${companyId}`).send({
+    callChRef.current?.send({
       type: 'broadcast', event: 'call-signal',
       payload: { to_user: toUser, from_user: operatorId, channel_id: channelId, signal_type: signalType, ...extra },
     }).catch(() => {})
@@ -612,13 +612,9 @@ export default function OperatorChatPanel({
   const endActiveCall = async () => {
     // Stop recording if active
     if (callRecRef.current?.state === 'recording') callRecRef.current.stop()
-    // Send call-end signal
+    // Send call-end signal via broadcast (not DB — receiver listens on broadcast)
     if (activeCall?.peerId && activeCall?.channelId) {
-      await supabase.from('chat_call_signals').insert({
-        channel_id: activeCall.channelId, company_id: companyId,
-        from_user: operatorId, to_user: activeCall.peerId,
-        signal_type: 'call-end', payload: {},
-      }).catch(() => {})
+      bcastSignal(activeCall.peerId, activeCall.channelId, 'call-end')
       const dur = callStartTime ? fmtDuration(Date.now() - callStartTime) : ''
       await insertCallMsg(activeCall.channelId, `📞 Call ended${dur ? ` — ${dur}` : ''}`)
     }
