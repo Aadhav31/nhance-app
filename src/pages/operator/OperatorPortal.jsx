@@ -420,6 +420,8 @@ async function requestAllPermissions() {
 }
 
 // ── Permission gate component ─────────────────────────────────────────────────
+// Uses inline styles (not Tailwind dark classes) so it renders correctly in
+// Android WebView regardless of light/dark mode.
 function PermissionGate({ onDone }) {
   const [status, setStatus] = useState(null)   // null=checking, {}=result
   const [requesting, setRequesting] = useState(false)
@@ -427,10 +429,7 @@ function PermissionGate({ onDone }) {
   useEffect(() => {
     const stored = localStorage.getItem('nhance_perms_granted')
     if (stored === 'yes') { onDone(); return }
-    checkPermissions().then(s => {
-      if (s.camera && s.mic) { localStorage.setItem('nhance_perms_granted', 'yes'); onDone(); return }
-      setStatus(s)
-    })
+    checkPermissions().then(s => setStatus(s))
   }, [])
 
   const handleGrant = async () => {
@@ -439,13 +438,27 @@ function PermissionGate({ onDone }) {
     const s = await checkPermissions()
     setStatus(s)
     setRequesting(false)
-    // If at least camera or mic is now granted, proceed
-    if (s.camera || s.mic) { localStorage.setItem('nhance_perms_granted', 'yes'); onDone() }
+    // Always proceed — Android native dialogs already handled the actual granting.
+    // navigator.permissions.query is unreliable in WebView and must not gate onDone.
+    localStorage.setItem('nhance_perms_granted', 'yes')
+    onDone()
   }
 
+  const done = () => {
+    localStorage.setItem('nhance_perms_granted', 'yes')
+    onDone()
+  }
+
+  // Inline style constants (avoids Tailwind custom-color issues in WebView)
+  const bg        = { background: '#0f172a', minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '0 24px', textAlign: 'center' }
+  const cardStyle = { background: '#1e293b', border: '1px solid #334155', borderRadius: 16, padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12, width: '100%', maxWidth: 320, marginBottom: 10 }
+  const btnStyle  = { background: '#2563eb', color: '#fff', border: 'none', borderRadius: 16, padding: '16px 0', width: '100%', maxWidth: 320, fontWeight: 700, fontSize: 16, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, opacity: requesting ? 0.6 : 1 }
+  const skipStyle = { marginTop: 12, color: '#64748b', fontSize: 14, background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }
+
   if (status === null) return (
-    <div className="flex flex-col items-center justify-center h-screen bg-dark-900">
-      <div className="w-10 h-10 border-2 border-primary-500/30 border-t-primary-500 rounded-full animate-spin" />
+    <div style={bg}>
+      <div style={{ width: 40, height: 40, border: '3px solid #2563eb', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+      <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
     </div>
   )
 
@@ -457,38 +470,35 @@ function PermissionGate({ onDone }) {
   ]
 
   return (
-    <div className="flex flex-col items-center justify-center h-screen bg-dark-900 px-6 text-center">
-      <div className="w-20 h-20 bg-primary-600/20 border-2 border-primary-500/40 rounded-full flex items-center justify-center text-4xl mb-6">🔐</div>
-      <h1 className="text-white text-2xl font-bold mb-2">Allow Permissions</h1>
-      <p className="text-slate-400 text-sm mb-8 max-w-xs">
+    <div style={bg}>
+      <div style={{ width: 80, height: 80, background: 'rgba(37,99,235,0.15)', border: '2px solid rgba(37,99,235,0.4)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 36, marginBottom: 24 }}>🔐</div>
+      <h1 style={{ color: '#f1f5f9', fontSize: 24, fontWeight: 700, marginBottom: 8, margin: '0 0 8px' }}>Allow Permissions</h1>
+      <p style={{ color: '#94a3b8', fontSize: 14, marginBottom: 32, maxWidth: 280 }}>
         Nhance needs access to your camera, microphone, and location to work correctly on site.
       </p>
 
-      <div className="w-full max-w-xs space-y-3 mb-8">
+      <div style={{ width: '100%', maxWidth: 320, marginBottom: 24 }}>
         {items.map(({ icon, label, sub, granted }) => (
-          <div key={label} className="flex items-center gap-3 bg-dark-800 rounded-2xl px-4 py-3 border border-dark-700">
-            <span className="text-2xl">{icon}</span>
-            <div className="flex-1 text-left">
-              <p className="text-white text-sm font-semibold">{label}</p>
-              <p className="text-slate-500 text-xs">{sub}</p>
+          <div key={label} style={cardStyle}>
+            <span style={{ fontSize: 24 }}>{icon}</span>
+            <div style={{ flex: 1, textAlign: 'left' }}>
+              <p style={{ color: '#f1f5f9', fontSize: 14, fontWeight: 600, margin: 0 }}>{label}</p>
+              <p style={{ color: '#64748b', fontSize: 12, margin: '2px 0 0' }}>{sub}</p>
             </div>
-            <span className={`text-xl ${granted ? 'text-green-400' : 'text-slate-600'}`}>
+            <span style={{ fontSize: 20, color: granted ? '#4ade80' : '#475569' }}>
               {granted ? '✓' : '○'}
             </span>
           </div>
         ))}
       </div>
 
-      <button
-        onClick={handleGrant}
-        disabled={requesting}
-        className="w-full max-w-xs py-4 bg-primary-600 hover:bg-primary-500 disabled:opacity-50 rounded-2xl text-white font-bold text-base transition-all active:scale-[0.98] flex items-center justify-center gap-2"
-      >
-        {requesting ? <><span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin inline-block" /> Requesting…</> : '✅ Grant All Permissions'}
+      <button onClick={handleGrant} disabled={requesting} style={btnStyle}>
+        {requesting
+          ? <><span style={{ width: 20, height: 20, border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', display: 'inline-block', animation: 'spin 0.8s linear infinite' }} /> Requesting…</>
+          : '✅ Grant All Permissions'}
       </button>
-      <button onClick={onDone} className="mt-3 text-slate-500 text-sm underline">
-        Skip for now
-      </button>
+      <button onClick={done} style={skipStyle}>Skip for now</button>
+      <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
     </div>
   )
 }
