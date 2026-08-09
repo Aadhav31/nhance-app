@@ -2312,11 +2312,29 @@ export default function OperatorPortal() {
         const r = data?.[0]
         if (!r || seenIds.has(r.id)) return
         seenIds.add(r.id)
+
+        const callerName   = r.payload?.name || 'Someone'
+        const embeddedOffer = r.payload?.offer  // offer SDP bundled into call-start payload
+
+        // Show the incoming overlay (idempotent — prev guard prevents flicker)
         setPortalIncoming(prev => prev || {
           channelId: r.channel_id,
-          callerId: r.from_user,
-          callerName: r.payload?.name || 'Someone',
+          callerId:  r.from_user,
+          callerName,
         })
+
+        // Store the embedded offer so Accept doesn't have to wait for broadcast
+        if (embeddedOffer && !portalOfferRef.current) {
+          portalOfferRef.current = embeddedOffer
+        }
+
+        // If user already tapped Accept before the poll ran, complete the handshake now
+        if (pendingAccept.current && embeddedOffer) {
+          const incoming = { channelId: r.channel_id, callerId: r.from_user, callerName }
+          pendingAccept.current = false
+          doAcceptRef.current?.(incoming, embeddedOffer)
+        }
+
         ringRef.play()
       } catch {}
     }, 2000)
