@@ -463,12 +463,12 @@ function AppShell() {
         {/* Global sticky notes — floats above all content */}
         {!isSuperAdmin() && <StickyNotes />}
 
-        {/* Floating chat icon — below sticky notes */}
+        {/* Floating chat icon — stacked above sticky notes */}
         {!isSuperAdmin() && (
           <button
             onClick={() => handleNavigate('chat')}
             title="Team Chat"
-            className="fixed bottom-24 right-4 z-30 w-12 h-12 rounded-full bg-primary-600 hover:bg-primary-500 shadow-lg flex items-center justify-center transition-all hover:scale-110 lg:bottom-6"
+            className="fixed bottom-36 right-4 z-30 w-12 h-12 rounded-2xl bg-primary-600 hover:bg-primary-500 shadow-lg flex items-center justify-center transition-all hover:scale-110 lg:bottom-[88px] lg:right-6"
           >
             <MessageSquare className="w-5 h-5 text-white" />
           </button>
