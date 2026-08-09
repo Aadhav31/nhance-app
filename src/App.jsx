@@ -247,9 +247,10 @@ function MobileNav({ role, activePage, onNavigate }) {
 // ── App Shell ─────────────────────────────────────────────────────────────────
 function AppShell() {
   const { loading, session, role, hasModule, isSuperAdmin } = useAuth()
-  const [activePage, setActivePage] = useState('dashboard')
-  const [navExtra,   setNavExtra]   = useState({})   // deep-link extras {tab, equipmentId, …}
-  const [notesOpen,  setNotesOpen]  = useState(false)
+  const [activePage,       setActivePage]       = useState('dashboard')
+  const [navExtra,         setNavExtra]         = useState({})   // deep-link extras {tab, equipmentId, …}
+  const [notesOpen,        setNotesOpen]        = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const isOnline = useOnlineStatus()
 
   // Live sync — invalidates React Query cache the moment any table row changes
@@ -440,15 +441,17 @@ function AppShell() {
   return (
     <DisplayModeProvider>
       <div className="app-container flex h-screen overflow-hidden">
-        {/* Left activity bar — desktop only */}
+        {/* Left sidebar — desktop only */}
         <Sidebar
           activePage={effectivePage}
           onNavigate={handleNavigate}
+          collapsed={sidebarCollapsed}
+          onToggle={() => setSidebarCollapsed(p => !p)}
         />
 
         {/* Main area */}
         <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
-          <TopBar activePage={effectivePage} onMenuToggle={() => {}} onNavigate={handleNavigate} />
+          <TopBar activePage={effectivePage} onMenuToggle={() => setSidebarCollapsed(p => !p)} onNavigate={handleNavigate} />
           {/* Offline banner — shown mid-session when connection drops */}
           {!isOnline && (
             <div className="shrink-0 flex items-center justify-center gap-2 bg-amber-500/20 border-b border-amber-600/40 text-amber-300 text-xs font-semibold py-2 px-4">
