@@ -161,10 +161,18 @@ function NoteEditor({ note, onSave, onDelete, onBack }) {
 }
 
 // ── Main StickyNotes panel ────────────────────────────────────────────────────
-export default function StickyNotes() {
+// Supports two modes:
+//   Uncontrolled (default): manages its own open state + shows floating trigger button
+//   Controlled:             pass open={bool} + onToggle={() => …} — hides the floating button
+export default function StickyNotes({ open: controlledOpen, onToggle: onControlledToggle } = {}) {
+  const isControlled = controlledOpen !== undefined
   const { companyId, session } = useAuth()
   const qc = useQueryClient()
-  const [open,    setOpen]    = useState(false)
+  const [internalOpen, setInternalOpen] = useState(false)
+  const open    = isControlled ? controlledOpen : internalOpen
+  const setOpen = isControlled
+    ? (val) => { if (typeof val === 'function' ? val(controlledOpen) !== controlledOpen : val !== controlledOpen) onControlledToggle?.() }
+    : setInternalOpen
   const [editing, setEditing] = useState(null)   // null = list view, 'new' = new note, note obj = edit
   const [search,  setSearch]  = useState('')
 
@@ -257,17 +265,19 @@ export default function StickyNotes() {
 
   return (
     <>
-      {/* ── Floating trigger button ── */}
-      <button
-        onClick={() => { setOpen(p => !p); setEditing(null); setSearch('') }}
-        className={`fixed bottom-20 right-4 lg:bottom-6 lg:right-6 z-40 w-12 h-12 rounded-2xl shadow-lg flex items-center justify-center transition-all duration-200 ${
-          open
-            ? 'bg-yellow-400 text-yellow-900 shadow-yellow-400/40 scale-95'
-            : 'bg-yellow-300 hover:bg-yellow-400 text-yellow-900 shadow-yellow-300/30 hover:scale-105'
-        }`}
-        title="Quick Notes">
-        <StickyNote className="w-5 h-5" />
-      </button>
+      {/* ── Floating trigger button — hidden when controlled by RightBar ── */}
+      {!isControlled && (
+        <button
+          onClick={() => { setOpen(p => !p); setEditing(null); setSearch('') }}
+          className={`fixed bottom-20 right-4 lg:bottom-6 lg:right-6 z-40 w-12 h-12 rounded-2xl shadow-lg flex items-center justify-center transition-all duration-200 ${
+            open
+              ? 'bg-yellow-400 text-yellow-900 shadow-yellow-400/40 scale-95'
+              : 'bg-yellow-300 hover:bg-yellow-400 text-yellow-900 shadow-yellow-300/30 hover:scale-105'
+          }`}
+          title="Quick Notes">
+          <StickyNote className="w-5 h-5" />
+        </button>
+      )}
 
       {/* ── Panel ── */}
       {open && (

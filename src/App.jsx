@@ -7,6 +7,7 @@ import LoadingScreen from './components/shared/LoadingScreen'
 import StickyNotes from './components/shared/StickyNotes'
 import LoginPage from './pages/auth/LoginPage'
 import Sidebar from './components/layout/Sidebar'
+import RightBar from './components/layout/RightBar'
 import TopBar from './components/layout/TopBar'
 import { MODULES, ROLES } from './lib/constants'
 import OperatorPortal from './pages/operator/OperatorPortal'
@@ -248,7 +249,7 @@ function AppShell() {
   const { loading, session, role, hasModule, isSuperAdmin } = useAuth()
   const [activePage, setActivePage] = useState('dashboard')
   const [navExtra,   setNavExtra]   = useState({})   // deep-link extras {tab, equipmentId, …}
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [notesOpen,  setNotesOpen]  = useState(false)
   const isOnline = useOnlineStatus()
 
   // Live sync — invalidates React Query cache the moment any table row changes
@@ -439,19 +440,15 @@ function AppShell() {
   return (
     <DisplayModeProvider>
       <div className="app-container flex h-screen overflow-hidden">
-        {/* Sidebar — desktop only */}
-        <div className="hidden lg:flex">
-          <Sidebar
-            activePage={effectivePage}
-            onNavigate={handleNavigate}
-            collapsed={sidebarCollapsed}
-            onToggle={() => setSidebarCollapsed(p => !p)}
-          />
-        </div>
+        {/* Left activity bar — desktop only */}
+        <Sidebar
+          activePage={effectivePage}
+          onNavigate={handleNavigate}
+        />
 
         {/* Main area */}
         <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
-          <TopBar activePage={effectivePage} onMenuToggle={() => setSidebarCollapsed(p => !p)} onNavigate={handleNavigate} />
+          <TopBar activePage={effectivePage} onMenuToggle={() => {}} onNavigate={handleNavigate} />
           {/* Offline banner — shown mid-session when connection drops */}
           {!isOnline && (
             <div className="shrink-0 flex items-center justify-center gap-2 bg-amber-500/20 border-b border-amber-600/40 text-amber-300 text-xs font-semibold py-2 px-4">
@@ -473,18 +470,22 @@ function AppShell() {
           />
         )}
 
-        {/* Global sticky notes — floats above all content */}
-        {!isSuperAdmin() && <StickyNotes />}
-
-        {/* Floating chat icon — stacked above sticky notes */}
+        {/* Right icon strip — desktop only (Chat, Notes, Approvals, Settings…) */}
         {!isSuperAdmin() && (
-          <button
-            onClick={() => handleNavigate('chat')}
-            title="Team Chat"
-            className="fixed bottom-36 right-4 z-30 w-12 h-12 rounded-2xl bg-primary-600 hover:bg-primary-500 shadow-lg flex items-center justify-center transition-all hover:scale-110 lg:bottom-[88px] lg:right-6"
-          >
-            <MessageSquare className="w-5 h-5 text-white" />
-          </button>
+          <RightBar
+            activePage={effectivePage}
+            onNavigate={handleNavigate}
+            notesOpen={notesOpen}
+            onToggleNotes={() => setNotesOpen(p => !p)}
+          />
+        )}
+
+        {/* Global sticky notes — controlled by RightBar on desktop, floating on mobile */}
+        {!isSuperAdmin() && (
+          <StickyNotes
+            open={notesOpen}
+            onToggle={() => setNotesOpen(p => !p)}
+          />
         )}
       </div>
     </DisplayModeProvider>
