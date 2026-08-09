@@ -699,7 +699,7 @@ function ChannelItem({ channel, active, unread, myId, onClick }) {
 }
 
 // ── WebRTC call hook ───────────────────────────────────────────────────────────
-function useWebRTCCall({ channel, companyId, session, profile }) {
+function useWebRTCCall({ channel, companyId, session, profile, pendingCallRef }) {
   const myId   = session?.user?.id
   const myName = profile?.full_name || session?.user?.email || 'Me'
   const [callState, setCallState] = useState(null)  // null | {status, peerName, peerId, callType, ...}
@@ -707,10 +707,12 @@ function useWebRTCCall({ channel, companyId, session, profile }) {
   const pcRef     = useRef(null)
   const localRef  = useRef(null)
   const screenRef = useRef(null)
+  // Keep stable ref to handleIncomingSignal for use inside subscription callback
+  const handleSignalRef = useRef(null)
 
   const iceServers = [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }]
 
-  // Subscribe to incoming signals
+  // Subscribe to incoming signals + drain any buffered signals from global sub
   useEffect(() => {
     if (!channel?.id || !myId) return
     const sub = supabase.channel(`call-signals-${channel.id}`)
@@ -720,9 +722,23 @@ function useWebRTCCall({ channel, companyId, session, profile }) {
       }, (payload) => {
         const sig = payload.new
         if (sig.from_user === myId) return  // ignore own signals
-        handleIncomingSignal(sig)
+        handleSignalRef.current?.(sig)
       })
-      .subscribe()
+      .subscribe(status => {
+        // Once subscription is SUBSCRIBED, drain any buffered pending call
+        if (status === 'SUBSCRIBED' && pendingCallRef?.current?.channelId === channel.id) {
+          const pending = pendingCallRef.current
+          pendingCallRef.current = null
+          // Replay call-start
+          handleSignalRef.current?.({ signal_type: 'call-start', from_user: pending.callerId, payload: { name: pending.callerName } })
+          // Replay offer if already received
+          if (pending.offer) {
+            setTimeout(() => {
+              handleSignalRef.current?.({ signal_type: 'offer', from_user: pending.callerId, payload: pending.offer })
+            }, 100)
+          }
+        }
+      })
     return () => supabase.removeChannel(sub)
   }, [channel?.id, myId])
 
@@ -736,7 +752,7 @@ function useWebRTCCall({ channel, companyId, session, profile }) {
 
   const handleIncomingSignal = async (sig) => {
     if (sig.signal_type === 'call-start') {
-      setIncomingCall({ callerId: sig.from_user, callerName: sig.payload.name, callType: sig.payload.callType })
+      setIncomingCall({ callerId: sig.from_user, callerName: sig.payload?.name || 'Someone', callType: sig.payload?.callType || 'audio' })
     } else if (sig.signal_type === 'call-end') {
       endCallCleanup()
     } else if (sig.signal_type === 'offer') {
@@ -751,6 +767,9 @@ function useWebRTCCall({ channel, companyId, session, profile }) {
       setTimeout(endCallCleanup, 2000)
     }
   }
+
+  // Keep handleSignalRef current so subscription callback can call it without stale closure
+  useEffect(() => { handleSignalRef.current = handleIncomingSignal })
 
   const createPeerConnection = (peerId, callType, localStream) => {
     const pc = new RTCPeerConnection({ iceServers })
@@ -999,20 +1018,28 @@ export default function ChatPage({ navExtra = {} }) {
     refetchInterval: 15_000,
   })
 
-  // Global incoming-call subscription — receives calls even when not in that specific DM
+  // ── Global incoming-call subscription ─────────────────────────────────────
+  // Uses company_id filter (indexed) + client-side to_user check (reliable)
+  // Buffers call-start + offer so per-channel sub timing doesn't matter
+  const pendingCallRef = useRef(null)  // { channelId, callerId, callerName, offer }
   useEffect(() => {
     if (!myId || !companyId) return
     const sub = supabase.channel(`desktop-call-${myId}`)
       .on('postgres_changes', {
         event: 'INSERT', schema: 'public', table: 'chat_call_signals',
-        filter: `to_user=eq.${myId}`,
+        filter: `company_id=eq.${companyId}`,   // indexed — reliable
       }, payload => {
         const sig = payload.new
-        // If MessageThread already handles it (channel open), skip
+        if (sig.to_user !== myId) return         // client-side filter
         if (sig.signal_type === 'call-start') {
-          // Auto-navigate to the DM so the MessageThread subscription picks it up
+          pendingCallRef.current = { channelId: sig.channel_id, callerId: sig.from_user, callerName: sig.payload?.name || 'Someone', offer: null }
+          // Navigate to the DM channel so per-channel sub activates
           const existingCh = channels.find(c => c.id === sig.channel_id)
           if (existingCh) setActiveChannel(existingCh)
+        } else if (sig.signal_type === 'offer') {
+          if (pendingCallRef.current && pendingCallRef.current.channelId === sig.channel_id) {
+            pendingCallRef.current = { ...pendingCallRef.current, offer: sig.payload }
+          }
         }
       })
       .subscribe()
@@ -1063,7 +1090,7 @@ export default function ChatPage({ navExtra = {} }) {
 
   // WebRTC
   const { callState, incomingCall, startCall, endCall, acceptCall, declineCall } = useWebRTCCall({
-    channel: activeChannel, companyId, session, profile,
+    channel: activeChannel, companyId, session, profile, pendingCallRef,
   })
 
   const totalUnread = Object.values(unreadMap).reduce((s, c) => s + c, 0)

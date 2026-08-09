@@ -1921,10 +1921,144 @@ const TABS = [
   { id: 'chat',       big: '💬',  label: 'chat'       },
 ]
 
+// ── Ringtone via Web Audio API ──────────────────────────────────────────────
+function useRingtone() {
+  const ctxRef   = useRef(null)
+  const timerRef = useRef(null)
+  const play = () => {
+    try {
+      ctxRef.current = new AudioContext()
+      const ring = () => {
+        [440, 480].forEach((freq, i) => {
+          const osc = ctxRef.current.createOscillator()
+          const gain = ctxRef.current.createGain()
+          osc.connect(gain); gain.connect(ctxRef.current.destination)
+          osc.frequency.value = freq
+          osc.type = 'sine'
+          const t = ctxRef.current.currentTime + i * 0.12
+          gain.gain.setValueAtTime(0, t)
+          gain.gain.linearRampToValueAtTime(0.25, t + 0.05)
+          gain.gain.linearRampToValueAtTime(0, t + 0.2)
+          osc.start(t); osc.stop(t + 0.25)
+        })
+      }
+      ring()
+      timerRef.current = setInterval(ring, 1400)
+    } catch {}
+  }
+  const stop = () => {
+    clearInterval(timerRef.current)
+    ctxRef.current?.close().catch(() => {})
+    ctxRef.current = null
+  }
+  return { play, stop }
+}
+
 export default function OperatorPortal() {
   const { userProfile, company, companyId, signOut } = useAuth()
   const [tab,  setTab]  = useState('shift')
   const [lang, setLang] = useState('en')
+  // ── Global call state (works from any tab) ─────────────────────────────
+  const [portalIncoming, setPortalIncoming] = useState(null) // {channelId, callerId, callerName}
+  const [portalOffer,    setPortalOffer]    = useState(null)
+  const [portalActive,   setPortalActive]   = useState(null) // {peerName, peerId, channelId}
+  const portalPcRef    = useRef(null)
+  const portalAudRef   = useRef(null) // local stream
+  const portalRemRef   = useRef(null) // remote audio element
+  const ringRef        = useRingtone()
+
+  // ── Global incoming-call subscription ─────────────────────────────────
+  useEffect(() => {
+    const uid = userProfile?.id
+    if (!uid || !companyId) return
+    const sub = supabase.channel(`portal-call-${uid}`)
+      .on('postgres_changes', {
+        event: 'INSERT', schema: 'public', table: 'chat_call_signals',
+        filter: `company_id=eq.${companyId}`,   // indexed column — reliable
+      }, payload => {
+        const sig = payload.new
+        if (sig.to_user !== uid) return          // client-side filter
+        if (sig.signal_type === 'call-start') {
+          setPortalIncoming({ channelId: sig.channel_id, callerId: sig.from_user, callerName: sig.payload?.name || 'Someone' })
+          ringRef.play()
+        } else if (sig.signal_type === 'offer') {
+          setPortalOffer(sig.payload)
+        } else if (sig.signal_type === 'ice-candidate') {
+          portalPcRef.current?.addIceCandidate(new RTCIceCandidate(sig.payload)).catch(() => {})
+        } else if (sig.signal_type === 'call-end' || sig.signal_type === 'busy') {
+          ringRef.stop()
+          portalPcRef.current?.close(); portalPcRef.current = null
+          portalAudRef.current?.getTracks().forEach(t => t.stop()); portalAudRef.current = null
+          portalRemRef.current = null
+          setPortalIncoming(null); setPortalOffer(null); setPortalActive(null)
+        } else if (sig.signal_type === 'answer') {
+          portalPcRef.current?.setRemoteDescription(new RTCSessionDescription(sig.payload)).catch(() => {})
+        }
+      })
+      .subscribe()
+    return () => { supabase.removeChannel(sub); ringRef.stop() }
+  }, [userProfile?.id, companyId])
+
+  const portalAcceptCall = async () => {
+    if (!portalIncoming || !portalOffer) return
+    ringRef.stop()
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+      portalAudRef.current = stream
+      const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] })
+      portalPcRef.current = pc
+      stream.getTracks().forEach(t => pc.addTrack(t, stream))
+      pc.ontrack = e => { const a = new Audio(); a.srcObject = e.streams[0]; a.play().catch(() => {}); portalRemRef.current = a }
+      pc.onicecandidate = async e => {
+        if (e.candidate) await supabase.from('chat_call_signals').insert({
+          channel_id: portalIncoming.channelId, company_id: companyId,
+          from_user: userProfile.id, to_user: portalIncoming.callerId,
+          signal_type: 'ice-candidate', payload: e.candidate,
+        }).catch(() => {})
+      }
+      await pc.setRemoteDescription(new RTCSessionDescription(portalOffer))
+      const answer = await pc.createAnswer()
+      await pc.setLocalDescription(answer)
+      await supabase.from('chat_call_signals').insert({
+        channel_id: portalIncoming.channelId, company_id: companyId,
+        from_user: userProfile.id, to_user: portalIncoming.callerId,
+        signal_type: 'answer', payload: answer,
+      })
+      await supabase.from('chat_messages').insert({
+        channel_id: portalIncoming.channelId, company_id: companyId,
+        sender_id: userProfile.id, sender_name: userProfile.full_name || 'Operator', sender_role: 'system',
+        content: `📞 Call answered`, attachments: [],
+      }).catch(() => {})
+      setPortalActive({ peerName: portalIncoming.callerName, peerId: portalIncoming.callerId, channelId: portalIncoming.channelId })
+      setPortalIncoming(null); setPortalOffer(null)
+    } catch (err) { ringRef.stop(); setPortalIncoming(null); setPortalOffer(null) }
+  }
+
+  const portalDeclineCall = async () => {
+    ringRef.stop()
+    if (portalIncoming) {
+      await supabase.from('chat_call_signals').insert({
+        channel_id: portalIncoming.channelId, company_id: companyId,
+        from_user: userProfile.id, to_user: portalIncoming.callerId,
+        signal_type: 'busy', payload: {},
+      }).catch(() => {})
+    }
+    setPortalIncoming(null); setPortalOffer(null)
+  }
+
+  const portalEndCall = async () => {
+    if (portalActive) {
+      await supabase.from('chat_call_signals').insert({
+        channel_id: portalActive.channelId, company_id: companyId,
+        from_user: userProfile.id, to_user: portalActive.peerId,
+        signal_type: 'call-end', payload: {},
+      }).catch(() => {})
+    }
+    portalPcRef.current?.close(); portalPcRef.current = null
+    portalAudRef.current?.getTracks().forEach(t => t.stop()); portalAudRef.current = null
+    portalRemRef.current = null
+    setPortalActive(null)
+  }
 
   const L = LANGS[lang]
 
@@ -1982,8 +2116,46 @@ export default function OperatorPortal() {
 
   return (
     <div className="flex flex-col h-screen bg-dark-900 text-slate-100 max-w-lg mx-auto">
+
+      {/* ── INCOMING CALL OVERLAY (full-screen, any tab) ─────────────────────── */}
+      {portalIncoming && (
+        <div className="fixed inset-0 z-[200] flex flex-col items-center justify-center bg-black/90 backdrop-blur-sm">
+          <div className="flex flex-col items-center gap-6 px-8 text-center">
+            <div className="w-24 h-24 rounded-full bg-primary-600 flex items-center justify-center text-4xl font-bold text-white animate-pulse shadow-2xl">
+              {(portalIncoming.callerName || '?')[0].toUpperCase()}
+            </div>
+            <div>
+              <p className="text-white text-2xl font-bold">{portalIncoming.callerName}</p>
+              <p className="text-slate-400 text-sm mt-1">Incoming voice call…</p>
+            </div>
+            <div className="flex gap-12 mt-4">
+              <button onPointerUp={portalDeclineCall}
+                className="w-16 h-16 rounded-full bg-red-600 flex items-center justify-center text-3xl shadow-lg active:scale-95 transition-transform">
+                📵
+              </button>
+              <button onPointerUp={portalAcceptCall}
+                className="w-16 h-16 rounded-full bg-green-500 flex items-center justify-center text-3xl shadow-lg active:scale-95 transition-transform animate-bounce">
+                📞
+              </button>
+            </div>
+            <p className="text-slate-500 text-xs">Tap green to answer · red to decline</p>
+          </div>
+        </div>
+      )}
+
+      {/* ── ACTIVE CALL BAR (shown while call in progress) ───────────────────── */}
+      {portalActive && (
+        <div className="fixed top-0 left-0 right-0 z-[150] max-w-lg mx-auto bg-green-700 px-4 py-2 flex items-center gap-3 shadow-xl">
+          <span className="text-white text-sm font-semibold flex-1 truncate">📞 Call with {portalActive.peerName}</span>
+          <button onPointerUp={portalEndCall}
+            className="bg-red-500 text-white text-xs font-bold rounded-full px-3 py-1 active:scale-95">
+            End
+          </button>
+        </div>
+      )}
+
       {/* Top bar — minimal */}
-      <div className="shrink-0 bg-dark-800 border-b border-dark-700 px-4 py-2.5 flex items-center gap-2">
+      <div className={`shrink-0 bg-dark-800 border-b border-dark-700 px-4 py-2.5 flex items-center gap-2 ${portalActive ? 'mt-9' : ''}`}>
         <div className="flex-1 min-w-0">
           <p className="text-sm font-bold text-slate-100 truncate">{userProfile?.full_name}</p>
           <p className="text-[10px] text-slate-500 truncate">{company?.name}</p>
