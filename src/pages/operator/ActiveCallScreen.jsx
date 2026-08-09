@@ -71,7 +71,7 @@ function CallChip({ peerName, duration, onExpand }) {
         }} />
         <span style={{ color: '#fff', fontSize: 13, fontWeight: 700 }}>{peerName}</span>
         <span style={{ color: '#bbf7d0', fontSize: 12, fontFamily: 'monospace', letterSpacing: 1 }}>
-          {fmt(duration)}
+          {duration < 0 ? 'Calling…' : fmt(duration)}
         </span>
         <span style={{ color: '#86efac', fontSize: 14 }}>▲</span>
       </div>
@@ -86,6 +86,7 @@ export default function ActiveCallScreen({
   duration   = 0,     // seconds, updated externally
   muted      = false,
   recording  = false,
+  connected  = true,  // false = still ringing/calling → show "Calling…" instead of timer
   onToggleMute,       // () => void
   onToggleHold,       // (newHeld: boolean) => void
   onRecord,           // () => void
@@ -102,7 +103,7 @@ export default function ActiveCallScreen({
   }
 
   if (minimized) {
-    return <CallChip peerName={peerName} duration={duration} onExpand={() => setMinimized(false)} />
+    return <CallChip peerName={peerName} duration={connected ? duration : -1} onExpand={() => setMinimized(false)} />
   }
 
   return (
@@ -178,11 +179,11 @@ export default function ActiveCallScreen({
           {peerName}
         </p>
         <p style={{
-          color: held ? '#f59e0b' : '#22c55e',
+          color: held ? '#f59e0b' : connected ? '#22c55e' : '#94a3b8',
           fontSize: 13, marginTop: 6, fontFamily: 'monospace', letterSpacing: 2,
           display: 'flex', alignItems: 'center', gap: 6,
         }}>
-          {held ? '⏸  On Hold' : fmt(duration)}
+          {held ? '⏸  On Hold' : connected ? fmt(duration) : 'Calling…'}
         </p>
 
         {/* ── Controls (2 rows × 3) ───────────────────────────────────────── */}

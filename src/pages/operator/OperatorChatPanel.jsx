@@ -242,6 +242,7 @@ export default function OperatorChatPanel({
   const [incomingCall,   setIncomingCall]   = useState(null) // {channelId, callerId, callerName}
   const [incomingOffer,  setIncomingOffer]  = useState(null) // RTCSessionDescriptionInit
   const [activeCall,     setActiveCall]     = useState(null) // {peerName, peerId, channelId, muted, callRecording}
+  const [callConnected,  setCallConnected]  = useState(false) // false = 'Calling…' phase, true = timer phase
   const [callStartTime,  setCallStartTime]  = useState(null)
   const [callDuration,   setCallDuration]   = useState(0)    // live seconds counter
   const pcRef          = useRef(null)
@@ -492,6 +493,13 @@ export default function OperatorChatPanel({
       if (!pcRef.current) { portalOutSignalRef.current = null; return }
       if (p.signal_type === 'answer') {
         try { await pcRef.current.setRemoteDescription(new RTCSessionDescription({ type: p.type, sdp: p.sdp })) } catch {}
+        // Web user answered — switch from "Calling…" to live timer
+        setCallConnected(true)
+        const now = Date.now()
+        setCallStartTime(now); callStartTimeRef.current = now
+        setCallDuration(0)
+        if (callDurRef.current) clearInterval(callDurRef.current)
+        callDurRef.current = setInterval(() => setCallDuration(d => d + 1), 1000)
       } else if (p.signal_type === 'ice-candidate') {
         try { await pcRef.current.addIceCandidate(new RTCIceCandidate(p.candidate)) } catch {}
       } else if (p.signal_type === 'call-end' || p.signal_type === 'busy') {
@@ -588,12 +596,9 @@ export default function OperatorChatPanel({
       await new Promise(r => setTimeout(r, 400))
       bcastSignal(peer.user_id, channel.id, 'offer', { type: offer.type, sdp: offer.sdp })
       setActiveCall({ peerName: peer.user_name || peer.user_id, peerId: peer.user_id, channelId: channel.id, muted: false, callRecording: false })
-      const now = Date.now()
-      setCallStartTime(now); callStartTimeRef.current = now
-      // Start live duration timer
+      setCallConnected(false)   // show "Calling…" until the web user answers
       setCallDuration(0)
-      if (callDurRef.current) clearInterval(callDurRef.current)
-      callDurRef.current = setInterval(() => setCallDuration(d => d + 1), 1000)
+      // NOTE: timer starts only when the answer arrives (in portalOutSignalRef handler)
       // Insert call event after state updates — DB failure must not abort the call
       insertCallMsg(channel.id, `📞 ${operatorName} started a call`)
     } catch (err) {
@@ -659,7 +664,7 @@ export default function OperatorChatPanel({
     callRecRef.current = null; callRecChunks.current = []
     // Stop duration timer
     if (callDurRef.current) { clearInterval(callDurRef.current); callDurRef.current = null }
-    setActiveCall(null); setCallStartTime(null); setCallDuration(0)
+    setActiveCall(null); setCallStartTime(null); setCallDuration(0); setCallConnected(false)
   }
 
   // ── Mute / unmute ─────────────────────────────────────────────────────────
@@ -1007,6 +1012,7 @@ export default function OperatorChatPanel({
           duration={callDuration}
           muted={activeCall.muted}
           recording={activeCall.callRecording}
+          connected={callConnected}
           onToggleMute={toggleMute}
           onToggleHold={handleHold}
           onRecord={toggleCallRecord}

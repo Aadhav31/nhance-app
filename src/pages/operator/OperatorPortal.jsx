@@ -2177,9 +2177,13 @@ export default function OperatorPortal() {
   const [portalHeld,      setPortalHeld]      = useState(false)
   const [portalRecording, setPortalRecording] = useState(false)
   const [portalDuration,  setPortalDuration]  = useState(0)
-  const portalDurRef   = useRef(null)
-  const portalRecRef   = useRef(null)   // MediaRecorder for incoming-call recording
+  const portalDurRef    = useRef(null)
+  const portalRecRef    = useRef(null)   // MediaRecorder for incoming-call recording
   const portalRecChunks = useRef([])
+  const portalActiveRef = useRef(null)   // stale-closure-safe mirror of portalActive state
+
+  // Keep portalActiveRef in sync so subscription closure always sees current value
+  useEffect(() => { portalActiveRef.current = portalActive }, [portalActive])
 
   // Helper: send a signal via broadcast
   const bcast = (toUser, channelId, signalType, extra = {}) => {
@@ -2276,7 +2280,8 @@ export default function OperatorPortal() {
         if (outCallSignalRef.current) outCallSignalRef.current(p)
 
       } else if (p.signal_type === 'call-end' || p.signal_type === 'busy') {
-        if (portalPcRef.current || portalActive) {
+        // Use ref (not state) — portalActive is always stale in this closure
+        if (portalPcRef.current || portalActiveRef.current) {
           cleanupCall()
         } else if (outCallSignalRef.current) {
           outCallSignalRef.current(p)
@@ -2285,7 +2290,37 @@ export default function OperatorPortal() {
     })
     .subscribe()
 
-    return () => { supabase.removeChannel(ch); callChRef.current = null; ringRef.stop() }
+    // ── DB fallback: postgres_changes on chat_call_signals ────────────────────
+    // Guards against broadcast delivery failures on Android WebView / poor network.
+    // When web user calls, they also insert a chat_call_signals row.
+    // This listener catches it if the broadcast never arrives.
+    const dbCh = supabase
+      .channel(`call-db-${uid}`)
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'chat_call_signals',
+        filter: `to_user=eq.${uid}`,
+      }, ({ new: r }) => {
+        if (r.signal_type !== 'call-start') return
+        // Ignore if already in an active call
+        if (portalPcRef.current || portalActiveRef.current) return
+        // Dedup: broadcast may have already set portalIncoming — don't reset it
+        setPortalIncoming(prev => prev || {
+          channelId: r.channel_id,
+          callerId: r.from_user,
+          callerName: r.payload?.name || 'Someone',
+        })
+        ringRef.play()
+      })
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(ch)
+      supabase.removeChannel(dbCh)
+      callChRef.current = null
+      ringRef.stop()
+    }
   }, [userProfile?.id, companyId])
 
   const portalAcceptCall = () => {
@@ -2331,6 +2366,9 @@ export default function OperatorPortal() {
         }).catch(() => {})
         setPortalActive({ peerName: incoming.callerName, peerId: incoming.callerId, channelId: incoming.channelId })
         setPortalIncoming(null); setPortalOffer(null)
+        setPortalDuration(0)
+        if (portalDurRef.current) clearInterval(portalDurRef.current)
+        portalDurRef.current = setInterval(() => setPortalDuration(d => d + 1), 1000)
         portalOfferRef.current = null
       } catch (err) {
         console.error('portalAcceptCall error', err)
