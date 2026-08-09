@@ -22,6 +22,7 @@ const PAGE_TITLES = {
   superadmin:      { title: 'Nhance Admin',             subtitle: 'Platform management' },
   approval_center: { title: 'Approval Centre',         subtitle: 'Approvals & acknowledgments' },
   audit_log:       { title: 'Audit Log',               subtitle: 'Immutable record of all system actions' },
+  chat:            { title: 'Team Chat',               subtitle: 'Channels, direct messages & calls' },
   ra_billing:      { title: 'RA Billing',              subtitle: 'Running account bills & payments' },
   hire_contracts:  { title: 'Hire Contracts',          subtitle: 'Equipment hire agreements' },
   boq:             { title: 'BOQ',                     subtitle: 'Bill of Quantities' },

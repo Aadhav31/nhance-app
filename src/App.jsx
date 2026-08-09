@@ -15,6 +15,7 @@ import {
   LayoutDashboard, Receipt, ClipboardList, BarChart3,
   Users, Wallet, Package, X, Truck, Wrench, FolderOpen,
   Settings, ShoppingCart, TrendingUp, CalendarDays, Building2,
+  MessageSquare,
 } from 'lucide-react'
 
 // Lazy-load all pages for performance
@@ -48,6 +49,7 @@ const BOQPage                 = lazy(() => import('./pages/boq/BOQPage'))
 const RABillingPage           = lazy(() => import('./pages/ra_billing/RABillingPage'))
 const ApprovalCenterPage      = lazy(() => import('./pages/approvals/ApprovalCenterPage'))
 const AuditLogPage            = lazy(() => import('./pages/audit/AuditLogPage'))
+const ChatPage                = lazy(() => import('./pages/chat/ChatPage'))
 
 // ── Connectivity hook ─────────────────────────────────────────────────────────
 function useOnlineStatus() {
@@ -410,6 +412,12 @@ function AppShell() {
             <AuditLogPage />
           </Suspense>
         )
+      case 'chat':
+        return (
+          <Suspense fallback={<LoadingScreen message="Loading Chat…" />}>
+            <ChatPage />
+          </Suspense>
+        )
       case 'showroom':     return <ComingSoon page="Vehicle Stock / Showroom" />
       default:             return <ComingSoon page={page} />
     }
@@ -454,6 +462,17 @@ function AppShell() {
 
         {/* Global sticky notes — floats above all content */}
         {!isSuperAdmin() && <StickyNotes />}
+
+        {/* Floating chat icon — below sticky notes */}
+        {!isSuperAdmin() && (
+          <button
+            onClick={() => handleNavigate('chat')}
+            title="Team Chat"
+            className="fixed bottom-24 right-4 z-30 w-12 h-12 rounded-full bg-primary-600 hover:bg-primary-500 shadow-lg flex items-center justify-center transition-all hover:scale-110 lg:bottom-6"
+          >
+            <MessageSquare className="w-5 h-5 text-white" />
+          </button>
+        )}
       </div>
     </DisplayModeProvider>
   )
