@@ -90,6 +90,7 @@ export default function ActiveCallScreen({
   onToggleMute,       // () => void
   onToggleHold,       // (newHeld: boolean) => void
   onRecord,           // () => void
+  onFlipCamera,       // () => void | null (only passed for video calls)
   onEnd,              // () => void | async
 }) {
   const [minimized, setMinimized] = useState(false)
@@ -221,9 +222,10 @@ export default function ActiveCallScreen({
               onPress={onRecord}
             />
             <CallBtn
-              icon="➕"
-              label="Add Call"
-              onPress={() => toast('Conference calling coming soon')}
+              icon="🔄"
+              label="Flip Cam"
+              disabled={!onFlipCamera}
+              onPress={() => onFlipCamera ? onFlipCamera() : toast('No camera available')}
             />
             <CallBtn
               icon="📺"

@@ -2230,18 +2230,20 @@ export default function OperatorPortal() {
         const answer = await pc.createAnswer()
         await pc.setLocalDescription(answer)
         bcast(incoming.callerId, incoming.channelId, 'answer', { type: answer.type, sdp: answer.sdp })
-        await supabase.from('chat_messages').insert({
-          channel_id: incoming.channelId, company_id: companyId,
-          sender_id: uid, sender_name: userProfile?.full_name || 'Operator', sender_role: 'system',
-          content: '📞 Call answered', attachments: [],
-        }).catch(() => {})
+        try {
+          await supabase.from('chat_messages').insert({
+            channel_id: incoming.channelId, company_id: companyId,
+            sender_id: uid, sender_name: userProfile?.full_name || 'Operator', sender_role: 'system',
+            content: '📞 Call answered', attachments: [],
+          })
+        } catch {}
         setPortalActive({ peerName: incoming.callerName, peerId: incoming.callerId, channelId: incoming.channelId })
         setPortalIncoming(null); setPortalOffer(null)
         setPortalDuration(0)
         if (portalDurRef.current) clearInterval(portalDurRef.current)
         portalDurRef.current = setInterval(() => setPortalDuration(d => d + 1), 1000)
         portalOfferRef.current = null; pendingAccept.current = false
-      } catch { ringRef.stop(); setPortalIncoming(null); setPortalOffer(null) }
+      } catch (err) { console.error('doAccept error', err); toast.error('Call accept failed: ' + (err?.message || err)); ringRef.stop(); setPortalIncoming(null); setPortalOffer(null) }
     }
 
     const ch = supabase.channel(`nhance-calls-${companyId}`, { config: { broadcast: { self: false } } })
@@ -2290,34 +2292,38 @@ export default function OperatorPortal() {
     })
     .subscribe()
 
-    // ── DB fallback: postgres_changes on chat_call_signals ────────────────────
-    // Guards against broadcast delivery failures on Android WebView / poor network.
-    // When web user calls, they also insert a chat_call_signals row.
-    // This listener catches it if the broadcast never arrives.
-    const dbCh = supabase
-      .channel(`call-db-${uid}`)
-      .on('postgres_changes', {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'chat_call_signals',
-        filter: `to_user=eq.${uid}`,
-      }, ({ new: r }) => {
-        if (r.signal_type !== 'call-start') return
-        // Ignore if already in an active call
-        if (portalPcRef.current || portalActiveRef.current) return
-        // Dedup: broadcast may have already set portalIncoming — don't reset it
+    // ── DB poll fallback (every 2s) ───────────────────────────────────────────
+    // postgres_changes filters are unreliable without REPLICA IDENTITY FULL.
+    // Polling is simple and guaranteed: check chat_call_signals for recent
+    // call-start rows addressed to this operator.
+    const seenIds = new Set()
+    const poll = setInterval(async () => {
+      if (portalPcRef.current || portalActiveRef.current) return  // already in a call
+      const since = new Date(Date.now() - 90_000).toISOString()  // last 90 seconds
+      try {
+        const { data } = await supabase
+          .from('chat_call_signals')
+          .select('id,channel_id,from_user,signal_type,payload')
+          .eq('to_user', uid)
+          .eq('signal_type', 'call-start')
+          .gt('created_at', since)
+          .order('created_at', { ascending: false })
+          .limit(1)
+        const r = data?.[0]
+        if (!r || seenIds.has(r.id)) return
+        seenIds.add(r.id)
         setPortalIncoming(prev => prev || {
           channelId: r.channel_id,
           callerId: r.from_user,
           callerName: r.payload?.name || 'Someone',
         })
         ringRef.play()
-      })
-      .subscribe()
+      } catch {}
+    }, 2000)
 
     return () => {
+      clearInterval(poll)
       supabase.removeChannel(ch)
-      supabase.removeChannel(dbCh)
       callChRef.current = null
       ringRef.stop()
     }
@@ -2359,11 +2365,13 @@ export default function OperatorPortal() {
         const answer = await pc.createAnswer()
         await pc.setLocalDescription(answer)
         bcast(incoming.callerId, incoming.channelId, 'answer', { type: answer.type, sdp: answer.sdp })
-        await supabase.from('chat_messages').insert({
-          channel_id: incoming.channelId, company_id: companyId,
-          sender_id: userProfile?.id, sender_name: userProfile?.full_name || 'Operator', sender_role: 'system',
-          content: '📞 Call answered', attachments: [],
-        }).catch(() => {})
+        try {
+          await supabase.from('chat_messages').insert({
+            channel_id: incoming.channelId, company_id: companyId,
+            sender_id: userProfile?.id, sender_name: userProfile?.full_name || 'Operator', sender_role: 'system',
+            content: '📞 Call answered', attachments: [],
+          })
+        } catch {}
         setPortalActive({ peerName: incoming.callerName, peerId: incoming.callerId, channelId: incoming.channelId })
         setPortalIncoming(null); setPortalOffer(null)
         setPortalDuration(0)
@@ -2371,7 +2379,8 @@ export default function OperatorPortal() {
         portalDurRef.current = setInterval(() => setPortalDuration(d => d + 1), 1000)
         portalOfferRef.current = null
       } catch (err) {
-        console.error('portalAcceptCall error', err)
+        console.error('doAcceptRef error', err)
+        toast.error('Call accept failed: ' + (err?.message || err))
         ringRef.stop(); setPortalIncoming(null); setPortalOffer(null)
       }
     }
@@ -2401,6 +2410,33 @@ export default function OperatorPortal() {
     const nowMuted = !portalMuted
     portalAudRef.current?.getAudioTracks().forEach(t => { t.enabled = !nowMuted })
     setPortalMuted(nowMuted)
+  }
+
+  // ── Camera flip (front ↔ rear) — only meaningful for video calls ───────────
+  const [portalFacingMode, setPortalFacingMode] = useState('user') // 'user' | 'environment'
+  const flipPortalCamera = async () => {
+    if (!portalPcRef.current || !portalAudRef.current) return
+    const newFacing = portalFacingMode === 'user' ? 'environment' : 'user'
+    try {
+      const newStream = await navigator.mediaDevices.getUserMedia({
+        audio: true, video: { facingMode: { exact: newFacing } },
+      })
+      // Replace the video track in the PC sender
+      const sender = portalPcRef.current.getSenders().find(s => s.track?.kind === 'video')
+      if (sender) await sender.replaceTrack(newStream.getVideoTracks()[0])
+      // Stop old video tracks, keep new stream
+      portalAudRef.current.getVideoTracks().forEach(t => t.stop())
+      // Keep audio from old stream, merge new video
+      const merged = new MediaStream([
+        ...portalAudRef.current.getAudioTracks(),
+        ...newStream.getVideoTracks(),
+      ])
+      portalAudRef.current = merged
+      setPortalFacingMode(newFacing)
+      newStream.getAudioTracks().forEach(t => t.stop()) // release duplicate audio
+    } catch {
+      toast('Camera flip not available on this device')
+    }
   }
 
   const togglePortalHold = (newHeld) => {
@@ -2548,9 +2584,11 @@ export default function OperatorPortal() {
           duration={portalDuration}
           muted={portalMuted}
           recording={portalRecording}
+          connected={true}
           onToggleMute={togglePortalMute}
           onToggleHold={togglePortalHold}
           onRecord={togglePortalRecord}
+          onFlipCamera={flipPortalCamera}
           onEnd={portalEndCall}
         />
       )}
