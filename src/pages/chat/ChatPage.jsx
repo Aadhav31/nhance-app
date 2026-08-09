@@ -124,6 +124,14 @@ function MessageBubble({ msg, isMine, showAvatar, prevMsg }) {
       </div>
     )
   }
+  // System messages (call events etc.) — centered pill
+  if (msg.sender_role === 'system') {
+    return (
+      <div className="flex justify-center py-1.5">
+        <span className="text-[11px] px-3 py-1 rounded-full bg-dark-700 border border-dark-600 text-slate-400">{msg.content}</span>
+      </div>
+    )
+  }
   return (
     <>
       {showDate && (
@@ -217,6 +225,7 @@ function CallOverlay({ call, onEnd }) {
   const { peerName, callType, status, localStream, remoteStream, isScreenSharing } = call
   const localVideoRef  = useRef(null)
   const remoteVideoRef = useRef(null)
+  const remoteAudioRef = useRef(null)  // always-present hidden audio for voice calls
   const [muted,    setMuted]    = useState(false)
   const [camOff,   setCamOff]   = useState(false)
   const [duration, setDuration] = useState(0)
@@ -224,6 +233,8 @@ function CallOverlay({ call, onEnd }) {
   useEffect(() => {
     if (localVideoRef.current  && localStream)  localVideoRef.current.srcObject  = localStream
     if (remoteVideoRef.current && remoteStream) remoteVideoRef.current.srcObject = remoteStream
+    // Always play remote audio (even for video calls — audio element handles audio track)
+    if (remoteAudioRef.current && remoteStream) remoteAudioRef.current.srcObject = remoteStream
   }, [localStream, remoteStream])
 
   useEffect(() => {
@@ -245,6 +256,8 @@ function CallOverlay({ call, onEnd }) {
 
   return (
     <div className="fixed inset-0 z-50 bg-dark-900/95 backdrop-blur-sm flex flex-col items-center justify-center gap-6">
+      {/* Hidden audio element — plays remote audio track for ALL call types */}
+      <audio ref={remoteAudioRef} autoPlay playsInline style={{ display: 'none' }} />
       {/* Remote video */}
       {callType === 'video' || isScreenSharing ? (
         <div className="relative w-full max-w-2xl aspect-video bg-dark-800 rounded-2xl overflow-hidden border border-dark-700">
@@ -788,7 +801,8 @@ function useWebRTCCall({ channel, companyId, session, profile }) {
       await new Promise(r => setTimeout(r, 400))  // let receiver setup
       sendSignal('offer', peer.user_id, { type: offer.type, sdp: offer.sdp })
 
-      setCallState({ status: 'calling', peerId: peer.user_id, peerName: peer.user_name, callType, localStream: stream, remoteStream: null, isScreenSharing: false })
+      await insertCallEvent(channel.id, `📞 ${myName} started a call`)
+      setCallState({ status: 'calling', peerId: peer.user_id, peerName: peer.user_name, callType, localStream: stream, remoteStream: null, isScreenSharing: false, channelId: channel.id, startedAt: Date.now() })
     } catch (e) {
       alert('Could not start call: ' + (e.message || 'Permission denied'))
     }
@@ -812,7 +826,9 @@ function useWebRTCCall({ channel, companyId, session, profile }) {
         await pc.setLocalDescription(answer)
         sendSignal('answer', p.from_user, { type: answer.type, sdp: answer.sdp })
 
-        setCallState({ status: 'connected', peerId: p.from_user, peerName: caller?.user_name || 'Caller', callType: 'audio', localStream: stream, remoteStream: null, isScreenSharing: false })
+        const chId = p.channel_id || channel?.id
+        await insertCallEvent(chId, `📞 Call answered`)
+        setCallState({ status: 'connected', peerId: p.from_user, peerName: caller?.user_name || 'Caller', callType: 'audio', localStream: stream, remoteStream: null, isScreenSharing: false, channelId: chId, startedAt: Date.now() })
         setIncomingCall(null)
       } catch (e) { console.error('handleOffer error', e) }
     }
@@ -862,8 +878,24 @@ function useWebRTCCall({ channel, companyId, session, profile }) {
     setCallState(null); setIncomingCall(null)
   }
 
+  // Insert a system call-history pill into the chat
+  const insertCallEvent = async (channelId, content) => {
+    await supabase.from('chat_messages').insert({
+      channel_id: channelId, company_id: companyId,
+      sender_id: myId, sender_name: myName, sender_role: 'system',
+      content, attachments: [],
+    }).catch(() => {})
+  }
+
   const endCall = async () => {
-    if (callState?.peerId) await sendSignal('call-end', {}, callState.peerId)
+    if (callState?.peerId) {
+      sendSignal('call-end', callState.peerId)
+      if (callState.channelId) {
+        const dur = callState.startedAt ? Math.round((Date.now() - callState.startedAt) / 1000) : 0
+        const durStr = dur ? ` — ${Math.floor(dur/60)}:${String(dur%60).padStart(2,'0')}` : ''
+        await insertCallEvent(callState.channelId, `📞 Call ended${durStr}`)
+      }
+    }
     endCallCleanup()
   }
 

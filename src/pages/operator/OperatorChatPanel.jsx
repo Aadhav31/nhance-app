@@ -219,6 +219,10 @@ export default function OperatorChatPanel({
   operatorName,
   operatorRole = 'operator',
   lang = 'en',
+  // Shared broadcast channel from OperatorPortal (avoids duplicate subscriptions)
+  portalCallChRef,
+  // Ref portal sets so this component can receive reply signals (answer/ice from web user)
+  portalOutSignalRef,
 }) {
   const L = LABELS[lang] || LABELS.en
   const queryClient = useQueryClient()
@@ -468,21 +472,18 @@ export default function OperatorChatPanel({
     return () => { supabase.removeChannel(sub) }
   }, [channel?.id, queryClient])
 
-  // Unified broadcast channel — nhance-calls-${companyId}
-  // Used for BOTH sending signals and receiving replies to our outgoing calls.
-  // Must be subscribed before send() is called (unsubscribed channels fail silently).
-  const callChRef = useRef(null)
   // Stable ref to activeCall (avoids stale closure in broadcast handler)
   const activeCallRef = useRef(null)
   useEffect(() => { activeCallRef.current = activeCall }, [activeCall])
 
+  // Register reply-signal handler with OperatorPortal's subscription.
+  // Runs every render so it captures the latest insertCallMsg, activeCallRef etc.
+  // Portal calls outCallSignalRef.current(p) when it receives answer/ice/end
+  // signals that are destined for an operator-initiated (outgoing) call.
   useEffect(() => {
-    if (!operatorId || !companyId) return
-    const ch = supabase.channel(`nhance-calls-${companyId}`, { config: { broadcast: { self: false } } })
-    callChRef.current = ch
-    ch.on('broadcast', { event: 'call-signal' }, async ({ payload: p }) => {
-      if (p.to_user !== operatorId) return
-      if (!pcRef.current) return  // only handle replies to calls WE initiated
+    if (!portalOutSignalRef) return
+    portalOutSignalRef.current = async (p) => {
+      if (!pcRef.current) { portalOutSignalRef.current = null; return }
       if (p.signal_type === 'answer') {
         try { await pcRef.current.setRemoteDescription(new RTCSessionDescription({ type: p.type, sdp: p.sdp })) } catch {}
       } else if (p.signal_type === 'ice-candidate') {
@@ -494,12 +495,11 @@ export default function OperatorChatPanel({
         pcRef.current.close(); pcRef.current = null
         localAudRef.current?.getTracks().forEach(t => t.stop()); localAudRef.current = null
         setActiveCall(null); setCallStartTime(null)
+        portalOutSignalRef.current = null
         await insertCallMsg(cur.channelId, p.signal_type === 'busy' ? '📵 Call declined' : '📞 Call ended')
       }
-    })
-    .subscribe()
-    return () => { supabase.removeChannel(ch); callChRef.current = null }
-  }, [operatorId, companyId])
+    }
+  })
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   const fmtDuration = ms => {
@@ -516,10 +516,11 @@ export default function OperatorChatPanel({
     queryClient.invalidateQueries(['op_messages', channelId])
   }
 
-  // Send a WebRTC signal via broadcast
-  // Uses callChRef which is already subscribed — unsubscribed channels silently drop sends.
+  // Send a WebRTC signal via the portal's shared broadcast channel.
+  // portalCallChRef is the portal's subscribed nhance-calls-${companyId} channel.
+  // Using a single shared channel avoids duplicate-subscription undefined behavior.
   const bcastSignal = (toUser, channelId, signalType, extra = {}) => {
-    callChRef.current?.send({
+    portalCallChRef?.current?.send({
       type: 'broadcast', event: 'call-signal',
       payload: { to_user: toUser, from_user: operatorId, channel_id: channelId, signal_type: signalType, ...extra },
     }).catch(() => {})

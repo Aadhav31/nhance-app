@@ -2158,10 +2158,23 @@ export default function OperatorPortal() {
   const portalRemRef   = useRef(null) // remote audio element
   const ringRef        = useRingtone()
 
-  // ── Broadcast channel ref — used to send signals back to caller ──────────
-  const callChRef    = useRef(null)
+  // ── Broadcast channel ref — shared with OperatorChatPanel ─────────────────
+  // Only ONE subscription to nhance-calls-${companyId} per page session.
+  // Having two breaks Supabase Realtime (undefined behavior per docs).
+  const callChRef      = useRef(null)
   const portalOfferRef = useRef(null)   // mirror of portalOffer for stale-closure safety
   const pendingAccept  = useRef(false)  // tapped Accept before offer arrived?
+
+  // ── Out-call signal relay ──────────────────────────────────────────────────
+  // OperatorChatPanel sets this ref so the portal's subscription can forward
+  // WebRTC reply signals (answer, ice-candidate) from the web user back to the
+  // PeerConnection managed inside OperatorChatPanel.
+  const outCallSignalRef = useRef(null)
+
+  // ── Portal mute state (for incoming calls answered at portal level) ────────
+  const [portalMuted, setPortalMuted] = useState(false)
+  const [portalDuration, setPortalDuration] = useState(0)
+  const portalDurRef = useRef(null)
 
   // Helper: send a signal via broadcast
   const bcast = (toUser, channelId, signalType, extra = {}) => {
@@ -2182,6 +2195,8 @@ export default function OperatorPortal() {
       portalAudRef.current?.getTracks().forEach(t => t.stop()); portalAudRef.current = null
       if (portalRemRef.current) { portalRemRef.current.srcObject = null; portalRemRef.current = null }
       setPortalIncoming(null); setPortalOffer(null); setPortalActive(null)
+      setPortalMuted(false); setPortalDuration(0)
+      if (portalDurRef.current) { clearInterval(portalDurRef.current); portalDurRef.current = null }
       portalOfferRef.current = null; pendingAccept.current = false
     }
 
@@ -2210,6 +2225,9 @@ export default function OperatorPortal() {
         }).catch(() => {})
         setPortalActive({ peerName: incoming.callerName, peerId: incoming.callerId, channelId: incoming.channelId })
         setPortalIncoming(null); setPortalOffer(null)
+        setPortalDuration(0)
+        if (portalDurRef.current) clearInterval(portalDurRef.current)
+        portalDurRef.current = setInterval(() => setPortalDuration(d => d + 1), 1000)
         portalOfferRef.current = null; pendingAccept.current = false
       } catch { ringRef.stop(); setPortalIncoming(null); setPortalOffer(null) }
     }
@@ -2237,14 +2255,24 @@ export default function OperatorPortal() {
           doAccept(incoming, offer)
         }
 
-      } else if (p.signal_type === 'ice-candidate' && portalPcRef.current) {
-        portalPcRef.current.addIceCandidate(new RTCIceCandidate(p.candidate)).catch(() => {})
+      } else if (p.signal_type === 'ice-candidate') {
+        // Route to whichever PC is active: incoming (portalPcRef) or outgoing (ChatPanel)
+        if (portalPcRef.current) {
+          portalPcRef.current.addIceCandidate(new RTCIceCandidate(p.candidate)).catch(() => {})
+        } else if (outCallSignalRef.current) {
+          outCallSignalRef.current(p)
+        }
 
-      } else if (p.signal_type === 'answer' && portalPcRef.current) {
-        // This is a reply to our OUTGOING call — handled by OperatorChatPanel
-        // Only set if we initiated (pcRef in chat panel), skip here
+      } else if (p.signal_type === 'answer') {
+        // Reply to an outgoing call — forward to OperatorChatPanel's PC
+        if (outCallSignalRef.current) outCallSignalRef.current(p)
+
       } else if (p.signal_type === 'call-end' || p.signal_type === 'busy') {
-        cleanupCall()
+        if (portalPcRef.current || portalActive) {
+          cleanupCall()
+        } else if (outCallSignalRef.current) {
+          outCallSignalRef.current(p)
+        }
       }
     })
     .subscribe()
@@ -2408,16 +2436,43 @@ export default function OperatorPortal() {
         </div>
       )}
 
-      {/* ── ACTIVE CALL BAR (shown while call in progress) ───────────────────── */}
-      {portalActive && (
-        <div className="fixed top-0 left-0 right-0 z-[150] max-w-lg mx-auto bg-green-700 px-4 py-2 flex items-center gap-3 shadow-xl">
-          <span className="text-white text-sm font-semibold flex-1 truncate">📞 Call with {portalActive.peerName}</span>
-          <button onPointerUp={portalEndCall}
-            className="bg-red-500 text-white text-xs font-bold rounded-full px-3 py-1 active:scale-95">
-            End
-          </button>
-        </div>
-      )}
+      {/* ── ACTIVE CALL PANEL (incoming call answered at portal level) ─────── */}
+      {portalActive && (() => {
+        const dur = portalDuration
+        const fmtDur = `${String(Math.floor(dur/60)).padStart(2,'0')}:${String(dur%60).padStart(2,'0')}`
+        const togglePortalMute = () => {
+          portalAudRef.current?.getAudioTracks().forEach(t => { t.enabled = portalMuted })
+          setPortalMuted(m => !m)
+        }
+        return (
+          <div className="fixed top-0 left-0 right-0 z-[150] max-w-lg mx-auto shadow-2xl"
+               style={{ background: '#14532d', borderBottom: '1px solid #166534' }}>
+            {/* Name + timer row */}
+            <div className="flex items-center gap-2 px-4 pt-2 pb-1">
+              <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse flex-shrink-0" />
+              <span className="text-white text-sm font-bold flex-1 truncate">📞 {portalActive.peerName}</span>
+              <span className="text-green-300 text-xs font-mono">{fmtDur}</span>
+            </div>
+            {/* Controls row */}
+            <div className="flex items-center justify-center gap-4 px-4 pb-2.5">
+              {/* Mute */}
+              <button onPointerUp={togglePortalMute}
+                style={{ background: portalMuted ? '#dc2626' : 'rgba(255,255,255,0.15)', border: 'none', borderRadius: 24, width: 44, height: 44, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, cursor: 'pointer' }}>
+                {portalMuted ? '🔇' : '🎙️'}
+              </button>
+              {/* Speaker / volume indicator */}
+              <div style={{ background: 'rgba(255,255,255,0.1)', borderRadius: 24, width: 44, height: 44, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20 }}>
+                🔊
+              </div>
+              {/* End call — bigger, red */}
+              <button onPointerUp={portalEndCall}
+                style={{ background: '#dc2626', border: 'none', borderRadius: 28, width: 56, height: 44, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: 14, cursor: 'pointer' }}>
+                End
+              </button>
+            </div>
+          </div>
+        )
+      })()}
 
       {/* Top bar — minimal */}
       <div className={`shrink-0 bg-dark-800 border-b border-dark-700 px-4 py-2.5 flex items-center gap-2 ${portalActive ? 'mt-9' : ''}`}>
@@ -2444,6 +2499,8 @@ export default function OperatorPortal() {
             operatorName={employeeName || userProfile?.full_name || 'Operator'}
             operatorRole="operator"
             lang={lang}
+            portalCallChRef={callChRef}
+            portalOutSignalRef={outCallSignalRef}
           />
         </div>
       ) : (
