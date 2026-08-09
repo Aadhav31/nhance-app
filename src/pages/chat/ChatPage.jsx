@@ -999,7 +999,27 @@ export default function ChatPage({ navExtra = {} }) {
     refetchInterval: 15_000,
   })
 
-  // Seed default channels on first open
+  // Global incoming-call subscription — receives calls even when not in that specific DM
+  useEffect(() => {
+    if (!myId || !companyId) return
+    const sub = supabase.channel(`desktop-call-${myId}`)
+      .on('postgres_changes', {
+        event: 'INSERT', schema: 'public', table: 'chat_call_signals',
+        filter: `to_user=eq.${myId}`,
+      }, payload => {
+        const sig = payload.new
+        // If MessageThread already handles it (channel open), skip
+        if (sig.signal_type === 'call-start') {
+          // Auto-navigate to the DM so the MessageThread subscription picks it up
+          const existingCh = channels.find(c => c.id === sig.channel_id)
+          if (existingCh) setActiveChannel(existingCh)
+        }
+      })
+      .subscribe()
+    return () => { supabase.removeChannel(sub) }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myId, companyId])
+
   // Auto-open DM when navigated from HR employee tile
   useEffect(() => {
     const targetId = navExtra?.dmUserId

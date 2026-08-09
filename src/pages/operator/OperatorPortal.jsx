@@ -1996,11 +1996,11 @@ export default function OperatorPortal() {
 
       {/* Content */}
       {tab === 'expenses' ? (
-        <div className="flex-1 overflow-hidden flex flex-col pb-16">
+        <div className="flex-1 overflow-hidden flex flex-col">
           <FieldExpensePage embedded={true} />
         </div>
       ) : tab === 'chat' ? (
-        <div className="flex-1 overflow-hidden flex flex-col pb-16">
+        <div className="flex-1 overflow-hidden flex flex-col">
           <OperatorChatPanel
             companyId={companyId}
             operatorId={userProfile?.id}
@@ -2011,7 +2011,7 @@ export default function OperatorPortal() {
         </div>
       ) : (
         <div className="flex-1 overflow-y-auto">
-          <div className="p-4 pb-28">
+          <div className="p-4 pb-6">
             {tab === 'shift'      && <ShiftModule      {...sharedProps} />}
             {tab === 'attendance' && <AttendanceModule {...sharedProps} />}
             {tab === 'pay'        && <PayModule        {...sharedProps} />}
@@ -2020,7 +2020,7 @@ export default function OperatorPortal() {
       )}
 
       {/* Bottom nav — large icons, no clutter */}
-      <div className="shrink-0 fixed bottom-0 left-0 right-0 max-w-lg mx-auto bg-dark-800/95 backdrop-blur border-t border-dark-700">
+      <div className="shrink-0 bg-dark-800/95 border-t border-dark-700">
         <div className="flex">
           {TABS.map(t => {
             const active = tab === t.id

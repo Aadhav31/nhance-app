@@ -136,6 +136,14 @@ function Bubble({ msg, isMine }) {
       </div>
     )
   }
+  // System call event messages — centered pill
+  if (msg.sender_role === 'system') {
+    return (
+      <div className="flex justify-center py-1.5">
+        <span className="text-[11px] text-slate-500 bg-dark-700 rounded-full px-3 py-1">{msg.content}</span>
+      </div>
+    )
+  }
   const atts = msg.attachments || []
   const isVoice = atts.some(a => isAudio(a.type))
 
@@ -224,13 +232,16 @@ export default function OperatorChatPanel({
   const [dmSearch, setDmSearch] = useState('')
   const [groupName, setGroupName] = useState('')
   const [creatingGroup, setCreatingGroup] = useState(false)
-  // ── Incoming call state ───────────────────────────────────────────────────
-  const [incomingCall,  setIncomingCall]  = useState(null) // {channelId, callerId, callerName}
-  const [incomingOffer, setIncomingOffer] = useState(null) // RTCSessionDescriptionInit
-  const [activeCall,   setActiveCall]    = useState(null) // {peerName, muted}
-  const pcRef        = useRef(null)
-  const localAudRef  = useRef(null)
-  const remoteAudRef = useRef(null)
+  // ── Call state ────────────────────────────────────────────────────────────
+  const [incomingCall,   setIncomingCall]   = useState(null) // {channelId, callerId, callerName}
+  const [incomingOffer,  setIncomingOffer]  = useState(null) // RTCSessionDescriptionInit
+  const [activeCall,     setActiveCall]     = useState(null) // {peerName, peerId, channelId, muted, callRecording}
+  const [callStartTime,  setCallStartTime]  = useState(null)
+  const pcRef          = useRef(null)
+  const localAudRef    = useRef(null)
+  const remoteAudRef   = useRef(null)
+  const callRecRef     = useRef(null)   // MediaRecorder for call recording
+  const callRecChunks  = useRef([])
 
   const bottomRef   = useRef(null)
   const mediaRecRef = useRef(null)
@@ -488,25 +499,76 @@ export default function OperatorChatPanel({
     return () => { supabase.removeChannel(sub) }
   }, [operatorId, companyId])
 
+  // ── Helpers ───────────────────────────────────────────────────────────────
+  const fmtDuration = ms => {
+    const s = Math.floor(ms / 1000)
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+  }
+
+  const insertCallMsg = async (channelId, content) => {
+    await supabase.from('chat_messages').insert({
+      channel_id: channelId, company_id: companyId,
+      sender_id: operatorId, sender_name: operatorName, sender_role: 'system',
+      content, attachments: [],
+    }).catch(() => {})
+    queryClient.invalidateQueries(['op_messages', channelId])
+  }
+
+  const buildPC = (channelId, toUserId) => {
+    const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] })
+    pcRef.current = pc
+    pc.ontrack = e => {
+      const audio = new Audio(); audio.srcObject = e.streams[0]; audio.play().catch(() => {})
+      remoteAudRef.current = audio
+    }
+    pc.onicecandidate = async e => {
+      if (e.candidate) await supabase.from('chat_call_signals').insert({
+        channel_id: channelId, company_id: companyId,
+        from_user: operatorId, to_user: toUserId,
+        signal_type: 'ice-candidate', payload: e.candidate,
+      }).catch(() => {})
+    }
+    return pc
+  }
+
+  // ── Outgoing call (from operator) ──────────────────────────────────────────
+  const startDMCall = async () => {
+    if (!channel || channel.type !== 'direct') return
+    const peer = (channel.members || []).find(m => m.user_id !== operatorId)
+    if (!peer) return
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+      localAudRef.current = stream
+      const pc = buildPC(channel.id, peer.user_id)
+      stream.getTracks().forEach(t => pc.addTrack(t, stream))
+      const offer = await pc.createOffer()
+      await pc.setLocalDescription(offer)
+      await supabase.from('chat_call_signals').insert({
+        channel_id: channel.id, company_id: companyId,
+        from_user: operatorId, to_user: peer.user_id,
+        signal_type: 'call-start', payload: { name: operatorName, callType: 'audio' },
+      })
+      await supabase.from('chat_call_signals').insert({
+        channel_id: channel.id, company_id: companyId,
+        from_user: operatorId, to_user: peer.user_id,
+        signal_type: 'offer', payload: offer,
+      })
+      await insertCallMsg(channel.id, `📞 ${operatorName} started a call`)
+      setActiveCall({ peerName: peer.user_name || peer.user_id, peerId: peer.user_id, channelId: channel.id, muted: false, callRecording: false })
+      setCallStartTime(Date.now())
+    } catch (err) {
+      console.error('start call error', err)
+    }
+  }
+
+  // ── Accept incoming call ──────────────────────────────────────────────────
   const acceptCall = async () => {
     if (!incomingCall || !incomingOffer) return
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
       localAudRef.current = stream
-      const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] })
-      pcRef.current = pc
+      const pc = buildPC(incomingCall.channelId, incomingCall.callerId)
       stream.getTracks().forEach(t => pc.addTrack(t, stream))
-      pc.ontrack = e => {
-        const audio = new Audio(); audio.srcObject = e.streams[0]; audio.play().catch(() => {})
-        remoteAudRef.current = audio
-      }
-      pc.onicecandidate = async e => {
-        if (e.candidate) await supabase.from('chat_call_signals').insert({
-          channel_id: incomingCall.channelId, company_id: companyId,
-          from_user: operatorId, to_user: incomingCall.callerId,
-          signal_type: 'ice-candidate', payload: e.candidate,
-        })
-      }
       await pc.setRemoteDescription(new RTCSessionDescription(incomingOffer))
       const answer = await pc.createAnswer()
       await pc.setLocalDescription(answer)
@@ -515,7 +577,9 @@ export default function OperatorChatPanel({
         from_user: operatorId, to_user: incomingCall.callerId,
         signal_type: 'answer', payload: answer,
       })
-      setActiveCall({ peerName: incomingCall.callerName, muted: false })
+      await insertCallMsg(incomingCall.channelId, `📞 Call answered by ${operatorName}`)
+      setActiveCall({ peerName: incomingCall.callerName, peerId: incomingCall.callerId, channelId: incomingCall.channelId, muted: false, callRecording: false })
+      setCallStartTime(Date.now())
       setIncomingCall(null); setIncomingOffer(null)
     } catch (err) {
       console.error('accept call error', err)
@@ -523,6 +587,7 @@ export default function OperatorChatPanel({
     }
   }
 
+  // ── Decline incoming call ─────────────────────────────────────────────────
   const declineCall = async () => {
     if (!incomingCall) return
     await supabase.from('chat_call_signals').insert({
@@ -533,19 +598,74 @@ export default function OperatorChatPanel({
     setIncomingCall(null); setIncomingOffer(null)
   }
 
+  // ── End active call ───────────────────────────────────────────────────────
   const endActiveCall = async () => {
-    if (activeCall && pcRef.current) {
-      // find channel id from call state — we stored it in incomingCall but it's cleared; use a ref pattern
+    // Stop recording if active
+    if (callRecRef.current?.state === 'recording') callRecRef.current.stop()
+    // Send call-end signal
+    if (activeCall?.peerId && activeCall?.channelId) {
+      await supabase.from('chat_call_signals').insert({
+        channel_id: activeCall.channelId, company_id: companyId,
+        from_user: operatorId, to_user: activeCall.peerId,
+        signal_type: 'call-end', payload: {},
+      }).catch(() => {})
+      const dur = callStartTime ? fmtDuration(Date.now() - callStartTime) : ''
+      await insertCallMsg(activeCall.channelId, `📞 Call ended${dur ? ` — ${dur}` : ''}`)
     }
     pcRef.current?.close(); pcRef.current = null
     localAudRef.current?.getTracks().forEach(t => t.stop()); localAudRef.current = null
     remoteAudRef.current = null
-    setActiveCall(null)
+    callRecRef.current = null; callRecChunks.current = []
+    setActiveCall(null); setCallStartTime(null)
   }
 
+  // ── Mute / unmute ─────────────────────────────────────────────────────────
   const toggleMute = () => {
     localAudRef.current?.getAudioTracks().forEach(t => { t.enabled = !t.enabled })
     setActiveCall(prev => prev ? { ...prev, muted: !prev.muted } : prev)
+  }
+
+  // ── Record call audio ─────────────────────────────────────────────────────
+  const toggleCallRecord = async () => {
+    if (!activeCall || !localAudRef.current) return
+    if (callRecRef.current?.state === 'recording') {
+      callRecRef.current.stop()
+      return
+    }
+    try {
+      // Mix local + remote into AudioContext for recording both sides
+      const ctx = new AudioContext()
+      const dest = ctx.createMediaStreamDestination()
+      ctx.createMediaStreamSource(localAudRef.current).connect(dest)
+      if (remoteAudRef.current?.srcObject) {
+        ctx.createMediaStreamSource(remoteAudRef.current.srcObject).connect(dest)
+      }
+      const rec = new MediaRecorder(dest.stream, { mimeType: 'audio/webm' })
+      callRecChunks.current = []
+      rec.ondataavailable = e => { if (e.data.size > 0) callRecChunks.current.push(e.data) }
+      rec.onstop = async () => {
+        const blob = new Blob(callRecChunks.current, { type: 'audio/webm' })
+        const path = `${companyId}/call-rec-${Date.now()}.webm`
+        const { data: up } = await supabase.storage.from('chat-attachments').upload(path, blob)
+        if (up) {
+          const { data: { publicUrl } } = supabase.storage.from('chat-attachments').getPublicUrl(path)
+          await supabase.from('chat_messages').insert({
+            channel_id: activeCall.channelId, company_id: companyId,
+            sender_id: operatorId, sender_name: operatorName, sender_role: 'operator',
+            content: '🎙️ Call recording',
+            attachments: [{ url: publicUrl, type: 'audio/webm', name: 'call-recording.webm', size: blob.size }],
+          }).catch(() => {})
+          queryClient.invalidateQueries(['op_messages', activeCall.channelId])
+        }
+        ctx.close().catch(() => {})
+        setActiveCall(prev => prev ? { ...prev, callRecording: false } : prev)
+      }
+      rec.start()
+      callRecRef.current = rec
+      setActiveCall(prev => prev ? { ...prev, callRecording: true } : prev)
+    } catch (err) {
+      console.error('recording error', err)
+    }
   }
 
   // Auto-scroll to bottom
@@ -831,13 +951,21 @@ export default function OperatorChatPanel({
 
       {/* ── Active call bar ── */}
       {activeCall && (
-        <div className="shrink-0 bg-emerald-900/80 border-b border-emerald-700/50 px-4 py-2 flex items-center gap-3">
+        <div className="shrink-0 bg-emerald-900/80 border-b border-emerald-700/50 px-3 py-2 flex items-center gap-2">
           <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse flex-shrink-0" />
-          <p className="flex-1 text-emerald-300 text-sm font-semibold truncate">Call with {activeCall.peerName}</p>
+          <p className="flex-1 text-emerald-300 text-xs font-semibold truncate">📞 {activeCall.peerName}</p>
+          {/* Mute */}
           <button onClick={toggleMute}
-            className={`w-8 h-8 rounded-lg flex items-center justify-center text-lg ${activeCall.muted ? 'bg-red-600/30 text-red-400' : 'bg-dark-700 text-slate-300'}`}>
+            className={`w-8 h-8 rounded-lg flex items-center justify-center text-base ${activeCall.muted ? 'bg-red-600/40 text-red-300' : 'bg-dark-700 text-slate-300'}`}>
             {activeCall.muted ? '🔇' : '🎙️'}
           </button>
+          {/* Record */}
+          <button onClick={toggleCallRecord}
+            className={`w-8 h-8 rounded-lg flex items-center justify-center text-base ${activeCall.callRecording ? 'bg-red-600 text-white animate-pulse' : 'bg-dark-700 text-slate-400'}`}
+            title={activeCall.callRecording ? 'Stop recording' : 'Record call'}>
+            {activeCall.callRecording ? '⏹' : '⏺'}
+          </button>
+          {/* End call */}
           <button onClick={endActiveCall}
             className="w-8 h-8 rounded-lg bg-red-600 flex items-center justify-center text-white text-sm font-bold">
             ✕
@@ -869,6 +997,16 @@ export default function OperatorChatPanel({
             : channel.description && <p className="text-[10px] text-slate-500 truncate">{channel.description}</p>
           }
         </div>
+        {/* Call button — only for DMs */}
+        {channel.type === 'direct' && !activeCall && (
+          <button
+            onClick={startDMCall}
+            className="w-9 h-9 rounded-xl bg-dark-700 border border-dark-600 active:bg-dark-600 flex items-center justify-center flex-shrink-0 transition-colors"
+            title="Start audio call"
+          >
+            <span className="text-lg">📞</span>
+          </button>
+        )}
       </div>
 
       {/* Messages list */}
