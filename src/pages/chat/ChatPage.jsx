@@ -802,14 +802,16 @@ function useWebRTCCall({ channel, companyId, session, profile }) {
       // DB-backed fallback — insert a call_signal row so OperatorPortal's
       // postgres_changes listener catches it even if broadcast delivery fails
       // (common on Android WebView with unstable WebSocket connections)
-      supabase.from('chat_call_signals').insert({
-        channel_id: channel.id,
-        company_id: companyId,
-        from_user: myId,
-        to_user: peer.user_id,
-        signal_type: 'call-start',
-        payload: { name: myName, callType },
-      }).catch(() => {})
+      try {
+        await supabase.from('chat_call_signals').insert({
+          channel_id: channel.id,
+          company_id: companyId,
+          from_user: myId,
+          to_user: peer.user_id,
+          signal_type: 'call-start',
+          payload: { name: myName, callType },
+        })
+      } catch {}
 
       await new Promise(r => setTimeout(r, 400))  // let receiver setup
       sendSignal('offer', peer.user_id, { type: offer.type, sdp: offer.sdp })
