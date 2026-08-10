@@ -156,15 +156,15 @@ function OverviewTab({ companyId, onNavigate, onNavigatePage }) {
 
       {/* ── Pending bill alert ── */}
       {pendingBills.length > 0 && (
-        <div
-          onClick={() => onNavigatePage?.('purchase', {
-            tab: 'bills',
-            createForTxnId: pendingBills.length === 1 ? pendingBills[0].id : null,
-          })}
-          className="bg-amber-500/10 border border-amber-500/30 rounded-xl px-4 py-3 flex items-center gap-3 cursor-pointer hover:bg-amber-500/20 transition-colors"
-        >
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl px-4 py-3 flex items-center gap-3">
           <span className="text-lg">🚛</span>
-          <div className="flex-1 min-w-0">
+          <div
+            className="flex-1 min-w-0 cursor-pointer"
+            onClick={() => onNavigatePage?.('purchase', {
+              tab: 'bills',
+              createForTxnId: pendingBills.length === 1 ? pendingBills[0].id : null,
+            })}
+          >
             <p className="text-xs font-bold text-amber-400">{pendingBills.length} stock receipt{pendingBills.length > 1 ? 's' : ''} waiting for a bill</p>
             <p className="text-[11px] text-amber-300/60 mt-0.5">
               {pendingBills.slice(0, 2).map(r => r.inventory_items?.item_name).filter(Boolean).join(', ')}
@@ -172,13 +172,28 @@ function OverviewTab({ companyId, onNavigate, onNavigatePage }) {
             </p>
           </div>
           <button
-            onClick={e => { e.stopPropagation(); onNavigatePage?.('purchase', {
+            onClick={() => onNavigatePage?.('purchase', {
               tab: 'bills',
               createForTxnId: pendingBills.length === 1 ? pendingBills[0].id : null,
-            }) }}
+            })}
             className="text-[11px] font-semibold bg-amber-500 hover:bg-amber-400 text-white px-3 py-1.5 rounded-lg shrink-0 transition-colors"
           >
             Go to Bills →
+          </button>
+          {/* Dismiss — marks bill as already handled */}
+          <button
+            title="Bill already created — dismiss this alert"
+            onClick={async (e) => {
+              e.stopPropagation()
+              if (!window.confirm('Mark all pending stock receipts as already billed?\nThis will remove the alert.')) return
+              const ids = pendingBills.map(r => r.id)
+              await supabase.from('stock_transactions').update({ action_taken: true }).in('id', ids)
+              // force refetch
+              window.location.reload()
+            }}
+            className="text-slate-500 hover:text-red-400 hover:bg-red-500/10 w-7 h-7 flex items-center justify-center rounded-lg transition-all shrink-0"
+          >
+            <X className="w-4 h-4" />
           </button>
         </div>
       )}
