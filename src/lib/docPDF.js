@@ -111,7 +111,7 @@ function buildDocPDF(opts) {
     lineItems = [], subtotal = 0, discountAmount = 0, taxableAmount,
     cgst_rate, cgst_amount = 0, sgst_rate, sgst_amount = 0,
     igst_rate, igst_amount = 0, total = 0, paidAmount = 0, balanceDue,
-    notes, extraMetaLeft = [], noTotals = false, bodyText,
+    notes, termsAndConditions, extraMetaLeft = [], noTotals = false, bodyText,
   } = opts
 
   const pdf = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' })
@@ -402,6 +402,25 @@ function buildDocPDF(opts) {
     pdf.setFontSize(7.5)
     pdf.setTextColor(100,100,100)
     pdf.text('Authorized Signature', totX+2 + (totW-4)/2, sigLineY+4, { align:'center' })
+
+    // ── Terms & Conditions block (full-width, below everything) ─────────────
+    if (termsAndConditions) {
+      const tncY = sigLineY + 12
+      pdf.setDrawColor(180)
+      pdf.setLineWidth(0.3)
+      pdf.setFillColor(245, 247, 250)
+
+      pdf.setFont('helvetica','bold')
+      pdf.setFontSize(8)
+      pdf.setTextColor(30,30,30)
+      pdf.text('Terms & Conditions', ML+2, tncY)
+
+      pdf.setFont('helvetica','normal')
+      pdf.setFontSize(7.5)
+      pdf.setTextColor(60,60,60)
+      const tncLines = pdf.splitTextToSize(termsAndConditions, W-ML-MR-4)
+      tncLines.forEach((l, i) => pdf.text(l, ML+2, tncY + 5 + i*4))
+    }
   }
 
   return pdf
@@ -450,10 +469,11 @@ export async function downloadInvoicePDF(invoice, lineItems, company, verifyUrl 
 export async function downloadQuotePDF(quote, lineItems, company, verifyUrl = null) {
   const pdf = buildDocPDF({
     company,
-    docTitle: quote.is_tax_invoice !== false ? 'TAX QUOTATION' : 'QUOTATION',
+    docTitle: 'QUOTATION',
     docNumber: quote.quote_number,
     docDate: quote.quote_date,
     terms: 'Valid for 30 days',
+    termsLabel: 'Validity',
     dueDate: quote.valid_until,
     partyLabel: 'Quoted To',
     partyName: quote.client_name,
@@ -470,6 +490,7 @@ export async function downloadQuotePDF(quote, lineItems, company, verifyUrl = nu
     paidAmount: 0,
     balanceDue: quote.total_amount || 0,
     notes: quote.notes,
+    termsAndConditions: quote.terms || null,
   })
   await stampQR(pdf, verifyUrl || [
     'NHANCE DOCUMENT', `Type: Quotation`,
