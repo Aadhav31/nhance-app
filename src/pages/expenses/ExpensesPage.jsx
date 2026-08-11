@@ -447,27 +447,7 @@ export default function ExpensesPage({ onNavigate }) {
     enabled: !!companyId,
   })
 
-  // 4. Fixed expense payments
-  const { data: fixedPayments = [], isLoading: loadFixed } = useQuery({
-    queryKey: ['fixed_unified', companyId],
-    queryFn: async () => {
-      // Get all fixed_expenses for this company, then their payments
-      const { data: templates } = await supabase.from('fixed_expenses')
-        .select('id')
-        .eq('company_id', companyId)
-      if (!templates?.length) return []
-      const ids = templates.map(t => t.id)
-      const { data } = await supabase.from('fixed_expense_payments')
-        .select('*, fixed_expenses(name, category, payee_name, description, amount, frequency)')
-        .in('fixed_expense_id', ids)
-        .order('due_date', { ascending: false })
-        .limit(300)
-      return data || []
-    },
-    enabled: !!companyId,
-  })
-
-  const isLoading = loadField || loadCore || loadPay || loadFixed
+  const isLoading = loadField || loadCore || loadPay
 
   // ── normalise → unified entries ────────────────────────────────────────────
   const allEntries = useMemo(() => {
@@ -498,11 +478,12 @@ export default function ExpensesPage({ onNavigate }) {
       })
     })
 
-    // Core expenses (purchase / payroll / overhead)
+    // Core expenses (purchase / payroll / fixed / overhead)
     coreExpenses.forEach(r => {
       let type = 'overhead'
-      if (r.source === 'purchase')  type = 'purchase'
-      else if (r.source === 'payroll') type = 'payroll'
+      if (r.source === 'purchase')       type = 'purchase'
+      else if (r.source === 'payroll')   type = 'payroll'
+      else if (r.source === 'fixed_expense') type = 'fixed'
       // source === 'manual' → overhead
 
       rows.push({
@@ -518,13 +499,15 @@ export default function ExpensesPage({ onNavigate }) {
           ? (r.bill_number || r.inv_item_name)
           : type === 'payroll'
             ? r.reference_number
-            : (r.equipment?.name || null),
+            : type === 'fixed'
+              ? r.category
+              : (r.equipment?.name || null),
         ref:       r.bank_reference || r.reference_number || r.bill_number,
         hasBillPhoto: !!r.bill_photo_url,
         scope:     r.expense_scope,
         catLabel:  r.category,
-        canEdit:   type !== 'payroll',
-        canDelete: type !== 'payroll',
+        canEdit:   type !== 'payroll' && type !== 'fixed',
+        canDelete: type !== 'payroll' && type !== 'fixed',
         editModal: 'expense',
         raw: r,
       })
@@ -551,30 +534,8 @@ export default function ExpensesPage({ onNavigate }) {
       })
     })
 
-    // Fixed payments
-    fixedPayments.forEach(r => {
-      const fe = r.fixed_expenses
-      rows.push({
-        _key:      `fx-${r.id}`,
-        source_id: r.id,
-        type:      'fixed',
-        date:      r.paid_date || r.due_date,
-        amount:    Number(r.amount || 0),
-        mode:      r.payment_mode || 'cash',
-        title:     fe?.name || 'Fixed Expense',
-        sub1:      fe?.payee_name,
-        sub2:      fe?.category,
-        ref:       null,
-        hasBillPhoto: false,
-        scope:     null,
-        canEdit:   false,
-        canDelete: false,
-        raw: r,
-      })
-    })
-
     return rows.sort((a, b) => new Date(b.date) - new Date(a.date))
-  }, [fieldExpenses, coreExpenses, billPayments, fixedPayments])
+  }, [fieldExpenses, coreExpenses, billPayments])
 
   // ── filter ─────────────────────────────────────────────────────────────────
   const filtered = useMemo(() => {
