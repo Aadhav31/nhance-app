@@ -2629,6 +2629,17 @@ function ExpenseDetailModal({ exp, equipmentList, onClose, onEdit, onDelete }) {
   const ci = EXPENSE_CATS.find(c => c.value === exp.category) || { icon: '📦', label: exp.category }
   const isField = exp.source === 'field_expense'
 
+  // Extract salary period from description e.g. "Salary — July 2026 — Arabind Pal" → "July 2026"
+  const salaryPeriod = exp.category === 'salary'
+    ? (() => { const m = (exp.description || '').match(/Salary\s*[—\-]\s*(.+?)\s*[—\-]\s*.+/) ; return m?.[1] || null })()
+    : null
+
+  const sourceLabel = isField ? 'Field Expenses (APK)'
+    : exp.source === 'payroll'       ? 'Payroll'
+    : exp.source === 'fixed_expense' ? 'Fixed Expense'
+    : exp.source === 'purchase'      ? 'Purchase'
+    : 'Manual'
+
   const Row = ({ label, value }) => value ? (
     <div className="flex justify-between items-start gap-4 py-2.5 border-b border-dark-700/60 last:border-0">
       <span className="text-xs text-slate-500 shrink-0">{label}</span>
@@ -2675,16 +2686,22 @@ function ExpenseDetailModal({ exp, equipmentList, onClose, onEdit, onDelete }) {
 
         {/* Details */}
         <div className="bg-dark-700/50 rounded-xl px-4">
-          <Row label="Date"          value={fmtDate(exp.expense_date)} />
-          <Row label="Category"      value={`${ci.icon} ${ci.label}`} />
-          <Row label="Vendor / Payee" value={exp.vendor_name} />
-          <Row label="Payment Mode"  value={exp.payment_mode ? exp.payment_mode.charAt(0).toUpperCase() + exp.payment_mode.slice(1) : null} />
-          <Row label="Bill / Ref No" value={exp.bank_reference} />
-          <Row label="Equipment"     value={exp.equipment?.name ? `${exp.equipment.name}${exp.equipment.equipment_number ? ` · ${exp.equipment.equipment_number}` : ''}` : null} />
-          <Row label="Total Amount"  value={fmt(exp.total_amount || exp.amount)} />
+          <Row label="Date"           value={fmtDate(exp.expense_date)} />
+          <Row label="Category"       value={`${ci.icon} ${ci.label}`} />
+          {salaryPeriod && (
+            <div className="flex justify-between items-start gap-4 py-2.5 border-b border-dark-700/60">
+              <span className="text-xs text-slate-500 shrink-0">Salary Period</span>
+              <span className="text-xs font-semibold text-primary-300 text-right">{salaryPeriod}</span>
+            </div>
+          )}
+          <Row label={exp.category === 'salary' ? 'Employee' : 'Vendor / Payee'} value={exp.vendor_name} />
+          <Row label="Payment Mode"   value={exp.payment_mode ? exp.payment_mode.charAt(0).toUpperCase() + exp.payment_mode.slice(1) : null} />
+          <Row label="Bill / Ref No"  value={exp.bank_reference} />
+          <Row label="Equipment"      value={exp.equipment?.name ? `${exp.equipment.name}${exp.equipment.equipment_number ? ` · ${exp.equipment.equipment_number}` : ''}` : null} />
+          <Row label="Total Amount"   value={fmt(exp.total_amount || exp.amount)} />
           {exp.gst_amount > 0 && <Row label="GST Amount" value={fmt(exp.gst_amount)} />}
-          <Row label="Notes"         value={exp.notes} />
-          <Row label="Source"        value={isField ? 'Recorded via Field Expenses / APK' : 'Manually entered'} />
+          <Row label="Notes"          value={exp.notes} />
+          <Row label="Source"         value={sourceLabel} />
           {exp.created_at && <Row label="Created" value={(() => { try { return format(new Date(exp.created_at), 'dd MMM yyyy, hh:mm a') } catch { return exp.created_at } })()} />}
         </div>
 
