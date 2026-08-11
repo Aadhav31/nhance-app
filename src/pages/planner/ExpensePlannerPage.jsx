@@ -558,12 +558,13 @@ function FepMarkPaidModal({ payment, companyId, onClose, onSaved }) {
       const expPayMode = ['cash','bank','upi','cheque'].includes(form.payment_mode)
         ? form.payment_mode : 'bank'
 
-      // 1. Write to expenses table
+      // 1. Write to expenses table (include period_month so it's visible in Expenses view)
+      const expDesc = `${fe?.name || 'Fixed expense'} – ${payment.period_month}`
       const { data: exp, error: ee } = await supabase.from('expenses').insert({
         company_id:    companyId,
         expense_date:  form.paid_date,
         category:      fe?.category || 'misc',
-        description:   fe?.name || 'Fixed expense',
+        description:   expDesc,
         vendor_name:   fe?.payee_name || null,
         amount:        amt,
         total_amount:  amt,
@@ -578,7 +579,7 @@ function FepMarkPaidModal({ payment, companyId, onClose, onSaved }) {
         company_id:    companyId,
         txn_date:      form.paid_date,
         type:          'expense',
-        description:   `${fe?.name || 'Fixed expense'} – ${payment.period_month}`,
+        description:   expDesc,
         amount:        amt,
         payment_mode:  form.payment_mode,
         bank_reference: form.transaction_ref || null,
