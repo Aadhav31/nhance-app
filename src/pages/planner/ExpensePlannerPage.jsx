@@ -863,7 +863,7 @@ export default function ExpensePlannerPage() {
                   if (!window.confirm(`Mark "${payment.fixed_expenses?.name || 'EMI'}" (${payment.period_month}) as paid?`)) return
                   const { error } = await supabase
                     .from('fixed_expense_payments')
-                    .update({ status: 'paid', paid_amount: payment.amount, paid_at: new Date().toISOString() })
+                    .update({ status: 'paid', paid_amount: payment.amount })
                     .eq('id', payment.id)
                   if (error) { toast.error(error.message); return }
                   toast.success('Marked as paid')
