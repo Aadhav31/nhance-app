@@ -114,23 +114,29 @@ function CameraButton({ companyId, label, photoUrl, onCapture, location }) {
 function useGPS() {
   const [location, setLocation] = useState(null)
   const [loading, setLoading]   = useState(false)
-  const capture = () => {
-    if (!navigator.geolocation) { toast.error('GPS not supported'); return }
+  const capture = (onSuccess) => {
+    if (!navigator.geolocation) { toast.error('GPS not supported on this device/browser'); return }
     setLoading(true)
     navigator.geolocation.getCurrentPosition(
       async ({ coords: { latitude, longitude } }) => {
         try {
           const res  = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json`, { headers: { 'Accept-Language': 'en' } })
           const data = await res.json()
-          setLocation({ lat: latitude, lng: longitude, address: data.display_name })
-        } catch { setLocation({ lat: latitude, lng: longitude, address: `${latitude.toFixed(5)}, ${longitude.toFixed(5)}` }) }
+          const loc = { lat: latitude, lng: longitude, address: data.display_name }
+          setLocation(loc)
+          onSuccess?.(loc)
+        } catch {
+          const loc = { lat: latitude, lng: longitude, address: `${latitude.toFixed(5)}, ${longitude.toFixed(5)}` }
+          setLocation(loc)
+          onSuccess?.(loc)
+        }
         setLoading(false)
       },
-      () => { toast.error('Could not get location — check GPS permission'); setLoading(false) },
+      () => { toast.error('GPS unavailable — enter location manually'); setLoading(false) },
       { enableHighAccuracy: true, timeout: 12000 }
     )
   }
-  useEffect(() => { capture() }, [])
+  // NOT auto-triggered on mount — only fires when user clicks the GPS button
   return { location, loading, capture }
 }
 
@@ -1992,7 +1998,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
   const [deployWorkOrderRef,     setDeployWorkOrderRef]     = useState('')
   const [deployMachinePhotoUrl,  setDeployMachinePhotoUrl]  = useState('')
   const [deployMeterPhotoUrl,    setDeployMeterPhotoUrl]    = useState('')
-  const { location: deployGpsLoc, loading: deployGpsLoading } = useGPS()
+  const { location: deployGpsLoc, loading: deployGpsLoading, capture } = useGPS()
 
   // Re-sync deploy form when fresh equipment data arrives (on mount fetch above)
   useEffect(() => {
@@ -2658,7 +2664,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
         work_order_ref:       deployWorkOrderRef    || null,
         machine_photo_url:    deployMachinePhotoUrl || null,
         hour_meter_photo_url: deployMeterPhotoUrl   || null,
-        deployment_location:  deployGpsLoc?.address || null,
+        deployment_location:  deployGpsLoc?.address || deploySiteName || null,
       })
 
       setEquipment(e => ({ ...e, current_client_id: deployClientId, current_project_id: deployProjectId, current_site_name: deploySiteName, fuel_by_client: deployFuelByClient }))
@@ -3280,6 +3286,28 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
                       </select>
                     </div>
                   )}
+                  {/* Site / Location */}
+                  <div>
+                    <label className="block text-[10px] text-slate-500 mb-1 uppercase tracking-wider">Site Location</label>
+                    <div className="flex gap-1.5">
+                      <input
+                        className="flex-1 bg-dark-700 border border-dark-600 rounded-lg px-2.5 py-2 text-xs text-slate-100 focus:outline-none focus:border-primary-500"
+                        value={deploySiteName}
+                        onChange={e => setDeploySiteName(e.target.value)}
+                        placeholder="e.g. Kodambakkam Railway station"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => deployGpsLoading ? null : capture(loc => setDeploySiteName(loc.address))}
+                        disabled={deployGpsLoading}
+                        title="Auto-fill from GPS"
+                        className="px-2.5 py-2 rounded-lg bg-dark-700 border border-dark-600 text-slate-400 hover:text-emerald-400 hover:border-emerald-600 transition-colors disabled:opacity-40 text-xs flex items-center gap-1">
+                        {deployGpsLoading
+                          ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          : <MapPin className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
+                  </div>
                   {/* Fuel by client toggle */}
                   <label className="flex items-center gap-2 cursor-pointer select-none">
                     <input type="checkbox" checked={deployFuelByClient}
