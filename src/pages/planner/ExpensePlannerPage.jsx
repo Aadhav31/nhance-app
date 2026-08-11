@@ -540,7 +540,7 @@ function FepMarkPaidModal({ payment, companyId, onClose, onSaved }) {
   const todayISO = () => new Date().toISOString().split('T')[0]
   const fe = payment.fixed_expenses
   const [form, setForm] = useState({
-    paid_date:     payment.due_date || todayISO(),
+    paid_date:     todayISO(),
     paid_amount:   String(payment.amount || ''),
     payment_mode:  'bank',
     transaction_ref: '',
