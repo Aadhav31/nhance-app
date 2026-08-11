@@ -1214,49 +1214,126 @@ function RecordPaymentModal({ invoice, companyId, session, onClose, onSaved }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Add Expense Modal
+// Add Expense Modal — category-aware fields
 // ─────────────────────────────────────────────────────────────────────────────
 function AddExpenseModal({ companyId, session, equipmentList, onClose, onSaved }) {
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState({
-    expense_date: today(), category: 'salary', description: '',
-    vendor_name: '', amount: '', gst_amount: '',
-    vendor_gstin: '', payment_mode: 'cash', bank_reference: '',
-    expense_scope: '', equipment_id: '', notes: '',
+    expense_date: today(),
+    category: 'misc',
+    // salary-specific
+    employee_id: '',
+    salary_month: new Date().toISOString().slice(0, 7),
+    // common
+    description: '',
+    vendor_name: '',
+    amount: '',
+    gst_amount: '',
+    vendor_gstin: '',
+    payment_mode: 'cash',
+    bank_reference: '',
+    expense_scope: '',
+    equipment_id: '',
+    notes: '',
   })
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
+  const cat = form.category
+
+  // Employees — fetch only when category = salary
+  const { data: employees = [] } = useQuery({
+    queryKey: ['emp_for_expense', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('hr_employees')
+        .select('id, name, employee_number')
+        .eq('company_id', companyId)
+        .order('name')
+      return data || []
+    },
+    enabled: !!companyId && cat === 'salary',
+  })
+
+  // Auto-fill salary amount from salary structure when employee changes
+  useEffect(() => {
+    if (cat !== 'salary' || !form.employee_id) return
+    supabase.from('hr_salary_structure')
+      .select('basic_salary, hra, special_allowance, other_allowance')
+      .eq('employee_id', form.employee_id)
+      .order('effective_from', { ascending: false })
+      .limit(1).maybeSingle()
+      .then(({ data }) => {
+        if (data) {
+          const gross = (Number(data.basic_salary) || 0) + (Number(data.hra) || 0)
+            + (Number(data.special_allowance) || 0) + (Number(data.other_allowance) || 0)
+          if (gross > 0) setF('amount', String(gross))
+        }
+      })
+  }, [form.employee_id, cat])
+
+  // Reset non-common fields when category changes
+  const handleCategoryChange = (newCat) => {
+    setForm(p => ({
+      ...p,
+      category: newCat,
+      description: '', vendor_name: '', amount: '', gst_amount: '',
+      vendor_gstin: '', bank_reference: '', expense_scope: '', equipment_id: '',
+      employee_id: '', notes: '',
+    }))
+  }
 
   const handleSave = async () => {
-    if (!form.expense_scope) return toast.error('Select Machine or Administrative')
-    if (form.expense_scope === 'equipment' && !form.equipment_id) return toast.error('Select which machine this expense belongs to')
-    if (!form.description.trim()) return toast.error('Description required')
     const amount = parseFloat(form.amount)
     if (!amount || amount <= 0) return toast.error('Enter valid amount')
+
+    let description = form.description.trim()
+    let source = 'manual'
+    let refNum = null
+    let vendorName = form.vendor_name.trim() || null
+    let scope = form.expense_scope || 'administrative'
+    let equipId = scope === 'equipment' ? (form.equipment_id || null) : null
+
+    if (cat === 'salary') {
+      if (!form.employee_id) return toast.error('Select an employee')
+      if (!form.salary_month) return toast.error('Select salary month')
+      const emp = employees.find(e => e.id === form.employee_id)
+      const [yr, mo] = form.salary_month.split('-')
+      const monthLabel = new Date(Number(yr), Number(mo) - 1)
+        .toLocaleString('en-IN', { month: 'long', year: 'numeric' })
+      description = `Salary — ${monthLabel} — ${emp?.name || ''}`
+      source = 'payroll'
+      refNum = `PAYROLL-${yr}-${mo}-${form.employee_id}`
+      vendorName = emp?.name || null
+      scope = 'administrative'
+      equipId = null
+    } else {
+      if (!description) return toast.error('Description required')
+      if (['admin', 'misc'].includes(cat)) {
+        if (!form.expense_scope) return toast.error('Select Machine or Administrative')
+        if (form.expense_scope === 'equipment' && !form.equipment_id) return toast.error('Select which machine this expense belongs to')
+      }
+    }
+
     setSaving(true)
     try {
       const gst_amount = parseFloat(form.gst_amount) || 0
       const { data: exp, error: ee } = await supabase.from('expenses').insert({
         company_id: companyId, expense_date: form.expense_date,
-        category: form.category, description: form.description.trim(),
-        vendor_name: form.vendor_name.trim() || null,
-        amount, total_amount: amount,
+        category: cat, description, vendor_name: vendorName, amount,
+        total_amount: amount,
         vendor_gstin: form.vendor_gstin.trim() || null,
         payment_mode: form.payment_mode,
         bank_reference: form.bank_reference.trim() || null,
-        expense_scope: form.expense_scope,
-        equipment_id: form.expense_scope === 'equipment' ? (form.equipment_id || null) : null,
-        source: 'manual',
+        expense_scope: scope, equipment_id: equipId,
+        source, reference_number: refNum,
         created_by: session.user.id,
       }).select().single()
       if (ee) throw ee
 
       const { error: te } = await supabase.from('account_transactions').insert({
         company_id: companyId, txn_date: form.expense_date, type: 'expense',
-        description: form.description.trim(), amount, gst_amount,
-        payment_mode: form.payment_mode,
+        description, amount, gst_amount, payment_mode: form.payment_mode,
         bank_reference: form.bank_reference.trim() || null,
         reference_type: 'expense', reference_id: exp.id,
-        equipment_id: form.equipment_id || null,
+        equipment_id: equipId,
         notes: form.notes.trim() || null, created_by: session.user.id,
       })
       if (te) throw te
@@ -1267,93 +1344,189 @@ function AddExpenseModal({ companyId, session, equipmentList, onClose, onSaved }
     } finally { setSaving(false) }
   }
 
+  // ── shared UI helpers ────────────────────────────────────────────────────
+  const lbl = (text, req) => (
+    <label className="text-xs text-slate-400 mb-1 block">
+      {text}{req && <span className="text-red-400 ml-0.5">*</span>}
+    </label>
+  )
+  const PayModeSelect = () => (
+    <div>
+      {lbl('Payment Mode')}
+      <select className={inp()} value={form.payment_mode} onChange={e => setF('payment_mode', e.target.value)}>
+        {PAYMENT_MODES.map(m => <option key={m} value={m}>{m.charAt(0).toUpperCase() + m.slice(1)}</option>)}
+      </select>
+    </div>
+  )
+  const RefInput = () => (
+    <div>
+      {lbl('Bill / Ref / UTR')}
+      <input className={inp()} value={form.bank_reference} onChange={e => setF('bank_reference', e.target.value)} placeholder="Optional" />
+    </div>
+  )
+  const AmtInput = (placeholder = '0.00') => (
+    <div>
+      {lbl('Amount (₹)', true)}
+      <input type="number" className={inp()} value={form.amount} onChange={e => setF('amount', e.target.value)} min="0" step="0.01" placeholder={placeholder} />
+    </div>
+  )
+  const CostCentre = () => (
+    <div className="col-span-2">
+      {lbl('Cost Centre', true)}
+      <div className="grid grid-cols-2 gap-2 mb-2">
+        <button type="button" onClick={() => setF('expense_scope', 'equipment')}
+          className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border transition-all text-left text-xs ${
+            form.expense_scope === 'equipment'
+              ? 'bg-primary-500/15 border-primary-500 text-primary-300 ring-1 ring-primary-500'
+              : 'bg-dark-700 border-dark-600 text-slate-400 hover:border-dark-500'}`}>
+          <Wrench className="w-3.5 h-3.5 shrink-0" />
+          <div><p className="font-semibold">Machine</p><p className="text-[10px] text-slate-500">Tag to equipment</p></div>
+        </button>
+        <button type="button" onClick={() => { setF('expense_scope', 'administrative'); setF('equipment_id', '') }}
+          className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border transition-all text-left text-xs ${
+            form.expense_scope === 'administrative'
+              ? 'bg-indigo-500/15 border-indigo-500 text-indigo-300 ring-1 ring-indigo-500'
+              : 'bg-dark-700 border-dark-600 text-slate-400 hover:border-dark-500'}`}>
+          <Building2 className="w-3.5 h-3.5 shrink-0" />
+          <div><p className="font-semibold">Admin Overhead</p><p className="text-[10px] text-slate-500">Company-wide cost</p></div>
+        </button>
+      </div>
+      {form.expense_scope === 'equipment' && (
+        <select className={inp()} value={form.equipment_id} onChange={e => setF('equipment_id', e.target.value)}>
+          <option value="">— Select machine —</option>
+          {(equipmentList || []).map(eq => (
+            <option key={eq.id} value={eq.id}>{eq.name}{eq.equipment_number ? ` (${eq.equipment_number})` : ''}</option>
+          ))}
+        </select>
+      )}
+    </div>
+  )
+
   return (
     <PagePanel title="Add Expense" onClose={onClose}
       footer={<>
         <button onClick={onClose} className="btn-ghost">Cancel</button>
-        <button onClick={handleSave} disabled={saving} className="btn-primary">
-          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save Expense'}
+        <button onClick={handleSave} disabled={saving} className="btn-primary flex items-center gap-2">
+          {saving && <Loader2 className="w-4 h-4 animate-spin" />} Save Expense
         </button>
       </>}>
       <div className="space-y-4">
+
+        {/* Date + Category — always shown */}
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="text-xs text-slate-400 mb-1 block">Date</label>
+            {lbl('Date')}
             <input type="date" className={inp()} value={form.expense_date} onChange={e => setF('expense_date', e.target.value)} />
           </div>
           <div>
-            <label className="text-xs text-slate-400 mb-1 block">Category</label>
-            <select className={inp()} value={form.category} onChange={e => setF('category', e.target.value)}>
+            {lbl('Category')}
+            <select className={inp()} value={cat} onChange={e => handleCategoryChange(e.target.value)}>
               {EXPENSE_CATS.map(c => <option key={c.value} value={c.value}>{c.icon} {c.label}</option>)}
             </select>
           </div>
-          <div className="col-span-2">
-            <label className="text-xs text-slate-400 mb-1 block">Description *</label>
-            <input className={inp()} value={form.description} onChange={e => setF('description', e.target.value)} placeholder="e.g. HSD purchase for JCB 3DX — 150 litres" />
-          </div>
-          <div>
-            <label className="text-xs text-slate-400 mb-1 block">Vendor / Supplier</label>
-            <VendorPicker companyId={companyId} value={form.vendor_name} onChange={n => setF('vendor_name', n)} onSelect={v => setForm(p => ({ ...p, vendor_name: v.name, vendor_gstin: v.gstin || p.vendor_gstin }))} placeholder="Optional" className={inp()} />
-          </div>
-          <div>
-            <label className="text-xs text-slate-400 mb-1 block">Vendor GSTIN</label>
-            <input className={inp()} value={form.vendor_gstin} onChange={e => setF('vendor_gstin', e.target.value.toUpperCase())} placeholder="For input credit" />
-          </div>
-          <div>
-            <label className="text-xs text-slate-400 mb-1 block">Amount (₹) *</label>
-            <input type="number" className={inp()} value={form.amount} onChange={e => setF('amount', e.target.value)} min="0" step="0.01" placeholder="0.00" />
-          </div>
-          <div>
-            <label className="text-xs text-slate-400 mb-1 block">GST Amount (₹)</label>
-            <input type="number" className={inp()} value={form.gst_amount} onChange={e => setF('gst_amount', e.target.value)} min="0" step="0.01" placeholder="Input tax credit" />
-          </div>
-          <div>
-            <label className="text-xs text-slate-400 mb-1 block">Payment Mode</label>
-            <select className={inp()} value={form.payment_mode} onChange={e => setF('payment_mode', e.target.value)}>
-              {PAYMENT_MODES.map(m => <option key={m} value={m}>{m.charAt(0).toUpperCase() + m.slice(1)}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="text-xs text-slate-400 mb-1 block">Bill / Ref No</label>
-            <input className={inp()} value={form.bank_reference} onChange={e => setF('bank_reference', e.target.value)} placeholder="Optional" />
-          </div>
-          {/* Cost Centre */}
-          <div className="col-span-2">
-            <label className="text-xs text-slate-400 mb-1.5 block">Cost Centre <span className="text-red-400">*</span></label>
-            <div className="grid grid-cols-2 gap-2 mb-2">
-              <button type="button" onClick={() => setF('expense_scope', 'equipment')}
-                className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border transition-all text-left text-xs ${
-                  form.expense_scope === 'equipment'
-                    ? 'bg-primary-500/15 border-primary-500 text-primary-300 ring-1 ring-primary-500'
-                    : 'bg-dark-700 border-dark-600 text-slate-400 hover:border-dark-500'
-                }`}>
-                <Wrench className="w-3.5 h-3.5 shrink-0" />
-                <div><p className="font-semibold">Machine</p><p className="text-[10px] text-slate-500">Tag to equipment</p></div>
-              </button>
-              <button type="button" onClick={() => { setF('expense_scope', 'administrative'); setF('equipment_id', '') }}
-                className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border transition-all text-left text-xs ${
-                  form.expense_scope === 'administrative'
-                    ? 'bg-indigo-500/15 border-indigo-500 text-indigo-300 ring-1 ring-indigo-500'
-                    : 'bg-dark-700 border-dark-600 text-slate-400 hover:border-dark-500'
-                }`}>
-                <Building2 className="w-3.5 h-3.5 shrink-0" />
-                <div><p className="font-semibold">Admin Overhead</p><p className="text-[10px] text-slate-500">Company-wide cost</p></div>
-              </button>
-            </div>
-            {form.expense_scope === 'equipment' && (
-              <select className={inp()} value={form.equipment_id} onChange={e => setF('equipment_id', e.target.value)}>
-                <option value="">— Select machine —</option>
-                {(equipmentList || []).map(eq => (
-                  <option key={eq.id} value={eq.id}>{eq.name}{eq.equipment_number ? ` (${eq.equipment_number})` : ''}</option>
-                ))}
-              </select>
-            )}
-          </div>
-          <div className="col-span-2">
-            <label className="text-xs text-slate-400 mb-1 block">Notes</label>
-            <input className={inp()} value={form.notes} onChange={e => setF('notes', e.target.value)} placeholder="Optional" />
-          </div>
         </div>
+
+        {/* ── SALARY ── */}
+        {cat === 'salary' && (
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                {lbl('Employee', true)}
+                <select className={inp()} value={form.employee_id} onChange={e => setF('employee_id', e.target.value)}>
+                  <option value="">— Select employee —</option>
+                  {employees.map(e => <option key={e.id} value={e.id}>{e.name}{e.employee_number ? ` (${e.employee_number})` : ''}</option>)}
+                </select>
+              </div>
+              <div>
+                {lbl('Salary Month', true)}
+                <input type="month" className={inp()} value={form.salary_month} onChange={e => setF('salary_month', e.target.value)} />
+              </div>
+              <div>
+                {lbl('Amount (₹)', true)}
+                <input type="number" className={inp()} value={form.amount} onChange={e => setF('amount', e.target.value)} min="0" step="0.01" placeholder="Auto-filled from salary structure" />
+              </div>
+              <PayModeSelect />
+            </div>
+            <div>
+              {lbl('Notes')}
+              <input className={inp()} value={form.notes} onChange={e => setF('notes', e.target.value)} placeholder="Optional — e.g. advance deducted" />
+            </div>
+          </div>
+        )}
+
+        {/* ── EMI ── */}
+        {cat === 'emi' && (
+          <div className="space-y-3">
+            <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2 text-xs text-amber-300">
+              💡 For tracked EMIs with overdue alerts, use <strong>Expense Planner → Mark Paid</strong>. Use this only for unscheduled or one-off loan payments.
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="col-span-2">
+                {lbl('Loan / Asset name', true)}
+                <input className={inp()} value={form.description} onChange={e => setF('description', e.target.value)} placeholder="e.g. Creta Car Loan — July 2026" />
+              </div>
+              <div>
+                {lbl('Lender / Bank')}
+                <input className={inp()} value={form.vendor_name} onChange={e => setF('vendor_name', e.target.value)} placeholder="e.g. HDFC Bank" />
+              </div>
+              {AmtInput()}
+              <PayModeSelect />
+              <RefInput />
+            </div>
+          </div>
+        )}
+
+        {/* ── INTEREST / RENT / INSURANCE ── */}
+        {['interest', 'rent', 'insurance'].includes(cat) && (
+          <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2">
+              {lbl('Description', true)}
+              <input className={inp()} value={form.description} onChange={e => setF('description', e.target.value)}
+                placeholder={cat === 'rent' ? 'e.g. Office rent — August 2026' : cat === 'insurance' ? 'e.g. Equipment insurance premium' : 'e.g. Loan interest — HDFC OD account'} />
+            </div>
+            <div>
+              {lbl(cat === 'rent' ? 'Landlord / Owner' : cat === 'insurance' ? 'Insurance Provider' : 'Lender / Bank')}
+              <input className={inp()} value={form.vendor_name} onChange={e => setF('vendor_name', e.target.value)} placeholder="Optional" />
+            </div>
+            {AmtInput()}
+            <PayModeSelect />
+            <RefInput />
+          </div>
+        )}
+
+        {/* ── ADMIN / MISC ── */}
+        {['admin', 'misc'].includes(cat) && (
+          <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2">
+              {lbl('Description', true)}
+              <input className={inp()} value={form.description} onChange={e => setF('description', e.target.value)}
+                placeholder={cat === 'admin' ? 'e.g. Office stationery, internet bill' : 'e.g. Miscellaneous site expense'} />
+            </div>
+            <div>
+              {lbl('Vendor / Supplier')}
+              <VendorPicker companyId={companyId} value={form.vendor_name} onChange={n => setF('vendor_name', n)}
+                onSelect={v => setForm(p => ({ ...p, vendor_name: v.name, vendor_gstin: v.gstin || p.vendor_gstin }))}
+                placeholder="Optional" className={inp()} />
+            </div>
+            <div>
+              {lbl('Vendor GSTIN')}
+              <input className={inp()} value={form.vendor_gstin} onChange={e => setF('vendor_gstin', e.target.value.toUpperCase())} placeholder="For input credit" />
+            </div>
+            {AmtInput()}
+            <div>
+              {lbl('GST Amount (₹)')}
+              <input type="number" className={inp()} value={form.gst_amount} onChange={e => setF('gst_amount', e.target.value)} min="0" step="0.01" placeholder="Input tax credit" />
+            </div>
+            <PayModeSelect />
+            <RefInput />
+            <CostCentre />
+            <div className="col-span-2">
+              {lbl('Notes')}
+              <input className={inp()} value={form.notes} onChange={e => setF('notes', e.target.value)} placeholder="Optional" />
+            </div>
+          </div>
+        )}
+
       </div>
     </PagePanel>
   )
