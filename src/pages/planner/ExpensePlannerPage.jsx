@@ -115,7 +115,7 @@ function CatDot({ color, size = 8 }) {
 }
 
 // ── Month Forecast Column ─────────────────────────────────────────────────────
-function MonthColumn({ year, month, plans, hrPayroll, isCurrent, fixedExpenses = [], fepStats = { paid: 0, pending: 0 }, overdueItems = [], today = '', pendingBills = [] }) {
+function MonthColumn({ year, month, plans, hrPayroll, isCurrent, fixedExpenses = [], fepStats = { paid: 0, pending: 0 }, overdueItems = [], today = '', pendingBills = [], onMarkPaid }) {
   const fixedTotal        = fixedExpenses.reduce((s, fe) => s + fixedMonthlyAmount(fe), 0)
   const plansTotal        = plans.reduce((s, p) => s + monthlyAmount(p), 0)
   const pendingBillsTotal = pendingBills.reduce((s, b) => s + Number(b.balance_due || 0), 0)
@@ -306,7 +306,17 @@ function MonthColumn({ year, month, plans, hrPayroll, isCurrent, fixedExpenses =
                     Due {p.due_date} · <span className="font-semibold">{p.daysOverdue}d overdue</span>
                   </p>
                 </div>
-                <p className="text-xs text-red-300 nhance-overdue-amount font-semibold shrink-0">{fmtINRShort(p.amount)}</p>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <p className="text-xs text-red-300 nhance-overdue-amount font-semibold">{fmtINRShort(p.amount)}</p>
+                  {onMarkPaid && (
+                    <button
+                      onClick={() => onMarkPaid(p)}
+                      className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-emerald-600/20 border border-emerald-600/40 text-emerald-400 hover:bg-emerald-600/40 transition-colors"
+                    >
+                      ✓ Paid
+                    </button>
+                  )}
+                </div>
               </div>
             ))}
           </div>
@@ -329,10 +339,20 @@ function MonthColumn({ year, month, plans, hrPayroll, isCurrent, fixedExpenses =
                 <div className="min-w-0">
                   <p className="text-xs text-red-200 nhance-overdue-name truncate">{p.fixed_expenses?.name || '—'}</p>
                   <p className="text-[10px] text-red-500 nhance-overdue-date">
-                    Due {p.due_date} · <span className="font-semibold">{p.daysOverdue}d overdue</span>
+                    Due {p.due_date} · <span className="font-semibold">{p.daysOverdue}d overdue (carryover)</span>
                   </p>
                 </div>
-                <p className="text-xs text-red-300 nhance-overdue-amount font-semibold shrink-0">{fmtINRShort(p.amount)}</p>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <p className="text-xs text-red-300 nhance-overdue-amount font-semibold">{fmtINRShort(p.amount)}</p>
+                  {onMarkPaid && (
+                    <button
+                      onClick={() => onMarkPaid(p)}
+                      className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-emerald-600/20 border border-emerald-600/40 text-emerald-400 hover:bg-emerald-600/40 transition-colors"
+                    >
+                      ✓ Paid
+                    </button>
+                  )}
+                </div>
               </div>
             ))}
           </div>
@@ -839,6 +859,17 @@ export default function ExpensePlannerPage() {
                 overdueItems={overdueByMonth[i] || []}
                 today={todayStr}
                 pendingBills={pendingBillsByMonth[i] || []}
+                onMarkPaid={async (payment) => {
+                  if (!window.confirm(`Mark "${payment.fixed_expenses?.name || 'EMI'}" (${payment.period_month}) as paid?`)) return
+                  const { error } = await supabase
+                    .from('fixed_expense_payments')
+                    .update({ status: 'paid', paid_amount: payment.amount, paid_at: new Date().toISOString() })
+                    .eq('id', payment.id)
+                  if (error) { toast.error(error.message); return }
+                  toast.success('Marked as paid')
+                  qc.invalidateQueries({ queryKey: ['fep_overdue'] })
+                  qc.invalidateQueries({ queryKey: ['fep_planner_status'] })
+                }}
               />
             ))}
           </div>
