@@ -482,7 +482,7 @@ export default function ExpensesPage({ onNavigate }) {
     coreExpenses.forEach(r => {
       let type = 'overhead'
       if (r.source === 'purchase')       type = 'purchase'
-      else if (r.source === 'payroll')   type = 'payroll'
+      else if (r.source === 'payroll' || r.category === 'salary') type = 'payroll'
       else if (r.source === 'fixed_expense') type = 'fixed'
       // source === 'manual' → overhead
 
