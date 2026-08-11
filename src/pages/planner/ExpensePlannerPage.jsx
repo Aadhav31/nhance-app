@@ -534,6 +534,127 @@ function ExpenseModal({ initial, categories, onClose, onSaved, companyId }) {
   )
 }
 
+// ── FEP Mark Paid Modal ───────────────────────────────────────────────────────
+// Full 3-step write: expenses → account_transactions → fixed_expense_payments
+function FepMarkPaidModal({ payment, companyId, onClose, onSaved }) {
+  const todayISO = () => new Date().toISOString().split('T')[0]
+  const fe = payment.fixed_expenses
+  const [form, setForm] = useState({
+    paid_date:     payment.due_date || todayISO(),
+    paid_amount:   String(payment.amount || ''),
+    payment_mode:  'bank',
+    transaction_ref: '',
+    notes: '',
+  })
+  const [saving, setSaving] = useState(false)
+  const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
+  const inp = (extra = '') => `w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500 ${extra}`
+
+  const handleSave = async () => {
+    const amt = parseFloat(form.paid_amount)
+    if (!amt || amt <= 0) return toast.error('Enter a valid amount')
+    setSaving(true)
+    try {
+      const expPayMode = ['cash','bank','upi','cheque'].includes(form.payment_mode)
+        ? form.payment_mode : 'bank'
+
+      // 1. Write to expenses table
+      const { data: exp, error: ee } = await supabase.from('expenses').insert({
+        company_id:    companyId,
+        expense_date:  form.paid_date,
+        category:      fe?.category || 'misc',
+        description:   fe?.name || 'Fixed expense',
+        vendor_name:   fe?.payee_name || null,
+        amount:        amt,
+        total_amount:  amt,
+        payment_mode:  expPayMode,
+        bank_reference: form.transaction_ref || null,
+        source:        'fixed_expense',
+      }).select('id').single()
+      if (ee) throw ee
+
+      // 2. Write to account_transactions (shows in ledger / P&L)
+      const { error: te } = await supabase.from('account_transactions').insert({
+        company_id:    companyId,
+        txn_date:      form.paid_date,
+        type:          'expense',
+        description:   `${fe?.name || 'Fixed expense'} – ${payment.period_month}`,
+        amount:        amt,
+        payment_mode:  form.payment_mode,
+        bank_reference: form.transaction_ref || null,
+        reference_type: 'expense',
+        reference_id:  exp?.id || null,
+      })
+      if (te) throw te
+
+      // 3. Mark fixed_expense_payments as paid
+      const { error: pe } = await supabase.from('fixed_expense_payments').update({
+        status:          'paid',
+        paid_date:       form.paid_date,
+        paid_amount:     amt,
+        payment_mode:    form.payment_mode,
+        transaction_ref: form.transaction_ref || null,
+        notes:           form.notes || null,
+      }).eq('id', payment.id)
+      if (pe) throw pe
+
+      toast.success(`${fe?.name || 'EMI'} marked as paid & added to ledger`)
+      onSaved()
+    } catch (err) {
+      toast.error(err.message || 'Save failed')
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <PagePanel
+      title="Mark EMI as Paid"
+      subtitle={`${fe?.name || '—'} · ${payment.period_month}`}
+      onClose={onClose}
+      footer={<>
+        <button onClick={onClose} className="btn-ghost flex-1 justify-center">Cancel</button>
+        <button onClick={handleSave} disabled={saving} className="btn-primary flex items-center gap-2">
+          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : '✓ Confirm Payment'}
+        </button>
+      </>}
+    >
+      <div className="space-y-4 py-1">
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-xs text-slate-400 mb-1 block">Payment Date</label>
+            <input type="date" className={inp()} value={form.paid_date} onChange={e => set('paid_date', e.target.value)} />
+          </div>
+          <div>
+            <label className="text-xs text-slate-400 mb-1 block">Amount (₹)</label>
+            <input type="number" className={inp()} value={form.paid_amount} onChange={e => set('paid_amount', e.target.value)} step="0.01" />
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-xs text-slate-400 mb-1 block">Payment Mode</label>
+            <select className={inp()} value={form.payment_mode} onChange={e => set('payment_mode', e.target.value)}>
+              <option value="cash">Cash</option>
+              <option value="bank">Bank Transfer</option>
+              <option value="upi">UPI</option>
+              <option value="cheque">Cheque</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-xs text-slate-400 mb-1 block">Reference / UTR</label>
+            <input className={inp()} value={form.transaction_ref} onChange={e => set('transaction_ref', e.target.value)} placeholder="Optional" />
+          </div>
+        </div>
+        <div>
+          <label className="text-xs text-slate-400 mb-1 block">Notes</label>
+          <input className={inp()} value={form.notes} onChange={e => set('notes', e.target.value)} placeholder="Optional" />
+        </div>
+        <div className="bg-dark-700 rounded-lg px-3 py-2.5 text-xs text-slate-400">
+          This will create an entry in <span className="text-slate-200 font-semibold">Expenses</span> and the <span className="text-slate-200 font-semibold">Account Ledger</span> automatically.
+        </div>
+      </div>
+    </PagePanel>
+  )
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
 export default function ExpensePlannerPage() {
   const { company } = useAuth()
@@ -541,10 +662,11 @@ export default function ExpensePlannerPage() {
   const qc          = useQueryClient()
 
   // Rolling offset — 0 = current month is first column
-  const [offset, setOffset] = useState(0)
-  const [modal, setModal]   = useState(null)   // null | 'add' | plan object
-  const [delId, setDelId]   = useState(null)
-  const [deleting, setDeleting] = useState(false)
+  const [offset, setOffset]       = useState(0)
+  const [modal, setModal]         = useState(null)   // null | 'add' | plan object
+  const [delId, setDelId]         = useState(null)
+  const [deleting, setDeleting]   = useState(false)
+  const [payModal, setPayModal]   = useState(null)   // payment being marked paid
   const [expandedCats, setExpandedCats]           = useState({})  // planned expense categories
   const [expandedFixedCats, setExpandedFixedCats] = useState({})  // fixed expense categories
 
@@ -695,7 +817,7 @@ export default function ExpensePlannerPage() {
     queryKey: ['fep_overdue', companyId],
     queryFn: async () => {
       const { data } = await supabase.from('fixed_expense_payments')
-        .select('id, fixed_expense_id, period_month, due_date, amount, fixed_expenses(name, category)')
+        .select('id, fixed_expense_id, period_month, due_date, amount, fixed_expenses(name, category, payee_name)')
         .eq('company_id', companyId)
         .eq('status', 'pending')
         .lt('due_date', todayStr)
@@ -859,17 +981,7 @@ export default function ExpensePlannerPage() {
                 overdueItems={overdueByMonth[i] || []}
                 today={todayStr}
                 pendingBills={pendingBillsByMonth[i] || []}
-                onMarkPaid={async (payment) => {
-                  if (!window.confirm(`Mark "${payment.fixed_expenses?.name || 'EMI'}" (${payment.period_month}) as paid?`)) return
-                  const { error } = await supabase
-                    .from('fixed_expense_payments')
-                    .update({ status: 'paid', paid_amount: payment.amount })
-                    .eq('id', payment.id)
-                  if (error) { toast.error(error.message); return }
-                  toast.success('Marked as paid')
-                  qc.invalidateQueries({ queryKey: ['fep_overdue'] })
-                  qc.invalidateQueries({ queryKey: ['fep_planner_status'] })
-                }}
+                onMarkPaid={(payment) => setPayModal(payment)}
               />
             ))}
           </div>
@@ -1096,6 +1208,20 @@ export default function ExpensePlannerPage() {
           companyId={companyId}
           onClose={() => setModal(null)}
           onSaved={() => { setModal(null); invalidate() }}
+        />
+      )}
+
+      {/* Mark EMI as Paid — full ledger write */}
+      {payModal && (
+        <FepMarkPaidModal
+          payment={payModal}
+          companyId={companyId}
+          onClose={() => setPayModal(null)}
+          onSaved={() => {
+            setPayModal(null)
+            qc.invalidateQueries({ queryKey: ['fep_overdue'] })
+            qc.invalidateQueries({ queryKey: ['fep_planner_status'] })
+          }}
         />
       )}
     </div>
