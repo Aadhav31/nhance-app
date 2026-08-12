@@ -1577,12 +1577,14 @@ function EquipmentPLTab({ equipment, companyId }) {
   const { data: taggedBills = [] } = useQuery({
     queryKey: ['eq_pl_bills', equipment.id, from, to],
     queryFn: async () => {
+      // Match by equipment_id (UUID) OR equipment_name (text) — some older bills stored
+      // name but not the UUID if the dropdown value wasn't properly captured on save
       const { data } = await supabase.from('bills')
         .select('id, bill_number, bill_date, vendor_name, description, total_amount, status')
-        .eq('equipment_id', equipment.id)
         .eq('company_id', companyId)
         .neq('status', 'cancelled')
         .gte('bill_date', from).lte('bill_date', to)
+        .or(`equipment_id.eq.${equipment.id},equipment_name.eq.${equipment.name}`)
         .order('bill_date', { ascending: false })
       return data || []
     },

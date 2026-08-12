@@ -1871,6 +1871,259 @@ function ProjectDocumentsSection({ project, companyId }) {
   )
 }
 
+// ── Project P&L Tab ────────────────────────────────────────────────────────────
+function ProjectPLTab({ project, companyId, projectInvoices, projectPayments, deployments, equipment }) {
+  const todayStr = new Date().toISOString().slice(0, 10)
+  const defFrom  = project.start_date ? project.start_date.slice(0, 10) : `${new Date().getFullYear()}-01-01`
+  const [from, setFrom] = useState(defFrom)
+  const [to,   setTo]   = useState(todayStr)
+
+  const fmtM = n => `₹${Math.round(n).toLocaleString('en-IN')}`
+
+  // All equipment IDs ever on this project (current + historical deployments)
+  const allEqIds = useMemo(() => {
+    const ids = new Set([
+      ...equipment.map(e => e.id),
+      ...deployments.map(d => d.equipment?.id).filter(Boolean),
+    ])
+    return [...ids]
+  }, [equipment, deployments])
+
+  const eqEnabled = allEqIds.length > 0
+
+  // 1. Fuel issued to project equipment
+  const { data: fuelIssues = [], isLoading: fuelLoad } = useQuery({
+    queryKey: ['proj_pl_fuel', project.id, from, to],
+    queryFn: async () => {
+      const { data } = await supabase.from('fuel_issues')
+        .select('id, issue_date, qty_liters, rate_per_litre, equipment_id')
+        .in('equipment_id', allEqIds)
+        .gte('issue_date', from).lte('issue_date', to)
+      return data || []
+    },
+    enabled: eqEnabled,
+  })
+
+  // 2. Maintenance — closed job cards for project equipment
+  const { data: jobCards = [], isLoading: jobLoad } = useQuery({
+    queryKey: ['proj_pl_jobs', project.id, from, to],
+    queryFn: async () => {
+      const { data } = await supabase.from('job_cards')
+        .select('id, jc_type, total_cost, closed_at, equipment_id')
+        .in('equipment_id', allEqIds)
+        .eq('status', 'closed')
+        .gte('closed_at', from).lte('closed_at', to)
+      return data || []
+    },
+    enabled: eqEnabled,
+  })
+
+  // 3. Expenses tagged to project equipment only
+  //    (field expenses, operator salaries, purchases entered against a specific machine)
+  const { data: eqExp = [], isLoading: expLoad } = useQuery({
+    queryKey: ['proj_pl_exp', project.id, from, to],
+    queryFn: async () => {
+      const { data } = await supabase.from('expenses')
+        .select('id, expense_date, category, source, total_amount, equipment_id')
+        .in('equipment_id', allEqIds)
+        .eq('company_id', companyId)
+        .gte('expense_date', from).lte('expense_date', to)
+      return data || []
+    },
+    enabled: eqEnabled,
+  })
+
+  // Equipment names (for fallback matching — older bills stored name but not UUID)
+  const allEqNames = useMemo(() => {
+    const names = new Set([
+      ...equipment.map(e => e.name).filter(Boolean),
+      ...deployments.map(d => d.equipment?.name).filter(Boolean),
+    ])
+    return [...names]
+  }, [equipment, deployments])
+
+  // 4. Bills tagged to project equipment — fetch company bills and filter by id OR name
+  const { data: rawBills = [], isLoading: billLoad } = useQuery({
+    queryKey: ['proj_pl_bills', project.id, companyId, from, to],
+    queryFn: async () => {
+      const { data } = await supabase.from('bills')
+        .select('id, bill_date, total_amount, equipment_id, equipment_name')
+        .eq('company_id', companyId)
+        .neq('status', 'cancelled')
+        .gte('bill_date', from).lte('bill_date', to)
+      return data || []
+    },
+  })
+
+  // Filter client-side: match by equipment_id UUID or equipment_name text
+  const eqBills = useMemo(() =>
+    rawBills.filter(b =>
+      (b.equipment_id && allEqIds.includes(b.equipment_id)) ||
+      (b.equipment_name && allEqNames.includes(b.equipment_name))
+    ),
+    [rawBills, allEqIds, allEqNames]
+  )
+
+  const isLoading = fuelLoad || jobLoad || expLoad || billLoad
+
+  const pl = useMemo(() => {
+    // Revenue
+    const totalRaised    = projectInvoices.reduce((s, i) => s + (Number(i.total_amount) || 0), 0)
+    const totalReceived  = projectPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0)
+    const outstanding    = totalRaised - totalReceived
+    const contractVal    = Number(project.contract_value) || 0
+    const yetToBill      = Math.max(0, contractVal - totalRaised)
+
+    // Fuel cost (issued qty × rate, fallback ₹95/L)
+    const DIESEL_FALLBACK = 95
+    const fuelCost   = fuelIssues.reduce((s, f) =>
+      s + (Number(f.qty_liters || 0) * ((Number(f.rate_per_litre) || 0) || DIESEL_FALLBACK)), 0)
+    const fuelLitres = fuelIssues.reduce((s, f) => s + Number(f.qty_liters || 0), 0)
+
+    // Maintenance
+    const maintCost = jobCards.reduce((s, j) => s + Number(j.total_cost || 0), 0)
+
+    // Equipment-tagged expense breakdown
+    const fieldCost = eqExp
+      .filter(e => e.source === 'field_expense')
+      .reduce((s, e) => s + Number(e.total_amount || 0), 0)
+
+    const salaryCost = eqExp
+      .filter(e => e.source === 'payroll' || e.category === 'salary')
+      .reduce((s, e) => s + Number(e.total_amount || 0), 0)
+
+    const purchaseExpCost = eqExp
+      .filter(e => e.source === 'purchase')
+      .reduce((s, e) => s + Number(e.total_amount || 0), 0)
+
+    const otherCost = eqExp
+      .filter(e =>
+        e.source !== 'field_expense' &&
+        e.source !== 'payroll' && e.category !== 'salary' &&
+        e.source !== 'purchase'
+      )
+      .reduce((s, e) => s + Number(e.total_amount || 0), 0)
+
+    const billsCost = eqBills.reduce((s, b) => s + Number(b.total_amount || 0), 0)
+
+    const totalCost = fuelCost + maintCost + fieldCost + salaryCost + purchaseExpCost + otherCost + billsCost
+    const netPL     = totalRaised - totalCost
+    const marginPct = totalRaised > 0 ? (netPL / totalRaised) * 100 : null
+
+    return {
+      totalRaised, totalReceived, outstanding, contractVal, yetToBill,
+      fuelCost, fuelLitres, maintCost, fieldCost, salaryCost,
+      purchaseExpCost, otherCost, billsCost,
+      totalCost, netPL, marginPct,
+    }
+  }, [projectInvoices, projectPayments, project.contract_value, fuelIssues, jobCards, eqExp, eqBills])
+
+  const clrNet  = pl.netPL >= 0 ? 'text-emerald-400' : 'text-red-400'
+  const clrMgn  = (pl.marginPct ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'
+
+  const PLRow = ({ label, value, sub, highlight, indent }) => (
+    <div className={`flex items-center justify-between py-1.5 ${indent ? 'pl-4' : ''} border-b border-dark-700/40 last:border-0`}>
+      <span className={`text-xs ${highlight ? 'font-semibold text-slate-200' : indent ? 'text-slate-400' : 'text-slate-400'}`}>{label}</span>
+      <div className="text-right">
+        <span className={`text-xs font-medium ${highlight ? clrNet : 'text-slate-200'}`}>{value}</span>
+        {sub && <span className="text-xs text-slate-500 ml-2">{sub}</span>}
+      </div>
+    </div>
+  )
+
+  return (
+    <div className="space-y-4">
+      {/* Date Range Filter */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <span className="text-xs text-slate-400">Period:</span>
+        <div className="flex items-center gap-2">
+          <input type="date" value={from} onChange={e => setFrom(e.target.value)}
+            className="bg-dark-700 border border-dark-600 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-primary-500" />
+          <span className="text-xs text-slate-500">→</span>
+          <input type="date" value={to} onChange={e => setTo(e.target.value)}
+            className="bg-dark-700 border border-dark-600 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-primary-500" />
+        </div>
+        <span className="text-xs text-slate-500 italic">
+          {from === defFrom && to === todayStr ? 'Full project duration (since mobilization)' : 'Custom range'}
+        </span>
+        {allEqIds.length === 0 && (
+          <span className="text-xs text-orange-400 ml-2">No equipment deployed — cost data unavailable</span>
+        )}
+      </div>
+
+      {isLoading ? (
+        <div className="flex items-center justify-center h-32 text-slate-500 text-sm">Loading P&amp;L data…</div>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+
+          {/* Revenue Column */}
+          <div className="bg-dark-800/40 border border-emerald-500/20 rounded-xl p-5">
+            <div className="flex items-center gap-2 mb-4 pb-3 border-b border-dark-700/60">
+              <IndianRupee className="w-4 h-4 text-emerald-400" />
+              <span className="text-sm font-semibold text-slate-200">Revenue</span>
+            </div>
+            {pl.contractVal > 0 && <PLRow label="Contract Value"    value={fmtM(pl.contractVal)} />}
+            <PLRow label="Total Invoiced"    value={fmtM(pl.totalRaised)} />
+            <PLRow label="Total Received"    value={fmtM(pl.totalReceived)} />
+            <PLRow label="Outstanding"       value={fmtM(pl.outstanding)} />
+            {pl.contractVal > 0 && <PLRow label="Yet to Bill"  value={fmtM(pl.yetToBill)} />}
+          </div>
+
+          {/* Cost Column */}
+          <div className="bg-dark-800/40 border border-orange-500/20 rounded-xl p-5">
+            <div className="flex items-center gap-2 mb-4 pb-3 border-b border-dark-700/60">
+              <IndianRupee className="w-4 h-4 text-orange-400" />
+              <span className="text-sm font-semibold text-slate-200">Costs</span>
+            </div>
+            <PLRow label="Fuel"              value={fmtM(pl.fuelCost)}         sub={pl.fuelLitres > 0 ? `${pl.fuelLitres.toFixed(0)}L` : undefined} />
+            <PLRow label="Maintenance"       value={fmtM(pl.maintCost)}        sub={jobCards.length > 0 ? `${jobCards.length} JC` : undefined} />
+            <PLRow label="Field Expenses"    value={fmtM(pl.fieldCost)} />
+            <PLRow label="Salary (Operators)" value={fmtM(pl.salaryCost)} />
+            <PLRow label="Purchases"         value={fmtM(pl.purchaseExpCost)} />
+            <PLRow label="Bills"             value={fmtM(pl.billsCost)}        sub={eqBills.length > 0 ? `${eqBills.length} bills` : undefined} />
+            <PLRow label="Other"             value={fmtM(pl.otherCost)} />
+            <p className="text-xs text-slate-500 mt-3 pt-2 border-t border-dark-700/40 leading-relaxed">
+              Costs shown are for equipment deployed on this project only. Company-wide overheads (EMI, office salary) are excluded.
+            </p>
+            <div className="mt-3 pt-3 border-t border-dark-700/60">
+              <PLRow label="Total Cost"      value={fmtM(pl.totalCost)}    highlight />
+            </div>
+          </div>
+
+          {/* Net P&L Column */}
+          <div className="bg-dark-800/40 border border-primary-500/20 rounded-xl p-5">
+            <div className="flex items-center gap-2 mb-4 pb-3 border-b border-dark-700/60">
+              <IndianRupee className="w-4 h-4 text-primary-400" />
+              <span className="text-sm font-semibold text-slate-200">Net P&amp;L</span>
+            </div>
+            <PLRow label="Revenue (Invoiced)" value={fmtM(pl.totalRaised)} />
+            <PLRow label="Total Cost"         value={fmtM(pl.totalCost)} />
+            <div className="mt-4 pt-4 border-t border-dark-700/60 text-center">
+              <p className="text-xs text-slate-400 mb-1">Net Profit / Loss</p>
+              <p className={`text-2xl font-bold ${clrNet}`}>{fmtM(pl.netPL)}</p>
+              {pl.marginPct !== null && (
+                <p className={`text-sm mt-1 font-medium ${clrMgn}`}>
+                  {pl.marginPct >= 0 ? '+' : ''}{pl.marginPct.toFixed(1)}% margin
+                </p>
+              )}
+            </div>
+            {/* Equipment deployed */}
+            {allEqIds.length > 0 && (
+              <div className="mt-4 pt-3 border-t border-dark-700/40">
+                <p className="text-xs text-slate-500">
+                  Across <span className="text-slate-300 font-medium">{allEqIds.length}</span> equipment
+                  {deployments.length > equipment.length && ` (incl. ${deployments.length - equipment.length} past)`}
+                </p>
+              </div>
+            )}
+          </div>
+
+        </div>
+      )}
+    </div>
+  )
+}
+
 function ProjectDetail({ project, companyId, docTotals, onClose, onEdit, onDelete }) {
   const { isAdvanced } = useDisplayMode()
   const [detailTab, setDetailTab] = useState('contract')
@@ -2379,41 +2632,14 @@ function ProjectDetail({ project, companyId, docTotals, onClose, onEdit, onDelet
 
       {/* ══ PROJECT P&L ═══════════════════════════════════════════════════ */}
       {detailTab === 'pl' && (
-        <div className="grid grid-cols-2 gap-5">
-          <div className="bg-dark-800/40 border border-emerald-500/20 rounded-xl p-5">
-            <Sec icon={IndianRupee} label="Revenue Summary"/>
-            <div className="mt-4">
-              <Row label="Contract Value"  value={fmt(project.contract_value)}/>
-              <Row label="Total Invoiced"  value={fmt(totalRaised)}/>
-              <Row label="Total Received"  value={fmt(totalReceived)}/>
-              <Row label="Outstanding"     value={fmt(balance)}/>
-              {contractVal > 0 && <Row label="Yet to Bill"    value={fmt(yetToBill)}/>}
-            </div>
-          </div>
-          <div className="bg-dark-800/40 border border-orange-500/20 rounded-xl p-5">
-            <Sec icon={IndianRupee} label="Invoice Breakdown by Status"/>
-            {projectInvoices.length === 0 ? (
-              <p className="text-xs text-slate-500 mt-4">No invoices yet.</p>
-            ) : (
-              <div className="mt-4 space-y-2">
-                {['draft','sent','partial','paid','overdue'].map(s => {
-                  const grp = projectInvoices.filter(i => i.status === s)
-                  if (!grp.length) return null
-                  const tot = grp.reduce((a, i) => a + (Number(i.total_amount)||0), 0)
-                  return (
-                    <div key={s} className="flex items-center justify-between py-1.5 border-b border-dark-700/40">
-                      <span className={`text-xs px-2.5 py-0.5 rounded-full capitalize ${invStatusCls(s)}`}>{s}</span>
-                      <div className="flex items-center gap-4 text-xs">
-                        <span className="text-slate-500">{grp.length} invoice{grp.length!==1?'s':''}</span>
-                        <span className="text-slate-200 font-medium">{fmt(tot)}</span>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-          </div>
-        </div>
+        <ProjectPLTab
+          project={project}
+          companyId={companyId}
+          projectInvoices={projectInvoices}
+          projectPayments={projectPayments}
+          deployments={deployments}
+          equipment={equipment}
+        />
       )}
 
       {/* ══ REMARKS ═══════════════════════════════════════════════════════ */}
