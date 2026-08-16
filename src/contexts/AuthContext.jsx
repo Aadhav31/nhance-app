@@ -170,7 +170,9 @@ export function AuthProvider({ children }) {
 
   const signOut = async () => {
     setAuthError(null)
-    await supabase.auth.signOut()
+    // scope: 'local' ends only this device's session.
+    // Default 'global' would invalidate all refresh tokens across every device for this user.
+    await supabase.auth.signOut({ scope: 'local' })
   }
 
   const value = {

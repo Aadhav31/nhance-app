@@ -1302,8 +1302,15 @@ function AddExpenseModal({ companyId, session, equipmentList, onClose, onSaved }
       source = 'payroll'
       refNum = `PAYROLL-${yr}-${mo}-${form.employee_id}`
       vendorName = emp?.name || null
-      scope = 'administrative'
-      equipId = null
+      // Link salary to equipment via equipment_assignments (the operator roster)
+      const { data: assignment } = await supabase
+        .from('equipment_assignments')
+        .select('equipment_id')
+        .eq('employee_id', form.employee_id)
+        .limit(1)
+        .maybeSingle()
+      equipId = assignment?.equipment_id || null
+      scope = equipId ? 'equipment' : 'administrative'
     } else {
       if (!description) return toast.error('Description required')
       if (['admin', 'misc'].includes(cat)) {
