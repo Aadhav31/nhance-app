@@ -247,7 +247,15 @@ function MobileNav({ role, activePage, onNavigate }) {
 // ── App Shell ─────────────────────────────────────────────────────────────────
 function AppShell() {
   const { loading, session, role, hasModule, isSuperAdmin, passwordRecovery } = useAuth()
-  const [activePage,       setActivePage]       = useState('dashboard')
+
+  // Detect recovery URL once on mount — covers both PKCE (?code=) and implicit (#type=recovery)
+  const isRecoveryUrl = (
+    window.location.search.includes('code=') ||
+    window.location.hash.includes('type=recovery') ||
+    window.location.hash.includes('access_token')
+  )
+
+  const [activePage,       setActivePage]       = useState(isRecoveryUrl ? 'profile' : 'dashboard')
   const [navExtra,         setNavExtra]         = useState({})   // deep-link extras {tab, equipmentId, …}
   const [notesOpen,        setNotesOpen]        = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
@@ -256,19 +264,16 @@ function AppShell() {
   // Live sync — invalidates React Query cache the moment any table row changes
   useRealtimeSync()
 
-  // When user arrives via password reset link, take them straight to Profile
+  // Fallback: if passwordRecovery state arrives after mount, still redirect to profile
   useEffect(() => {
     if (passwordRecovery) setActivePage('profile')
   }, [passwordRecovery])
 
   if (loading) return <LoadingScreen />
 
-  // If no session but URL has a recovery code/token, keep showing loader while SDK processes it
+  // If no session but URL has a recovery token, show loader while SDK exchanges the code
   if (!session) {
-    const hasRecovery = window.location.search.includes('code=') ||
-                        window.location.hash.includes('type=recovery') ||
-                        window.location.hash.includes('access_token')
-    if (hasRecovery) return <LoadingScreen message="Verifying reset link…" />
+    if (isRecoveryUrl) return <LoadingScreen message="Verifying reset link…" />
     return <LoginPage />
   }
 
