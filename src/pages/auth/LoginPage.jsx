@@ -39,8 +39,9 @@ export default function LoginPage() {
       await resetPassword(resetEmail.trim().toLowerCase())
       setResetSent(true)
     } catch (err) {
-      // Supabase AuthError may have message, error_description, or be an object
-      // Rate limit errors sometimes return message: "{}" — treat those as generic
+      // Debug: log full error so we can inspect it in console
+      console.error('resetPassword error object:', err)
+      console.error('resetPassword error JSON:', JSON.stringify(err, Object.getOwnPropertyNames(err)))
       const rawMsg = typeof err?.message === 'string' ? err.message : ''
       const isUseless = !rawMsg || rawMsg === '{}' || rawMsg === '[object Object]'
       const msg = !isUseless
