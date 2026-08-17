@@ -246,7 +246,7 @@ function MobileNav({ role, activePage, onNavigate }) {
 
 // ── App Shell ─────────────────────────────────────────────────────────────────
 function AppShell() {
-  const { loading, session, role, hasModule, isSuperAdmin } = useAuth()
+  const { loading, session, role, hasModule, isSuperAdmin, passwordRecovery } = useAuth()
   const [activePage,       setActivePage]       = useState('dashboard')
   const [navExtra,         setNavExtra]         = useState({})   // deep-link extras {tab, equipmentId, …}
   const [notesOpen,        setNotesOpen]        = useState(false)
@@ -256,8 +256,21 @@ function AppShell() {
   // Live sync — invalidates React Query cache the moment any table row changes
   useRealtimeSync()
 
+  // When user arrives via password reset link, take them straight to Profile
+  useEffect(() => {
+    if (passwordRecovery) setActivePage('profile')
+  }, [passwordRecovery])
+
   if (loading) return <LoadingScreen />
-  if (!session) return <LoginPage />
+
+  // If no session but URL has a recovery code/token, keep showing loader while SDK processes it
+  if (!session) {
+    const hasRecovery = window.location.search.includes('code=') ||
+                        window.location.hash.includes('type=recovery') ||
+                        window.location.hash.includes('access_token')
+    if (hasRecovery) return <LoadingScreen message="Verifying reset link…" />
+    return <LoginPage />
+  }
 
   // Operators get their own dedicated mobile portal
   if (role === 'operator') return <OperatorPortal />
