@@ -40,13 +40,18 @@ export default function LoginPage() {
       setResetSent(true)
     } catch (err) {
       // Supabase AuthError may have message, error_description, or be an object
-      const msg = typeof err?.message === 'string' && err.message
-        ? err.message
-        : typeof err?.error_description === 'string' && err.error_description
-          ? err.error_description
-          : typeof err === 'string'
-            ? err
-            : 'Failed to send reset email. Please try again.'
+      // Rate limit errors sometimes return message: "{}" — treat those as generic
+      const rawMsg = typeof err?.message === 'string' ? err.message : ''
+      const isUseless = !rawMsg || rawMsg === '{}' || rawMsg === '[object Object]'
+      const msg = !isUseless
+        ? rawMsg
+        : err?.status === 429
+          ? 'Too many attempts. Please wait a few minutes and try again.'
+          : typeof err?.error_description === 'string' && err.error_description
+            ? err.error_description
+            : typeof err === 'string' && err
+              ? err
+              : 'Failed to send reset email. Please try again.'
       setResetError(msg)
     } finally {
       setResetLoading(false)
