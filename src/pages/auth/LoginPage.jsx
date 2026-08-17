@@ -39,7 +39,15 @@ export default function LoginPage() {
       await resetPassword(resetEmail.trim().toLowerCase())
       setResetSent(true)
     } catch (err) {
-      setResetError(err.message || 'Failed to send reset email')
+      // Supabase AuthError may have message, error_description, or be an object
+      const msg = typeof err?.message === 'string' && err.message
+        ? err.message
+        : typeof err?.error_description === 'string' && err.error_description
+          ? err.error_description
+          : typeof err === 'string'
+            ? err
+            : 'Failed to send reset email. Please try again.'
+      setResetError(msg)
     } finally {
       setResetLoading(false)
     }
@@ -92,7 +100,7 @@ export default function LoginPage() {
                   </div>
 
                   <form onSubmit={handleForgot} className="space-y-4">
-                    {resetError && (
+                    {resetError && typeof resetError === 'string' && (
                       <div className="flex items-center gap-2 text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg p-3">
                         <AlertCircle className="w-4 h-4 shrink-0" />
                         {resetError}
