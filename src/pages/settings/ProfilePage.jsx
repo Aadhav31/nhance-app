@@ -4,6 +4,29 @@ import { supabase } from '../../lib/supabase'
 import { Eye, EyeOff, Loader2, CheckCircle2, AlertCircle, Lock, User, Mail, Shield } from 'lucide-react'
 import toast from 'react-hot-toast'
 
+// Defined outside component so it never remounts on re-render (fixes focus-loss bug)
+function PwdInput({ label, value, onChange, show, onToggle, autoComplete, required = true }) {
+  return (
+    <div>
+      <label className="text-xs text-slate-400 mb-1 block">{label}</label>
+      <div className="relative">
+        <input
+          type={show ? 'text' : 'password'}
+          value={value} onChange={e => onChange(e.target.value)}
+          required={required} autoComplete={autoComplete}
+          className="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2.5 text-sm text-slate-200 pr-10
+            focus:outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500/20"
+          placeholder="••••••••"
+        />
+        <button type="button" onClick={onToggle}
+          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200">
+          {show ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 export default function ProfilePage() {
   const { userProfile, userRole, company, updatePassword, passwordRecovery, setPasswordRecovery } = useAuth()
 
@@ -56,26 +79,6 @@ export default function ProfilePage() {
       setSaving(false)
     }
   }
-
-  const PwdInput = ({ label, value, onChange, show, onToggle, autoComplete, required = true }) => (
-    <div>
-      <label className="text-xs text-slate-400 mb-1 block">{label}</label>
-      <div className="relative">
-        <input
-          type={show ? 'text' : 'password'}
-          value={value} onChange={e => onChange(e.target.value)}
-          required={required} autoComplete={autoComplete}
-          className="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2.5 text-sm text-slate-200 pr-10
-            focus:outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500/20"
-          placeholder="••••••••"
-        />
-        <button type="button" onClick={onToggle}
-          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200">
-          {show ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-        </button>
-      </div>
-    </div>
-  )
 
   return (
     <div className="max-w-2xl mx-auto p-6 space-y-6">
