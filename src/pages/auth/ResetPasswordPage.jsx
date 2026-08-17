@@ -44,8 +44,9 @@ export default function ResetPasswordPage() {
     try {
       await updatePassword(newPwd)
       setDone(true)
-      // Sign out the temporary recovery session
+      // Sign out the temporary recovery session, then redirect to login
       await signOut()
+      setTimeout(() => { window.location.href = '/' }, 2000)
     } catch (err) {
       setError(err.message || 'Failed to update password. Please try again.')
     } finally {
@@ -79,14 +80,9 @@ export default function ResetPasswordPage() {
             <div className="text-center py-4">
               <CheckCircle2 className="w-12 h-12 text-emerald-400 mx-auto mb-3" />
               <h2 className="text-lg font-bold text-slate-100 mb-1">Password updated!</h2>
-              <p className="text-sm text-slate-400 mb-6">
-                Your password has been changed successfully. Please sign in with your new password.
+              <p className="text-sm text-slate-400">
+                Your password has been changed successfully. Redirecting to sign in…
               </p>
-              <button
-                onClick={() => { window.location.href = '/' }}
-                className="btn-primary w-full justify-center py-2.5">
-                Go to Sign In
-              </button>
             </div>
           ) : (
             /* ── SET NEW PASSWORD ── */
