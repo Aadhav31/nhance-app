@@ -6,6 +6,7 @@ import { ThemeProvider } from './contexts/ThemeContext'
 import LoadingScreen from './components/shared/LoadingScreen'
 import StickyNotes from './components/shared/StickyNotes'
 import LoginPage from './pages/auth/LoginPage'
+import ResetPasswordPage from './pages/auth/ResetPasswordPage'
 import Sidebar from './components/layout/Sidebar'
 import RightBar from './components/layout/RightBar'
 import TopBar from './components/layout/TopBar'
@@ -246,16 +247,9 @@ function MobileNav({ role, activePage, onNavigate }) {
 
 // ── App Shell ─────────────────────────────────────────────────────────────────
 function AppShell() {
-  const { loading, session, role, hasModule, isSuperAdmin, passwordRecovery } = useAuth()
+  const { loading, session, role, hasModule, isSuperAdmin } = useAuth()
 
-  // Detect recovery URL once on mount — covers both PKCE (?code=) and implicit (#type=recovery)
-  const isRecoveryUrl = (
-    window.location.search.includes('code=') ||
-    window.location.hash.includes('type=recovery') ||
-    window.location.hash.includes('access_token')
-  )
-
-  const [activePage,       setActivePage]       = useState(isRecoveryUrl ? 'profile' : 'dashboard')
+  const [activePage,       setActivePage]       = useState('dashboard')
   const [navExtra,         setNavExtra]         = useState({})   // deep-link extras {tab, equipmentId, …}
   const [notesOpen,        setNotesOpen]        = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
@@ -264,18 +258,8 @@ function AppShell() {
   // Live sync — invalidates React Query cache the moment any table row changes
   useRealtimeSync()
 
-  // Fallback: if passwordRecovery state arrives after mount, still redirect to profile
-  useEffect(() => {
-    if (passwordRecovery) setActivePage('profile')
-  }, [passwordRecovery])
-
   if (loading) return <LoadingScreen />
-
-  // If no session but URL has a recovery token, show loader while SDK exchanges the code
-  if (!session) {
-    if (isRecoveryUrl) return <LoadingScreen message="Verifying reset link…" />
-    return <LoginPage />
-  }
+  if (!session) return <LoginPage />
 
   // Operators get their own dedicated mobile portal
   if (role === 'operator') return <OperatorPortal />
@@ -514,13 +498,29 @@ function AppShell() {
 }
 
 export default function App() {
-  // Public verification route — accessible without login
+  // Public verification route — no login needed
   const path  = window.location.pathname
   const match = path.match(/^\/verify\/([0-9a-f-]{36})$/i)
   if (match) {
     return (
       <ThemeProvider>
         <VerifyPage token={match[1]} />
+      </ThemeProvider>
+    )
+  }
+
+  // Password reset link — show standalone reset page, never the full app
+  const isRecoveryUrl = (
+    window.location.search.includes('code=') ||
+    window.location.hash.includes('type=recovery') ||
+    window.location.hash.includes('access_token')
+  )
+  if (isRecoveryUrl) {
+    return (
+      <ThemeProvider>
+        <AuthProvider>
+          <ResetPasswordPage />
+        </AuthProvider>
       </ThemeProvider>
     )
   }
