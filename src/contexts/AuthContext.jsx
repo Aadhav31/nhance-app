@@ -13,6 +13,7 @@ export function AuthProvider({ children }) {
   const [modules,     setModules]     = useState([])
   const [loading,     setLoading]     = useState(true)
   const [authError,   setAuthError]   = useState(null)  // shown on login page if profile missing
+  const [passwordRecovery, setPasswordRecovery] = useState(false) // true when user arrived via reset link
 
   // Load full profile after auth session is established
   const loadUserData = async (authUser) => {
@@ -122,7 +123,15 @@ export function AuthProvider({ children }) {
     })
 
     // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        // User clicked the reset link from email — flag so app can show change-password screen
+        setPasswordRecovery(true)
+        setSession(session)
+        loadUserData(session?.user ?? null)
+        return
+      }
+      setPasswordRecovery(false)
       setSession(session)
       loadUserData(session?.user ?? null)
     })
@@ -194,6 +203,8 @@ export function AuthProvider({ children }) {
     // ─────────────────────────────────────────────────────────────────────────
     signIn,
     signOut,
+    passwordRecovery,
+    setPasswordRecovery,
     resetPassword,
     updatePassword,
     hasModule,
