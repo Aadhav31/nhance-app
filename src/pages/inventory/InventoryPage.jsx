@@ -132,7 +132,7 @@ function OverviewTab({ companyId, onNavigate, onNavigatePage }) {
 
       {/* ── Summary KPIs ── */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <button onClick={() => onNavigate('items')} className="bg-dark-800 border border-dark-700 hover:border-primary-600/60 rounded-xl p-4 text-left transition-colors group">
+        <button onClick={() => onNavigate('catalogue')} className="bg-dark-800 border border-dark-700 hover:border-primary-600/60 rounded-xl p-4 text-left transition-colors group">
           <p className="text-xs text-slate-500 mb-1">Total Items</p>
           <p className="text-2xl font-black text-slate-100">{items.length}</p>
           <p className="text-[10px] text-slate-600 mt-0.5 group-hover:text-primary-400">in catalog →</p>
@@ -142,7 +142,7 @@ function OverviewTab({ companyId, onNavigate, onNavigatePage }) {
           <p className="text-2xl font-black text-slate-100">{stock.length}</p>
           <p className="text-[10px] text-slate-600 mt-0.5 group-hover:text-primary-400">item-store pairs →</p>
         </button>
-        <button onClick={() => onNavigate('stock_in')} className={`bg-dark-800 border rounded-xl p-4 text-left transition-colors group ${lowStock.length > 0 ? 'border-red-700/50 hover:border-red-500' : 'border-dark-700 hover:border-primary-600/60'}`}>
+        <button onClick={() => onNavigate('stock', 'stock_in')} className={`bg-dark-800 border rounded-xl p-4 text-left transition-colors group ${lowStock.length > 0 ? 'border-red-700/50 hover:border-red-500' : 'border-dark-700 hover:border-primary-600/60'}`}>
           <p className="text-xs text-slate-500 mb-1">Low Stock</p>
           <p className={`text-2xl font-black ${lowStock.length > 0 ? 'text-red-400' : 'text-emerald-400'}`}>{lowStock.length}</p>
           <p className={`text-[10px] mt-0.5 ${lowStock.length > 0 ? 'text-red-500 group-hover:text-red-400' : 'text-slate-600 group-hover:text-primary-400'}`}>{lowStock.length > 0 ? 'needs restocking →' : 'all good'}</p>
@@ -228,7 +228,7 @@ function OverviewTab({ companyId, onNavigate, onNavigatePage }) {
           <div className="bg-dark-800 border border-dark-700 rounded-xl px-4 py-8 text-center">
             <Package className="w-8 h-8 text-slate-700 mx-auto mb-2" />
             <p className="text-sm text-slate-500">No stock recorded yet</p>
-            <button onClick={() => onNavigate('stock_in')} className="mt-2 text-xs text-primary-400 hover:text-primary-300 underline underline-offset-2">Receive your first stock →</button>
+            <button onClick={() => onNavigate('stock', 'stock_in')} className="mt-2 text-xs text-primary-400 hover:text-primary-300 underline underline-offset-2">Receive your first stock →</button>
           </div>
         ) : (
           <div className="space-y-1.5">
@@ -268,7 +268,7 @@ function OverviewTab({ companyId, onNavigate, onNavigatePage }) {
             const stats = catStats[cat.value] || { items: 0, value: 0 }
             const Icon = cat.icon
             return (
-              <button key={cat.value} onClick={() => onNavigate('items')}
+              <button key={cat.value} onClick={() => onNavigate('catalogue')}
                 className="bg-dark-800 border border-dark-700 hover:border-primary-600/50 rounded-xl p-3 flex items-center gap-3 text-left transition-colors">
                 <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${cat.bg} shrink-0`}>
                   <Icon className={`w-4 h-4 ${cat.color}`} />
@@ -289,14 +289,14 @@ function OverviewTab({ companyId, onNavigate, onNavigatePage }) {
         <div className="flex items-center justify-between mb-2">
           <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Recent Movements</p>
           <div className="flex gap-2">
-            <button onClick={() => onNavigate('stock_in')}  className="text-[11px] text-emerald-400 hover:text-emerald-300">+ Stock In</button>
-            <button onClick={() => onNavigate('stock_out')} className="text-[11px] text-red-400 hover:text-red-300">- Stock Out</button>
+            <button onClick={() => onNavigate('stock', 'stock_in')}  className="text-[11px] text-emerald-400 hover:text-emerald-300">+ Stock In</button>
+            <button onClick={() => onNavigate('stock', 'stock_out')} className="text-[11px] text-red-400 hover:text-red-300">- Stock Out</button>
           </div>
         </div>
         {recentTxns.length === 0 ? (
           <div className="bg-dark-800 border border-dark-700 rounded-xl px-4 py-6 text-center">
             <p className="text-sm text-slate-500">No movements recorded yet</p>
-            <button onClick={() => onNavigate('stock_in')} className="mt-1 text-xs text-primary-400 hover:text-primary-300 underline underline-offset-2">Record first stock receipt →</button>
+            <button onClick={() => onNavigate('stock', 'stock_in')} className="mt-1 text-xs text-primary-400 hover:text-primary-300 underline underline-offset-2">Record first stock receipt →</button>
           </div>
         ) : (
           <div className="space-y-1.5">
@@ -2142,20 +2142,60 @@ function AdjustmentsTab({ companyId, session }) {
   )
 }
 
+// ── STOCK TAB (wrapper with sub-tabs) ────────────────────────────────────────
+function StockTab({ companyId, session, initialSub = 'stock_in' }) {
+  const [sub, setSub] = useState(initialSub)
+
+  const subTabs = [
+    { id: 'stock_in',    label: 'Stock In',    icon: ArrowDownCircle, color: 'text-emerald-400', active: 'border-emerald-500 text-emerald-400' },
+    { id: 'stock_out',   label: 'Stock Out',   icon: ArrowUpCircle,   color: 'text-red-400',     active: 'border-red-500 text-red-400' },
+    { id: 'transfers',   label: 'Transfers',   icon: Shuffle,         color: 'text-blue-400',    active: 'border-blue-500 text-blue-400' },
+    { id: 'adjustments', label: 'Adjustments', icon: RefreshCcw,      color: 'text-orange-400',  active: 'border-orange-500 text-orange-400' },
+  ]
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* Sub-tab bar */}
+      <div className="px-6 pt-3 pb-0 shrink-0 border-b border-dark-800/60 bg-dark-900/40">
+        <div className="flex gap-0 overflow-x-auto">
+          {subTabs.map(t => (
+            <button key={t.id} onClick={() => setSub(t.id)}
+              className={`flex items-center gap-1.5 px-4 py-2 text-xs font-medium border-b-2 whitespace-nowrap transition-colors ${
+                sub === t.id ? t.active : 'border-transparent text-slate-500 hover:text-slate-300'
+              }`}>
+              <t.icon className="w-3.5 h-3.5" />{t.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {/* Sub-tab content */}
+      <div className="flex-1 overflow-hidden">
+        {sub === 'stock_in'    && <StockInTab     companyId={companyId} session={session} />}
+        {sub === 'stock_out'   && <StockOutTab    companyId={companyId} session={session} />}
+        {sub === 'transfers'   && <TransfersTab   companyId={companyId} session={session} />}
+        {sub === 'adjustments' && <AdjustmentsTab companyId={companyId} session={session} />}
+      </div>
+    </div>
+  )
+}
+
 // ── MAIN INVENTORY PAGE ───────────────────────────────────────────────────────
 export default function InventoryPage({ onNavigate: onNavigatePage }) {
   const { companyId, session } = useAuth()
-  const [activeTab, setActiveTab] = useState('overview')
+  const [activeTab,    setActiveTab]    = useState('overview')
+  const [stockInitSub, setStockInitSub] = useState('stock_in')
+
+  // Navigate handler — supports optional sub-tab for Stock
+  const handleNavigate = (tab, sub) => {
+    if (sub) setStockInitSub(sub)
+    setActiveTab(tab)
+  }
 
   const tabs = [
-    { id: 'overview',     label: 'Overview',       icon: LayoutDashboard },
-    { id: 'items',        label: 'Items',           icon: Package },
-    { id: 'catalogue',    label: 'Item Catalogue',  icon: BookOpen },
-    { id: 'stores',       label: 'Stores',          icon: Store },
-    { id: 'stock_in',     label: 'Stock In',        icon: ArrowDownCircle },
-    { id: 'stock_out',    label: 'Stock Out',       icon: ArrowUpCircle },
-    { id: 'transfers',    label: 'Transfers',       icon: Shuffle },
-    { id: 'adjustments',  label: 'Adjustments',    icon: RefreshCcw },
+    { id: 'overview',   label: 'Overview',       icon: LayoutDashboard },
+    { id: 'catalogue',  label: 'Item Catalogue',  icon: BookOpen },
+    { id: 'stock',      label: 'Stock',           icon: Package },
+    { id: 'stores',     label: 'Stores',          icon: Store },
   ]
 
   return (
@@ -2168,12 +2208,12 @@ export default function InventoryPage({ onNavigate: onNavigatePage }) {
           </div>
           <div>
             <h1 className="text-lg font-bold text-slate-100">Inventory</h1>
-            <p className="text-xs text-slate-500">Items · Stores · Stock Movements</p>
+            <p className="text-xs text-slate-500">Item Catalogue · Stock Movements · Stores</p>
           </div>
         </div>
         <div className="flex gap-0 overflow-x-auto">
           {tabs.map(t => (
-            <button key={t.id} onClick={() => setActiveTab(t.id)}
+            <button key={t.id} onClick={() => handleNavigate(t.id)}
               className={`flex items-center gap-1.5 px-4 py-2.5 text-xs font-medium border-b-2 whitespace-nowrap transition-colors ${
                 activeTab === t.id ? 'border-violet-500 text-violet-400' : 'border-transparent text-slate-500 hover:text-slate-300'
               }`}>
@@ -2185,14 +2225,10 @@ export default function InventoryPage({ onNavigate: onNavigatePage }) {
 
       {/* Tab content */}
       <div className="flex-1 overflow-hidden">
-        {activeTab === 'overview'    && <OverviewTab        companyId={companyId} onNavigate={setActiveTab} onNavigatePage={onNavigatePage} />}
-        {activeTab === 'items'       && <ItemsTab           companyId={companyId} session={session} />}
-        {activeTab === 'catalogue'   && <ItemCatalogueTab   companyId={companyId} session={session} />}
-        {activeTab === 'stores'      && <StoresTab          companyId={companyId} session={session} />}
-        {activeTab === 'stock_in'    && <StockInTab      companyId={companyId} session={session} />}
-        {activeTab === 'stock_out'   && <StockOutTab     companyId={companyId} session={session} />}
-        {activeTab === 'transfers'   && <TransfersTab    companyId={companyId} session={session} />}
-        {activeTab === 'adjustments' && <AdjustmentsTab  companyId={companyId} session={session} />}
+        {activeTab === 'overview'  && <OverviewTab      companyId={companyId} onNavigate={handleNavigate} onNavigatePage={onNavigatePage} />}
+        {activeTab === 'catalogue' && <ItemCatalogueTab companyId={companyId} session={session} />}
+        {activeTab === 'stock'     && <StockTab         companyId={companyId} session={session} initialSub={stockInitSub} key={stockInitSub} />}
+        {activeTab === 'stores'    && <StoresTab        companyId={companyId} session={session} />}
       </div>
     </div>
   )
