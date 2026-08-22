@@ -1577,16 +1577,36 @@ function EquipmentPLTab({ equipment, companyId }) {
   const { data: taggedBills = [] } = useQuery({
     queryKey: ['eq_pl_bills', equipment.id, from, to],
     queryFn: async () => {
-      // Match by equipment_id (UUID) OR equipment_name (text) — some older bills stored
-      // name but not the UUID if the dropdown value wasn't properly captured on save
-      const { data } = await supabase.from('bills')
-        .select('id, bill_number, bill_date, vendor_name, description, total_amount, status')
+      // Two separate queries to avoid PostgREST .or() parsing issues
+      // when equipment.name contains spaces (e.g. "CAT 320" breaks the filter DSL)
+      const base = { company_id: companyId, status: 'neq.cancelled' }
+      const sel  = 'id, bill_number, bill_date, vendor_name, description, total_amount, status'
+
+      // Primary: match by UUID
+      const { data: byId = [] } = await supabase.from('bills')
+        .select(sel)
         .eq('company_id', companyId)
         .neq('status', 'cancelled')
+        .eq('equipment_id', equipment.id)
         .gte('bill_date', from).lte('bill_date', to)
-        .or(`equipment_id.eq.${equipment.id},equipment_name.eq.${equipment.name}`)
         .order('bill_date', { ascending: false })
-      return data || []
+
+      // Fallback: match by name for older bills where UUID wasn't stored
+      const { data: byName = [] } = await supabase.from('bills')
+        .select(sel)
+        .eq('company_id', companyId)
+        .neq('status', 'cancelled')
+        .is('equipment_id', null)
+        .eq('equipment_name', equipment.name)
+        .gte('bill_date', from).lte('bill_date', to)
+        .order('bill_date', { ascending: false })
+
+      // Merge, deduplicate by id
+      const seen = new Set()
+      return [...(byId || []), ...(byName || [])].filter(b => {
+        if (seen.has(b.id)) return false
+        seen.add(b.id); return true
+      })
     },
   })
 
