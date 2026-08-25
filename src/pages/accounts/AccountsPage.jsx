@@ -2222,7 +2222,7 @@ function InvoicesTab({ companyId, session }) {
         invoice_number: newNum,
         status: 'draft',
         invoice_date: today(),
-        due_date: inv.due_date || '',
+        due_date: inv.due_date || null,
         paid_amount: 0,
         balance_due: inv.total_amount,
         payment_link_url: null,
