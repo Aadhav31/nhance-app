@@ -139,16 +139,14 @@ function MaintenanceFormModal({ record, companyId, session, onClose, onSaved }) 
               // Create shift_incident if none open
               const { data: openInc } = await supabase.from('shift_incidents')
                 .select('id').eq('equipment_id', eqId)
-                .eq('incident_type', 'breakdown').eq('status', 'open').limit(1).maybeSingle()
+                .eq('incident_type', 'breakdown').eq('resolved', false).limit(1).maybeSingle()
               if (!openInc) {
                 await supabase.from('shift_incidents').insert({
                   company_id:     companyId,
                   equipment_id:   eqId,
-                  equipment_name: eqName,
                   incident_type:  'breakdown',
                   description:    form.description.trim() || 'Breakdown — see maintenance record',
-                  status:         'open',
-                  source:         'maintenance',
+                  resolved:       false,
                 })
               }
               // Create job card if none open
@@ -164,7 +162,6 @@ function MaintenanceFormModal({ record, companyId, session, onClose, onSaved }) 
                   complaint:      form.description.trim() || 'Breakdown — see maintenance record',
                   status:         'open',
                   opened_date:    form.service_date || today(),
-                  source:         'maintenance',
                 })
               }
             } catch (_) { /* Non-blocking */ }
@@ -327,8 +324,8 @@ function RecordDetailModal({ record, companyId, onClose, onEdit }) {
       ;(async () => {
         try {
           await supabase.from('shift_incidents')
-            .update({ status: 'resolved', resolved_at: new Date().toISOString(), resolution_notes: 'Resolved via maintenance record' })
-            .eq('equipment_id', record.equipment_id).eq('incident_type', 'breakdown').eq('status', 'open')
+            .update({ resolved: true, resolved_at: new Date().toISOString() })
+            .eq('equipment_id', record.equipment_id).eq('incident_type', 'breakdown').eq('resolved', false)
           await supabase.from('job_cards')
             .update({ status: 'completed', closed_date: today() })
             .eq('equipment_id', record.equipment_id).eq('jc_type', 'breakdown').eq('status', 'open')

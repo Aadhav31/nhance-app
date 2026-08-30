@@ -1064,7 +1064,6 @@ function IncidentModal({ equipment, shift, companyId, onClose }) {
                 complaint:      descriptionValue,
                 status:         'open',
                 opened_date:    svcDate,
-                source:         'ops_incident',
               })
             }
             const { data: openMR } = await supabase.from('maintenance_records')
@@ -1083,7 +1082,6 @@ function IncidentModal({ equipment, shift, companyId, onClose }) {
                 labour_cost:      0,
                 total_cost:       0,
                 downtime_hours:   0,
-                source:           'ops_incident',
               })
             }
           } catch (_) { /* Non-blocking */ }
@@ -1284,11 +1282,9 @@ function MarkStatusModal({ equipment, companyId, statusType, onClose }) {
         await supabase.from('shift_incidents').insert({
           company_id:     companyId,
           equipment_id:   equipment.id,
-          equipment_name: equipment.name,
           incident_type:  'breakdown',
           description:    description.trim(),
-          reported_by:    userProfile?.full_name || null,
-          status:         'open',
+          resolved:       false,
         })
         // Auto-create Job Card + Maintenance Record if none already open
         ;(async () => {
@@ -1305,7 +1301,6 @@ function MarkStatusModal({ equipment, companyId, statusType, onClose }) {
                 complaint:      description.trim(),
                 status:         'open',
                 opened_date:    today,
-                source:         'ops_breakdown',
               })
             }
             const { data: openMR } = await supabase.from('maintenance_records')
@@ -1324,7 +1319,6 @@ function MarkStatusModal({ equipment, companyId, statusType, onClose }) {
                 labour_cost:      0,
                 total_cost:       0,
                 downtime_hours:   0,
-                source:           'ops_breakdown',
               })
             }
           } catch (_) { /* Non-blocking */ }
@@ -1398,10 +1392,10 @@ function RecoverModal({ equipment, companyId, onClose }) {
 
       // 2. Close any open breakdown incidents for this machine
       await supabase.from('shift_incidents')
-        .update({ status: 'resolved', resolved_at: new Date().toISOString(), resolution_notes: notes.trim() || 'Marked recovered' })
+        .update({ resolved: true, resolved_at: new Date().toISOString() })
         .eq('equipment_id', equipment.id)
         .eq('incident_type', 'breakdown')
-        .eq('status', 'open')
+        .eq('resolved', false)
 
       // 3. Log a daily_operations entry for the recovery
       await supabase.from('daily_operations').insert({

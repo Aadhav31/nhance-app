@@ -5881,16 +5881,14 @@ function JobCardModal({ equipment, companyId, initialValues, onClose, onSaved })
             // Only create incident if no open breakdown incident exists for this machine
             const { data: openInc } = await supabase.from('shift_incidents')
               .select('id').eq('equipment_id', equipment.id)
-              .eq('incident_type', 'breakdown').eq('status', 'open').limit(1).maybeSingle()
+              .eq('incident_type', 'breakdown').eq('resolved', false).limit(1).maybeSingle()
             if (!openInc) {
               await supabase.from('shift_incidents').insert({
                 company_id:     companyId,
                 equipment_id:   equipment.id,
-                equipment_name: equipment.name,
                 incident_type:  'breakdown',
                 description:    complaint || workDone || 'Breakdown — see job card',
-                status:         'open',
-                source:         'job_card',
+                resolved:       false,
               })
             }
             // Only create maintenance_record if none open for this machine
@@ -5911,7 +5909,6 @@ function JobCardModal({ equipment, companyId, initialValues, onClose, onSaved })
                 labour_cost:      0,
                 total_cost:       0,
                 downtime_hours:   0,
-                source:           'job_card',
               })
             }
           } catch (_) { /* Non-blocking */ }
