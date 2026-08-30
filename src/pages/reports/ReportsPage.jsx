@@ -1071,16 +1071,23 @@ function MaintenanceCostReport({ companyId, from, to }) {
 
 function RevenueReport({ companyId, from, to }) {
   const { data=[], isLoading } = useQuery({
-    queryKey: ['rpt_revenue', companyId, from, to],
+    queryKey: ['rpt_revenue', companyId],
     queryFn: async () => {
+      // No date filter — show all invoices so historical data is never hidden
       const { data: rawInv } = await supabase.from('client_invoices')
         .select('id,invoice_number,invoice_date,due_date,total_amount,paid_amount,balance_due,status,client_id,invoice_type')
         .eq('company_id', companyId)
-        .gte('invoice_date', from).lte('invoice_date', to).order('invoice_date', { ascending:false })
+        .neq('status', 'cancelled')
+        .order('invoice_date', { ascending:false })
       const invoices = (rawInv||[]).filter(i => i.invoice_type !== 'proforma')
       const { data: clients } = await supabase.from('clients').select('id,name').eq('company_id', companyId)
       const clientMap = Object.fromEntries((clients||[]).map(c=>[c.id,c]))
-      return invoices.map(inv=>({ ...inv, _client:clientMap[inv.client_id] }))
+      return invoices.map(inv=>({
+        ...inv,
+        // Compute balance_due dynamically in case DB value is stale
+        balance_due: Math.max(0, (Number(inv.total_amount)||0) - (Number(inv.paid_amount)||0)),
+        _client: clientMap[inv.client_id],
+      }))
     },
     enabled: !!companyId,
   })
@@ -1089,7 +1096,7 @@ function RevenueReport({ companyId, from, to }) {
   const totOutstanding = data.reduce((s,r)=>s+(Number(r.balance_due)||0),0)
   const collRate = totInvoiced>0?((totCollected/totInvoiced)*100).toFixed(0):0
   if (isLoading) return <Spinner />
-  if (!data.length) return <Empty msg="No invoices found for this period" />
+  if (!data.length) return <Empty msg="No invoices found" />
   return (
     <div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
@@ -1140,12 +1147,21 @@ function InvoiceAgingReport({ companyId }) {
   const { data=[], isLoading } = useQuery({
     queryKey: ['rpt_aging', companyId],
     queryFn: async () => {
-      const { data: rawInv2 } = await supabase.from('client_invoices').select('id,invoice_number,due_date,balance_due,status,client_id,invoice_type').eq('company_id', companyId).neq('status','paid').gt('balance_due',0)
-      const invoices = (rawInv2||[]).filter(i => i.invoice_type !== 'proforma')
+      // Fetch all non-paid, non-cancelled invoices regardless of balance_due value
+      const { data: rawInv2 } = await supabase
+        .from('client_invoices')
+        .select('id,invoice_number,due_date,total_amount,paid_amount,balance_due,status,client_id,invoice_type')
+        .eq('company_id', companyId)
+        .not('status', 'in', '("paid","cancelled")')
+      // Compute balance dynamically; exclude proformas and fully-paid
+      const invoices = (rawInv2||[])
+        .filter(i => i.invoice_type !== 'proforma')
+        .map(i => ({ ...i, balance_due: Math.max(0, (Number(i.total_amount)||0) - (Number(i.paid_amount)||0)) }))
+        .filter(i => i.balance_due > 0)
       const { data: clients } = await supabase.from('clients').select('id,name,phone').eq('company_id', companyId)
       const clientMap = Object.fromEntries((clients||[]).map(c=>[c.id,c]))
       const now = new Date()
-      return (invoices||[]).map(inv => {
+      return invoices.map(inv => {
         const due = inv.due_date ? new Date(inv.due_date) : null
         const days = due ? Math.floor((now-due)/86400000) : 0
         const bucket = days<=0?'current':days<=30?'1-30':days<=60?'31-60':days<=90?'61-90':'90+'
@@ -1274,9 +1290,11 @@ function ProjectPLReport({ companyId, from, to }) {
         const hrs     = pShifts.reduce((s,sh)=>s+(Number(sh.working_hours)||0),0)
         const revenue = pInvs.reduce((s,i)=>s+(Number(i.total_amount)||0),0)
         const collected=pInvs.reduce((s,i)=>s+(Number(i.paid_amount)||0),0)
+        const maintCost=(pMaint||[]).reduce((s,m)=>s+(Number(m.total_cost)||0),0)
         const equipSet = new Set(pShifts.map(s=>s.equipment_id).filter(Boolean))
-        return { ...p, _client:clientMap[p.client_id], hrs, revenue, collected, equipCount:equipSet.size, invoiceCount:pInvs.length }
-      }).filter(p=>p.hrs>0||p.revenue>0).sort((a,b)=>b.revenue-a.revenue)
+        return { ...p, _client:clientMap[p.client_id], hrs, revenue, collected, maintCost, equipCount:equipSet.size, invoiceCount:pInvs.length }
+      // Show any project that has shifts OR invoices OR is active
+      }).filter(p=>p.hrs>0||p.revenue>0||p.status==='active').sort((a,b)=>b.revenue-a.revenue)
     },
     enabled: !!companyId,
   })
@@ -1321,17 +1339,20 @@ function ProjectPLReport({ companyId, from, to }) {
 
 function ClientStatementReport({ companyId, from, to }) {
   const { data=[], isLoading } = useQuery({
-    queryKey: ['rpt_client_statement', companyId, from, to],
+    queryKey: ['rpt_client_statement', companyId],
     queryFn: async () => {
-      // Fetch invoices first — works even if client isn't in the clients table
+      // No date filter — show all-time client billing so historical invoices aren't hidden
       const { data: rawInv4 } = await supabase
         .from('client_invoices')
         .select('client_id,client_name,total_amount,paid_amount,balance_due,status,invoice_type')
         .eq('company_id', companyId)
-        .gte('invoice_date', from)
-        .lte('invoice_date', to)
-      // JS !== correctly treats null as "not proforma" (unlike SQL != which treats null as unknown)
-      const invoices = (rawInv4||[]).filter(i => i.invoice_type !== 'proforma')
+        .neq('status', 'cancelled')
+      const invoices = (rawInv4||[])
+        .filter(i => i.invoice_type !== 'proforma')
+        .map(i => ({
+          ...i,
+          balance_due: Math.max(0, (Number(i.total_amount)||0) - (Number(i.paid_amount)||0)),
+        }))
       if (!invoices.length) return []
 
       // Optionally enrich with phone/email/gstin from clients table
@@ -1366,7 +1387,7 @@ function ClientStatementReport({ companyId, from, to }) {
     enabled: !!companyId,
   })
   if (isLoading) return <Spinner />
-  if (!data.length) return <Empty msg="No client invoices for this period" />
+  if (!data.length) return <Empty msg="No client invoices found" />
   return (
     <div>
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-5">

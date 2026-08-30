@@ -862,25 +862,41 @@ function FinancialsSection({ companyId, range, onNavigate }) {
   const { data: invoices  = [] } = useInvoiceData(companyId, range)
   const { data: bills     = [] } = useBillData(companyId, range)
   const { data: payments  = [] } = usePaymentsData(companyId, range)
+  // All-time invoices for Revenue Collected KPI (not date-filtered)
+  const { data: allInvoices = [] } = useQuery({
+    queryKey: ['dash_all_invoices', companyId],
+    queryFn: async () => {
+      const { data } = await supabase.from('client_invoices')
+        .select('id,total_amount,paid_amount,balance_due,status,invoice_type')
+        .eq('company_id', companyId)
+        .neq('invoice_type', 'proforma')
+        .neq('status', 'cancelled')
+      return data || []
+    },
+    staleTime: 60_000, enabled: !!companyId,
+  })
 
-  // Revenue Collected = actual payments received in this period (by payment_date)
-  const revenue        = payments.reduce((s, p) => s + (Number(p.amount) || 0), 0)
-  const totalBilled    = invoices.reduce((s, i) => s + (Number(i.total_amount) || 0), 0)
-  // Outstanding = all non-paid invoices regardless of date (use all invoices in range + overdue)
-  const outstanding    = invoices.filter(i => i.status !== 'paid' && i.status !== 'cancelled')
-  const outstandingAmt = outstanding.reduce((s, i) => s + (Number(i.balance_due) || 0), 0)
-  const overdue        = invoices.filter(i => i.status === 'overdue')
+  // Revenue Collected = total paid_amount across ALL invoices (all-time)
+  const revenue = allInvoices.reduce((s, i) => s + (Number(i.paid_amount) || 0), 0)
+  // Fallback: if payments_received has data for the period, use the larger of the two
+  const paymentsRevenue = payments.reduce((s, p) => s + (Number(p.amount) || 0), 0)
+  const displayRevenue  = Math.max(revenue, paymentsRevenue)
+
+  const totalBilled    = allInvoices.reduce((s, i) => s + (Number(i.total_amount) || 0), 0)
+  const outstanding    = allInvoices.filter(i => i.status !== 'paid' && i.status !== 'cancelled')
+  const outstandingAmt = outstanding.reduce((s, i) => s + (Math.max(0, (Number(i.total_amount)||0) - (Number(i.paid_amount)||0))) , 0)
+  const overdue        = allInvoices.filter(i => i.status === 'overdue')
   const billsPending   = bills.filter(b => b.status !== 'paid' && b.status !== 'cancelled')
   const billsDue       = billsPending.reduce((s, b) => s + (Number(b.balance_due) || 0), 0)
-  const net            = revenue - billsDue
+  const net            = displayRevenue - billsDue
 
   return (
     <>
       <Section icon={Wallet} title="Financials">
-        <KpiCard icon={TrendingUp}   label="Revenue Collected"  value={fmtINRShort(revenue)}       sub={`of ${fmtINRShort(totalBilled)} billed`}         color="green"  onClick={() => setPanel('revenue')} />
+        <KpiCard icon={TrendingUp}   label="Revenue Collected"  value={fmtINRShort(displayRevenue)} sub={`of ${fmtINRShort(totalBilled)} billed`}        color="green"  onClick={() => setPanel('revenue')} />
         <KpiCard icon={Receipt}      label="Outstanding"        value={fmtINRShort(outstandingAmt)} sub={overdue.length > 0 ? `${overdue.length} overdue` : `${outstanding.length} invoices`} color={overdue.length > 0 ? 'red' : 'amber'} onClick={() => setPanel('outstanding')} />
         <KpiCard icon={ShoppingCart} label="Bills Due"          value={fmtINRShort(billsDue)}       sub={`${billsPending.length} pending`}                 color="amber"  onClick={() => setPanel('bills')} />
-        <KpiCard icon={BarChart3}    label="Net"                value={fmtINRShort(Math.abs(net))}  sub={net >= 0 ? 'net positive' : 'net negative'}       color={net >= 0 ? 'green' : 'red'} />
+        <KpiCard icon={BarChart3}    label="Net"                value={fmtINRShort(Math.abs(net))}  sub={net >= 0 ? 'net positive' : 'net negative'}       color={net >= 0 ? 'green' : 'red'} onClick={() => setPanel(null)} />
       </Section>
 
       {/* Revenue vs Expense Chart */}
