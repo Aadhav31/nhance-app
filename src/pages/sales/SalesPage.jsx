@@ -409,9 +409,9 @@ function InvoicesTab({ companyId, session }) {
   // ── Filter panel state ─────────────────────────────────────────────────────
   const [showFilters, setShowFilters] = useState(false)
   const filterRef = useRef(null)
-  const [filterClient,   setFilterClient]   = useState('')
-  const [filterProject,  setFilterProject]  = useState('')
-  const [filterEquipId,  setFilterEquipId]  = useState('')
+  const [filterClients,  setFilterClients]  = useState([])
+  const [filterProjects, setFilterProjects] = useState([])
+  const [filterEquipIds, setFilterEquipIds] = useState([])
   const [filterDateMode, setFilterDateMode] = useState('all')
   const [filterDateFrom, setFilterDateFrom] = useState('')
   const [filterDateTo,   setFilterDateTo]   = useState('')
@@ -529,7 +529,7 @@ function InvoicesTab({ companyId, session }) {
 
   // Active filter count (for badge)
   const activeFilterCount = [
-    filterClient, filterProject, filterEquipId,
+    ...filterClients, ...filterProjects, ...filterEquipIds,
     filterDateMode !== 'all' ? filterDateMode : '',
     filterStatus !== 'all' ? filterStatus : '',
     filterType   !== 'all' ? filterType   : '',
@@ -537,10 +537,12 @@ function InvoicesTab({ companyId, session }) {
   ].filter(Boolean).length
 
   const clearFilters = () => {
-    setFilterClient(''); setFilterProject(''); setFilterEquipId('')
+    setFilterClients([]); setFilterProjects([]); setFilterEquipIds([])
     setFilterDateMode('all'); setFilterDateFrom(''); setFilterDateTo('')
     setFilterStatus('all'); setFilterType('all'); setFilterConverted(false)
   }
+
+  const toggleFilter = (setter, value) => setter(prev => prev.includes(value) ? prev.filter(x => x !== value) : [...prev, value])
 
   // Build set of proforma IDs that have been converted to a tax invoice
   const convertedProformaIds = useMemo(
@@ -552,9 +554,9 @@ function InvoicesTab({ companyId, session }) {
     // Hide proformas that have already been converted to a tax invoice
     if (i.invoice_type === 'proforma' && convertedProformaIds.has(i.id)) return false
     if (search) { const q = search.toLowerCase(); if (!i.client_name?.toLowerCase().includes(q) && !i.invoice_number?.toLowerCase().includes(q)) return false }
-    if (filterClient  && i.client_name  !== filterClient)  return false
-    if (filterProject && i.project_name !== filterProject) return false
-    if (filterEquipId && i.inv_equipment_id !== filterEquipId) return false
+    if (filterClients.length  > 0 && !filterClients.includes(i.client_name))         return false
+    if (filterProjects.length > 0 && !filterProjects.includes(i.project_name))       return false
+    if (filterEquipIds.length > 0 && !filterEquipIds.includes(i.inv_equipment_id))   return false
     if (filterStatus !== 'all') {
       if (filterStatus === 'unpaid') { if (['paid','cancelled'].includes(i.status)) return false }
       else if (i.status !== filterStatus) return false
@@ -624,30 +626,50 @@ function InvoicesTab({ companyId, session }) {
 
                   {/* Client */}
                   <div>
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">Client</label>
-                    <select className={inp('text-xs w-full')} value={filterClient} onChange={e => setFilterClient(e.target.value)}>
-                      <option value="">All Clients</option>
-                      {clientOptions.map(c => <option key={c} value={c}>{c}</option>)}
-                    </select>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">
+                      Client {filterClients.length > 0 && <span className="ml-1 text-primary-400">({filterClients.length})</span>}
+                    </label>
+                    <div className="flex flex-wrap gap-1.5">
+                      {clientOptions.map(c => (
+                        <button key={c} onClick={() => toggleFilter(setFilterClients, c)}
+                          className={`text-xs px-2.5 py-1 rounded-lg border transition-colors text-left ${filterClients.includes(c) ? 'bg-primary-600 border-primary-500 text-white' : 'border-dark-600 text-slate-400 hover:border-slate-500'}`}>
+                          {c}
+                        </button>
+                      ))}
+                      {clientOptions.length === 0 && <p className="text-xs text-slate-600">No clients</p>}
+                    </div>
                   </div>
 
                   {/* Project */}
                   <div>
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">Project</label>
-                    <select className={inp('text-xs w-full')} value={filterProject} onChange={e => setFilterProject(e.target.value)}>
-                      <option value="">All Projects</option>
-                      {projectOptions.map(p => <option key={p} value={p}>{p}</option>)}
-                    </select>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">
+                      Project {filterProjects.length > 0 && <span className="ml-1 text-primary-400">({filterProjects.length})</span>}
+                    </label>
+                    <div className="flex flex-wrap gap-1.5">
+                      {projectOptions.map(p => (
+                        <button key={p} onClick={() => toggleFilter(setFilterProjects, p)}
+                          className={`text-xs px-2.5 py-1 rounded-lg border transition-colors text-left ${filterProjects.includes(p) ? 'bg-primary-600 border-primary-500 text-white' : 'border-dark-600 text-slate-400 hover:border-slate-500'}`}>
+                          {p}
+                        </button>
+                      ))}
+                      {projectOptions.length === 0 && <p className="text-xs text-slate-600">No projects</p>}
+                    </div>
                   </div>
 
                   {/* Equipment */}
                   {equipOptions.length > 0 && (
                     <div>
-                      <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">Equipment</label>
-                      <select className={inp('text-xs w-full')} value={filterEquipId} onChange={e => setFilterEquipId(e.target.value)}>
-                        <option value="">All Equipment</option>
-                        {equipOptions.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-                      </select>
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">
+                        Equipment {filterEquipIds.length > 0 && <span className="ml-1 text-primary-400">({filterEquipIds.length})</span>}
+                      </label>
+                      <div className="flex flex-wrap gap-1.5">
+                        {equipOptions.map(e => (
+                          <button key={e.id} onClick={() => toggleFilter(setFilterEquipIds, e.id)}
+                            className={`text-xs px-2.5 py-1 rounded-lg border transition-colors ${filterEquipIds.includes(e.id) ? 'bg-primary-600 border-primary-500 text-white' : 'border-dark-600 text-slate-400 hover:border-slate-500'}`}>
+                            {e.name}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   )}
 
