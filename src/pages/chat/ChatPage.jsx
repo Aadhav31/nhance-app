@@ -20,6 +20,7 @@ import {
   ChevronLeft, Settings, Users, Download, Play,
   MoreVertical, Smile, ArrowLeft, VolumeX, Volume2,
   CheckCheck, AlertCircle, ImageIcon, FileText, Film,
+  UserPlus, UserCheck, Trash2,
 } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
 import { supabase } from '../../lib/supabase'
@@ -326,10 +327,11 @@ function MessageThread({ channel, companyId, session, profile, allUsers, onStart
   const myName = profile?.full_name || session?.user?.email || 'Me'
   const myRole = profile?.role || ''
 
-  const [text,         setText]         = useState('')
-  const [pendingFiles, setPendingFiles] = useState([])
-  const [fileProgress, setFileProgress] = useState({})
-  const [sending,      setSending]      = useState(false)
+  const [text,            setText]            = useState('')
+  const [pendingFiles,    setPendingFiles]    = useState([])
+  const [fileProgress,    setFileProgress]    = useState({})
+  const [sending,         setSending]         = useState(false)
+  const [showMembers,     setShowMembers]     = useState(false)
   const bottomRef  = useRef(null)
   const fileInput  = useRef(null)
 
@@ -473,8 +475,16 @@ function MessageThread({ channel, companyId, session, profile, allUsers, onStart
             )}
           </div>
         </div>
-        {/* Call buttons */}
+        {/* Header actions */}
         <div className="flex items-center gap-1.5 flex-shrink-0">
+          {channel.type === 'group' && (
+            <button onClick={() => setShowMembers(true)}
+              title="Manage members"
+              className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-dark-700 transition-colors"
+              style={{ color: 'rgb(var(--t3))' }}>
+              <UserPlus className="w-4 h-4" />
+            </button>
+          )}
           <button onClick={() => onStartCall('audio')}
             title="Voice call"
             className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-dark-700 transition-colors"
@@ -489,6 +499,17 @@ function MessageThread({ channel, companyId, session, profile, allUsers, onStart
           </button>
         </div>
       </div>
+
+      {/* Manage Members Modal */}
+      {showMembers && (
+        <ManageMembersModal
+          channel={channel}
+          companyId={companyId}
+          session={session}
+          allUsers={allUsers}
+          onClose={() => setShowMembers(false)}
+        />
+      )}
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-1 min-h-0">
@@ -562,12 +583,26 @@ function MessageThread({ channel, companyId, session, profile, allUsers, onStart
 }
 
 // ── New Channel Modal ──────────────────────────────────────────────────────────
-function NewChannelModal({ companyId, session, profile, onClose, onCreated }) {
-  const [name, setName]   = useState('')
-  const [desc, setDesc]   = useState('')
-  const [saving, setSaving] = useState(false)
+function NewChannelModal({ companyId, session, profile, allUsers = [], onClose, onCreated }) {
+  const [name, setName]       = useState('')
+  const [desc, setDesc]       = useState('')
+  const [search, setSearch]   = useState('')
+  const [selected, setSelected] = useState([])
+  const [saving, setSaving]   = useState(false)
+  const myId   = session?.user?.id
   const myName = profile?.full_name || session?.user?.email || ''
   const myRole = profile?.role || ''
+
+  const others = allUsers.filter(u =>
+    u.id !== myId &&
+    (u.full_name || u.email || '').toLowerCase().includes(search.toLowerCase())
+  )
+
+  const toggle = (u) => {
+    setSelected(prev =>
+      prev.find(x => x.id === u.id) ? prev.filter(x => x.id !== u.id) : [...prev, u]
+    )
+  }
 
   const create = async () => {
     const slug = name.trim().toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-')
@@ -576,12 +611,19 @@ function NewChannelModal({ companyId, session, profile, onClose, onCreated }) {
     try {
       const { data: ch, error } = await supabase.from('chat_channels').insert({
         company_id: companyId, name: slug, description: desc.trim() || null,
-        type: 'group', created_by: session?.user?.id,
+        type: 'group', created_by: myId,
       }).select().single()
       if (error) throw error
-      await supabase.from('chat_members').insert({
-        channel_id: ch.id, user_id: session?.user?.id, user_name: myName, user_role: myRole,
-      })
+      // Insert creator + selected members
+      const rows = [
+        { channel_id: ch.id, user_id: myId, user_name: myName, user_role: myRole },
+        ...selected.map(u => ({
+          channel_id: ch.id, user_id: u.id,
+          user_name: u.full_name || u.email || '',
+          user_role: u.role || '',
+        })),
+      ]
+      await supabase.from('chat_members').insert(rows)
       onCreated(ch)
     } catch (e) { alert(e.message) } finally { setSaving(false) }
   }
@@ -608,11 +650,154 @@ function NewChannelModal({ companyId, session, profile, onClose, onCreated }) {
               className="w-full px-3 py-2 rounded-lg bg-dark-700 border border-dark-600 text-sm focus:outline-none focus:border-primary-500"
               style={{ color: 'rgb(var(--t1))' }} />
           </div>
+          {/* Member picker */}
+          <div>
+            <label className="text-xs text-slate-400 mb-1 block">Add members</label>
+            <div className="flex items-center gap-2 bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus-within:border-primary-500 mb-2">
+              <Search className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
+              <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search people…"
+                className="flex-1 bg-transparent text-sm focus:outline-none" style={{ color: 'rgb(var(--t1))' }} />
+            </div>
+            {selected.length > 0 && (
+              <div className="flex flex-wrap gap-1 mb-2">
+                {selected.map(u => (
+                  <span key={u.id} className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-primary-600/20 border border-primary-500/30 text-xs" style={{ color: 'rgb(var(--t1))' }}>
+                    {u.full_name || u.email}
+                    <button onClick={() => toggle(u)}><X className="w-3 h-3 text-slate-400" /></button>
+                  </span>
+                ))}
+              </div>
+            )}
+            <div className="max-h-36 overflow-y-auto space-y-1">
+              {others.slice(0, 20).map(u => {
+                const isSelected = !!selected.find(x => x.id === u.id)
+                return (
+                  <button key={u.id} onClick={() => toggle(u)}
+                    className="w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-dark-700 transition-colors text-left">
+                    <Avatar name={u.full_name || u.email} size="sm" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium truncate" style={{ color: 'rgb(var(--t1))' }}>{u.full_name || u.email}</p>
+                      {u.role && <p className="text-[10px] text-slate-500 truncate capitalize">{u.role}</p>}
+                    </div>
+                    {isSelected && <UserCheck className="w-4 h-4 text-primary-400 flex-shrink-0" />}
+                  </button>
+                )
+              })}
+              {others.length === 0 && <p className="text-xs text-slate-500 text-center py-2">No people found</p>}
+            </div>
+          </div>
         </div>
         <button onClick={create} disabled={saving || !name.trim()}
           className="w-full py-2 rounded-lg bg-primary-600 hover:bg-primary-500 disabled:opacity-40 text-white text-sm font-semibold transition-colors">
-          {saving ? 'Creating…' : 'Create Channel'}
+          {saving ? 'Creating…' : `Create Channel${selected.length ? ` + ${selected.length} member${selected.length > 1 ? 's' : ''}` : ''}`}
         </button>
+      </div>
+    </div>
+  )
+}
+
+// ── Manage Members Modal ───────────────────────────────────────────────────────
+function ManageMembersModal({ channel, companyId, session, allUsers = [], onClose }) {
+  const qc = useQueryClient()
+  const myId = session?.user?.id
+  const [search, setSearch] = useState('')
+  const [adding, setAdding] = useState(false)
+
+  // Fetch current members
+  const { data: members = [], refetch } = useQuery({
+    queryKey: ['channel_members', channel.id],
+    queryFn: async () => {
+      const { data } = await supabase.from('chat_members').select('*').eq('channel_id', channel.id)
+      return data || []
+    },
+  })
+
+  const memberIds = new Set(members.map(m => m.user_id))
+
+  const candidates = allUsers.filter(u =>
+    !memberIds.has(u.id) &&
+    (u.full_name || u.email || '').toLowerCase().includes(search.toLowerCase())
+  )
+
+  const addMember = async (u) => {
+    setAdding(true)
+    try {
+      await supabase.from('chat_members').insert({
+        channel_id: channel.id, user_id: u.id,
+        user_name: u.full_name || u.email || '',
+        user_role: u.role || '',
+      })
+      refetch()
+      qc.invalidateQueries({ queryKey: ['channels', companyId] })
+    } catch (e) { alert(e.message) } finally { setAdding(false) }
+  }
+
+  const removeMember = async (memberId, userId) => {
+    if (userId === myId) return // can't remove yourself
+    try {
+      await supabase.from('chat_members').delete().eq('id', memberId)
+      refetch()
+      qc.invalidateQueries({ queryKey: ['channels', companyId] })
+    } catch (e) { alert(e.message) }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-dark-800 rounded-2xl border border-dark-700 w-full max-w-sm p-5 space-y-4" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between">
+          <p className="text-sm font-bold" style={{ color: 'rgb(var(--t1))' }}>#{channel.name} — Members</p>
+          <button onClick={onClose}><X className="w-4 h-4 text-slate-400" /></button>
+        </div>
+
+        {/* Current members */}
+        <div>
+          <p className="text-xs text-slate-500 mb-2">{members.length} member{members.length !== 1 ? 's' : ''}</p>
+          <div className="space-y-1 max-h-36 overflow-y-auto">
+            {members.map(m => (
+              <div key={m.id} className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg bg-dark-700/50">
+                <Avatar name={m.user_name} size="sm" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-medium truncate" style={{ color: 'rgb(var(--t1))' }}>{m.user_name}</p>
+                  {m.user_role && <p className="text-[10px] text-slate-500 capitalize">{m.user_role}</p>}
+                </div>
+                {m.user_id !== myId && (
+                  <button onClick={() => removeMember(m.id, m.user_id)} title="Remove"
+                    className="w-6 h-6 flex items-center justify-center rounded hover:bg-red-500/20 text-slate-500 hover:text-red-400 transition-colors">
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Add members */}
+        <div>
+          <p className="text-xs text-slate-400 mb-2 font-medium">Add people</p>
+          <div className="flex items-center gap-2 bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 focus-within:border-primary-500 mb-2">
+            <Search className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search…"
+              className="flex-1 bg-transparent text-sm focus:outline-none" style={{ color: 'rgb(var(--t1))' }} />
+          </div>
+          <div className="space-y-1 max-h-36 overflow-y-auto">
+            {candidates.slice(0, 20).map(u => (
+              <button key={u.id} onClick={() => addMember(u)} disabled={adding}
+                className="w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-dark-700 transition-colors text-left disabled:opacity-50">
+                <Avatar name={u.full_name || u.email} size="sm" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-medium truncate" style={{ color: 'rgb(var(--t1))' }}>{u.full_name || u.email}</p>
+                  {u.role && <p className="text-[10px] text-slate-500 capitalize">{u.role}</p>}
+                </div>
+                <Plus className="w-4 h-4 text-primary-400 flex-shrink-0" />
+              </button>
+            ))}
+            {candidates.length === 0 && (
+              <p className="text-xs text-slate-500 text-center py-2">
+                {search ? 'No people found' : 'Everyone has been added'}
+              </p>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   )
@@ -1202,6 +1387,7 @@ export default function ChatPage({ navExtra = {} }) {
       {/* ── Modals ── */}
       {showNewChannel && (
         <NewChannelModal companyId={companyId} session={session} profile={profile}
+          allUsers={allUsers}
           onClose={() => setShowNewChannel(false)} onCreated={handleChannelCreated} />
       )}
       {showNewDM && (
