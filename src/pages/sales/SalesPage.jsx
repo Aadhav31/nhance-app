@@ -406,6 +406,10 @@ function InvoicesTab({ companyId, session }) {
   const [editingDoc, setEditingDoc] = useState(null)
   const [search, setSearch] = useState('')
   const [filterStatus, setFilterStatus] = useState('all')
+  const [filterProject, setFilterProject] = useState('all')
+  const [dateMode, setDateMode] = useState('all') // 'all' | 'this_month' | 'last_month' | 'custom'
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
 
   const dlPDF = async (inv) => {
     try {
@@ -468,11 +472,43 @@ function InvoicesTab({ companyId, session }) {
     qc.invalidateQueries(['sales_invoices', companyId])
   }
 
-  const displayed = invoices.filter(i =>
-    (filterStatus === 'all' || i.status === filterStatus) &&
-    (!search || i.client_name?.toLowerCase().includes(search.toLowerCase()) ||
-     i.invoice_number?.toLowerCase().includes(search.toLowerCase()))
-  )
+  // Unique project names for dropdown
+  const projectOptions = useMemo(() => {
+    const names = [...new Set(invoices.map(i => i.project_name).filter(Boolean))].sort()
+    return names
+  }, [invoices])
+
+  // Date range bounds from dateMode
+  const { rangeFrom, rangeTo } = useMemo(() => {
+    const now = new Date()
+    if (dateMode === 'this_month') {
+      return {
+        rangeFrom: new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0],
+        rangeTo:   new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0],
+      }
+    }
+    if (dateMode === 'last_month') {
+      return {
+        rangeFrom: new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString().split('T')[0],
+        rangeTo:   new Date(now.getFullYear(), now.getMonth(), 0).toISOString().split('T')[0],
+      }
+    }
+    if (dateMode === 'custom') return { rangeFrom: dateFrom, rangeTo: dateTo }
+    return { rangeFrom: '', rangeTo: '' }
+  }, [dateMode, dateFrom, dateTo])
+
+  const displayed = invoices.filter(i => {
+    if (filterStatus !== 'all' && i.status !== filterStatus) return false
+    if (filterProject !== 'all' && i.project_name !== filterProject) return false
+    if (search) {
+      const q = search.toLowerCase()
+      if (!i.client_name?.toLowerCase().includes(q) && !i.invoice_number?.toLowerCase().includes(q)) return false
+    }
+    const d = i.invoice_date || ''
+    if (rangeFrom && d < rangeFrom) return false
+    if (rangeTo   && d > rangeTo)   return false
+    return true
+  })
 
   const totalPaid     = invoices.filter(i => i.status === 'paid').reduce((s, i) => s + Number(i.total_amount || 0), 0)
   const totalPending  = invoices.filter(i => !['paid','cancelled'].includes(i.status)).reduce((s, i) => s + Number(i.balance_due || 0), 0)
@@ -486,17 +522,42 @@ function InvoicesTab({ companyId, session }) {
         </div>
         <button onClick={() => setShowCreate(true)} className="btn-primary shrink-0"><Plus className="w-4 h-4" /> New Invoice</button>
       </div>
-      <div className="px-4 py-2 flex gap-2 shrink-0 flex-wrap">
-        <div className="relative flex-1 min-w-[160px]">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" />
-          <input className={inp('pl-8 text-xs')} placeholder="Search client or invoice #…" value={search} onChange={e => setSearch(e.target.value)} />
+      {/* Filters row */}
+      <div className="px-4 py-2 border-b border-dark-800 shrink-0 flex flex-col gap-2">
+        {/* Row 1: Search + Project + Date mode */}
+        <div className="flex gap-2 flex-wrap">
+          <div className="relative flex-1 min-w-[160px]">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" />
+            <input className={inp('pl-8 text-xs')} placeholder="Search client or invoice #…" value={search} onChange={e => setSearch(e.target.value)} />
+          </div>
+          {projectOptions.length > 0 && (
+            <select className={inp('text-xs min-w-[140px]')} value={filterProject} onChange={e => setFilterProject(e.target.value)}>
+              <option value="all">All Projects</option>
+              {projectOptions.map(p => <option key={p} value={p}>{p}</option>)}
+            </select>
+          )}
+          <select className={inp('text-xs min-w-[130px]')} value={dateMode} onChange={e => setDateMode(e.target.value)}>
+            <option value="all">All Dates</option>
+            <option value="this_month">This Month</option>
+            <option value="last_month">Last Month</option>
+            <option value="custom">Custom Range</option>
+          </select>
+          {dateMode === 'custom' && (
+            <>
+              <input type="date" className={inp('text-xs')} value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
+              <input type="date" className={inp('text-xs')} value={dateTo}   onChange={e => setDateTo(e.target.value)} />
+            </>
+          )}
         </div>
-        {['all','draft','sent','partial','paid','overdue'].map(s => (
-          <button key={s} onClick={() => setFilterStatus(s)}
-            className={`text-xs px-3 py-2 rounded-lg border capitalize transition-colors ${filterStatus === s ? 'bg-primary-600 border-primary-500 text-white' : 'border-dark-600 text-slate-400 hover:border-slate-500'}`}>
-            {s}
-          </button>
-        ))}
+        {/* Row 2: Status pills */}
+        <div className="flex gap-1.5 flex-wrap">
+          {['all','draft','sent','partial','paid','overdue','cancelled'].map(s => (
+            <button key={s} onClick={() => setFilterStatus(s)}
+              className={`text-xs px-3 py-1.5 rounded-lg border capitalize transition-colors ${filterStatus === s ? 'bg-primary-600 border-primary-500 text-white' : 'border-dark-600 text-slate-400 hover:border-slate-500'}`}>
+              {s === 'all' ? 'All Status' : s}
+            </button>
+          ))}
+        </div>
       </div>
       <div className="flex-1 overflow-y-auto px-4 pb-4">
         {isLoading ? <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-primary-400" /></div>
@@ -1633,24 +1694,7 @@ export default function SalesPage({ onNavigate }) {
       {/* Tab content */}
       <div className="flex-1 overflow-hidden">
         {activeTab === 'clients'  && <ClientsPage embedded />}
-        {activeTab === 'invoices' && (
-          onNavigate ? (
-            <div className="flex flex-col items-center justify-center h-full gap-5 px-6 text-center">
-              <div className="w-14 h-14 rounded-2xl bg-primary-500/15 border border-primary-700/40 flex items-center justify-center">
-                <FileText className="w-7 h-7 text-primary-400" />
-              </div>
-              <div>
-                <h3 className="text-slate-100 font-semibold mb-1.5">Invoices are managed in Accounts & Ledger</h3>
-                <p className="text-sm text-slate-400 max-w-sm">GST invoices, proforma invoices, QR verification, payment tracking, and work order billing are all in the Accounts module.</p>
-              </div>
-              <button onClick={() => onNavigate('accounts')} className="btn-primary px-6">
-                Go to Accounts & Ledger →
-              </button>
-            </div>
-          ) : (
-            <InvoicesTab companyId={companyId} session={session} />
-          )
-        )}
+        {activeTab === 'invoices' && <InvoicesTab companyId={companyId} session={session} />}
         {activeTab === 'quotes'   && <QuotesTab   companyId={companyId} session={session} />}
         {activeTab === 'orders'   && <SalesOrdersTab companyId={companyId} session={session} />}
         {activeTab === 'challans' && <DeliveryChallansTab companyId={companyId} session={session} />}
