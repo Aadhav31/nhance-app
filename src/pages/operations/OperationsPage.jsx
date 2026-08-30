@@ -1048,9 +1048,10 @@ function IncidentModal({ equipment, shift, companyId, onClose }) {
       if (incidentType === 'breakdown') {
         await supabase.from('equipment').update({ status: 'breakdown' }).eq('id', equipment.id)
 
-        // ── Auto-create a Job Card for the maintenance team (if none open already) ──
+        // ── Auto-create Job Card + Maintenance Record (if none open already) ──
         ;(async () => {
           try {
+            const svcDate = new Date().toISOString().slice(0, 10)
             const { data: openJC } = await supabase.from('job_cards')
               .select('id').eq('equipment_id', equipment.id)
               .eq('jc_type', 'breakdown').eq('status', 'open').limit(1).maybeSingle()
@@ -1062,8 +1063,27 @@ function IncidentModal({ equipment, shift, companyId, onClose }) {
                 jc_type:        'breakdown',
                 complaint:      descriptionValue,
                 status:         'open',
-                opened_date:    new Date().toISOString().slice(0, 10),
+                opened_date:    svcDate,
                 source:         'ops_incident',
+              })
+            }
+            const { data: openMR } = await supabase.from('maintenance_records')
+              .select('id').eq('equipment_id', equipment.id)
+              .eq('maintenance_type', 'breakdown').eq('status', 'open').limit(1).maybeSingle()
+            if (!openMR) {
+              await supabase.from('maintenance_records').insert({
+                company_id:       companyId,
+                equipment_id:     equipment.id,
+                maintenance_type: 'breakdown',
+                description:      descriptionValue || 'Breakdown — see incident report',
+                service_date:     svcDate,
+                status:           'open',
+                priority:         'high',
+                done_by:          'inhouse',
+                labour_cost:      0,
+                total_cost:       0,
+                downtime_hours:   0,
+                source:           'ops_incident',
               })
             }
           } catch (_) { /* Non-blocking */ }
@@ -1270,7 +1290,7 @@ function MarkStatusModal({ equipment, companyId, statusType, onClose }) {
           reported_by:    userProfile?.full_name || null,
           status:         'open',
         })
-        // Auto-create a Job Card for maintenance team if none is already open
+        // Auto-create Job Card + Maintenance Record if none already open
         ;(async () => {
           try {
             const { data: openJC } = await supabase.from('job_cards')
@@ -1286,6 +1306,25 @@ function MarkStatusModal({ equipment, companyId, statusType, onClose }) {
                 status:         'open',
                 opened_date:    today,
                 source:         'ops_breakdown',
+              })
+            }
+            const { data: openMR } = await supabase.from('maintenance_records')
+              .select('id').eq('equipment_id', equipment.id)
+              .eq('maintenance_type', 'breakdown').eq('status', 'open').limit(1).maybeSingle()
+            if (!openMR) {
+              await supabase.from('maintenance_records').insert({
+                company_id:       companyId,
+                equipment_id:     equipment.id,
+                maintenance_type: 'breakdown',
+                description:      description.trim() || 'Breakdown — see daily operations',
+                service_date:     today,
+                status:           'open',
+                priority:         'high',
+                done_by:          'inhouse',
+                labour_cost:      0,
+                total_cost:       0,
+                downtime_hours:   0,
+                source:           'ops_breakdown',
               })
             }
           } catch (_) { /* Non-blocking */ }

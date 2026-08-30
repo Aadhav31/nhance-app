@@ -5873,7 +5873,7 @@ function JobCardModal({ equipment, companyId, initialValues, onClose, onSaved })
       toast.success(isEdit ? 'Job card updated' : 'Job card created')
 
       // ── If this is a NEW breakdown job card: update equipment status +
-      //    create a shift_incident so ops team sees it too ──────────────
+      //    create a shift_incident + maintenance_record so all teams see it ──
       if (!isEdit && jcType === 'breakdown') {
         ;(async () => {
           try {
@@ -5891,6 +5891,27 @@ function JobCardModal({ equipment, companyId, initialValues, onClose, onSaved })
                 description:    complaint || workDone || 'Breakdown — see job card',
                 status:         'open',
                 source:         'job_card',
+              })
+            }
+            // Only create maintenance_record if none open for this machine
+            const { data: openMR } = await supabase.from('maintenance_records')
+              .select('id').eq('equipment_id', equipment.id)
+              .eq('maintenance_type', 'breakdown').eq('status', 'open').limit(1).maybeSingle()
+            if (!openMR) {
+              const svcDate = new Date().toISOString().slice(0, 10)
+              await supabase.from('maintenance_records').insert({
+                company_id:       companyId,
+                equipment_id:     equipment.id,
+                maintenance_type: 'breakdown',
+                description:      complaint || workDone || 'Breakdown — see job card',
+                service_date:     svcDate,
+                status:           'open',
+                priority:         'high',
+                done_by:          'inhouse',
+                labour_cost:      0,
+                total_cost:       0,
+                downtime_hours:   0,
+                source:           'job_card',
               })
             }
           } catch (_) { /* Non-blocking */ }

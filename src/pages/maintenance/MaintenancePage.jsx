@@ -130,6 +130,46 @@ function MaintenanceFormModal({ record, companyId, session, onClose, onSaved }) 
         if (['breakdown', 'accidental', 'overhaul'].includes(form.maintenance_type) && form.status !== 'completed') {
           await supabase.from('equipment').update({ status: 'maintenance' }).eq('id', form.equipment_id)
         }
+        // ── If breakdown: cross-link to shift_incidents + job_cards ──────────
+        if (form.maintenance_type === 'breakdown' && form.status !== 'completed') {
+          ;(async () => {
+            try {
+              const eqId   = form.equipment_id
+              const eqName = eq?.name || ''
+              // Create shift_incident if none open
+              const { data: openInc } = await supabase.from('shift_incidents')
+                .select('id').eq('equipment_id', eqId)
+                .eq('incident_type', 'breakdown').eq('status', 'open').limit(1).maybeSingle()
+              if (!openInc) {
+                await supabase.from('shift_incidents').insert({
+                  company_id:     companyId,
+                  equipment_id:   eqId,
+                  equipment_name: eqName,
+                  incident_type:  'breakdown',
+                  description:    form.description.trim() || 'Breakdown — see maintenance record',
+                  status:         'open',
+                  source:         'maintenance',
+                })
+              }
+              // Create job card if none open
+              const { data: openJC } = await supabase.from('job_cards')
+                .select('id').eq('equipment_id', eqId)
+                .eq('jc_type', 'breakdown').eq('status', 'open').limit(1).maybeSingle()
+              if (!openJC) {
+                await supabase.from('job_cards').insert({
+                  company_id:     companyId,
+                  equipment_id:   eqId,
+                  equipment_name: eqName,
+                  jc_type:        'breakdown',
+                  complaint:      form.description.trim() || 'Breakdown — see maintenance record',
+                  status:         'open',
+                  opened_date:    form.service_date || today(),
+                  source:         'maintenance',
+                })
+              }
+            } catch (_) { /* Non-blocking */ }
+          })()
+        }
         toast.success('Maintenance record created')
       }
       onSaved()
@@ -283,6 +323,17 @@ function RecordDetailModal({ record, companyId, onClose, onEdit }) {
         .update({ status: 'completed', completed_date: today() }).eq('id', record.id)
       if (error) throw error
       await supabase.from('equipment').update({ status: 'idle' }).eq('id', record.equipment_id)
+      // ── Resolve linked shift_incidents + close open job cards ─────────────
+      ;(async () => {
+        try {
+          await supabase.from('shift_incidents')
+            .update({ status: 'resolved', resolved_at: new Date().toISOString(), resolution_notes: 'Resolved via maintenance record' })
+            .eq('equipment_id', record.equipment_id).eq('incident_type', 'breakdown').eq('status', 'open')
+          await supabase.from('job_cards')
+            .update({ status: 'completed', closed_date: today() })
+            .eq('equipment_id', record.equipment_id).eq('jc_type', 'breakdown').eq('status', 'open')
+        } catch (_) { /* Non-blocking */ }
+      })()
       toast.success('Marked as completed — equipment set to idle')
       qc.invalidateQueries(['maintenance_records', companyId])
       onClose()
