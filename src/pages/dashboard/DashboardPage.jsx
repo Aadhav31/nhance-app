@@ -325,6 +325,21 @@ function useBillData(companyId, range) {
   })
 }
 
+function usePaymentsData(companyId, range) {
+  return useQuery({
+    queryKey: ['dash_payments', companyId, range],
+    queryFn: async () => {
+      const { data } = await supabase.from('payments_received')
+        .select('id,amount,payment_date,client_name,payment_mode')
+        .eq('company_id', companyId)
+        .gte('payment_date', range.from).lte('payment_date', range.to)
+        .order('payment_date', { ascending: false })
+      return data || []
+    },
+    staleTime: 60_000, enabled: !!companyId,
+  })
+}
+
 function useShiftData(companyId, range) {
   return useQuery({
     queryKey: ['dash_shifts', companyId, range],
@@ -412,9 +427,9 @@ function usePOData(companyId, range) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Revenue vs Expense ComposedChart (Bar billed + Bar bills + Line collected)
-function RevenueExpenseChart({ invoices, bills, range }) {
+function RevenueExpenseChart({ invoices, payments, bills, range }) {
   const billedMap    = useMemo(() => sumByDate(invoices, 'invoice_date', 'total_amount'),  [invoices])
-  const collectedMap = useMemo(() => sumByDate(invoices, 'invoice_date', 'paid_amount'),   [invoices])
+  const collectedMap = useMemo(() => sumByDate(payments, 'payment_date', 'amount'),        [payments])
   const expenseMap   = useMemo(() => sumByDate(bills,    'bill_date',    'total_amount'),  [bills])
 
   const data = useMemo(() => buildTimeline(range.from, range.to, [
@@ -844,16 +859,19 @@ function ShiftLogTable({ shifts }) {
 
 function FinancialsSection({ companyId, range, onNavigate }) {
   const [panel, setPanel] = useState(null)
-  const { data: invoices = [] } = useInvoiceData(companyId, range)
-  const { data: bills = [] }    = useBillData(companyId, range)
+  const { data: invoices  = [] } = useInvoiceData(companyId, range)
+  const { data: bills     = [] } = useBillData(companyId, range)
+  const { data: payments  = [] } = usePaymentsData(companyId, range)
 
-  const revenue        = invoices.reduce((s, i) => s + (Number(i.paid_amount) || 0), 0)
+  // Revenue Collected = actual payments received in this period (by payment_date)
+  const revenue        = payments.reduce((s, p) => s + (Number(p.amount) || 0), 0)
+  const totalBilled    = invoices.reduce((s, i) => s + (Number(i.total_amount) || 0), 0)
+  // Outstanding = all non-paid invoices regardless of date (use all invoices in range + overdue)
   const outstanding    = invoices.filter(i => i.status !== 'paid' && i.status !== 'cancelled')
   const outstandingAmt = outstanding.reduce((s, i) => s + (Number(i.balance_due) || 0), 0)
   const overdue        = invoices.filter(i => i.status === 'overdue')
   const billsPending   = bills.filter(b => b.status !== 'paid' && b.status !== 'cancelled')
   const billsDue       = billsPending.reduce((s, b) => s + (Number(b.balance_due) || 0), 0)
-  const totalBilled    = invoices.reduce((s, i) => s + (Number(i.total_amount) || 0), 0)
   const net            = revenue - billsDue
 
   return (
@@ -867,7 +885,7 @@ function FinancialsSection({ companyId, range, onNavigate }) {
 
       {/* Revenue vs Expense Chart */}
       <ChartCard title="Revenue vs Expenses (Daily)">
-        <RevenueExpenseChart invoices={invoices} bills={bills} range={range} />
+        <RevenueExpenseChart invoices={invoices} payments={payments} bills={bills} range={range} />
       </ChartCard>
 
       {/* Invoice + Bills tables side by side */}
