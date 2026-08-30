@@ -1300,6 +1300,78 @@ function MarkStatusModal({ equipment, companyId, statusType, onClose }) {
   )
 }
 
+// ── Recover from Breakdown Modal ──────────────────────────────────────────────
+function RecoverModal({ equipment, companyId, onClose }) {
+  const { userProfile } = useAuth()
+  const qc = useQueryClient()
+  const [notes, setNotes] = useState('')
+  const [saving, setSaving] = useState(false)
+  const inp = 'w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500'
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      const today = new Date().toISOString().slice(0, 10)
+
+      // 1. Mark equipment as active
+      await supabase.from('equipment').update({ status: 'active' }).eq('id', equipment.id)
+
+      // 2. Close any open breakdown incidents for this machine
+      await supabase.from('shift_incidents')
+        .update({ status: 'resolved', resolved_at: new Date().toISOString(), resolution_notes: notes.trim() || 'Marked recovered' })
+        .eq('equipment_id', equipment.id)
+        .eq('incident_type', 'breakdown')
+        .eq('status', 'open')
+
+      // 3. Log a daily_operations entry for the recovery
+      await supabase.from('daily_operations').insert({
+        company_id:     companyId,
+        equipment_id:   equipment.id,
+        equipment_name: equipment.name,
+        ops_date:       today,
+        status:         'active',
+        notes:          notes.trim() ? `Recovered from breakdown: ${notes.trim()}` : 'Recovered from breakdown',
+        logged_by:      userProfile?.id || null,
+        logged_by_name: userProfile?.full_name || null,
+      })
+
+      toast.success('Equipment marked as operational')
+      qc.invalidateQueries({ queryKey: ['today_ops',   companyId] })
+      qc.invalidateQueries({ queryKey: ['equipment',   companyId] })
+      qc.invalidateQueries({ queryKey: ['incidents',   companyId] })
+      onClose()
+    } catch (e) { toast.error(e.message) } finally { setSaving(false) }
+  }
+
+  return (
+    <Modal
+      title={`✅ Mark Recovered — ${equipment.name}`}
+      onClose={onClose}
+      footer={
+        <>
+          <button onClick={onClose} className="flex-1 btn-secondary">Cancel</button>
+          <button onClick={handleSave} disabled={saving}
+            className="flex-1 btn-primary flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500">
+            {saving ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving…</> : '✅ Mark Recovered'}
+          </button>
+        </>
+      }
+    >
+      <div className="bg-emerald-900/20 border border-emerald-700/30 rounded-xl p-3 text-xs text-emerald-300 mb-3">
+        This will set <strong>{equipment.name}</strong> back to <strong>Active</strong> and close any open breakdown incidents.
+      </div>
+      <Field label="What was done to fix it? (optional)">
+        <VoiceTextarea
+          value={notes}
+          onChange={v => setNotes(v)}
+          placeholder="Parts replaced, repaired by mechanic, issue resolved…"
+          rows={3}
+        />
+      </Field>
+    </Modal>
+  )
+}
+
 // ── Equipment Operation Card ───────────────────────────────────────────────────
 function EquipmentOpCard({ equipment, companyId }) {
   const { role } = useAuth()
@@ -1388,25 +1460,36 @@ function EquipmentOpCard({ equipment, companyId }) {
           {/* Status change — supervisor / manager / admin only */}
           {canChangeStatus && (
             <>
-              <button onClick={() => setModal('idle')}
-                className="flex items-center justify-center gap-1.5 py-2 rounded-lg bg-dark-700 border border-dark-600 hover:border-slate-400 text-slate-400 text-xs transition-colors">
-                <PauseCircle className="w-3.5 h-3.5" /> Mark Idle
-              </button>
-              <button onClick={() => setModal('breakdown')}
-                className="flex items-center justify-center gap-1.5 py-2 rounded-lg bg-dark-700 border border-dark-600 hover:border-red-500 text-slate-400 hover:text-red-400 text-xs transition-colors">
-                <AlertOctagon className="w-3.5 h-3.5" /> Breakdown
-              </button>
+              {/* If currently in breakdown, show Recover button prominently */}
+              {equipment.status === 'breakdown' ? (
+                <button onClick={() => setModal('recover')}
+                  className="col-span-2 flex items-center justify-center gap-1.5 py-2 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-semibold transition-colors">
+                  ✅ Mark Recovered / Operational
+                </button>
+              ) : (
+                <>
+                  <button onClick={() => setModal('idle')}
+                    className="flex items-center justify-center gap-1.5 py-2 rounded-lg bg-dark-700 border border-dark-600 hover:border-slate-400 text-slate-400 text-xs transition-colors">
+                    <PauseCircle className="w-3.5 h-3.5" /> Mark Idle
+                  </button>
+                  <button onClick={() => setModal('breakdown')}
+                    className="flex items-center justify-center gap-1.5 py-2 rounded-lg bg-dark-700 border border-dark-600 hover:border-red-500 text-slate-400 hover:text-red-400 text-xs transition-colors">
+                    <AlertOctagon className="w-3.5 h-3.5" /> Breakdown
+                  </button>
+                </>
+              )}
             </>
           )}
         </div>
       </div>
 
-      {modal === 'start'     && <StartShiftModal equipment={equipment} companyId={companyId} onClose={() => setModal(null)} />}
-      {modal === 'end'       && <EndShiftModal   equipment={equipment} shift={activeShift}   companyId={companyId} onClose={() => setModal(null)} />}
-      {modal === 'fuel'      && <FuelModal       equipment={equipment} shift={activeShift}   companyId={companyId} onClose={() => setModal(null)} />}
-      {modal === 'incident'  && <IncidentModal   equipment={equipment} shift={activeShift}   companyId={companyId} onClose={() => setModal(null)} />}
-      {modal === 'idle'      && <MarkStatusModal equipment={equipment} companyId={companyId} statusType="idle"      onClose={() => setModal(null)} />}
-      {modal === 'breakdown' && <MarkStatusModal equipment={equipment} companyId={companyId} statusType="breakdown" onClose={() => setModal(null)} />}
+      {modal === 'start'     && <StartShiftModal  equipment={equipment} companyId={companyId} onClose={() => setModal(null)} />}
+      {modal === 'end'       && <EndShiftModal    equipment={equipment} shift={activeShift}   companyId={companyId} onClose={() => setModal(null)} />}
+      {modal === 'fuel'      && <FuelModal        equipment={equipment} shift={activeShift}   companyId={companyId} onClose={() => setModal(null)} />}
+      {modal === 'incident'  && <IncidentModal    equipment={equipment} shift={activeShift}   companyId={companyId} onClose={() => setModal(null)} />}
+      {modal === 'idle'      && <MarkStatusModal  equipment={equipment} companyId={companyId} statusType="idle"      onClose={() => setModal(null)} />}
+      {modal === 'breakdown' && <MarkStatusModal  equipment={equipment} companyId={companyId} statusType="breakdown" onClose={() => setModal(null)} />}
+      {modal === 'recover'   && <RecoverModal     equipment={equipment} companyId={companyId} onClose={() => setModal(null)} />}
     </>
   )
 }
