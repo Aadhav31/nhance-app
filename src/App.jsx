@@ -476,7 +476,8 @@ function AppShell() {
         )}
 
         {/* Right icon strip — desktop only (Chat, Notes, Approvals, Settings…) */}
-        {!isSuperAdmin() && (
+        {/* Hidden on Chat page — chat already IS the right panel */}
+        {!isSuperAdmin() && effectivePage !== 'chat' && (
           <RightBar
             activePage={effectivePage}
             onNavigate={handleNavigate}
