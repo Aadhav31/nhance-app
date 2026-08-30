@@ -12,6 +12,7 @@ import {
   Copy, Edit2, Trash2, Search, IndianRupee, Calendar, User,
   FileQuestion, Send, AlertTriangle, Building2, Phone, Mail,
   MapPin, BadgeCheck, Ban, FileDown, Sheet, ShieldOff,
+  SlidersHorizontal, ChevronDown, Wrench,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format } from 'date-fns'
@@ -405,11 +406,26 @@ function InvoicesTab({ companyId, session }) {
   const [showCreate, setShowCreate] = useState(false)
   const [editingDoc, setEditingDoc] = useState(null)
   const [search, setSearch] = useState('')
-  const [filterStatus, setFilterStatus] = useState('all')
-  const [filterProject, setFilterProject] = useState('all')
-  const [dateMode, setDateMode] = useState('all') // 'all' | 'this_month' | 'last_month' | 'custom'
-  const [dateFrom, setDateFrom] = useState('')
-  const [dateTo, setDateTo] = useState('')
+  // ── Filter panel state ─────────────────────────────────────────────────────
+  const [showFilters, setShowFilters] = useState(false)
+  const filterRef = useRef(null)
+  const [filterClient,   setFilterClient]   = useState('')
+  const [filterProject,  setFilterProject]  = useState('')
+  const [filterEquipId,  setFilterEquipId]  = useState('')
+  const [filterDateMode, setFilterDateMode] = useState('all')
+  const [filterDateFrom, setFilterDateFrom] = useState('')
+  const [filterDateTo,   setFilterDateTo]   = useState('')
+  const [filterStatus,   setFilterStatus]   = useState('all')
+  const [filterType,     setFilterType]     = useState('all')
+  const [filterConverted,setFilterConverted]= useState(false)
+
+  // Close filter panel on outside click
+  useEffect(() => {
+    if (!showFilters) return
+    const handler = (e) => { if (filterRef.current && !filterRef.current.contains(e.target)) setShowFilters(false) }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [showFilters])
 
   const dlPDF = async (inv) => {
     try {
@@ -472,38 +488,54 @@ function InvoicesTab({ companyId, session }) {
     qc.invalidateQueries(['sales_invoices', companyId])
   }
 
-  // Unique project names for dropdown
-  const projectOptions = useMemo(() => {
-    const names = [...new Set(invoices.map(i => i.project_name).filter(Boolean))].sort()
-    return names
+  // ── Derived filter options ─────────────────────────────────────────────────
+  const clientOptions  = useMemo(() => [...new Set(invoices.map(i => i.client_name).filter(Boolean))].sort(), [invoices])
+  const projectOptions = useMemo(() => [...new Set(invoices.map(i => i.project_name).filter(Boolean))].sort(), [invoices])
+  const equipOptions   = useMemo(() => {
+    const map = {}
+    invoices.forEach(i => { if (i.inv_equipment_id && i.equipment_name) map[i.inv_equipment_id] = i.equipment_name })
+    return Object.entries(map).map(([id, name]) => ({ id, name })).sort((a,b) => a.name.localeCompare(b.name))
   }, [invoices])
 
-  // Date range bounds from dateMode
+  // Date range from mode
   const { rangeFrom, rangeTo } = useMemo(() => {
     const now = new Date()
-    if (dateMode === 'this_month') {
-      return {
-        rangeFrom: new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0],
-        rangeTo:   new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0],
-      }
+    if (filterDateMode === 'this_month')  return { rangeFrom: new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0], rangeTo: new Date(now.getFullYear(), now.getMonth()+1, 0).toISOString().split('T')[0] }
+    if (filterDateMode === 'last_month')  return { rangeFrom: new Date(now.getFullYear(), now.getMonth()-1, 1).toISOString().split('T')[0], rangeTo: new Date(now.getFullYear(), now.getMonth(), 0).toISOString().split('T')[0] }
+    if (filterDateMode === 'this_quarter'){
+      const q = Math.floor(now.getMonth()/3)
+      return { rangeFrom: new Date(now.getFullYear(), q*3, 1).toISOString().split('T')[0], rangeTo: new Date(now.getFullYear(), q*3+3, 0).toISOString().split('T')[0] }
     }
-    if (dateMode === 'last_month') {
-      return {
-        rangeFrom: new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString().split('T')[0],
-        rangeTo:   new Date(now.getFullYear(), now.getMonth(), 0).toISOString().split('T')[0],
-      }
-    }
-    if (dateMode === 'custom') return { rangeFrom: dateFrom, rangeTo: dateTo }
+    if (filterDateMode === 'custom') return { rangeFrom: filterDateFrom, rangeTo: filterDateTo }
     return { rangeFrom: '', rangeTo: '' }
-  }, [dateMode, dateFrom, dateTo])
+  }, [filterDateMode, filterDateFrom, filterDateTo])
+
+  // Active filter count (for badge)
+  const activeFilterCount = [
+    filterClient, filterProject, filterEquipId,
+    filterDateMode !== 'all' ? filterDateMode : '',
+    filterStatus !== 'all' ? filterStatus : '',
+    filterType   !== 'all' ? filterType   : '',
+    filterConverted ? 'c' : '',
+  ].filter(Boolean).length
+
+  const clearFilters = () => {
+    setFilterClient(''); setFilterProject(''); setFilterEquipId('')
+    setFilterDateMode('all'); setFilterDateFrom(''); setFilterDateTo('')
+    setFilterStatus('all'); setFilterType('all'); setFilterConverted(false)
+  }
 
   const displayed = invoices.filter(i => {
-    if (filterStatus !== 'all' && i.status !== filterStatus) return false
-    if (filterProject !== 'all' && i.project_name !== filterProject) return false
-    if (search) {
-      const q = search.toLowerCase()
-      if (!i.client_name?.toLowerCase().includes(q) && !i.invoice_number?.toLowerCase().includes(q)) return false
+    if (search) { const q = search.toLowerCase(); if (!i.client_name?.toLowerCase().includes(q) && !i.invoice_number?.toLowerCase().includes(q)) return false }
+    if (filterClient  && i.client_name  !== filterClient)  return false
+    if (filterProject && i.project_name !== filterProject) return false
+    if (filterEquipId && i.inv_equipment_id !== filterEquipId) return false
+    if (filterStatus !== 'all') {
+      if (filterStatus === 'unpaid') { if (['paid','cancelled'].includes(i.status)) return false }
+      else if (i.status !== filterStatus) return false
     }
+    if (filterType !== 'all' && i.invoice_type !== filterType) return false
+    if (filterConverted && !i.converted_from_id) return false
     const d = i.invoice_date || ''
     if (rangeFrom && d < rangeFrom) return false
     if (rangeTo   && d > rangeTo)   return false
@@ -515,48 +547,155 @@ function InvoicesTab({ companyId, session }) {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="px-4 py-3 border-b border-dark-800 shrink-0 flex items-center justify-between gap-3 flex-wrap">
-        <div className="flex gap-3">
-          <div className="bg-dark-800 rounded-xl px-3 py-2 text-xs"><span className="text-slate-500">Collected </span><span className="font-bold text-emerald-400">{fmtINR(totalPaid)}</span></div>
-          <div className="bg-dark-800 rounded-xl px-3 py-2 text-xs"><span className="text-slate-500">Pending </span><span className="font-bold text-orange-400">{fmtINR(totalPending)}</span></div>
+      {/* Top bar */}
+      <div className="px-4 py-3 border-b border-dark-800 shrink-0 flex items-center gap-3">
+        {/* Stats */}
+        <div className="flex gap-2 flex-1">
+          <div className="bg-dark-800 rounded-lg px-3 py-1.5 text-xs"><span className="text-slate-500">Collected </span><span className="font-bold text-emerald-400">{fmtINR(totalPaid)}</span></div>
+          <div className="bg-dark-800 rounded-lg px-3 py-1.5 text-xs"><span className="text-slate-500">Pending </span><span className="font-bold text-orange-400">{fmtINR(totalPending)}</span></div>
         </div>
-        <button onClick={() => setShowCreate(true)} className="btn-primary shrink-0"><Plus className="w-4 h-4" /> New Invoice</button>
-      </div>
-      {/* Filters row */}
-      <div className="px-4 py-2 border-b border-dark-800 shrink-0 flex flex-col gap-2">
-        {/* Row 1: Search + Project + Date mode */}
-        <div className="flex gap-2 flex-wrap">
-          <div className="relative flex-1 min-w-[160px]">
+        {/* Search + Filter + New */}
+        <div className="flex items-center gap-2">
+          <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" />
-            <input className={inp('pl-8 text-xs')} placeholder="Search client or invoice #…" value={search} onChange={e => setSearch(e.target.value)} />
+            <input className={inp('pl-8 text-xs w-48')} placeholder="Search client or #…" value={search} onChange={e => setSearch(e.target.value)} />
           </div>
-          {projectOptions.length > 0 && (
-            <select className={inp('text-xs min-w-[140px]')} value={filterProject} onChange={e => setFilterProject(e.target.value)}>
-              <option value="all">All Projects</option>
-              {projectOptions.map(p => <option key={p} value={p}>{p}</option>)}
-            </select>
-          )}
-          <select className={inp('text-xs min-w-[130px]')} value={dateMode} onChange={e => setDateMode(e.target.value)}>
-            <option value="all">All Dates</option>
-            <option value="this_month">This Month</option>
-            <option value="last_month">Last Month</option>
-            <option value="custom">Custom Range</option>
-          </select>
-          {dateMode === 'custom' && (
-            <>
-              <input type="date" className={inp('text-xs')} value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
-              <input type="date" className={inp('text-xs')} value={dateTo}   onChange={e => setDateTo(e.target.value)} />
-            </>
-          )}
-        </div>
-        {/* Row 2: Status pills */}
-        <div className="flex gap-1.5 flex-wrap">
-          {['all','draft','sent','partial','paid','overdue','cancelled'].map(s => (
-            <button key={s} onClick={() => setFilterStatus(s)}
-              className={`text-xs px-3 py-1.5 rounded-lg border capitalize transition-colors ${filterStatus === s ? 'bg-primary-600 border-primary-500 text-white' : 'border-dark-600 text-slate-400 hover:border-slate-500'}`}>
-              {s === 'all' ? 'All Status' : s}
+          {/* Filter button */}
+          <div className="relative" ref={filterRef}>
+            <button
+              onClick={() => setShowFilters(p => !p)}
+              className={`flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg border transition-colors ${
+                showFilters || activeFilterCount > 0
+                  ? 'bg-primary-600/20 border-primary-500 text-primary-300'
+                  : 'border-dark-600 text-slate-400 hover:border-slate-500 hover:text-slate-200'
+              }`}
+            >
+              <SlidersHorizontal className="w-3.5 h-3.5" />
+              Filters
+              {activeFilterCount > 0 && (
+                <span className="ml-0.5 min-w-[18px] h-[18px] rounded-full bg-primary-500 text-white text-[10px] font-bold flex items-center justify-center px-1">
+                  {activeFilterCount}
+                </span>
+              )}
             </button>
-          ))}
+
+            {/* Filter popover */}
+            {showFilters && (
+              <div className="absolute right-0 top-full mt-2 w-80 bg-dark-800 border border-dark-600 rounded-xl shadow-2xl z-50 overflow-hidden">
+                {/* Header */}
+                <div className="flex items-center justify-between px-4 py-3 border-b border-dark-700">
+                  <span className="text-sm font-semibold text-slate-100">Filters</span>
+                  <div className="flex items-center gap-2">
+                    {activeFilterCount > 0 && (
+                      <button onClick={clearFilters} className="text-xs text-primary-400 hover:text-primary-300 transition-colors">Clear all</button>
+                    )}
+                    <button onClick={() => setShowFilters(false)} className="p-1 rounded text-slate-500 hover:text-slate-200">
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="px-4 py-3 space-y-4 max-h-[70vh] overflow-y-auto">
+
+                  {/* Client */}
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">Client</label>
+                    <select className={inp('text-xs w-full')} value={filterClient} onChange={e => setFilterClient(e.target.value)}>
+                      <option value="">All Clients</option>
+                      {clientOptions.map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                  </div>
+
+                  {/* Project */}
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">Project</label>
+                    <select className={inp('text-xs w-full')} value={filterProject} onChange={e => setFilterProject(e.target.value)}>
+                      <option value="">All Projects</option>
+                      {projectOptions.map(p => <option key={p} value={p}>{p}</option>)}
+                    </select>
+                  </div>
+
+                  {/* Equipment */}
+                  {equipOptions.length > 0 && (
+                    <div>
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">Equipment</label>
+                      <select className={inp('text-xs w-full')} value={filterEquipId} onChange={e => setFilterEquipId(e.target.value)}>
+                        <option value="">All Equipment</option>
+                        {equipOptions.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+                      </select>
+                    </div>
+                  )}
+
+                  {/* Date */}
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">Date</label>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {[['all','All Time'],['this_month','This Month'],['last_month','Last Month'],['this_quarter','This Quarter'],['custom','Custom']].map(([v,l]) => (
+                        <button key={v} onClick={() => setFilterDateMode(v)}
+                          className={`text-xs py-1.5 rounded-lg border text-center transition-colors ${filterDateMode === v ? 'bg-primary-600 border-primary-500 text-white' : 'border-dark-600 text-slate-400 hover:border-slate-500'}`}>
+                          {l}
+                        </button>
+                      ))}
+                    </div>
+                    {filterDateMode === 'custom' && (
+                      <div className="mt-2 flex gap-2">
+                        <div className="flex-1"><p className="text-[10px] text-slate-500 mb-1">From</p><input type="date" className={inp('text-xs w-full')} value={filterDateFrom} onChange={e => setFilterDateFrom(e.target.value)} /></div>
+                        <div className="flex-1"><p className="text-[10px] text-slate-500 mb-1">To</p><input type="date" className={inp('text-xs w-full')} value={filterDateTo} onChange={e => setFilterDateTo(e.target.value)} /></div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Payment Status */}
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">Payment Status</label>
+                    <div className="flex flex-wrap gap-1.5">
+                      {[['all','All'],['paid','Paid'],['unpaid','Unpaid'],['partial','Partial'],['overdue','Overdue'],['sent','Sent'],['draft','Draft'],['cancelled','Cancelled']].map(([v,l]) => (
+                        <button key={v} onClick={() => setFilterStatus(v)}
+                          className={`text-xs px-2.5 py-1 rounded-lg border transition-colors ${filterStatus === v ? 'bg-primary-600 border-primary-500 text-white' : 'border-dark-600 text-slate-400 hover:border-slate-500'}`}>
+                          {l}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Invoice Type */}
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">Invoice Type</label>
+                    <div className="flex gap-1.5">
+                      {[['all','All'],['tax_invoice','Tax Invoice'],['proforma','Proforma']].map(([v,l]) => (
+                        <button key={v} onClick={() => setFilterType(v)}
+                          className={`flex-1 text-xs py-1.5 rounded-lg border text-center transition-colors ${filterType === v ? 'bg-primary-600 border-primary-500 text-white' : 'border-dark-600 text-slate-400 hover:border-slate-500'}`}>
+                          {l}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Converted Proforma */}
+                  <div className="flex items-center justify-between py-1">
+                    <div>
+                      <p className="text-xs font-medium text-slate-300">Converted Proformas Only</p>
+                      <p className="text-[10px] text-slate-500">Show invoices converted from proforma</p>
+                    </div>
+                    <button
+                      onClick={() => setFilterConverted(p => !p)}
+                      className={`w-9 h-5 rounded-full transition-colors relative ${filterConverted ? 'bg-primary-500' : 'bg-dark-600'}`}
+                    >
+                      <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all ${filterConverted ? 'left-4' : 'left-0.5'}`} />
+                    </button>
+                  </div>
+
+                </div>
+
+                {/* Footer: result count */}
+                <div className="px-4 py-2.5 border-t border-dark-700 bg-dark-900/40">
+                  <p className="text-xs text-slate-500 text-center">{displayed.length} invoice{displayed.length !== 1 ? 's' : ''} match{displayed.length === 1 ? 'es' : ''}</p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <button onClick={() => setShowCreate(true)} className="btn-primary shrink-0 text-xs"><Plus className="w-3.5 h-3.5" /> New Invoice</button>
         </div>
       </div>
       <div className="flex-1 overflow-y-auto px-4 pb-4">
