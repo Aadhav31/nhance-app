@@ -1380,8 +1380,12 @@ function PaymentsReceivedTab({ companyId, session }) {
       await supabase.from('account_transactions').delete().eq('reference_type', 'payment_received').eq('reference_id', p.id)
       const { error } = await supabase.from('payments_received').delete().eq('id', p.id)
       if (error) throw error
+      // Re-sync the linked invoice (paid_amount may drop back)
+      if (p.invoice_id) await syncInvoice(p.invoice_id)
       toast.success(`Payment ${p.payment_number} deleted`)
-      qc.invalidateQueries(['payments_received', companyId]); qc.invalidateQueries(['sales_invoices', companyId])
+      qc.invalidateQueries(['payments_received', companyId])
+      qc.invalidateQueries(['sales_invoices', companyId])
+      qc.invalidateQueries(['dash_invoices', companyId])
       qc.invalidateQueries(['ledger', companyId])
     } catch (e) { toast.error(e.message) }
   }
@@ -1406,6 +1410,26 @@ function PaymentsReceivedTab({ companyId, session }) {
 
   const [invoiceId, setInvoiceId] = useState('')
   const totalReceived = payments.reduce((s, p) => s + Number(p.amount || 0), 0)
+
+  // ── Sync paid_amount / balance_due / status back onto the invoice ─────────
+  const syncInvoice = async (invId) => {
+    if (!invId) return
+    const { data: allPmts } = await supabase
+      .from('payments_received').select('amount').eq('invoice_id', invId)
+    const totalPaid = (allPmts || []).reduce((s, p) => s + Number(p.amount || 0), 0)
+    const { data: inv } = await supabase
+      .from('client_invoices').select('total_amount, due_date').eq('id', invId).single()
+    if (!inv) return
+    const balanceDue = Math.max(0, inv.total_amount - totalPaid)
+    const today = new Date().toISOString().split('T')[0]
+    const status = balanceDue <= 0 ? 'paid'
+      : totalPaid > 0 ? 'partial'
+      : inv.due_date && inv.due_date < today ? 'overdue'
+      : 'sent'
+    await supabase.from('client_invoices')
+      .update({ paid_amount: totalPaid, balance_due: balanceDue, status })
+      .eq('id', invId)
+  }
 
   const save = async () => {
     if (!form.client_name.trim()) return toast.error('Client name required')
@@ -1434,10 +1458,16 @@ function PaymentsReceivedTab({ companyId, session }) {
           notes: form.notes || null,
           project_id: projId, inv_equipment_id: equipId,
         }).eq('reference_type', 'payment_received').eq('reference_id', editing.id)
+        // Sync the invoice's paid_amount / balance / status
+        const prevInvId = editing.invoice_id
+        const newInvId  = invoiceId || null
+        await syncInvoice(newInvId)
+        if (prevInvId && prevInvId !== newInvId) await syncInvoice(prevInvId) // re-link edge-case
         toast.success(`Payment ${editing.payment_number} updated`)
         closeModal()
         qc.invalidateQueries(['payments_received', companyId])
         qc.invalidateQueries(['sales_invoices', companyId])
+        qc.invalidateQueries(['dash_invoices', companyId])
         qc.invalidateQueries(['ledger', companyId])
         return
       }
@@ -1461,10 +1491,13 @@ function PaymentsReceivedTab({ companyId, session }) {
         notes: form.notes || null, created_by: session.user.id,
         project_id: projId, inv_equipment_id: equipId,
       })
+      // Sync the invoice's paid_amount / balance / status
+      await syncInvoice(invoiceId || null)
       toast.success(`Payment ${prNum} recorded — ${fmtINR(form.amount)}`)
       closeModal()
       qc.invalidateQueries(['payments_received', companyId])
       qc.invalidateQueries(['sales_invoices', companyId])
+      qc.invalidateQueries(['dash_invoices', companyId])
       qc.invalidateQueries(['ledger', companyId])
     } catch (e) { toast.error(e.message) } finally { setSaving(false) }
   }
