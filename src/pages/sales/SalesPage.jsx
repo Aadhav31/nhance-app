@@ -427,6 +427,23 @@ function InvoicesTab({ companyId, session }) {
     return () => document.removeEventListener('mousedown', handler)
   }, [showFilters])
 
+  // ── Invoice detail view ────────────────────────────────────────────────────
+  const [viewingInv, setViewingInv]   = useState(null)
+  const [viewingLines, setViewingLines] = useState([])
+  const [viewLoading, setViewLoading]  = useState(false)
+
+  const openView = async (inv) => {
+    setViewingInv(inv)
+    setViewLoading(true)
+    try {
+      const { data: ld } = await supabase.from('invoice_line_items').select('*').eq('invoice_id', inv.id).order('sort_order')
+      setViewingLines(ld || [])
+    } catch (_) {}
+    setViewLoading(false)
+  }
+
+  const closeView = () => { setViewingInv(null); setViewingLines([]) }
+
   const dlPDF = async (inv) => {
     try {
       const { data: ld } = await supabase.from('invoice_line_items').select('*').eq('invoice_id', inv.id).order('sort_order')
@@ -703,12 +720,16 @@ function InvoicesTab({ companyId, session }) {
         : displayed.length === 0 ? <div className="flex flex-col items-center py-16 gap-2 text-slate-500"><FileText className="w-10 h-10 text-slate-700" /><p>No invoices yet</p></div>
         : <div className="space-y-2 mt-1">
           {displayed.map(inv => (
-            <div key={inv.id} className="bg-dark-800 border border-dark-700 rounded-xl p-4">
+            <div key={inv.id}
+              className="bg-dark-800 border border-dark-700 rounded-xl p-4 cursor-pointer hover:border-dark-500 hover:bg-dark-750 transition-colors group"
+              onClick={() => openView(inv)}
+            >
               <div className="flex items-start justify-between gap-3">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <p className="text-xs font-mono text-primary-500">{inv.invoice_number}</p>
                     <StatusBadge status={inv.status} />
+                    {inv.invoice_type === 'proforma' && <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-900/30 text-violet-400 border border-violet-800/40">Proforma</span>}
                   </div>
                   <p className="font-semibold text-slate-100 text-sm mt-0.5 truncate">{inv.client_name}</p>
                   {inv.project_name && <p className="text-xs text-slate-500">{inv.project_name}</p>}
@@ -721,7 +742,7 @@ function InvoicesTab({ companyId, session }) {
               </div>
               <div className="flex items-center justify-between mt-3">
                 <p className="text-xs text-slate-500">{fmtDate(inv.invoice_date)}{inv.due_date ? ` · Due ${fmtDate(inv.due_date)}` : ''}</p>
-                <div className="flex gap-1 items-center">
+                <div className="flex gap-1 items-center" onClick={e => e.stopPropagation()}>
                   {inv.status === 'draft' && <button onClick={() => updateStatus(inv.id, 'sent')} className="text-xs px-2 py-1 rounded-lg border border-blue-700/40 text-blue-400 hover:bg-blue-900/20"><Send className="w-3 h-3 inline mr-1" />Mark Sent</button>}
                   {inv.status === 'sent' && <button onClick={() => updateStatus(inv.id, 'paid')} className="text-xs px-2 py-1 rounded-lg border border-emerald-700/40 text-emerald-400 hover:bg-emerald-900/20"><CheckCircle className="w-3 h-3 inline mr-1" />Mark Paid</button>}
                   {inv.status === 'overdue' && <button onClick={() => updateStatus(inv.id, 'paid')} className="text-xs px-2 py-1 rounded-lg border border-emerald-700/40 text-emerald-400 hover:bg-emerald-900/20"><CheckCircle className="w-3 h-3 inline mr-1" />Mark Paid</button>}
@@ -738,6 +759,160 @@ function InvoicesTab({ companyId, session }) {
         </div>}
       </div>
       {(showCreate || editingDoc) && <CreateInvoiceModal companyId={companyId} session={session} initialDoc={editingDoc} onClose={() => { setShowCreate(false); setEditingDoc(null) }} onSaved={() => { setShowCreate(false); setEditingDoc(null); qc.invalidateQueries(['sales_invoices', companyId]) }} />}
+
+      {/* ── Invoice Detail Drawer ────────────────────────────────────────────── */}
+      {viewingInv && (
+        <div className="fixed inset-0 z-40 flex">
+          {/* Backdrop */}
+          <div className="flex-1 bg-black/40 backdrop-blur-sm" onClick={closeView} />
+          {/* Panel */}
+          <div className="w-full max-w-xl bg-dark-900 border-l border-dark-700 flex flex-col shadow-2xl overflow-hidden">
+            {/* Header */}
+            <div className="px-5 py-4 border-b border-dark-800 flex items-start justify-between gap-3 shrink-0">
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs font-mono text-primary-400">{viewingInv.invoice_number}</span>
+                  <StatusBadge status={viewingInv.status} />
+                  {viewingInv.invoice_type === 'proforma' && <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-900/30 text-violet-400 border border-violet-800/40">Proforma</span>}
+                </div>
+                <p className="text-base font-bold text-slate-100 mt-1">{viewingInv.client_name}</p>
+                {viewingInv.client_address && <p className="text-xs text-slate-500 mt-0.5">{viewingInv.client_address}</p>}
+                {viewingInv.client_gstin && <p className="text-xs text-slate-500">GSTIN: {viewingInv.client_gstin}</p>}
+              </div>
+              <button onClick={closeView} className="p-1.5 rounded-lg text-slate-500 hover:text-slate-200 hover:bg-dark-700 shrink-0"><X className="w-4 h-4" /></button>
+            </div>
+
+            {/* Scrollable body */}
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
+              {viewLoading
+                ? <div className="flex justify-center py-16"><Loader2 className="w-5 h-5 animate-spin text-primary-400" /></div>
+                : <>
+                  {/* Meta row */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="bg-dark-800 rounded-lg p-3">
+                      <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-0.5">Invoice Date</p>
+                      <p className="text-sm font-semibold text-slate-100">{fmtDate(viewingInv.invoice_date)}</p>
+                    </div>
+                    <div className="bg-dark-800 rounded-lg p-3">
+                      <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-0.5">Due Date</p>
+                      <p className="text-sm font-semibold text-slate-100">{viewingInv.due_date ? fmtDate(viewingInv.due_date) : '—'}</p>
+                    </div>
+                    {viewingInv.project_name && (
+                      <div className="bg-dark-800 rounded-lg p-3">
+                        <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-0.5">Project</p>
+                        <p className="text-sm font-semibold text-slate-100 truncate">{viewingInv.project_name}</p>
+                      </div>
+                    )}
+                    {viewingInv.inv_equipment_id && (
+                      <div className="bg-dark-800 rounded-lg p-3">
+                        <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-0.5">Equipment</p>
+                        <p className="text-sm font-semibold text-amber-400">Linked</p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Line items */}
+                  {viewingLines.length > 0 && (
+                    <div>
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2">Line Items</p>
+                      <div className="rounded-xl overflow-hidden border border-dark-700">
+                        <table className="w-full text-xs">
+                          <thead className="bg-dark-800">
+                            <tr>
+                              <th className="text-left px-3 py-2 text-slate-500 font-medium">Description</th>
+                              <th className="text-right px-3 py-2 text-slate-500 font-medium">Qty</th>
+                              <th className="text-right px-3 py-2 text-slate-500 font-medium">Rate</th>
+                              <th className="text-right px-3 py-2 text-slate-500 font-medium">Amount</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-dark-700">
+                            {viewingLines.map((l, i) => (
+                              <tr key={i} className="bg-dark-900">
+                                <td className="px-3 py-2 text-slate-200">
+                                  {l.description}
+                                  {l.hsn_sac && <span className="ml-1 text-slate-600 text-[10px]">HSN {l.hsn_sac}</span>}
+                                </td>
+                                <td className="px-3 py-2 text-right text-slate-400">{l.quantity} {l.unit}</td>
+                                <td className="px-3 py-2 text-right text-slate-400">{fmtINR(l.rate)}</td>
+                                <td className="px-3 py-2 text-right text-slate-100 font-medium">{fmtINR(l.amount)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Tax & totals */}
+                  <div className="bg-dark-800 rounded-xl p-4 space-y-2">
+                    {viewingInv.discount_amount > 0 && (
+                      <div className="flex justify-between text-xs">
+                        <span className="text-slate-500">Subtotal</span><span className="text-slate-300">{fmtINR(viewingInv.subtotal_amount || viewingInv.total_amount)}</span>
+                      </div>
+                    )}
+                    {viewingInv.discount_amount > 0 && (
+                      <div className="flex justify-between text-xs">
+                        <span className="text-slate-500">Discount</span><span className="text-red-400">− {fmtINR(viewingInv.discount_amount)}</span>
+                      </div>
+                    )}
+                    {viewingInv.cgst_amount > 0 && (
+                      <div className="flex justify-between text-xs">
+                        <span className="text-slate-500">CGST ({viewingInv.cgst_rate}%)</span><span className="text-slate-300">{fmtINR(viewingInv.cgst_amount)}</span>
+                      </div>
+                    )}
+                    {viewingInv.sgst_amount > 0 && (
+                      <div className="flex justify-between text-xs">
+                        <span className="text-slate-500">SGST ({viewingInv.sgst_rate}%)</span><span className="text-slate-300">{fmtINR(viewingInv.sgst_amount)}</span>
+                      </div>
+                    )}
+                    {viewingInv.igst_amount > 0 && (
+                      <div className="flex justify-between text-xs">
+                        <span className="text-slate-500">IGST ({viewingInv.igst_rate}%)</span><span className="text-slate-300">{fmtINR(viewingInv.igst_amount)}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between pt-2 border-t border-dark-700">
+                      <span className="text-sm font-bold text-slate-200">Total</span>
+                      <span className="text-sm font-black text-slate-100">{fmtINR(viewingInv.total_amount)}</span>
+                    </div>
+                    {viewingInv.paid_amount > 0 && (
+                      <div className="flex justify-between text-xs">
+                        <span className="text-slate-500">Paid</span><span className="text-emerald-400 font-semibold">{fmtINR(viewingInv.paid_amount)}</span>
+                      </div>
+                    )}
+                    {viewingInv.balance_due > 0 && (
+                      <div className="flex justify-between text-xs">
+                        <span className="text-slate-500">Balance Due</span><span className="text-orange-400 font-semibold">{fmtINR(viewingInv.balance_due)}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {viewingInv.notes && (
+                    <div className="bg-dark-800 rounded-xl p-4">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Notes</p>
+                      <p className="text-xs text-slate-300 whitespace-pre-wrap">{viewingInv.notes}</p>
+                    </div>
+                  )}
+                  {viewingInv.terms && (
+                    <div className="bg-dark-800 rounded-xl p-4">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Terms</p>
+                      <p className="text-xs text-slate-400 whitespace-pre-wrap">{viewingInv.terms}</p>
+                    </div>
+                  )}
+                </>
+              }
+            </div>
+
+            {/* Footer actions */}
+            <div className="px-5 py-3 border-t border-dark-800 shrink-0 flex gap-2 flex-wrap" onClick={e => e.stopPropagation()}>
+              {viewingInv.status === 'draft'   && <button onClick={() => { updateStatus(viewingInv.id, 'sent');   setViewingInv(p => ({...p, status:'sent'})) }} className="flex-1 btn-ghost text-xs border-blue-700/40 text-blue-400"><Send className="w-3.5 h-3.5" /> Mark Sent</button>}
+              {['sent','overdue'].includes(viewingInv.status) && <button onClick={() => { updateStatus(viewingInv.id, 'paid'); setViewingInv(p => ({...p, status:'paid'})) }} className="flex-1 btn-ghost text-xs border-emerald-700/40 text-emerald-400"><CheckCircle className="w-3.5 h-3.5" /> Mark Paid</button>}
+              {!['paid','cancelled'].includes(viewingInv.status) && <button onClick={() => { closeView(); openEdit(viewingInv) }} className="flex-1 btn-ghost text-xs"><Edit2 className="w-3.5 h-3.5" /> Edit</button>}
+              <button onClick={() => dlPDF(viewingInv)} className="flex-1 btn-ghost text-xs text-emerald-400"><FileDown className="w-3.5 h-3.5" /> PDF</button>
+              <button onClick={() => dlXLSX(viewingInv)} className="flex-1 btn-ghost text-xs text-teal-400"><Sheet className="w-3.5 h-3.5" /> Excel</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
