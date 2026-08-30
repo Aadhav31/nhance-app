@@ -2,6 +2,12 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Prevent horizontal scroll globally */
+html, body, #root {
+  overflow-x: hidden;
+  max-width: 100vw;
+}
+
 /* ── Theme variables ──────────────────────────────────────────────────────────
    RGB channel values (no rgb() wrapper) — allows Tailwind opacity modifiers
    e.g.  bg-dark-700/40  →  rgb(var(--s2) / 0.4)
