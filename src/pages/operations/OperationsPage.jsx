@@ -1047,6 +1047,27 @@ function IncidentModal({ equipment, shift, companyId, onClose }) {
       // Equipment status update
       if (incidentType === 'breakdown') {
         await supabase.from('equipment').update({ status: 'breakdown' }).eq('id', equipment.id)
+
+        // ── Auto-create a Job Card for the maintenance team (if none open already) ──
+        ;(async () => {
+          try {
+            const { data: openJC } = await supabase.from('job_cards')
+              .select('id').eq('equipment_id', equipment.id)
+              .eq('jc_type', 'breakdown').eq('status', 'open').limit(1).maybeSingle()
+            if (!openJC) {
+              await supabase.from('job_cards').insert({
+                company_id:     companyId,
+                equipment_id:   equipment.id,
+                equipment_name: equipment.name,
+                jc_type:        'breakdown',
+                complaint:      descriptionValue,
+                status:         'open',
+                opened_date:    new Date().toISOString().slice(0, 10),
+                source:         'ops_incident',
+              })
+            }
+          } catch (_) { /* Non-blocking */ }
+        })()
       } else if (['regular_maintenance', 'unscheduled_maintenance'].includes(incidentType)) {
         await supabase.from('equipment').update({ status: 'maintenance' }).eq('id', equipment.id)
       }
@@ -1237,7 +1258,7 @@ function MarkStatusModal({ equipment, companyId, statusType, onClose }) {
       })
       if (opsErr) throw opsErr
 
-      // 2. For breakdown: also update equipment status + create incident
+      // 2. For breakdown: also update equipment status + create incident + auto-create job card
       if (isBreakdown) {
         await supabase.from('equipment').update({ status: 'breakdown' }).eq('id', equipment.id)
         await supabase.from('shift_incidents').insert({
@@ -1249,6 +1270,26 @@ function MarkStatusModal({ equipment, companyId, statusType, onClose }) {
           reported_by:    userProfile?.full_name || null,
           status:         'open',
         })
+        // Auto-create a Job Card for maintenance team if none is already open
+        ;(async () => {
+          try {
+            const { data: openJC } = await supabase.from('job_cards')
+              .select('id').eq('equipment_id', equipment.id)
+              .eq('jc_type', 'breakdown').eq('status', 'open').limit(1).maybeSingle()
+            if (!openJC) {
+              await supabase.from('job_cards').insert({
+                company_id:     companyId,
+                equipment_id:   equipment.id,
+                equipment_name: equipment.name,
+                jc_type:        'breakdown',
+                complaint:      description.trim(),
+                status:         'open',
+                opened_date:    today,
+                source:         'ops_breakdown',
+              })
+            }
+          } catch (_) { /* Non-blocking */ }
+        })()
       } else {
         // Idle — update equipment status
         await supabase.from('equipment').update({ status: 'idle' }).eq('id', equipment.id)

@@ -5871,6 +5871,32 @@ function JobCardModal({ equipment, companyId, initialValues, onClose, onSaved })
       }
 
       toast.success(isEdit ? 'Job card updated' : 'Job card created')
+
+      // ── If this is a NEW breakdown job card: update equipment status +
+      //    create a shift_incident so ops team sees it too ──────────────
+      if (!isEdit && jcType === 'breakdown') {
+        ;(async () => {
+          try {
+            await supabase.from('equipment').update({ status: 'breakdown' }).eq('id', equipment.id)
+            // Only create incident if no open breakdown incident exists for this machine
+            const { data: openInc } = await supabase.from('shift_incidents')
+              .select('id').eq('equipment_id', equipment.id)
+              .eq('incident_type', 'breakdown').eq('status', 'open').limit(1).maybeSingle()
+            if (!openInc) {
+              await supabase.from('shift_incidents').insert({
+                company_id:     companyId,
+                equipment_id:   equipment.id,
+                equipment_name: equipment.name,
+                incident_type:  'breakdown',
+                description:    complaint || workDone || 'Breakdown — see job card',
+                status:         'open',
+                source:         'job_card',
+              })
+            }
+          } catch (_) { /* Non-blocking */ }
+        })()
+      }
+
       onSaved?.()
     } catch (e) {
       toast.error(e.message)
