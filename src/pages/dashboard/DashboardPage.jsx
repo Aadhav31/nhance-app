@@ -427,16 +427,28 @@ function usePOData(companyId, range) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Revenue vs Expense ComposedChart (Bar billed + Bar bills + Line collected)
-function RevenueExpenseChart({ invoices, payments, bills, range }) {
-  const billedMap    = useMemo(() => sumByDate(invoices, 'invoice_date', 'total_amount'),  [invoices])
-  const collectedMap = useMemo(() => sumByDate(payments, 'payment_date', 'amount'),        [payments])
-  const expenseMap   = useMemo(() => sumByDate(bills,    'bill_date',    'total_amount'),  [bills])
+function RevenueExpenseChart({ invoices, allInvoices, payments, bills, range }) {
+  const billedMap  = useMemo(() => sumByDate(invoices, 'invoice_date', 'total_amount'), [invoices])
+  const expenseMap = useMemo(() => sumByDate(bills,    'bill_date',    'total_amount'), [bills])
 
-  const data = useMemo(() => buildTimeline(range.from, range.to, [
+  // Collected: prefer payments_received by payment_date; fall back to allInvoices paid_amount by invoice_date
+  const collectedMap = useMemo(() => {
+    if (payments.length > 0) return sumByDate(payments, 'payment_date', 'amount')
+    return sumByDate(allInvoices || [], 'invoice_date', 'paid_amount')
+  }, [payments, allInvoices])
+
+  // Extend chart start 30 days back to capture prior-month collections
+  const chartFrom = useMemo(() => {
+    const d = new Date(range.from + 'T00:00:00')
+    d.setDate(d.getDate() - 30)
+    return d.toISOString().split('T')[0]
+  }, [range.from])
+
+  const data = useMemo(() => buildTimeline(chartFrom, range.to, [
     { key: 'billed',    map: billedMap },
     { key: 'collected', map: collectedMap },
     { key: 'expense',   map: expenseMap },
-  ]), [range, billedMap, collectedMap, expenseMap])
+  ]), [chartFrom, range.to, billedMap, collectedMap, expenseMap])
 
   const hasData = data.some(d => d.billed > 0 || d.collected > 0 || d.expense > 0)
   const ticks   = thinTicks(data)
@@ -901,7 +913,7 @@ function FinancialsSection({ companyId, range, onNavigate }) {
 
       {/* Revenue vs Expense Chart */}
       <ChartCard title="Revenue vs Expenses (Daily)">
-        <RevenueExpenseChart invoices={invoices} payments={payments} bills={bills} range={range} />
+        <RevenueExpenseChart invoices={invoices} allInvoices={allInvoices} payments={payments} bills={bills} range={range} />
       </ChartCard>
 
       {/* Invoice + Bills tables side by side */}
