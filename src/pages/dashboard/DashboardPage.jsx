@@ -879,7 +879,7 @@ function FinancialsSection({ companyId, range, onNavigate }) {
     queryKey: ['dash_all_invoices', companyId],
     queryFn: async () => {
       const { data } = await supabase.from('client_invoices')
-        .select('id,total_amount,paid_amount,balance_due,status,invoice_type')
+        .select('id,invoice_date,total_amount,paid_amount,balance_due,status,invoice_type')
         .eq('company_id', companyId)
         .neq('invoice_type', 'proforma')
         .neq('status', 'cancelled')
