@@ -400,6 +400,60 @@ function CreateInvoiceModal({ companyId, session, onClose, onSaved, initialDoc =
   )
 }
 
+// ── Searchable multi-select for filter panel ───────────────────────────────────
+function MultiSelectFilter({ label, options, selected, onToggle, valueKey, labelKey }) {
+  const [q, setQ] = useState('')
+  const filtered = options.filter(o => {
+    const lbl = labelKey ? o[labelKey] : o
+    return lbl?.toLowerCase().includes(q.toLowerCase())
+  })
+  const getVal = o => valueKey ? o[valueKey] : o
+  const getLbl = o => labelKey ? o[labelKey] : o
+  return (
+    <div>
+      <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">
+        {label} {selected.length > 0 && <span className="ml-1 text-primary-400">({selected.length})</span>}
+      </label>
+      {/* Selected tags */}
+      {selected.length > 0 && (
+        <div className="flex flex-wrap gap-1 mb-2">
+          {selected.map(v => {
+            const opt = options.find(o => getVal(o) === v)
+            return (
+              <span key={v} className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-primary-600/20 border border-primary-500/40 text-primary-300">
+                {opt ? getLbl(opt) : v}
+                <button onClick={() => onToggle(v)} className="text-primary-400 hover:text-white leading-none">×</button>
+              </span>
+            )
+          })}
+        </div>
+      )}
+      {/* Search input */}
+      <input
+        type="text" placeholder={`Search ${label.toLowerCase()}…`}
+        value={q} onChange={e => setQ(e.target.value)}
+        className="w-full bg-dark-700 border border-dark-600 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 placeholder:text-slate-600 focus:outline-none focus:ring-1 focus:ring-primary-600 mb-1.5"
+      />
+      {/* Option list */}
+      <div className="max-h-36 overflow-y-auto space-y-0.5 rounded-lg border border-dark-600 bg-dark-900/40">
+        {filtered.length === 0 && <p className="text-xs text-slate-600 px-3 py-2">No matches</p>}
+        {filtered.map(o => {
+          const v = getVal(o), l = getLbl(o), checked = selected.includes(v)
+          return (
+            <button key={v} onClick={() => onToggle(v)}
+              className={`w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left transition-colors ${checked ? 'bg-primary-600/15 text-primary-300' : 'text-slate-400 hover:bg-dark-700/60'}`}>
+              <span className={`w-3.5 h-3.5 rounded border flex-shrink-0 flex items-center justify-center ${checked ? 'bg-primary-600 border-primary-500' : 'border-dark-500'}`}>
+                {checked && <span className="text-white text-[8px] leading-none">✓</span>}
+              </span>
+              <span className="truncate">{l}</span>
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 function InvoicesTab({ companyId, session }) {
   const qc = useQueryClient()
   const { company, userProfile } = useAuth()
@@ -625,52 +679,24 @@ function InvoicesTab({ companyId, session }) {
                 <div className="px-4 py-3 space-y-4 max-h-[70vh] overflow-y-auto">
 
                   {/* Client */}
-                  <div>
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">
-                      Client {filterClients.length > 0 && <span className="ml-1 text-primary-400">({filterClients.length})</span>}
-                    </label>
-                    <div className="flex flex-wrap gap-1.5">
-                      {clientOptions.map(c => (
-                        <button key={c} onClick={() => toggleFilter(setFilterClients, c)}
-                          className={`text-xs px-2.5 py-1 rounded-lg border transition-colors text-left ${filterClients.includes(c) ? 'bg-primary-600 border-primary-500 text-white' : 'border-dark-600 text-slate-400 hover:border-slate-500'}`}>
-                          {c}
-                        </button>
-                      ))}
-                      {clientOptions.length === 0 && <p className="text-xs text-slate-600">No clients</p>}
-                    </div>
-                  </div>
+                  <MultiSelectFilter
+                    label="Client" options={clientOptions} selected={filterClients}
+                    onToggle={v => toggleFilter(setFilterClients, v)}
+                  />
 
                   {/* Project */}
-                  <div>
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">
-                      Project {filterProjects.length > 0 && <span className="ml-1 text-primary-400">({filterProjects.length})</span>}
-                    </label>
-                    <div className="flex flex-wrap gap-1.5">
-                      {projectOptions.map(p => (
-                        <button key={p} onClick={() => toggleFilter(setFilterProjects, p)}
-                          className={`text-xs px-2.5 py-1 rounded-lg border transition-colors text-left ${filterProjects.includes(p) ? 'bg-primary-600 border-primary-500 text-white' : 'border-dark-600 text-slate-400 hover:border-slate-500'}`}>
-                          {p}
-                        </button>
-                      ))}
-                      {projectOptions.length === 0 && <p className="text-xs text-slate-600">No projects</p>}
-                    </div>
-                  </div>
+                  <MultiSelectFilter
+                    label="Project" options={projectOptions} selected={filterProjects}
+                    onToggle={v => toggleFilter(setFilterProjects, v)}
+                  />
 
                   {/* Equipment */}
                   {equipOptions.length > 0 && (
-                    <div>
-                      <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">
-                        Equipment {filterEquipIds.length > 0 && <span className="ml-1 text-primary-400">({filterEquipIds.length})</span>}
-                      </label>
-                      <div className="flex flex-wrap gap-1.5">
-                        {equipOptions.map(e => (
-                          <button key={e.id} onClick={() => toggleFilter(setFilterEquipIds, e.id)}
-                            className={`text-xs px-2.5 py-1 rounded-lg border transition-colors ${filterEquipIds.includes(e.id) ? 'bg-primary-600 border-primary-500 text-white' : 'border-dark-600 text-slate-400 hover:border-slate-500'}`}>
-                            {e.name}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
+                    <MultiSelectFilter
+                      label="Equipment" options={equipOptions} selected={filterEquipIds}
+                      onToggle={v => toggleFilter(setFilterEquipIds, v)}
+                      valueKey="id" labelKey="name"
+                    />
                   )}
 
                   {/* Date */}
