@@ -559,7 +559,7 @@ function InvoicesTab({ companyId, session }) {
     return true
   })
 
-  const totalPaid     = invoices.filter(i => i.status === 'paid').reduce((s, i) => s + Number(i.total_amount || 0), 0)
+  const totalPaid     = invoices.reduce((s, i) => s + Number(i.paid_amount || 0), 0)
   const totalPending  = invoices.filter(i => !['paid','cancelled'].includes(i.status)).reduce((s, i) => s + Number(i.balance_due || 0), 0)
 
   return (
