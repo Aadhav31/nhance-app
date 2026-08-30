@@ -542,7 +542,15 @@ function InvoicesTab({ companyId, session }) {
     setFilterStatus('all'); setFilterType('all'); setFilterConverted(false)
   }
 
+  // Build set of proforma IDs that have been converted to a tax invoice
+  const convertedProformaIds = useMemo(
+    () => new Set(invoices.map(i => i.converted_from_id).filter(Boolean)),
+    [invoices]
+  )
+
   const displayed = invoices.filter(i => {
+    // Hide proformas that have already been converted to a tax invoice
+    if (i.invoice_type === 'proforma' && convertedProformaIds.has(i.id)) return false
     if (search) { const q = search.toLowerCase(); if (!i.client_name?.toLowerCase().includes(q) && !i.invoice_number?.toLowerCase().includes(q)) return false }
     if (filterClient  && i.client_name  !== filterClient)  return false
     if (filterProject && i.project_name !== filterProject) return false
