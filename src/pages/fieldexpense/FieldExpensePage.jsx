@@ -5,7 +5,7 @@
  * Operators access via OperatorPortal tab.
  */
 
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
@@ -1113,8 +1113,30 @@ function ExpenseHistory({ companyId, userId, userRole }) {
   const isAdmin   = ['admin', 'superadmin', 'manager', 'accounts'].includes(userRole)
   const canEdit   = ['admin', 'superadmin', 'accounts'].includes(userRole)
   const [search, setSearch] = useState('')
-  const [catFilter, setCatFilter] = useState('')
-  const [modeFilter, setModeFilter] = useState('')
+  // Filter panel
+  const [showFilters,   setShowFilters]   = useState(false)
+  const filterPanelRef                    = useRef(null)
+  const [catFilter,     setCatFilter]     = useState([])      // multi
+  const [modeFilter,    setModeFilter]    = useState([])      // multi
+  const [dateMode,      setDateMode]      = useState('all')
+  const [dateFrom,      setDateFrom]      = useState('')
+  const [dateTo,        setDateTo]        = useState('')
+  const [projectFilter, setProjectFilter] = useState('')
+  const [equipFilter,   setEquipFilter]   = useState('')
+  const [submittedBy,   setSubmittedBy]   = useState('')
+  const [amtMin,        setAmtMin]        = useState('')
+  const [amtMax,        setAmtMax]        = useState('')
+
+  // close on outside click
+  useRef(() => {})  // placeholder — handled below via useCallback
+  const handleOutside = useCallback((e) => {
+    if (filterPanelRef.current && !filterPanelRef.current.contains(e.target)) setShowFilters(false)
+  }, [])
+  useState(() => {
+    if (showFilters) document.addEventListener('mousedown', handleOutside)
+    else document.removeEventListener('mousedown', handleOutside)
+    return () => document.removeEventListener('mousedown', handleOutside)
+  })
   const [deleteId, setDeleteId] = useState(null)
   const [editExp, setEditExp] = useState(null)
   // "Record as Bill Payment" state
@@ -1233,12 +1255,54 @@ function ExpenseHistory({ companyId, userId, userRole }) {
     } catch (e) { toast.error(e.message) } finally { setLinkSaving(false) }
   }
 
+  // Derived date range from dateMode
+  const { rangeFrom, rangeTo } = useMemo(() => {
+    const now = new Date()
+    const pad = n => String(n).padStart(2,'0')
+    const fmt_ = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`
+    if (dateMode === 'this_month')  return { rangeFrom: fmt_(new Date(now.getFullYear(), now.getMonth(), 1)),     rangeTo: fmt_(new Date(now.getFullYear(), now.getMonth()+1, 0)) }
+    if (dateMode === 'last_month')  return { rangeFrom: fmt_(new Date(now.getFullYear(), now.getMonth()-1, 1)),   rangeTo: fmt_(new Date(now.getFullYear(), now.getMonth(), 0)) }
+    if (dateMode === 'this_quarter'){ const q=Math.floor(now.getMonth()/3); return { rangeFrom: fmt_(new Date(now.getFullYear(),q*3,1)), rangeTo: fmt_(new Date(now.getFullYear(),q*3+3,0)) } }
+    if (dateMode === 'custom')      return { rangeFrom: dateFrom, rangeTo: dateTo }
+    return { rangeFrom: '', rangeTo: '' }
+  }, [dateMode, dateFrom, dateTo])
+
+  // Unique projects + equipment from loaded data (for filter dropdowns)
+  const projectOptions = useMemo(() => [...new Set(expenses.map(e=>e.project_name).filter(Boolean))].sort(), [expenses])
+  const equipOptions   = useMemo(() => [...new Set(expenses.map(e=>e.equipment_name).filter(Boolean))].sort(), [expenses])
+  const submitterOptions = useMemo(() => isAdmin ? [...new Set(expenses.map(e=>e.created_by_name||e.submitted_by_name).filter(Boolean))].sort() : [], [expenses, isAdmin])
+
+  const activeFilterCount = [
+    ...catFilter, ...modeFilter,
+    dateMode !== 'all' ? '1' : '',
+    projectFilter, equipFilter, submittedBy,
+    amtMin, amtMax,
+  ].filter(Boolean).length
+
+  const clearFilters = () => {
+    setCatFilter([]); setModeFilter([]); setDateMode('all')
+    setDateFrom(''); setDateTo(''); setProjectFilter('')
+    setEquipFilter(''); setSubmittedBy(''); setAmtMin(''); setAmtMax('')
+  }
+
+  const toggleArr = (setter, val) => setter(prev => prev.includes(val) ? prev.filter(x=>x!==val) : [...prev, val])
+
   const filtered = expenses.filter(e => {
     const matchSearch = !search || [e.payee_name, e.description, e.bill_number, e.equipment_name, e.project_name]
       .filter(Boolean).some(s => s.toLowerCase().includes(search.toLowerCase()))
-    const matchCat  = !catFilter  || e.category === catFilter
-    const matchMode = !modeFilter || e.payment_mode === modeFilter
-    return matchSearch && matchCat && matchMode
+    if (!matchSearch) return false
+    if (catFilter.length  > 0 && !catFilter.includes(e.category))       return false
+    if (modeFilter.length > 0 && !modeFilter.includes(e.payment_mode))  return false
+    if (projectFilter && e.project_name !== projectFilter)               return false
+    if (equipFilter   && e.equipment_name !== equipFilter)               return false
+    if (submittedBy   && (e.created_by_name||e.submitted_by_name) !== submittedBy) return false
+    const d = e.expense_date || ''
+    if (rangeFrom && d < rangeFrom) return false
+    if (rangeTo   && d > rangeTo)   return false
+    const amt = parseFloat(e.amount)||0
+    if (amtMin && amt < parseFloat(amtMin)) return false
+    if (amtMax && amt > parseFloat(amtMax)) return false
+    return true
   })
 
   // Exclude expenses already recorded as bill payments — those are counted in Payments Made
@@ -1277,22 +1341,139 @@ function ExpenseHistory({ companyId, userId, userRole }) {
         </div>
       )}
 
-      {/* Filters */}
+      {/* Search + Filter toggle */}
       <div className="space-y-2">
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-          <input className={inp('pl-9')} placeholder="Search payee, description, bill…" value={search} onChange={e => setSearch(e.target.value)} />
-        </div>
         <div className="flex gap-2">
-          <select className={inp('flex-1 text-xs')} value={catFilter} onChange={e => setCatFilter(e.target.value)}>
-            <option value="">All Categories</option>
-            {CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
-          </select>
-          <select className={inp('flex-1 text-xs')} value={modeFilter} onChange={e => setModeFilter(e.target.value)}>
-            <option value="">All Modes</option>
-            {PAYMENT_MODES.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
-          </select>
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+            <input className={inp('pl-9')} placeholder="Search payee, description, bill…" value={search} onChange={e => setSearch(e.target.value)} />
+          </div>
+          <button
+            onClick={() => setShowFilters(v => !v)}
+            className={`relative flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-medium transition-colors ${showFilters ? 'bg-primary-600 border-primary-500 text-white' : 'bg-dark-700 border-dark-600 text-slate-400 hover:border-slate-500'}`}>
+            <Filter className="w-3.5 h-3.5" />
+            Filters
+            {activeFilterCount > 0 && (
+              <span className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-primary-500 text-white text-[9px] font-bold flex items-center justify-center">{activeFilterCount}</span>
+            )}
+          </button>
         </div>
+
+        {/* Filter panel */}
+        {showFilters && (
+          <div ref={filterPanelRef} className="bg-dark-800 border border-dark-600 rounded-2xl shadow-2xl overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center justify-between px-4 py-3 border-b border-dark-700">
+              <p className="text-xs font-semibold text-slate-200">Filters</p>
+              <div className="flex items-center gap-3">
+                {activeFilterCount > 0 && <button onClick={clearFilters} className="text-[10px] text-primary-400 hover:text-primary-300">Clear all</button>}
+                <button onClick={() => setShowFilters(false)} className="text-slate-500 hover:text-slate-200"><X className="w-3.5 h-3.5" /></button>
+              </div>
+            </div>
+
+            <div className="p-4 space-y-4 max-h-[70vh] overflow-y-auto">
+
+              {/* Date */}
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2">Date</p>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {[['all','All Time'],['this_month','This Month'],['last_month','Last Month'],['this_quarter','This Quarter'],['custom','Custom']].map(([v,l])=>(
+                    <button key={v} onClick={()=>setDateMode(v)}
+                      className={`text-xs py-1.5 rounded-lg border text-center transition-colors ${dateMode===v?'bg-primary-600 border-primary-500 text-white':'border-dark-600 text-slate-400 hover:border-slate-500'}`}>{l}</button>
+                  ))}
+                </div>
+                {dateMode === 'custom' && (
+                  <div className="mt-2 flex gap-2">
+                    <div className="flex-1"><p className="text-[10px] text-slate-500 mb-1">From</p><input type="date" className={inp('text-xs')} value={dateFrom} onChange={e=>setDateFrom(e.target.value)} /></div>
+                    <div className="flex-1"><p className="text-[10px] text-slate-500 mb-1">To</p><input type="date" className={inp('text-xs')} value={dateTo} onChange={e=>setDateTo(e.target.value)} /></div>
+                  </div>
+                )}
+              </div>
+
+              {/* Category — multi */}
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2">Category {catFilter.length>0&&<span className="ml-1 text-primary-400">({catFilter.length})</span>}</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {CATEGORIES.map(c => {
+                    const on = catFilter.includes(c.value)
+                    return (
+                      <button key={c.value} onClick={()=>toggleArr(setCatFilter,c.value)}
+                        className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border transition-colors ${on?'bg-primary-600 border-primary-500 text-white':'border-dark-600 text-slate-400 hover:border-slate-500'}`}>
+                        <c.icon className="w-3 h-3" />{c.label}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+
+              {/* Payment Mode — multi */}
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2">Payment Mode {modeFilter.length>0&&<span className="ml-1 text-primary-400">({modeFilter.length})</span>}</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {PAYMENT_MODES.map(m => {
+                    const on = modeFilter.includes(m.value)
+                    return (
+                      <button key={m.value} onClick={()=>toggleArr(setModeFilter,m.value)}
+                        className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border transition-colors ${on?'bg-primary-600 border-primary-500 text-white':'border-dark-600 text-slate-400 hover:border-slate-500'}`}>
+                        <m.icon className="w-3 h-3" />{m.label}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+
+              {/* Project */}
+              {projectOptions.length > 0 && (
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2">Project</p>
+                  <select className={inp('text-xs')} value={projectFilter} onChange={e=>setProjectFilter(e.target.value)}>
+                    <option value="">All Projects</option>
+                    {projectOptions.map(p=><option key={p} value={p}>{p}</option>)}
+                  </select>
+                </div>
+              )}
+
+              {/* Equipment */}
+              {equipOptions.length > 0 && (
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2">Equipment</p>
+                  <select className={inp('text-xs')} value={equipFilter} onChange={e=>setEquipFilter(e.target.value)}>
+                    <option value="">All Equipment</option>
+                    {equipOptions.map(eq=><option key={eq} value={eq}>{eq}</option>)}
+                  </select>
+                </div>
+              )}
+
+              {/* Amount range */}
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2">Amount Range</p>
+                <div className="flex gap-2">
+                  <div className="flex-1">
+                    <p className="text-[10px] text-slate-500 mb-1">Min (₹)</p>
+                    <input type="number" className={inp('text-xs')} placeholder="0" value={amtMin} onChange={e=>setAmtMin(e.target.value)} />
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-[10px] text-slate-500 mb-1">Max (₹)</p>
+                    <input type="number" className={inp('text-xs')} placeholder="Any" value={amtMax} onChange={e=>setAmtMax(e.target.value)} />
+                  </div>
+                </div>
+              </div>
+
+              {/* Submitted by (admin only) */}
+              {isAdmin && submitterOptions.length > 0 && (
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2">Submitted By</p>
+                  <select className={inp('text-xs')} value={submittedBy} onChange={e=>setSubmittedBy(e.target.value)}>
+                    <option value="">Anyone</option>
+                    {submitterOptions.map(s=><option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+              )}
+
+              <p className="text-xs text-slate-500 text-center pt-1">{filtered.length} expense{filtered.length!==1?'s':''} match{filtered.length===1?'es':''}</p>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* List */}
