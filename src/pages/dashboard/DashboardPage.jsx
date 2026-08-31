@@ -312,12 +312,14 @@ function useInvoiceData(companyId, range) {
 
 function useBillData(companyId, range) {
   return useQuery({
-    queryKey: ['dash_bills', companyId, range],
+    queryKey: ['dash_bills', companyId],
     queryFn: async () => {
+      // Fetch ALL unpaid/part-paid bills regardless of date — balance due is what matters
       const { data } = await supabase.from('bills')
         .select('id,bill_number,vendor_name,total_amount,balance_due,status,bill_date,due_date')
         .eq('company_id', companyId)
-        .gte('bill_date', range.from).lte('bill_date', range.to)
+        .not('status', 'in', '("paid","cancelled")')
+        .gt('balance_due', 0)
         .order('bill_date', { ascending: false })
       return data || []
     },
