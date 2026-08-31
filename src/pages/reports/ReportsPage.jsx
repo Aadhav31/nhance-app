@@ -155,14 +155,15 @@ function Spinner() {
 // ─── Shared Drilldown Modal ───────────────────────────────────────────────────
 
 function DrilldownModal({ modal, onClose }) {
+  const [expandedRow, setExpandedRow] = useState(null)
   if (!modal) return null
   const total = modal.rows.reduce((s, r) => s + (Number(r.amount) || 0), 0)
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => { setExpandedRow(null); onClose() }}>
       <div className="bg-dark-800 border border-dark-600 rounded-2xl w-full max-w-2xl max-h-[80vh] flex flex-col shadow-2xl" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-dark-600">
           <h3 className="text-sm font-semibold text-slate-100">{modal.title}</h3>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-200 text-lg leading-none">✕</button>
+          <button onClick={() => { setExpandedRow(null); onClose() }} className="text-slate-400 hover:text-slate-200 text-lg leading-none">✕</button>
         </div>
         <div className="flex-1 overflow-auto">
           {modal.rows.length === 0 ? (
@@ -179,12 +180,35 @@ function DrilldownModal({ modal, onClose }) {
               </thead>
               <tbody>
                 {modal.rows.map((r, i) => (
-                  <tr key={i} className="border-b border-dark-700 hover:bg-dark-700/30 transition-colors">
-                    <td className="py-2 px-4 text-xs text-slate-400">{r.date ? fmtDate(r.date) : '—'}</td>
-                    <td className="py-2 px-4 text-xs text-slate-200">{r.label || '—'}</td>
-                    <td className="py-2 px-4 text-xs text-slate-500">{r.ref || '—'}</td>
-                    <td className="py-2 px-4 text-xs text-right font-mono text-slate-200">{fmt(r.amount)}</td>
-                  </tr>
+                  <>
+                    <tr key={i}
+                      className={`border-b border-dark-700 transition-colors ${r.extra ? 'cursor-pointer hover:bg-dark-700/40 group' : 'hover:bg-dark-700/30'} ${expandedRow === i ? 'bg-dark-700/30' : ''}`}
+                      onClick={() => r.extra ? setExpandedRow(expandedRow === i ? null : i) : undefined}>
+                      <td className="py-2 px-4 text-xs text-slate-400 whitespace-nowrap">{r.date ? fmtDate(r.date) : '—'}</td>
+                      <td className="py-2 px-4 text-xs text-slate-200 capitalize">
+                        <span className="flex items-center gap-1">
+                          {r.label || '—'}
+                          {r.extra && <span className={`text-[9px] text-primary-400 transition-transform inline-block ${expandedRow === i ? 'rotate-180' : ''}`}>▾</span>}
+                        </span>
+                      </td>
+                      <td className="py-2 px-4 text-xs text-slate-500">{r.ref || '—'}</td>
+                      <td className="py-2 px-4 text-xs text-right font-mono text-slate-200">{fmt(r.amount)}</td>
+                    </tr>
+                    {expandedRow === i && r.extra && (
+                      <tr key={`${i}-detail`} className="border-b border-dark-700 bg-dark-900/60">
+                        <td colSpan={4} className="px-5 py-3">
+                          <div className="grid grid-cols-2 gap-x-6 gap-y-1.5">
+                            {r.extra.filter(({v}) => v && v !== '—').map(({k, v}) => (
+                              <div key={k} className="flex gap-2">
+                                <span className="text-[10px] text-slate-500 min-w-[72px] shrink-0">{k}</span>
+                                <span className="text-[10px] text-slate-300 capitalize">{v}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </>
                 ))}
               </tbody>
             </table>
@@ -514,6 +538,7 @@ function EquipPLReport({ companyId, from, to }) {
         const rawOpRows   = eqShifts.filter(s=>s.operator_id).map(s=>({
           date: s.shift_date, label: s.operator_name||'Operator', ref: 'Daily shift rate',
           amount: salByOperator[s.operator_id]||0,
+          extra: [{ k: 'Operator', v: s.operator_name||'—' }, { k: 'Rate type', v: 'Daily' }],
         }))
 
         return {
@@ -697,7 +722,7 @@ function EquipPLReport({ companyId, from, to }) {
                             const catRows = r.rawExps.filter(e=>(e.category||'misc').toLowerCase()===cat).map(e=>({ date:e.expense_date, label:e.description||catLabel, ref:e.vendor_name||'', amount:Number(e.total_amount)||0 }))
                             return (
                               <div key={cat} className={`flex justify-between text-xs pl-2 py-0.5 rounded px-1 -mx-1 ${catRows.length>0?'cursor-pointer hover:bg-dark-700/40 group transition-colors':''}`}
-                                onClick={catRows.length>0?()=>setDrillModal({ title:`${r.eq.name} — ${catLabel}`, rows: catRows }):undefined}>
+                                onClick={catRows.length>0?()=>setDrillModal({ title:`${r.eq.name} — ${catLabel}`, rows: catRows.map(rr=>({...rr,extra:[{k:'Category',v:rr.label},{k:'Ref',v:rr.ref||'—'}]})) }):undefined}>
                                 <span className="text-slate-500 flex items-center gap-1">
                                   ↳ {catLabel}
                                   {catRows.length>0 && <span className="opacity-0 group-hover:opacity-60 text-primary-400 text-[9px]">↗</span>}

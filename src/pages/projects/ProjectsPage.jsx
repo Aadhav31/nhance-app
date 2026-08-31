@@ -1953,7 +1953,7 @@ function ProjectPLTab({ project, companyId, projectInvoices, projectPayments, de
     queryKey: ['proj_pl_exp', project.id, from, to],
     queryFn: async () => {
       const { data } = await supabase.from('expenses')
-        .select('id, expense_date, category, source, total_amount, equipment_id')
+        .select('id, expense_date, category, source, total_amount, equipment_id, vendor_name, description, payment_mode, submitted_by_name')
         .in('equipment_id', allEqIds)
         .eq('company_id', companyId)
         .gte('expense_date', from).lte('expense_date', to)
@@ -2095,19 +2095,53 @@ function ProjectPLTab({ project, companyId, projectInvoices, projectPayments, de
       date: fmtD(j.closed_at), label: j.jc_type || 'Job Card', sub: eqNameMap[j.equipment_id] || '', amount: Number(j.total_cost)||0,
     }))),
     field: () => openDrilldown('Field Expenses', validExpDD.filter(e=>e.source==='field_expense').map(e => ({
-      date: fmtD(e.expense_date), label: e.category || 'Field Expense', sub: eqNameMap[e.equipment_id] || '', amount: Number(e.total_amount)||0,
+      date: fmtD(e.expense_date), label: e.description || e.category || 'Field Expense', sub: e.vendor_name || eqNameMap[e.equipment_id] || '', amount: Number(e.total_amount)||0,
+      extra: [
+        { k: 'Category',    v: e.category || '—' },
+        { k: 'Vendor',      v: e.vendor_name || '—' },
+        { k: 'Description', v: e.description || '—' },
+        { k: 'Payment',     v: e.payment_mode || '—' },
+        { k: 'Equipment',   v: eqNameMap[e.equipment_id] || '—' },
+        { k: 'Submitted by',v: e.submitted_by_name || '—' },
+      ],
     }))),
     salary: () => openDrilldown('Salary (Operators)', validExpDD.filter(e=>e.source==='payroll'||e.category==='salary').map(e => ({
-      date: fmtD(e.expense_date), label: 'Operator Salary', sub: eqNameMap[e.equipment_id] || '', amount: Number(e.total_amount)||0,
+      date: fmtD(e.expense_date), label: e.description || 'Operator Salary', sub: eqNameMap[e.equipment_id] || '', amount: Number(e.total_amount)||0,
+      extra: [
+        { k: 'Vendor',      v: e.vendor_name || '—' },
+        { k: 'Description', v: e.description || '—' },
+        { k: 'Payment',     v: e.payment_mode || '—' },
+        { k: 'Equipment',   v: eqNameMap[e.equipment_id] || '—' },
+      ],
     }))),
     purchases: () => openDrilldown('Purchases', validExpDD.filter(e=>e.source==='purchase').map(e => ({
-      date: fmtD(e.expense_date), label: e.category || 'Purchase', sub: eqNameMap[e.equipment_id] || '', amount: Number(e.total_amount)||0,
+      date: fmtD(e.expense_date), label: e.description || e.category || 'Purchase', sub: e.vendor_name || eqNameMap[e.equipment_id] || '', amount: Number(e.total_amount)||0,
+      extra: [
+        { k: 'Category',    v: e.category || '—' },
+        { k: 'Vendor',      v: e.vendor_name || '—' },
+        { k: 'Description', v: e.description || '—' },
+        { k: 'Payment',     v: e.payment_mode || '—' },
+        { k: 'Equipment',   v: eqNameMap[e.equipment_id] || '—' },
+      ],
     }))),
     bills: () => openDrilldown('Bills', validBillsDD.map(b => ({
-      date: fmtD(b.bill_date), label: b.bill_number || 'Bill', sub: b.equipment_name || eqNameMap[b.equipment_id] || '', amount: Number(b.total_amount)||0,
+      date: fmtD(b.bill_date), label: b.bill_number || 'Bill', sub: b.vendor_name || b.equipment_name || eqNameMap[b.equipment_id] || '', amount: Number(b.total_amount)||0,
+      extra: [
+        { k: 'Vendor',    v: b.vendor_name || '—' },
+        { k: 'Equipment', v: b.equipment_name || eqNameMap[b.equipment_id] || '—' },
+        { k: 'Status',    v: b.status || '—' },
+      ],
     }))),
     other: () => openDrilldown('Other Expenses', validExpDD.filter(e=>e.source!=='field_expense'&&e.source!=='payroll'&&e.category!=='salary'&&e.source!=='purchase').map(e => ({
-      date: fmtD(e.expense_date), label: e.category || e.source || 'Other', sub: eqNameMap[e.equipment_id] || '', amount: Number(e.total_amount)||0,
+      date: fmtD(e.expense_date), label: e.description || e.category || e.source || 'Other', sub: e.vendor_name || eqNameMap[e.equipment_id] || '', amount: Number(e.total_amount)||0,
+      extra: [
+        { k: 'Category',    v: e.category || '—' },
+        { k: 'Source',      v: e.source || '—' },
+        { k: 'Vendor',      v: e.vendor_name || '—' },
+        { k: 'Description', v: e.description || '—' },
+        { k: 'Payment',     v: e.payment_mode || '—' },
+        { k: 'Equipment',   v: eqNameMap[e.equipment_id] || '—' },
+      ],
     }))),
   }
 
@@ -2220,55 +2254,85 @@ function ProjectPLTab({ project, companyId, projectInvoices, projectPayments, de
 
       {/* ── Drilldown Modal ──────────────────────────────────────────────── */}
       {drilldown && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={()=>setDrilldown(null)}>
-          <div className="bg-dark-800 border border-dark-600 rounded-2xl shadow-2xl w-full max-w-lg max-h-[80vh] flex flex-col" onClick={e=>e.stopPropagation()}>
-            {/* Header */}
-            <div className="flex items-center justify-between px-5 py-4 border-b border-dark-700">
-              <div>
-                <p className="text-sm font-semibold text-slate-100">{drilldown.title}</p>
-                <p className="text-[11px] text-slate-500 mt-0.5">{drilldown.rows.length} entries · {fmtM(drilldown.rows.reduce((s,r)=>s+r.amount,0))} total</p>
-              </div>
-              <button onClick={()=>setDrilldown(null)} className="text-slate-500 hover:text-slate-200 p-1 rounded-lg hover:bg-dark-700">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-              </button>
-            </div>
-
-            {/* Rows */}
-            <div className="overflow-y-auto flex-1">
-              {drilldown.rows.length === 0 ? (
-                <div className="flex items-center justify-center h-24 text-slate-500 text-sm">No records</div>
-              ) : (
-                <table className="w-full text-xs">
-                  <thead className="sticky top-0 bg-dark-800 border-b border-dark-700">
-                    <tr>
-                      <th className="text-left px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">Date</th>
-                      <th className="text-left px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">Description</th>
-                      <th className="text-left px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">Equipment / Ref</th>
-                      <th className="text-right px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">Amount</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {drilldown.rows.map((r, i) => (
-                      <tr key={i} className="border-b border-dark-700/40 hover:bg-dark-700/30 transition-colors">
-                        <td className="px-4 py-2.5 text-slate-400 whitespace-nowrap">{r.date}</td>
-                        <td className="px-4 py-2.5 text-slate-200 font-medium capitalize">{r.label}</td>
-                        <td className="px-4 py-2.5 text-slate-500 max-w-[140px] truncate">{r.sub || '—'}</td>
-                        <td className="px-4 py-2.5 text-right text-slate-100 font-mono font-semibold">{fmtM(r.amount)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                  <tfoot className="sticky bottom-0 bg-dark-800 border-t border-dark-600">
-                    <tr>
-                      <td colSpan={3} className="px-4 py-2.5 text-xs font-semibold text-slate-300">Total</td>
-                      <td className="px-4 py-2.5 text-right text-sm font-bold text-primary-300 font-mono">{fmtM(drilldown.rows.reduce((s,r)=>s+r.amount,0))}</td>
-                    </tr>
-                  </tfoot>
-                </table>
-              )}
-            </div>
-          </div>
-        </div>
+        <DrilldownDetail drilldown={drilldown} onClose={()=>setDrilldown(null)} fmtM={fmtM} />
       )}
+    </div>
+  )
+}
+
+// Standalone drilldown detail component (used by ProjectDetail above)
+function DrilldownDetail({ drilldown, onClose, fmtM }) {
+  const [expandedRow, setExpandedRow] = useState(null)
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-dark-800 border border-dark-600 rounded-2xl shadow-2xl w-full max-w-lg max-h-[80vh] flex flex-col" onClick={e=>e.stopPropagation()}>
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-dark-700">
+          <div>
+            <p className="text-sm font-semibold text-slate-100">{drilldown.title}</p>
+            <p className="text-[11px] text-slate-500 mt-0.5">{drilldown.rows.length} entries · {fmtM(drilldown.rows.reduce((s,r)=>s+r.amount,0))} total</p>
+          </div>
+          <button onClick={onClose} className="text-slate-500 hover:text-slate-200 p-1 rounded-lg hover:bg-dark-700">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        {/* Rows */}
+        <div className="overflow-y-auto flex-1">
+          {drilldown.rows.length === 0 ? (
+            <div className="flex items-center justify-center h-24 text-slate-500 text-sm">No records</div>
+          ) : (
+            <table className="w-full text-xs">
+              <thead className="sticky top-0 bg-dark-800 border-b border-dark-700">
+                <tr>
+                  <th className="text-left px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">Date</th>
+                  <th className="text-left px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">Description</th>
+                  <th className="text-left px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">Equipment / Ref</th>
+                  <th className="text-right px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {drilldown.rows.map((r, i) => (
+                  <>
+                    <tr key={i}
+                      className={`border-b border-dark-700/40 transition-colors ${r.extra ? 'cursor-pointer hover:bg-dark-700/40 group' : 'hover:bg-dark-700/30'} ${expandedRow === i ? 'bg-dark-700/30' : ''}`}
+                      onClick={() => r.extra ? setExpandedRow(expandedRow === i ? null : i) : undefined}>
+                      <td className="px-4 py-2.5 text-slate-400 whitespace-nowrap">{r.date}</td>
+                      <td className="px-4 py-2.5 text-slate-200 font-medium capitalize">
+                        <span className="flex items-center gap-1">
+                          {r.label}
+                          {r.extra && <span className={`text-[9px] text-primary-400 transition-transform inline-block ${expandedRow === i ? 'rotate-180' : ''}`}>▾</span>}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2.5 text-slate-500 max-w-[120px] truncate">{r.sub || '—'}</td>
+                      <td className="px-4 py-2.5 text-right text-slate-100 font-mono font-semibold">{fmtM(r.amount)}</td>
+                    </tr>
+                    {expandedRow === i && r.extra && (
+                      <tr key={`${i}-detail`} className="border-b border-dark-700/40 bg-dark-900/60">
+                        <td colSpan={4} className="px-5 py-3">
+                          <div className="grid grid-cols-2 gap-x-6 gap-y-1.5">
+                            {r.extra.filter(({v}) => v && v !== '—').map(({k, v}) => (
+                              <div key={k} className="flex gap-2">
+                                <span className="text-[10px] text-slate-500 min-w-[72px] shrink-0">{k}</span>
+                                <span className="text-[10px] text-slate-300 capitalize">{v}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </>
+                ))}
+              </tbody>
+              <tfoot className="sticky bottom-0 bg-dark-800 border-t border-dark-600">
+                <tr>
+                  <td colSpan={3} className="px-4 py-2.5 text-xs font-semibold text-slate-300">Total</td>
+                  <td className="px-4 py-2.5 text-right text-sm font-bold text-primary-300 font-mono">{fmtM(drilldown.rows.reduce((s,r)=>s+r.amount,0))}</td>
+                </tr>
+              </tfoot>
+            </table>
+          )}
+        </div>
+      </div>
     </div>
   )
 }
