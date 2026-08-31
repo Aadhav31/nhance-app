@@ -32,6 +32,7 @@ const AccountsPage       = lazy(() => import('./pages/accounts/AccountsPage'))
 const SalesPage          = lazy(() => import('./pages/sales/SalesPage'))
 const PurchasePage       = lazy(() => import('./pages/purchase/PurchasePage'))
 const ReportsPage        = lazy(() => import('./pages/reports/ReportsPage'))
+const FinancialsPage     = lazy(() => import('./pages/financials/FinancialsPage'))
 const HRPage             = lazy(() => import('./pages/hr/HrPage'))
 const ExpensePlannerPage = lazy(() => import('./pages/planner/ExpensePlannerPage'))
 const FieldExpensePage   = lazy(() => import('./pages/fieldexpense/FieldExpensePage'))
@@ -156,6 +157,7 @@ const ALL_PAGES = [
   { key: 'sales',        Icon: TrendingUp,      label: 'Sales'                },
   { key: 'purchase',     Icon: ShoppingCart,    label: 'Purchase'             },
   { key: 'reports',      Icon: BarChart3,       label: 'Reports'              },
+  { key: 'financials',   Icon: BarChart3,       label: 'Financial Statements' },
   { key: 'hr',           Icon: Users,           label: 'Employee Management'  },
   { key: 'settings',     Icon: Settings,        label: 'Settings'             },
   { key: 'company',      Icon: Building2,       label: 'Company Profile'      },
@@ -352,6 +354,7 @@ function AppShell() {
           </Suspense>
         )
       case 'reports':      return wrap(ReportsPage,        MODULES.REPORTS)
+      case 'financials':   return wrap(FinancialsPage,     MODULES.ACCOUNTS)
       case 'expenses':
         return hasModule(MODULES.ACCOUNTS) ? (
           <Suspense fallback={<LoadingScreen message="Loading expenses…" />}>

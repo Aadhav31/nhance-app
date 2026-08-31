@@ -191,8 +191,10 @@ export const NAV_ITEMS = [
   {
     section: 'Insights',
     items: [
-      { key: 'reports', label: 'Reports', icon: 'BarChart3', module: MODULES.REPORTS,
+      { key: 'reports',    label: 'Reports',               icon: 'BarChart3', module: MODULES.REPORTS,
         roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
+      { key: 'financials', label: 'Financial Statements',  icon: 'FileText',  module: MODULES.ACCOUNTS,
+        roles: [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
     ],
   },
   {

@@ -1648,6 +1648,24 @@ function DashboardTab({ companyId, onNavigate, onNavigatePage }) {
         ))}
       </div>
 
+      {/* Financial Statements shortcut */}
+      {onNavigatePage && (
+        <button
+          onClick={() => onNavigatePage('financials')}
+          className="w-full flex items-center justify-between bg-dark-800 border border-primary-700/30 hover:border-primary-600/60 rounded-xl px-4 py-3 mb-4 text-left transition-all group">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-primary-900/40 border border-primary-700/40 flex items-center justify-center">
+              <FileText className="w-4 h-4 text-primary-400" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-slate-200">Financial Statements</p>
+              <p className="text-[10px] text-slate-500">P&L · Balance Sheet · Cash Flow · Trial Balance</p>
+            </div>
+          </div>
+          <span className="text-xs text-primary-400 opacity-0 group-hover:opacity-100 transition-opacity">Open →</span>
+        </button>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Outstanding */}
         <div className="bg-dark-800 rounded-xl border border-dark-700 p-4">
