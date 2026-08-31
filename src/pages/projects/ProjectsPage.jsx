@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useCallback } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import PagePanel from '../../components/shared/PagePanel'
@@ -1891,6 +1891,35 @@ function ProjectPLTab({ project, companyId, projectInvoices, projectPayments, de
 
   const eqEnabled = allEqIds.length > 0
 
+  // Deployment period map: equipId → [{from, to}]
+  // Used to exclude expenses that occurred after equipment was withdrawn from this project
+  const deployPeriods = useMemo(() => {
+    const map = {}
+    // Currently-assigned equipment: deployed from project start to "today" (no withdrawn_date)
+    equipment.forEach(e => {
+      if (!map[e.id]) map[e.id] = []
+      map[e.id].push({ from: project.start_date?.slice(0,10) || '2000-01-01', to: todayStr })
+    })
+    // Historical deployments: use deployed_date / withdrawn_date
+    deployments.forEach(d => {
+      const id = d.equipment?.id; if (!id) return
+      if (!map[id]) map[id] = []
+      map[id].push({
+        from: d.deployed_date ? d.deployed_date.slice(0,10) : '2000-01-01',
+        to:   d.withdrawn_date ? d.withdrawn_date.slice(0,10) : todayStr,
+      })
+    })
+    return map
+  }, [equipment, deployments, project.start_date, todayStr])
+
+  // Returns true if the given date falls within any deployment period for that equipment on this project
+  const wasOnProject = useCallback((equipId, date) => {
+    if (!date) return true // no date = can't filter, include it
+    const periods = deployPeriods[equipId]
+    if (!periods) return false
+    return periods.some(p => date >= p.from && date <= p.to)
+  }, [deployPeriods])
+
   // 1. Fuel issued to project equipment
   const { data: fuelIssues = [], isLoading: fuelLoad } = useQuery({
     queryKey: ['proj_pl_fuel', project.id, from, to],
@@ -1974,29 +2003,33 @@ function ProjectPLTab({ project, companyId, projectInvoices, projectPayments, de
     const contractVal    = Number(project.contract_value) || 0
     const yetToBill      = Math.max(0, contractVal - totalRaised)
 
-    // Fuel cost (issued qty × rate, fallback ₹95/L)
+    // Fuel cost — only when equipment was on this project on that date
     const DIESEL_FALLBACK = 95
-    const fuelCost   = fuelIssues.reduce((s, f) =>
+    const validFuel  = fuelIssues.filter(f => wasOnProject(f.equipment_id, f.issue_date))
+    const fuelCost   = validFuel.reduce((s, f) =>
       s + (Number(f.qty_liters || 0) * ((Number(f.rate_per_litre) || 0) || DIESEL_FALLBACK)), 0)
-    const fuelLitres = fuelIssues.reduce((s, f) => s + Number(f.qty_liters || 0), 0)
+    const fuelLitres = validFuel.reduce((s, f) => s + Number(f.qty_liters || 0), 0)
 
-    // Maintenance
-    const maintCost = jobCards.reduce((s, j) => s + Number(j.total_cost || 0), 0)
+    // Maintenance — only when equipment was on this project on that date
+    const validJobs  = jobCards.filter(j => wasOnProject(j.equipment_id, j.closed_at?.slice(0,10)))
+    const maintCost  = validJobs.reduce((s, j) => s + Number(j.total_cost || 0), 0)
 
-    // Equipment-tagged expense breakdown
-    const fieldCost = eqExp
+    // Equipment-tagged expense breakdown — filter by deployment period
+    const validExp   = eqExp.filter(e => wasOnProject(e.equipment_id, e.expense_date))
+
+    const fieldCost = validExp
       .filter(e => e.source === 'field_expense')
       .reduce((s, e) => s + Number(e.total_amount || 0), 0)
 
-    const salaryCost = eqExp
+    const salaryCost = validExp
       .filter(e => e.source === 'payroll' || e.category === 'salary')
       .reduce((s, e) => s + Number(e.total_amount || 0), 0)
 
-    const purchaseExpCost = eqExp
+    const purchaseExpCost = validExp
       .filter(e => e.source === 'purchase')
       .reduce((s, e) => s + Number(e.total_amount || 0), 0)
 
-    const otherCost = eqExp
+    const otherCost = validExp
       .filter(e =>
         e.source !== 'field_expense' &&
         e.source !== 'payroll' && e.category !== 'salary' &&
@@ -2004,7 +2037,9 @@ function ProjectPLTab({ project, companyId, projectInvoices, projectPayments, de
       )
       .reduce((s, e) => s + Number(e.total_amount || 0), 0)
 
-    const billsCost = eqBills.reduce((s, b) => s + Number(b.total_amount || 0), 0)
+    // Bills — filter by deployment period
+    const validBills = eqBills.filter(b => wasOnProject(b.equipment_id, b.bill_date))
+    const billsCost  = validBills.reduce((s, b) => s + Number(b.total_amount || 0), 0)
 
     const totalCost = fuelCost + maintCost + fieldCost + salaryCost + purchaseExpCost + otherCost + billsCost
     const netPL     = totalRaised - totalCost
@@ -2036,6 +2071,12 @@ function ProjectPLTab({ project, companyId, projectInvoices, projectPayments, de
 
   const openDrilldown = (title, rows) => setDrilldown({ title, rows })
 
+  // validXxx arrays — filtered by deployment period (mirrors pl useMemo)
+  const validFuelDD  = fuelIssues.filter(f => wasOnProject(f.equipment_id, f.issue_date))
+  const validJobsDD  = jobCards.filter(j => wasOnProject(j.equipment_id, j.closed_at?.slice(0,10)))
+  const validExpDD   = eqExp.filter(e => wasOnProject(e.equipment_id, e.expense_date))
+  const validBillsDD = eqBills.filter(b => wasOnProject(b.equipment_id, b.bill_date))
+
   const drilldownConfig = {
     invoiced: () => openDrilldown('Total Invoiced', projectInvoices.map(i => ({
       date: fmtD(i.invoice_date), label: i.invoice_number || 'Invoice', sub: i.client_name || '', amount: Number(i.total_amount)||0,
@@ -2046,26 +2087,26 @@ function ProjectPLTab({ project, companyId, projectInvoices, projectPayments, de
     outstanding: () => openDrilldown('Outstanding Invoices', projectInvoices.filter(i=>i.status!=='paid').map(i => ({
       date: fmtD(i.invoice_date), label: i.invoice_number || 'Invoice', sub: i.status, amount: Math.max(0,(Number(i.total_amount)||0)-(Number(i.paid_amount)||0)),
     }))),
-    fuel: () => openDrilldown('Fuel Issues', fuelIssues.map(f => ({
-      date: fmtD(f.issue_date), label: `${Number(f.qty_liters||0).toFixed(1)} L`, sub: eqNameMap[f.equipment_id] || f.equipment_id || '',
+    fuel: () => openDrilldown('Fuel Issues', validFuelDD.map(f => ({
+      date: fmtD(f.issue_date), label: `${Number(f.qty_liters||0).toFixed(1)} L`, sub: eqNameMap[f.equipment_id] || '',
       amount: Number(f.qty_liters||0) * (Number(f.rate_per_litre)||95),
     }))),
-    maintenance: () => openDrilldown('Maintenance (Job Cards)', jobCards.map(j => ({
+    maintenance: () => openDrilldown('Maintenance (Job Cards)', validJobsDD.map(j => ({
       date: fmtD(j.closed_at), label: j.jc_type || 'Job Card', sub: eqNameMap[j.equipment_id] || '', amount: Number(j.total_cost)||0,
     }))),
-    field: () => openDrilldown('Field Expenses', eqExp.filter(e=>e.source==='field_expense').map(e => ({
+    field: () => openDrilldown('Field Expenses', validExpDD.filter(e=>e.source==='field_expense').map(e => ({
       date: fmtD(e.expense_date), label: e.category || 'Field Expense', sub: eqNameMap[e.equipment_id] || '', amount: Number(e.total_amount)||0,
     }))),
-    salary: () => openDrilldown('Salary (Operators)', eqExp.filter(e=>e.source==='payroll'||e.category==='salary').map(e => ({
+    salary: () => openDrilldown('Salary (Operators)', validExpDD.filter(e=>e.source==='payroll'||e.category==='salary').map(e => ({
       date: fmtD(e.expense_date), label: 'Operator Salary', sub: eqNameMap[e.equipment_id] || '', amount: Number(e.total_amount)||0,
     }))),
-    purchases: () => openDrilldown('Purchases', eqExp.filter(e=>e.source==='purchase').map(e => ({
+    purchases: () => openDrilldown('Purchases', validExpDD.filter(e=>e.source==='purchase').map(e => ({
       date: fmtD(e.expense_date), label: e.category || 'Purchase', sub: eqNameMap[e.equipment_id] || '', amount: Number(e.total_amount)||0,
     }))),
-    bills: () => openDrilldown('Bills', eqBills.map(b => ({
+    bills: () => openDrilldown('Bills', validBillsDD.map(b => ({
       date: fmtD(b.bill_date), label: b.bill_number || 'Bill', sub: b.equipment_name || eqNameMap[b.equipment_id] || '', amount: Number(b.total_amount)||0,
     }))),
-    other: () => openDrilldown('Other Expenses', eqExp.filter(e=>e.source!=='field_expense'&&e.source!=='payroll'&&e.category!=='salary'&&e.source!=='purchase').map(e => ({
+    other: () => openDrilldown('Other Expenses', validExpDD.filter(e=>e.source!=='field_expense'&&e.source!=='payroll'&&e.category!=='salary'&&e.source!=='purchase').map(e => ({
       date: fmtD(e.expense_date), label: e.category || e.source || 'Other', sub: eqNameMap[e.equipment_id] || '', amount: Number(e.total_amount)||0,
     }))),
   }
@@ -2131,13 +2172,13 @@ function ProjectPLTab({ project, companyId, projectInvoices, projectPayments, de
               <IndianRupee className="w-4 h-4 text-orange-400" />
               <span className="text-sm font-semibold text-slate-200">Costs</span>
             </div>
-            <PLRow label="Fuel"               value={fmtM(pl.fuelCost)}         sub={pl.fuelLitres>0?`${pl.fuelLitres.toFixed(0)}L`:undefined}       onClick={fuelIssues.length>0?drilldownConfig.fuel:undefined} />
-            <PLRow label="Maintenance"        value={fmtM(pl.maintCost)}        sub={jobCards.length>0?`${jobCards.length} JC`:undefined}               onClick={jobCards.length>0?drilldownConfig.maintenance:undefined} />
-            <PLRow label="Field Expenses"     value={fmtM(pl.fieldCost)}                                                                                onClick={eqExp.filter(e=>e.source==='field_expense').length>0?drilldownConfig.field:undefined} />
-            <PLRow label="Salary (Operators)" value={fmtM(pl.salaryCost)}                                                                               onClick={eqExp.filter(e=>e.source==='payroll'||e.category==='salary').length>0?drilldownConfig.salary:undefined} />
-            <PLRow label="Purchases"          value={fmtM(pl.purchaseExpCost)}                                                                          onClick={eqExp.filter(e=>e.source==='purchase').length>0?drilldownConfig.purchases:undefined} />
-            <PLRow label="Bills"              value={fmtM(pl.billsCost)}        sub={eqBills.length>0?`${eqBills.length} bills`:undefined}               onClick={eqBills.length>0?drilldownConfig.bills:undefined} />
-            <PLRow label="Other"              value={fmtM(pl.otherCost)}                                                                                onClick={eqExp.filter(e=>e.source!=='field_expense'&&e.source!=='payroll'&&e.category!=='salary'&&e.source!=='purchase').length>0?drilldownConfig.other:undefined} />
+            <PLRow label="Fuel"               value={fmtM(pl.fuelCost)}         sub={pl.fuelLitres>0?`${pl.fuelLitres.toFixed(0)}L`:undefined}       onClick={validFuelDD.length>0?drilldownConfig.fuel:undefined} />
+            <PLRow label="Maintenance"        value={fmtM(pl.maintCost)}        sub={validJobsDD.length>0?`${validJobsDD.length} JC`:undefined}          onClick={validJobsDD.length>0?drilldownConfig.maintenance:undefined} />
+            <PLRow label="Field Expenses"     value={fmtM(pl.fieldCost)}                                                                                onClick={validExpDD.filter(e=>e.source==='field_expense').length>0?drilldownConfig.field:undefined} />
+            <PLRow label="Salary (Operators)" value={fmtM(pl.salaryCost)}                                                                               onClick={validExpDD.filter(e=>e.source==='payroll'||e.category==='salary').length>0?drilldownConfig.salary:undefined} />
+            <PLRow label="Purchases"          value={fmtM(pl.purchaseExpCost)}                                                                          onClick={validExpDD.filter(e=>e.source==='purchase').length>0?drilldownConfig.purchases:undefined} />
+            <PLRow label="Bills"              value={fmtM(pl.billsCost)}        sub={validBillsDD.length>0?`${validBillsDD.length} bills`:undefined}     onClick={validBillsDD.length>0?drilldownConfig.bills:undefined} />
+            <PLRow label="Other"              value={fmtM(pl.otherCost)}                                                                                onClick={validExpDD.filter(e=>e.source!=='field_expense'&&e.source!=='payroll'&&e.category!=='salary'&&e.source!=='purchase').length>0?drilldownConfig.other:undefined} />
             <p className="text-xs text-slate-500 mt-3 pt-2 border-t border-dark-700/40 leading-relaxed">
               Costs shown are for equipment deployed on this project only. Company-wide overheads (EMI, office salary) are excluded.
             </p>
