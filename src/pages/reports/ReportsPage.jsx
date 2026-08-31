@@ -152,6 +152,53 @@ function Spinner() {
   return <div className="flex items-center justify-center py-16"><div className="w-6 h-6 border-2 border-primary-500 border-t-transparent rounded-full animate-spin" /></div>
 }
 
+// ─── Shared Drilldown Modal ───────────────────────────────────────────────────
+
+function DrilldownModal({ modal, onClose }) {
+  if (!modal) return null
+  const total = modal.rows.reduce((s, r) => s + (Number(r.amount) || 0), 0)
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onClose}>
+      <div className="bg-dark-800 border border-dark-600 rounded-2xl w-full max-w-2xl max-h-[80vh] flex flex-col shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-dark-600">
+          <h3 className="text-sm font-semibold text-slate-100">{modal.title}</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-200 text-lg leading-none">✕</button>
+        </div>
+        <div className="flex-1 overflow-auto">
+          {modal.rows.length === 0 ? (
+            <div className="text-center text-slate-500 text-sm py-12">No records found</div>
+          ) : (
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 bg-dark-800 border-b border-dark-600">
+                <tr>
+                  <th className="text-left text-[10px] font-semibold text-slate-500 uppercase tracking-wide py-2 px-4">Date</th>
+                  <th className="text-left text-[10px] font-semibold text-slate-500 uppercase tracking-wide py-2 px-4">Description</th>
+                  <th className="text-left text-[10px] font-semibold text-slate-500 uppercase tracking-wide py-2 px-4">Ref</th>
+                  <th className="text-right text-[10px] font-semibold text-slate-500 uppercase tracking-wide py-2 px-4">Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {modal.rows.map((r, i) => (
+                  <tr key={i} className="border-b border-dark-700 hover:bg-dark-700/30 transition-colors">
+                    <td className="py-2 px-4 text-xs text-slate-400">{r.date ? fmtDate(r.date) : '—'}</td>
+                    <td className="py-2 px-4 text-xs text-slate-200">{r.label || '—'}</td>
+                    <td className="py-2 px-4 text-xs text-slate-500">{r.ref || '—'}</td>
+                    <td className="py-2 px-4 text-xs text-right font-mono text-slate-200">{fmt(r.amount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+        <div className="px-5 py-3 border-t border-dark-600 flex justify-between items-center bg-dark-900/40 rounded-b-2xl">
+          <span className="text-[11px] text-slate-500">{modal.rows.length} records</span>
+          <span className="text-sm font-bold text-slate-200">{fmt(total)}</span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Equipment Utilization ────────────────────────────────────────────────────
 
 function EquipUtilizationReport({ companyId, from, to }) {
@@ -289,6 +336,7 @@ function calcRevenue(deployment, workingHrs, shiftDays, shiftsByDate) {
 
 function EquipPLReport({ companyId, from, to }) {
   const [expandedId, setExpandedId] = useState(null)
+  const [drillModal, setDrillModal] = useState(null)
 
   const { data=[], isLoading } = useQuery({
     queryKey: ['rpt_equip_pl_full', companyId, from, to],
@@ -315,6 +363,8 @@ function EquipPLReport({ companyId, from, to }) {
 
       // ── 4. Fuel entries in period ──────────────────────────────────────────
       let fuelByEq = {}
+      let rawFuelByEq = {}
+      const shiftDateMap = Object.fromEntries((shifts||[]).map(s=>[s.id, s.shift_date]))
       if (shiftIds.length) {
         const { data: fuel } = await supabase.from('shift_fuel_entries')
           .select('shift_id,equipment_id,quantity_liters,total_amount,fuel_source')
@@ -325,6 +375,10 @@ function EquipPLReport({ companyId, from, to }) {
           fuelByEq[f.equipment_id].qty        += Number(f.quantity_liters)||0
           fuelByEq[f.equipment_id].clientQty  += isClientFuel ? Number(f.quantity_liters)||0 : 0
           fuelByEq[f.equipment_id].amt        += isClientFuel ? 0 : (Number(f.total_amount)||0)
+          if (!isClientFuel) {
+            if (!rawFuelByEq[f.equipment_id]) rawFuelByEq[f.equipment_id] = []
+            rawFuelByEq[f.equipment_id].push({ date: shiftDateMap[f.shift_id]||'', label: `${Number(f.quantity_liters)||0} L`, ref: 'Fuel fill', amount: Number(f.total_amount)||0 })
+          }
         }
       }
 
@@ -344,25 +398,25 @@ function EquipPLReport({ companyId, from, to }) {
 
       // ── 6. Maintenance cost ────────────────────────────────────────────────
       const { data: maint } = await supabase.from('maintenance_records')
-        .select('equipment_id,total_cost').eq('company_id', companyId)
+        .select('equipment_id,total_cost,service_date,maintenance_type,technician_name').eq('company_id', companyId)
         .gte('service_date', from).lte('service_date', to).in('equipment_id', eqIds)
 
       // ── 7. Spare parts (inventory_transactions type='issue'/'out') ─────────
       const { data: spares } = await supabase.from('inventory_transactions')
-        .select('equipment_id,total_cost').eq('company_id', companyId)
+        .select('equipment_id,total_cost,transaction_date,item_name').eq('company_id', companyId)
         .in('transaction_type', ['issue'])
         .gte('transaction_date', from).lte('transaction_date', to)
         .in('equipment_id', eqIds)
 
       // ── 8. Direct expenses tagged to equipment (incl. salary, EMI, accommodation, etc.)
       const { data: exps } = await supabase.from('expenses')
-        .select('equipment_id,total_amount,category').eq('company_id', companyId)
+        .select('equipment_id,total_amount,category,expense_date,vendor_name,description').eq('company_id', companyId)
         .gte('expense_date', from).lte('expense_date', to)
         .in('equipment_id', eqIds)
 
       // ── 8b. Bills tagged to equipment (vendor bills for repairs, spares, services etc.)
       const { data: billExps } = await supabase.from('bills')
-        .select('equipment_id,total_amount')
+        .select('equipment_id,total_amount,bill_date,vendor_name,bill_number')
         .eq('company_id', companyId)
         .gte('bill_date', from).lte('bill_date', to)
         .neq('status', 'cancelled')
@@ -451,6 +505,17 @@ function EquipPLReport({ companyId, from, to }) {
         }
 
         if (workingHrs === 0 && totalExpense === 0 && calcRevenue_ === 0) return null
+
+        // Raw records for drilldown modals
+        const rawMaintEq  = (maint||[]).filter(m=>m.equipment_id===eq.id)
+        const rawExpsEq   = (exps||[]).filter(e=>e.equipment_id===eq.id)
+        const rawBillsEq  = (billExps||[]).filter(b=>b.equipment_id===eq.id)
+        const rawSparesEq = (spares||[]).filter(sp=>sp.equipment_id===eq.id)
+        const rawOpRows   = eqShifts.filter(s=>s.operator_id).map(s=>({
+          date: s.shift_date, label: s.operator_name||'Operator', ref: 'Daily shift rate',
+          amount: salByOperator[s.operator_id]||0,
+        }))
+
         return {
           id: eq.id, eq, deploy,
           workingHrs, shiftDays, totalShiftCount, maxShiftsPerDay,
@@ -458,6 +523,9 @@ function EquipPLReport({ companyId, from, to }) {
           fuelCost, fuelQtyOwn, fuelByClient,
           operatorCost, maintCost, sparesCost, directCost, billCost, byCategory,
           totalExpense, netPL, fuelAlert,
+          rawFuel: rawFuelByEq[eq.id]||[],
+          rawMaint: rawMaintEq, rawSpares: rawSparesEq, rawExps: rawExpsEq,
+          rawBills: rawBillsEq, rawOpRows,
         }
       }).filter(Boolean).sort((a,b)=>b.netPL-a.netPL)
     },
@@ -576,40 +644,86 @@ function EquipPLReport({ companyId, from, to }) {
                   {/* Expense breakdown */}
                   <div>
                     <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-2">Expenses</p>
-                    <div className="space-y-1">
-                      <div className="flex justify-between text-xs">
-                        <span className="text-slate-400">Fuel {r.fuelByClient?'(client-supplied)':''}</span>
-                        <span className={r.fuelByClient?'text-slate-500 line-through':r.fuelAlert?'text-red-400':'text-yellow-400'}>{fmt(r.fuelCost)}</span>
+                    <div className="space-y-0.5">
+                      {/* Fuel */}
+                      <div className={`flex justify-between text-xs py-0.5 rounded px-1 -mx-1 ${!r.fuelByClient && r.rawFuel.length>0?'cursor-pointer hover:bg-dark-700/40 group transition-colors':''}`}
+                        onClick={!r.fuelByClient && r.rawFuel.length>0?()=>setDrillModal({ title:`${r.eq.name} — Fuel Fills`, rows: r.rawFuel }):undefined}>
+                        <span className="text-slate-400 flex items-center gap-1">
+                          Fuel {r.fuelByClient?'(client-supplied)':''}
+                          {!r.fuelByClient && r.rawFuel.length>0 && <span className="opacity-0 group-hover:opacity-60 text-primary-400 text-[9px]">↗</span>}
+                        </span>
+                        <span className={`font-mono ${r.fuelByClient?'text-slate-500 line-through':r.fuelAlert?'text-red-400':'text-yellow-400'} ${!r.fuelByClient&&r.rawFuel.length>0?'underline underline-offset-2 decoration-dashed':''}`}>{fmt(r.fuelCost)}</span>
                       </div>
                       {r.fuelAlert && (
-                        <div className="flex justify-between text-[10px]"><span className="text-red-500">⚠ Excess fuel</span><span className="text-red-400">{fmtN(r.fuelAlert.excess,1)} L over</span></div>
+                        <div className="flex justify-between text-[10px] px-1"><span className="text-red-500">⚠ Excess fuel</span><span className="text-red-400">{fmtN(r.fuelAlert.excess,1)} L over</span></div>
                       )}
-                      <div className="flex justify-between text-xs"><span className="text-slate-400">Operator salary</span><span className="text-orange-300">{fmt(r.operatorCost)}</span></div>
-                      <div className="flex justify-between text-xs"><span className="text-slate-400">Maintenance</span><span className="text-orange-400">{fmt(r.maintCost)}</span></div>
-                      <div className="flex justify-between text-xs"><span className="text-slate-400">Spare parts</span><span className="text-orange-400">{fmt(r.sparesCost)}</span></div>
+                      {/* Operator salary */}
+                      <div className={`flex justify-between text-xs py-0.5 rounded px-1 -mx-1 ${r.rawOpRows.length>0?'cursor-pointer hover:bg-dark-700/40 group transition-colors':''}`}
+                        onClick={r.rawOpRows.length>0?()=>setDrillModal({ title:`${r.eq.name} — Operator Salary`, rows: r.rawOpRows }):undefined}>
+                        <span className="text-slate-400 flex items-center gap-1">
+                          Operator salary
+                          {r.rawOpRows.length>0 && <span className="opacity-0 group-hover:opacity-60 text-primary-400 text-[9px]">↗</span>}
+                        </span>
+                        <span className={`font-mono text-orange-300 ${r.rawOpRows.length>0?'underline underline-offset-2 decoration-dashed':''}`}>{fmt(r.operatorCost)}</span>
+                      </div>
+                      {/* Maintenance */}
+                      <div className={`flex justify-between text-xs py-0.5 rounded px-1 -mx-1 ${r.rawMaint.length>0?'cursor-pointer hover:bg-dark-700/40 group transition-colors':''}`}
+                        onClick={r.rawMaint.length>0?()=>setDrillModal({ title:`${r.eq.name} — Maintenance`, rows: r.rawMaint.map(m=>({ date:m.service_date, label:(m.maintenance_type||'').replace(/_/g,' ')||'Maintenance', ref:m.technician_name||'', amount:Number(m.total_cost)||0 })) }):undefined}>
+                        <span className="text-slate-400 flex items-center gap-1">
+                          Maintenance
+                          {r.rawMaint.length>0 && <span className="opacity-0 group-hover:opacity-60 text-primary-400 text-[9px]">↗</span>}
+                        </span>
+                        <span className={`font-mono text-orange-400 ${r.rawMaint.length>0?'underline underline-offset-2 decoration-dashed':''}`}>{fmt(r.maintCost)}</span>
+                      </div>
+                      {/* Spare parts */}
+                      <div className={`flex justify-between text-xs py-0.5 rounded px-1 -mx-1 ${r.rawSpares.length>0?'cursor-pointer hover:bg-dark-700/40 group transition-colors':''}`}
+                        onClick={r.rawSpares.length>0?()=>setDrillModal({ title:`${r.eq.name} — Spare Parts`, rows: r.rawSpares.map(s=>({ date:s.transaction_date, label:s.item_name||'Spare part', ref:'Issue', amount:Number(s.total_cost)||0 })) }):undefined}>
+                        <span className="text-slate-400 flex items-center gap-1">
+                          Spare parts
+                          {r.rawSpares.length>0 && <span className="opacity-0 group-hover:opacity-60 text-primary-400 text-[9px]">↗</span>}
+                        </span>
+                        <span className={`font-mono text-orange-400 ${r.rawSpares.length>0?'underline underline-offset-2 decoration-dashed':''}`}>{fmt(r.sparesCost)}</span>
+                      </div>
                       {/* Per-category expense breakdown */}
                       {r.directCost > 0 && Object.keys(r.byCategory).length > 0 ? (
                         <>
-                          {Object.entries(r.byCategory).map(([cat, amt]) => {
+                          {Object.entries(r.byCategory).filter(([cat])=>cat!=='vendor bills').map(([cat, amt]) => {
                             const catLabel = {
                               salary: 'Salary', emi: 'EMI / Loan', fuel: 'Fuel (exp)',
                               accommodation: 'Accommodation', travel: 'Travel',
                               food: 'Food / Meals', repairs: 'Repairs',
                               misc: 'Miscellaneous',
                             }[cat] || cat.charAt(0).toUpperCase() + cat.slice(1)
+                            const catRows = r.rawExps.filter(e=>(e.category||'misc').toLowerCase()===cat).map(e=>({ date:e.expense_date, label:e.description||catLabel, ref:e.vendor_name||'', amount:Number(e.total_amount)||0 }))
                             return (
-                              <div key={cat} className="flex justify-between text-xs pl-2">
-                                <span className="text-slate-500">↳ {catLabel}</span>
-                                <span className="text-orange-400">{fmt(amt)}</span>
+                              <div key={cat} className={`flex justify-between text-xs pl-2 py-0.5 rounded px-1 -mx-1 ${catRows.length>0?'cursor-pointer hover:bg-dark-700/40 group transition-colors':''}`}
+                                onClick={catRows.length>0?()=>setDrillModal({ title:`${r.eq.name} — ${catLabel}`, rows: catRows }):undefined}>
+                                <span className="text-slate-500 flex items-center gap-1">
+                                  ↳ {catLabel}
+                                  {catRows.length>0 && <span className="opacity-0 group-hover:opacity-60 text-primary-400 text-[9px]">↗</span>}
+                                </span>
+                                <span className={`font-mono text-orange-400 ${catRows.length>0?'underline underline-offset-2 decoration-dashed':''}`}>{fmt(amt)}</span>
                               </div>
                             )
                           })}
-                          <div className="flex justify-between text-xs font-semibold"><span className="text-slate-400">Total tagged expenses</span><span className="text-orange-400">{fmt(r.directCost)}</span></div>
+                          {/* Vendor bills as a category */}
+                          {r.rawBills.length>0 && (
+                            <div className="flex justify-between text-xs pl-2 py-0.5 rounded px-1 -mx-1 cursor-pointer hover:bg-dark-700/40 group transition-colors"
+                              onClick={()=>setDrillModal({ title:`${r.eq.name} — Vendor Bills`, rows: r.rawBills.map(b=>({ date:b.bill_date, label:b.bill_number||'Bill', ref:b.vendor_name||'', amount:Number(b.total_amount)||0 })) })}>
+                              <span className="text-slate-500 flex items-center gap-1">↳ Vendor bills <span className="opacity-0 group-hover:opacity-60 text-primary-400 text-[9px]">↗</span></span>
+                              <span className="font-mono text-orange-400 underline underline-offset-2 decoration-dashed">{fmt(r.billCost)}</span>
+                            </div>
+                          )}
+                          <div className="flex justify-between text-xs font-semibold"><span className="text-slate-400">Total tagged expenses</span><span className="font-mono text-orange-400">{fmt(r.directCost)}</span></div>
                         </>
                       ) : (
-                        <div className="flex justify-between text-xs"><span className="text-slate-400">Other expenses</span><span className="text-orange-400">{fmt(r.directCost)}</span></div>
+                        <div className={`flex justify-between text-xs py-0.5 rounded px-1 -mx-1 ${r.rawExps.length>0||r.rawBills.length>0?'cursor-pointer hover:bg-dark-700/40 group transition-colors':''}`}
+                          onClick={r.rawExps.length>0||r.rawBills.length>0?()=>setDrillModal({ title:`${r.eq.name} — Other Expenses`, rows: [...r.rawExps.map(e=>({ date:e.expense_date, label:e.description||e.category||'Expense', ref:e.vendor_name||'', amount:Number(e.total_amount)||0 })), ...r.rawBills.map(b=>({ date:b.bill_date, label:b.bill_number||'Bill', ref:b.vendor_name||'', amount:Number(b.total_amount)||0 }))] }):undefined}>
+                          <span className="text-slate-400 flex items-center gap-1">Other expenses {(r.rawExps.length>0||r.rawBills.length>0)&&<span className="opacity-0 group-hover:opacity-60 text-primary-400 text-[9px]">↗</span>}</span>
+                          <span className={`font-mono text-orange-400 ${r.rawExps.length>0||r.rawBills.length>0?'underline underline-offset-2 decoration-dashed':''}`}>{fmt(r.directCost + r.billCost)}</span>
+                        </div>
                       )}
-                      <div className="flex justify-between text-xs font-semibold border-t border-dark-600 pt-1 mt-1"><span className="text-slate-300">Total Expenses</span><span className="text-red-400">{fmt(r.totalExpense)}</span></div>
+                      <div className="flex justify-between text-xs font-semibold border-t border-dark-600 pt-1 mt-1"><span className="text-slate-300">Total Expenses</span><span className="font-mono text-red-400">{fmt(r.totalExpense)}</span></div>
                     </div>
                   </div>
 
@@ -668,6 +782,7 @@ function EquipPLReport({ companyId, from, to }) {
         {key:'other_expenses',label:'Other Expenses'},{key:'total_expenses',label:'Total Expenses'},
         {key:'net_pl',label:'Net P&L'},{key:'fuel_alert',label:'Fuel Alert'},
       ],'equipment_pl_full')} />
+      <DrilldownModal modal={drillModal} onClose={() => setDrillModal(null)} />
     </div>
   )
 }
@@ -1275,6 +1390,7 @@ function ExpenseReport({ companyId, from, to }) {
 
 function ProjectPLReport({ companyId, from, to }) {
   const [expandedId, setExpandedId] = useState(null)
+  const [drillModal, setDrillModal] = useState(null)
 
   const { data=[], isLoading } = useQuery({
     queryKey: ['rpt_project_pl', companyId, from, to],
@@ -1295,6 +1411,8 @@ function ProjectPLReport({ companyId, from, to }) {
 
       // 3. Fuel entries linked to those shifts
       let fuelByProject = {}
+      let rawFuelByProject = {}
+      const shiftDateMapP = Object.fromEntries((shifts||[]).map(s=>[s.id, s.shift_date]))
       if (shiftIds.length) {
         const { data: fuel } = await supabase.from('shift_fuel_entries')
           .select('shift_id,quantity_liters,total_amount,fuel_source').in('shift_id', shiftIds)
@@ -1304,7 +1422,11 @@ function ProjectPLReport({ companyId, from, to }) {
           const pid = shiftProjectMap[f.shift_id]; if (!pid) continue
           if (!fuelByProject[pid]) fuelByProject[pid] = 0
           const isClient = (f.fuel_source||'').toLowerCase() === 'client'
-          if (!isClient) fuelByProject[pid] += Number(f.total_amount)||0
+          if (!isClient) {
+            fuelByProject[pid] += Number(f.total_amount)||0
+            if (!rawFuelByProject[pid]) rawFuelByProject[pid] = []
+            rawFuelByProject[pid].push({ date: shiftDateMapP[f.shift_id]||'', label:`${Number(f.quantity_liters)||0} L`, ref:'Fuel fill', amount:Number(f.total_amount)||0 })
+          }
         }
       }
 
@@ -1328,12 +1450,12 @@ function ProjectPLReport({ companyId, from, to }) {
 
       // 5. Maintenance cost per project
       const { data: maint } = await supabase.from('maintenance_records')
-        .select('project_id,total_cost').eq('company_id', companyId)
+        .select('project_id,total_cost,service_date,maintenance_type,technician_name,equipment_id').eq('company_id', companyId)
         .gte('service_date', from).lte('service_date', to).in('project_id', pIds)
 
       // 6. Direct expenses tagged to project
       const { data: exps } = await supabase.from('expenses')
-        .select('project_id,total_amount').eq('company_id', companyId)
+        .select('project_id,total_amount,expense_date,category,vendor_name,description').eq('company_id', companyId)
         .gte('expense_date', from).lte('expense_date', to).in('project_id', pIds)
 
       // 7. Invoices (all-time — revenue is contract-level, not date-filtered)
@@ -1351,19 +1473,26 @@ function ProjectPLReport({ companyId, from, to }) {
         const outstanding= revenue - collected
         const fuelCost   = fuelByProject[p.id]||0
         const opCost     = opCostByProject[p.id]||0
-        const maintCost  = (maint||[]).filter(m=>m.project_id===p.id).reduce((s,m)=>s+(Number(m.total_cost)||0),0)
-        const directCost = (exps||[]).filter(e=>e.project_id===p.id).reduce((s,e)=>s+(Number(e.total_amount)||0),0)
+        const rawMaintP  = (maint||[]).filter(m=>m.project_id===p.id)
+        const rawExpsP   = (exps||[]).filter(e=>e.project_id===p.id)
+        const maintCost  = rawMaintP.reduce((s,m)=>s+(Number(m.total_cost)||0),0)
+        const directCost = rawExpsP.reduce((s,e)=>s+(Number(e.total_amount)||0),0)
         const totalCost  = fuelCost + opCost + maintCost + directCost
         const netPL      = collected - totalCost
         const margin     = collected > 0 ? ((netPL / collected)*100).toFixed(1) : null
         const collRate   = revenue > 0 ? ((collected / revenue)*100).toFixed(0) : null
         const equipSet   = new Set(pShifts.map(s=>s.equipment_id).filter(Boolean))
+        // Raw records for per-project drilldown
+        const rawOpRowsP = pShifts.filter(s=>s.operator_id).map(s=>({ date:s.shift_date, label:`Operator shift`, ref:'Daily rate', amount:salByOperator[s.operator_id]||0 }))
         return {
           ...p, _client: clientMap[p.client_id],
           hrs, revenue, collected, outstanding,
           fuelCost, opCost, maintCost, directCost, totalCost,
           netPL, margin, collRate,
           equipCount: equipSet.size, invoiceCount: pInvs.length,
+          rawFuel: rawFuelByProject[p.id]||[], rawOpRows: rawOpRowsP,
+          rawMaint: rawMaintP, rawExps: rawExpsP,
+          rawInvs: pInvs,
         }
       }).filter(p=>p.hrs>0||p.revenue>0||p.status==='active').sort((a,b)=>b.netPL-a.netPL)
     },
@@ -1435,10 +1564,22 @@ function ProjectPLReport({ companyId, from, to }) {
                   {/* Revenue side */}
                   <div>
                     <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-2">Revenue</p>
-                    <div className="space-y-1">
-                      <div className="flex justify-between text-xs"><span className="text-slate-400">Total Billed</span><span className="text-slate-200 font-mono">{fmt(p.revenue)}</span></div>
-                      <div className="flex justify-between text-xs"><span className="text-slate-400">Collected</span><span className="text-green-400 font-mono">{fmt(p.collected)}</span></div>
-                      <div className="flex justify-between text-xs"><span className="text-slate-400">Outstanding</span><span className={`font-mono ${p.outstanding>0?'text-amber-400':'text-slate-500'}`}>{fmt(p.outstanding)}</span></div>
+                    <div className="space-y-0.5">
+                      <div className={`flex justify-between text-xs py-0.5 rounded px-1 -mx-1 ${p.rawInvs.length>0?'cursor-pointer hover:bg-dark-700/40 group transition-colors':''}`}
+                        onClick={p.rawInvs.length>0?()=>setDrillModal({ title:`${p.project_name} — Invoices`, rows: p.rawInvs.map(i=>({ date:i.invoice_date||'', label:i.invoice_number||'Invoice', ref:`${i.status}`, amount:Number(i.total_amount)||0 })) }):undefined}>
+                        <span className="text-slate-400 flex items-center gap-1">Total Billed {p.rawInvs.length>0&&<span className="opacity-0 group-hover:opacity-60 text-primary-400 text-[9px]">↗</span>}</span>
+                        <span className={`text-slate-200 font-mono ${p.rawInvs.length>0?'underline underline-offset-2 decoration-dashed':''}`}>{fmt(p.revenue)}</span>
+                      </div>
+                      <div className={`flex justify-between text-xs py-0.5 rounded px-1 -mx-1 ${p.rawInvs.filter(i=>Number(i.paid_amount)>0).length>0?'cursor-pointer hover:bg-dark-700/40 group transition-colors':''}`}
+                        onClick={p.rawInvs.filter(i=>Number(i.paid_amount)>0).length>0?()=>setDrillModal({ title:`${p.project_name} — Collections`, rows: p.rawInvs.filter(i=>Number(i.paid_amount)>0).map(i=>({ date:i.invoice_date||'', label:i.invoice_number||'Invoice', ref:'Payment received', amount:Number(i.paid_amount)||0 })) }):undefined}>
+                        <span className="text-slate-400 flex items-center gap-1">Collected {p.rawInvs.filter(i=>Number(i.paid_amount)>0).length>0&&<span className="opacity-0 group-hover:opacity-60 text-primary-400 text-[9px]">↗</span>}</span>
+                        <span className={`text-green-400 font-mono ${p.rawInvs.filter(i=>Number(i.paid_amount)>0).length>0?'underline underline-offset-2 decoration-dashed':''}`}>{fmt(p.collected)}</span>
+                      </div>
+                      <div className={`flex justify-between text-xs py-0.5 rounded px-1 -mx-1 ${p.outstanding>0&&p.rawInvs.filter(i=>Math.max(0,(Number(i.total_amount)||0)-(Number(i.paid_amount)||0))>0).length>0?'cursor-pointer hover:bg-dark-700/40 group transition-colors':''}`}
+                        onClick={p.outstanding>0?()=>setDrillModal({ title:`${p.project_name} — Outstanding`, rows: p.rawInvs.filter(i=>Math.max(0,(Number(i.total_amount)||0)-(Number(i.paid_amount)||0))>0).map(i=>({ date:i.due_date||i.invoice_date||'', label:i.invoice_number||'Invoice', ref:'Balance due', amount:Math.max(0,(Number(i.total_amount)||0)-(Number(i.paid_amount)||0)) })) }):undefined}>
+                        <span className="text-slate-400 flex items-center gap-1">Outstanding {p.outstanding>0&&<span className="opacity-0 group-hover:opacity-60 text-primary-400 text-[9px]">↗</span>}</span>
+                        <span className={`font-mono ${p.outstanding>0?'text-amber-400 underline underline-offset-2 decoration-dashed':'text-slate-500'}`}>{fmt(p.outstanding)}</span>
+                      </div>
                       <div className="flex justify-between text-xs"><span className="text-slate-400">Invoices</span><span className="text-slate-300">{p.invoiceCount}</span></div>
                       <div className="flex justify-between text-xs"><span className="text-slate-400">Collection rate</span><span className={Number(p.collRate)<80?'text-amber-400':'text-green-400'}>{p.collRate||'—'}%</span></div>
                     </div>
@@ -1447,11 +1588,27 @@ function ProjectPLReport({ companyId, from, to }) {
                   {/* Cost side */}
                   <div>
                     <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-2">Cost Breakdown</p>
-                    <div className="space-y-1">
-                      <div className="flex justify-between text-xs"><span className="text-slate-400">Fuel</span><span className="text-yellow-400 font-mono">{fmt(p.fuelCost)}</span></div>
-                      <div className="flex justify-between text-xs"><span className="text-slate-400">Operator salary</span><span className="text-orange-300 font-mono">{fmt(p.opCost)}</span></div>
-                      <div className="flex justify-between text-xs"><span className="text-slate-400">Maintenance</span><span className="text-orange-400 font-mono">{fmt(p.maintCost)}</span></div>
-                      <div className="flex justify-between text-xs"><span className="text-slate-400">Direct expenses</span><span className="text-orange-400 font-mono">{fmt(p.directCost)}</span></div>
+                    <div className="space-y-0.5">
+                      <div className={`flex justify-between text-xs py-0.5 rounded px-1 -mx-1 ${p.rawFuel.length>0?'cursor-pointer hover:bg-dark-700/40 group transition-colors':''}`}
+                        onClick={p.rawFuel.length>0?()=>setDrillModal({ title:`${p.project_name} — Fuel`, rows: p.rawFuel }):undefined}>
+                        <span className="text-slate-400 flex items-center gap-1">Fuel {p.rawFuel.length>0&&<span className="opacity-0 group-hover:opacity-60 text-primary-400 text-[9px]">↗</span>}</span>
+                        <span className={`text-yellow-400 font-mono ${p.rawFuel.length>0?'underline underline-offset-2 decoration-dashed':''}`}>{fmt(p.fuelCost)}</span>
+                      </div>
+                      <div className={`flex justify-between text-xs py-0.5 rounded px-1 -mx-1 ${p.rawOpRows.length>0?'cursor-pointer hover:bg-dark-700/40 group transition-colors':''}`}
+                        onClick={p.rawOpRows.length>0?()=>setDrillModal({ title:`${p.project_name} — Operator Salary`, rows: p.rawOpRows }):undefined}>
+                        <span className="text-slate-400 flex items-center gap-1">Operator salary {p.rawOpRows.length>0&&<span className="opacity-0 group-hover:opacity-60 text-primary-400 text-[9px]">↗</span>}</span>
+                        <span className={`text-orange-300 font-mono ${p.rawOpRows.length>0?'underline underline-offset-2 decoration-dashed':''}`}>{fmt(p.opCost)}</span>
+                      </div>
+                      <div className={`flex justify-between text-xs py-0.5 rounded px-1 -mx-1 ${p.rawMaint.length>0?'cursor-pointer hover:bg-dark-700/40 group transition-colors':''}`}
+                        onClick={p.rawMaint.length>0?()=>setDrillModal({ title:`${p.project_name} — Maintenance`, rows: p.rawMaint.map(m=>({ date:m.service_date, label:(m.maintenance_type||'').replace(/_/g,' ')||'Maintenance', ref:m.technician_name||'', amount:Number(m.total_cost)||0 })) }):undefined}>
+                        <span className="text-slate-400 flex items-center gap-1">Maintenance {p.rawMaint.length>0&&<span className="opacity-0 group-hover:opacity-60 text-primary-400 text-[9px]">↗</span>}</span>
+                        <span className={`text-orange-400 font-mono ${p.rawMaint.length>0?'underline underline-offset-2 decoration-dashed':''}`}>{fmt(p.maintCost)}</span>
+                      </div>
+                      <div className={`flex justify-between text-xs py-0.5 rounded px-1 -mx-1 ${p.rawExps.length>0?'cursor-pointer hover:bg-dark-700/40 group transition-colors':''}`}
+                        onClick={p.rawExps.length>0?()=>setDrillModal({ title:`${p.project_name} — Direct Expenses`, rows: p.rawExps.map(e=>({ date:e.expense_date, label:e.description||e.category||'Expense', ref:e.vendor_name||'', amount:Number(e.total_amount)||0 })) }):undefined}>
+                        <span className="text-slate-400 flex items-center gap-1">Direct expenses {p.rawExps.length>0&&<span className="opacity-0 group-hover:opacity-60 text-primary-400 text-[9px]">↗</span>}</span>
+                        <span className={`text-orange-400 font-mono ${p.rawExps.length>0?'underline underline-offset-2 decoration-dashed':''}`}>{fmt(p.directCost)}</span>
+                      </div>
                       <div className="flex justify-between text-xs font-semibold border-t border-dark-600 pt-1 mt-1">
                         <span className="text-slate-300">Total Costs</span>
                         <span className="text-red-400 font-mono">{fmt(p.totalCost)}</span>
@@ -1480,6 +1637,7 @@ function ProjectPLReport({ companyId, from, to }) {
         })}
       </div>
 
+      <DrilldownModal modal={drillModal} onClose={() => setDrillModal(null)} />
       <ExportBar
         onPrint={() => {
           const rows = data.map(p=>`<tr><td>${p.project_name}</td><td>${p._client?.name||'—'}</td><td>${p.status}</td><td>${p.equipCount}</td><td>${fmtN(p.hrs,1)}</td><td>${fmt(p.revenue)}</td><td>${fmt(p.collected)}</td><td>${fmt(p.fuelCost)}</td><td>${fmt(p.opCost)}</td><td>${fmt(p.maintCost)}</td><td>${fmt(p.directCost)}</td><td style="font-weight:bold;color:${p.netPL>=0?'green':'red'}">${fmt(p.netPL)}</td><td>${p.margin||'—'}%</td></tr>`).join('')
@@ -1508,13 +1666,15 @@ function ProjectPLReport({ companyId, from, to }) {
 // ─── Client Statement ─────────────────────────────────────────────────────────
 
 function ClientStatementReport({ companyId, from, to }) {
+  const [drillModal, setDrillModal] = useState(null)
+
   const { data=[], isLoading } = useQuery({
     queryKey: ['rpt_client_statement', companyId],
     queryFn: async () => {
       // No date filter — show all-time client billing so historical invoices aren't hidden
       const { data: rawInv4 } = await supabase
         .from('client_invoices')
-        .select('client_id,client_name,total_amount,paid_amount,balance_due,status,invoice_type')
+        .select('id,invoice_number,invoice_date,due_date,client_id,client_name,total_amount,paid_amount,balance_due,status,invoice_type')
         .eq('company_id', companyId)
         .neq('status', 'cancelled')
       const invoices = (rawInv4||[])
@@ -1545,12 +1705,13 @@ function ClientStatementReport({ companyId, from, to }) {
           phone:       client?.phone || '',
           email:       client?.email || '',
           gstin:       client?.gstin || '',
-          invoiced:0, paid:0, outstanding:0, count:0,
+          invoiced:0, paid:0, outstanding:0, count:0, rawInvs:[],
         }
         grouped[key].invoiced    += Number(inv.total_amount)||0
         grouped[key].paid        += Number(inv.paid_amount)||0
         grouped[key].outstanding += Number(inv.balance_due)||0
         grouped[key].count++
+        grouped[key].rawInvs.push(inv)
       }
       return Object.values(grouped).filter(c=>c.invoiced>0).sort((a,b)=>b.invoiced-a.invoiced)
     },
@@ -1573,15 +1734,20 @@ function ClientStatementReport({ companyId, from, to }) {
               <tr key={c.id} className="border-b border-dark-700 hover:bg-dark-700/40 transition-colors">
                 <td className="py-2.5 px-3"><p className="text-xs text-slate-200 font-medium">{c.name}</p>{c.gstin&&<p className="text-[10px] text-slate-500 font-mono">{c.gstin}</p>}</td>
                 <td className="py-2.5 px-3 text-xs text-slate-400">{c.phone||c.email||'—'}</td>
-                <td className="py-2.5 px-3 text-xs text-slate-400 font-mono">{c.count}</td>
-                <td className="py-2.5 px-3 text-xs text-slate-200 font-mono">{fmt(c.invoiced)}</td>
-                <td className="py-2.5 px-3 text-xs text-green-400 font-mono">{fmt(c.paid)}</td>
-                <td className="py-2.5 px-3 text-xs text-red-400 font-bold font-mono">{fmt(c.outstanding)}</td>
+                <td className="py-2.5 px-3 text-xs text-slate-400 font-mono cursor-pointer hover:text-primary-400 underline underline-offset-2 decoration-dashed transition-colors"
+                  onClick={()=>setDrillModal({ title:`${c.name} — All Invoices`, rows: c.rawInvs.map(i=>({ date:i.invoice_date, label:i.invoice_number||'Invoice', ref:i.status, amount:Number(i.total_amount)||0 })) })}>{c.count}</td>
+                <td className="py-2.5 px-3 text-xs text-slate-200 font-mono cursor-pointer hover:text-primary-300 underline underline-offset-2 decoration-dashed transition-colors"
+                  onClick={()=>setDrillModal({ title:`${c.name} — Invoiced`, rows: c.rawInvs.map(i=>({ date:i.invoice_date, label:i.invoice_number||'Invoice', ref:i.status, amount:Number(i.total_amount)||0 })) })}>{fmt(c.invoiced)}</td>
+                <td className="py-2.5 px-3 text-xs text-green-400 font-mono cursor-pointer hover:text-green-300 underline underline-offset-2 decoration-dashed transition-colors"
+                  onClick={()=>setDrillModal({ title:`${c.name} — Collected`, rows: c.rawInvs.filter(i=>Number(i.paid_amount)>0).map(i=>({ date:i.invoice_date, label:i.invoice_number||'Invoice', ref:'Payment received', amount:Number(i.paid_amount)||0 })) })}>{fmt(c.paid)}</td>
+                <td className="py-2.5 px-3 text-xs text-red-400 font-bold font-mono cursor-pointer hover:text-red-300 underline underline-offset-2 decoration-dashed transition-colors"
+                  onClick={()=>setDrillModal({ title:`${c.name} — Outstanding`, rows: c.rawInvs.filter(i=>i.balance_due>0).map(i=>({ date:i.due_date||i.invoice_date, label:i.invoice_number||'Invoice', ref:`Due ${i.due_date?fmtDate(i.due_date):'—'}`, amount:Number(i.balance_due)||0 })) })}>{fmt(c.outstanding)}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+      <DrilldownModal modal={drillModal} onClose={() => setDrillModal(null)} />
       <ExportBar onPrint={() => {
         const rows = data.map(c=>`<tr><td>${c.name}</td><td>${c.phone||c.email||'—'}</td><td>${c.count}</td><td>${fmt(c.invoiced)}</td><td>${fmt(c.paid)}</td><td>${fmt(c.outstanding)}</td></tr>`).join('')
         printSection('Client Statement',`<h1>Client Statement</h1><p class="sub">${fmtDate(from)} — ${fmtDate(to)}</p><table><tr><th>Client</th><th>Contact</th><th>Invoices</th><th>Billed</th><th>Paid</th><th>Outstanding</th></tr>${rows}</table>`)
