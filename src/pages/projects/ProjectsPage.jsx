@@ -2012,7 +2012,7 @@ function ProjectPLTab({ project, companyId, projectInvoices, projectPayments, de
   const pl = useMemo(() => {
     // Revenue
     const totalRaised    = projectInvoices.reduce((s, i) => s + (Number(i.total_amount) || 0), 0)
-    const totalReceived  = projectPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0)
+    const totalReceived  = projectInvoices.reduce((s, i) => s + (Number(i.paid_amount) || 0), 0)
     const outstanding    = totalRaised - totalReceived
     const contractVal    = Number(project.contract_value) || 0
     const yetToBill      = Math.max(0, contractVal - totalRaised)
@@ -2094,8 +2094,8 @@ function ProjectPLTab({ project, companyId, projectInvoices, projectPayments, de
     invoiced: () => openDrilldown('Total Invoiced', projectInvoices.map(i => ({
       date: fmtD(i.invoice_date), label: i.invoice_number || 'Invoice', sub: i.client_name || '', amount: Number(i.total_amount)||0,
     }))),
-    received: () => openDrilldown('Total Received', projectPayments.map(p => ({
-      date: fmtD(p.payment_date), label: p.payment_number || 'Payment', sub: p.payment_mode || '', amount: Number(p.amount)||0,
+    received: () => openDrilldown('Total Received', projectInvoices.filter(i=>Number(i.paid_amount)>0).map(i => ({
+      date: fmtD(i.invoice_date), label: i.invoice_number || 'Invoice', sub: i.payment_method || i.status || '', amount: Number(i.paid_amount)||0,
     }))),
     outstanding: () => openDrilldown('Outstanding Invoices', projectInvoices.filter(i=>i.status!=='paid').map(i => ({
       date: fmtD(i.invoice_date), label: i.invoice_number || 'Invoice', sub: i.status, amount: Math.max(0,(Number(i.total_amount)||0)-(Number(i.paid_amount)||0)),
@@ -2208,7 +2208,7 @@ function ProjectPLTab({ project, companyId, projectInvoices, projectPayments, de
             </div>
             {pl.contractVal > 0 && <PLRow label="Contract Value"    value={fmtM(pl.contractVal)} />}
             <PLRow label="Total Invoiced"    value={fmtM(pl.totalRaised)}   onClick={projectInvoices.length>0?drilldownConfig.invoiced:undefined} />
-            <PLRow label="Total Received"    value={fmtM(pl.totalReceived)} onClick={projectPayments.length>0?drilldownConfig.received:undefined} />
+            <PLRow label="Total Received"    value={fmtM(pl.totalReceived)} onClick={pl.totalReceived>0?drilldownConfig.received:undefined} />
             <PLRow label="Outstanding"       value={fmtM(pl.outstanding)}   onClick={projectInvoices.some(i=>i.status!=='paid')?drilldownConfig.outstanding:undefined} />
             {pl.contractVal > 0 && <PLRow label="Yet to Bill"  value={fmtM(pl.yetToBill)} />}
           </div>
@@ -2502,7 +2502,8 @@ function ProjectDetail({ project, companyId, docTotals, onClose, onEdit, onDelet
   })
 
   const totalRaised   = projectInvoices.reduce((s, i) => s + (Number(i.total_amount) || 0), 0)
-  const totalReceived = projectPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0)
+  // paid_amount on each invoice is the authoritative source — payments_received may not carry project_id
+  const totalReceived = projectInvoices.reduce((s, i) => s + (Number(i.paid_amount) || 0), 0)
   const balance       = totalRaised - totalReceived
   const contractVal   = Number(project.contract_value) || 0
   const yetToBill     = Math.max(0, contractVal - totalRaised)
@@ -2607,7 +2608,7 @@ function ProjectDetail({ project, companyId, docTotals, onClose, onEdit, onDelet
         <div className="space-y-3">
           {[
             { label: 'Total Invoiced',  value: fmt(totalRaised),   sub: `${projectInvoices.length} invoice${projectInvoices.length !== 1 ? 's' : ''}`, borderCls: 'border-indigo-500/25', bgCls: 'bg-indigo-500/5',  vc: 'text-indigo-300' },
-            { label: 'Total Received',  value: fmt(totalReceived),  sub: `${projectPayments.length} payment${projectPayments.length !== 1 ? 's' : ''}`, borderCls: 'border-emerald-500/25', bgCls: 'bg-emerald-500/5', vc: 'text-emerald-300' },
+            { label: 'Total Received',  value: fmt(totalReceived),  sub: (() => { const n = projectInvoices.filter(i=>Number(i.paid_amount)>0).length; return n > 0 ? `${n} invoice${n !== 1 ? 's' : ''} with payment` : 'No payments yet' })(), borderCls: 'border-emerald-500/25', bgCls: 'bg-emerald-500/5', vc: 'text-emerald-300' },
             { label: 'Outstanding',     value: fmt(balance),        sub: 'Balance due',  borderCls: balance > 0 ? 'border-orange-500/25' : 'border-dark-600/60', bgCls: balance > 0 ? 'bg-orange-500/5' : 'bg-dark-800/40', vc: balance > 0 ? 'text-orange-300' : 'text-slate-300' },
           ].map(k => (
             <div key={k.label} className={`border rounded-xl p-4 ${k.borderCls} ${k.bgCls}`}>
