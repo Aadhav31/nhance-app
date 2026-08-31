@@ -1633,8 +1633,8 @@ function DashboardTab({ companyId, onNavigate, onNavigatePage }) {
       {/* KPI cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {[
-          { label: 'Income', val: income, icon: <ArrowUpCircle className="w-4 h-4 text-emerald-400" />, cls: 'border-emerald-700/30', valCls: 'text-emerald-400' },
-          { label: 'Expenses', val: expense, icon: <ArrowDownCircle className="w-4 h-4 text-red-400" />, cls: 'border-red-700/30', valCls: 'text-red-400' },
+          { label: 'Income', val: income, icon: <ArrowDownCircle className="w-4 h-4 text-emerald-400" />, cls: 'border-emerald-700/30', valCls: 'text-emerald-400' },
+          { label: 'Expenses', val: expense, icon: <ArrowUpCircle className="w-4 h-4 text-red-400" />, cls: 'border-red-700/30', valCls: 'text-red-400' },
           { label: 'Net P&L', val: Math.abs(netPL), icon: netPL >= 0 ? <TrendingUp className="w-4 h-4 text-primary-400" /> : <TrendingDown className="w-4 h-4 text-red-400" />, cls: netPL >= 0 ? 'border-primary-700/30' : 'border-red-700/30', valCls: netPL >= 0 ? 'text-primary-400' : 'text-red-400', note: netPL < 0 ? '(loss)' : '' },
           { label: 'Outstanding', val: totalOU, icon: <Clock className="w-4 h-4 text-amber-400" />, cls: 'border-amber-700/30', valCls: 'text-amber-400', note: `${outstanding.length} invoice${outstanding.length !== 1 ? 's' : ''}` },
         ].map((c, i) => (
