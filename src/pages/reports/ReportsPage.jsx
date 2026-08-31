@@ -468,6 +468,7 @@ function EquipPLReport({ companyId, from, to }) {
   const totExp  = data.reduce((s,r)=>s+r.totalExpense,0)
   const totPL   = data.reduce((s,r)=>s+r.netPL,0)
   const alerts  = data.filter(r=>r.fuelAlert)
+  const periodDays = useMemo(()=>Math.max(Math.round((new Date(to)-new Date(from))/86400000)+1,1),[from,to])
 
   if (isLoading) return <Spinner />
   if (!data.length) return <Empty msg="No shift activity in this period. Start a shift and add a deployment rate card to see P&L." />
@@ -529,6 +530,7 @@ function EquipPLReport({ companyId, from, to }) {
                   </div>
                   <p className="text-[10px] text-slate-500 mt-0.5">
                     {fmtN(r.workingHrs,1)} hrs · {r.shiftDays} shift days · {rateLabel}
+                    {periodDays > 0 && <span className={` · font-medium ${(r.shiftDays/periodDays*100)>=70?'text-green-500':(r.shiftDays/periodDays*100)>=40?'text-amber-500':'text-red-500'}`}> {((r.shiftDays/periodDays)*100).toFixed(0)}% utilization</span>}
                     {r.deploy?.item_name && <span className="text-slate-600"> · {r.deploy.item_name}</span>}
                   </p>
                 </div>
@@ -544,6 +546,7 @@ function EquipPLReport({ companyId, from, to }) {
                   <div>
                     <p className="text-[10px] text-slate-500">Net P&L</p>
                     <p className={`text-sm font-bold font-mono ${r.netPL>=0?'text-green-400':'text-red-400'}`}>{fmt(r.netPL)}</p>
+                    {r.calcRevenue>0&&<p className="text-[10px] text-slate-500">{((r.netPL/r.calcRevenue)*100).toFixed(0)}% margin</p>}
                   </div>
                   <span className={`text-slate-500 transition-transform ${isOpen?'rotate-180':''}`}>▾</span>
                 </div>
@@ -1271,66 +1274,233 @@ function ExpenseReport({ companyId, from, to }) {
 // ─── Project Summary ──────────────────────────────────────────────────────────
 
 function ProjectPLReport({ companyId, from, to }) {
+  const [expandedId, setExpandedId] = useState(null)
+
   const { data=[], isLoading } = useQuery({
     queryKey: ['rpt_project_pl', companyId, from, to],
     queryFn: async () => {
-      const { data: projects } = await supabase.from('projects').select('id,project_name,project_code,status,client_id,start_date,end_date').eq('company_id', companyId)
+      // 1. Projects + clients
+      const { data: projects } = await supabase.from('projects')
+        .select('id,project_name,project_code,status,client_id,start_date,end_date').eq('company_id', companyId)
       if (!projects?.length) return []
       const pIds = projects.map(p=>p.id)
       const { data: clients } = await supabase.from('clients').select('id,name').eq('company_id', companyId)
       const clientMap = Object.fromEntries((clients||[]).map(c=>[c.id,c]))
-      const { data: shifts } = await supabase.from('shifts').select('project_id,working_hours,equipment_id').eq('company_id', companyId).gte('shift_date', from).lte('shift_date', to).in('project_id', pIds)
-      const { data: rawInv3 } = await supabase.from('client_invoices').select('id,total_amount,paid_amount,balance_due,project_id,invoice_type').eq('company_id', companyId).in('project_id', pIds)
-      const invoices = (rawInv3||[]).filter(i => i.invoice_type !== 'proforma')
-      const { data: maint } = await supabase.from('maintenance_records').select('project_id,total_cost').eq('company_id', companyId).gte('service_date', from).lte('service_date', to).in('project_id', pIds)
+
+      // 2. Shifts in period (with operator + date for salary calc)
+      const { data: shifts } = await supabase.from('shifts')
+        .select('id,project_id,working_hours,equipment_id,operator_id,shift_date')
+        .eq('company_id', companyId).gte('shift_date', from).lte('shift_date', to).in('project_id', pIds)
+      const shiftIds = (shifts||[]).map(s=>s.id)
+
+      // 3. Fuel entries linked to those shifts
+      let fuelByProject = {}
+      if (shiftIds.length) {
+        const { data: fuel } = await supabase.from('shift_fuel_entries')
+          .select('shift_id,quantity_liters,total_amount,fuel_source').in('shift_id', shiftIds)
+        // map shift → project
+        const shiftProjectMap = Object.fromEntries((shifts||[]).map(s=>[s.id, s.project_id]))
+        for (const f of fuel||[]) {
+          const pid = shiftProjectMap[f.shift_id]; if (!pid) continue
+          if (!fuelByProject[pid]) fuelByProject[pid] = 0
+          const isClient = (f.fuel_source||'').toLowerCase() === 'client'
+          if (!isClient) fuelByProject[pid] += Number(f.total_amount)||0
+        }
+      }
+
+      // 4. Operator salary per project
+      const operatorIds = [...new Set((shifts||[]).map(s=>s.operator_id).filter(Boolean))]
+      let salByOperator = {}
+      if (operatorIds.length) {
+        const { data: sal } = await supabase.from('hr_salary_structure')
+          .select('employee_id,basic_salary,hra,special_allowance,other_allowance,daily_rate,day_shift_rate')
+          .in('employee_id', operatorIds)
+        for (const s of sal||[]) {
+          const gross = (Number(s.basic_salary)||0)+(Number(s.hra)||0)+(Number(s.special_allowance)||0)+(Number(s.other_allowance)||0)
+          salByOperator[s.employee_id] = Number(s.daily_rate)||Number(s.day_shift_rate)||(gross>0?gross/26:0)
+        }
+      }
+      const opCostByProject = {}
+      for (const s of shifts||[]) {
+        if (!s.project_id || !s.operator_id) continue
+        opCostByProject[s.project_id] = (opCostByProject[s.project_id]||0) + (salByOperator[s.operator_id]||0)
+      }
+
+      // 5. Maintenance cost per project
+      const { data: maint } = await supabase.from('maintenance_records')
+        .select('project_id,total_cost').eq('company_id', companyId)
+        .gte('service_date', from).lte('service_date', to).in('project_id', pIds)
+
+      // 6. Direct expenses tagged to project
+      const { data: exps } = await supabase.from('expenses')
+        .select('project_id,total_amount').eq('company_id', companyId)
+        .gte('expense_date', from).lte('expense_date', to).in('project_id', pIds)
+
+      // 7. Invoices (all-time — revenue is contract-level, not date-filtered)
+      const { data: rawInv } = await supabase.from('client_invoices')
+        .select('id,total_amount,paid_amount,project_id,invoice_type,status')
+        .eq('company_id', companyId).in('project_id', pIds)
+      const invoices = (rawInv||[]).filter(i=>i.invoice_type!=='proforma'&&i.status!=='cancelled')
+
       return projects.map(p => {
-        const pShifts = (shifts||[]).filter(s=>s.project_id===p.id)
-        const pInvs   = (invoices||[]).filter(i=>i.project_id===p.id)
-        const pMaint  = (maint||[]).filter(m=>m.project_id===p.id)
-        const hrs     = pShifts.reduce((s,sh)=>s+(Number(sh.working_hours)||0),0)
-        const revenue = pInvs.reduce((s,i)=>s+(Number(i.total_amount)||0),0)
-        const collected=pInvs.reduce((s,i)=>s+(Number(i.paid_amount)||0),0)
-        const maintCost=(pMaint||[]).reduce((s,m)=>s+(Number(m.total_cost)||0),0)
-        const equipSet = new Set(pShifts.map(s=>s.equipment_id).filter(Boolean))
-        return { ...p, _client:clientMap[p.client_id], hrs, revenue, collected, maintCost, equipCount:equipSet.size, invoiceCount:pInvs.length }
-      // Show any project that has shifts OR invoices OR is active
-      }).filter(p=>p.hrs>0||p.revenue>0||p.status==='active').sort((a,b)=>b.revenue-a.revenue)
+        const pShifts    = (shifts||[]).filter(s=>s.project_id===p.id)
+        const pInvs      = invoices.filter(i=>i.project_id===p.id)
+        const hrs        = pShifts.reduce((s,sh)=>s+(Number(sh.working_hours)||0),0)
+        const revenue    = pInvs.reduce((s,i)=>s+(Number(i.total_amount)||0),0)
+        const collected  = pInvs.reduce((s,i)=>s+(Number(i.paid_amount)||0),0)
+        const outstanding= revenue - collected
+        const fuelCost   = fuelByProject[p.id]||0
+        const opCost     = opCostByProject[p.id]||0
+        const maintCost  = (maint||[]).filter(m=>m.project_id===p.id).reduce((s,m)=>s+(Number(m.total_cost)||0),0)
+        const directCost = (exps||[]).filter(e=>e.project_id===p.id).reduce((s,e)=>s+(Number(e.total_amount)||0),0)
+        const totalCost  = fuelCost + opCost + maintCost + directCost
+        const netPL      = collected - totalCost
+        const margin     = collected > 0 ? ((netPL / collected)*100).toFixed(1) : null
+        const collRate   = revenue > 0 ? ((collected / revenue)*100).toFixed(0) : null
+        const equipSet   = new Set(pShifts.map(s=>s.equipment_id).filter(Boolean))
+        return {
+          ...p, _client: clientMap[p.client_id],
+          hrs, revenue, collected, outstanding,
+          fuelCost, opCost, maintCost, directCost, totalCost,
+          netPL, margin, collRate,
+          equipCount: equipSet.size, invoiceCount: pInvs.length,
+        }
+      }).filter(p=>p.hrs>0||p.revenue>0||p.status==='active').sort((a,b)=>b.netPL-a.netPL)
     },
     enabled: !!companyId,
   })
+
+  const totRev  = data.reduce((s,p)=>s+p.revenue,0)
+  const totColl = data.reduce((s,p)=>s+p.collected,0)
+  const totCost = data.reduce((s,p)=>s+p.totalCost,0)
+  const totPL   = data.reduce((s,p)=>s+p.netPL,0)
+
   if (isLoading) return <Spinner />
   if (!data.length) return <Empty msg="No project activity in this period" />
+
   return (
     <div>
+      {/* Summary KPIs */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
-        <StatCard label="Active Projects" value={data.length} />
-        <StatCard label="Total Revenue" value={fmt(data.reduce((s,p)=>s+p.revenue,0))} />
-        <StatCard label="Collected" value={fmt(data.reduce((s,p)=>s+p.collected,0))} accent="text-green-400" />
-        <StatCard label="Total Shift Hours" value={`${fmtN(data.reduce((s,p)=>s+p.hrs,0))} hrs`} />
+        <StatCard label="Projects" value={data.length} />
+        <StatCard label="Total Collected" value={fmt(totColl)} accent="text-green-400" />
+        <StatCard label="Total Costs" value={fmt(totCost)} accent="text-red-400" />
+        <StatCard label="Net P&L" value={fmt(totPL)} accent={totPL>=0?'text-green-400':'text-red-400'}
+          sub={totRev>0?`${((totColl/totRev)*100).toFixed(0)}% collected`:undefined} />
       </div>
-      <div className="bg-dark-800 border border-dark-600 rounded-xl overflow-hidden">
-        <table className="w-full text-sm">
-          <THead cols={['Project','Client','Equipment','Shift Hours','Revenue','Collected','Status']} />
-          <tbody>
-            {data.map(p => (
-              <tr key={p.id} className="border-b border-dark-700 hover:bg-dark-700/40 transition-colors">
-                <td className="py-2.5 px-3"><p className="text-xs text-slate-200 font-medium">{p.project_name}</p><p className="text-[10px] text-slate-500">{p.project_code}</p></td>
-                <td className="py-2.5 px-3 text-xs text-slate-400">{p._client?.name||'—'}</td>
-                <td className="py-2.5 px-3 text-xs text-slate-300 font-mono">{p.equipCount}</td>
-                <td className="py-2.5 px-3 text-xs text-primary-400 font-mono">{fmtN(p.hrs)} hrs</td>
-                <td className="py-2.5 px-3 text-xs text-slate-200 font-mono">{fmt(p.revenue)}</td>
-                <td className="py-2.5 px-3 text-xs text-green-400 font-mono">{fmt(p.collected)}</td>
-                <td className="py-2.5 px-3"><span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${p.status==='active'?'bg-green-900/40 text-green-400':p.status==='completed'?'bg-blue-900/40 text-blue-400':'bg-dark-600 text-slate-400'}`}>{p.status}</span></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+
+      {/* Per-project expandable rows */}
+      <div className="space-y-2 mb-4">
+        {data.map(p => {
+          const isOpen = expandedId === p.id
+          return (
+            <div key={p.id} className="bg-dark-800 border border-dark-600 rounded-xl overflow-hidden">
+              <button className="w-full text-left px-4 py-3 flex items-center gap-4 hover:bg-dark-700/40 transition-colors"
+                onClick={()=>setExpandedId(isOpen?null:p.id)}>
+                {/* Left: project info */}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-semibold text-slate-100 truncate">{p.project_name}</p>
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium shrink-0 ${p.status==='active'?'bg-green-900/40 text-green-400':p.status==='completed'?'bg-blue-900/40 text-blue-400':'bg-dark-600 text-slate-400'}`}>{p.status}</span>
+                  </div>
+                  <p className="text-[10px] text-slate-500 mt-0.5">
+                    {p._client?.name||'—'} · {p.equipCount} equipment · {fmtN(p.hrs,1)} hrs
+                    {p.collRate && <span> · <span className={Number(p.collRate)<80?'text-amber-400':'text-green-400'}>{p.collRate}% collected</span></span>}
+                  </p>
+                </div>
+                {/* Right: financials */}
+                <div className="flex items-center gap-5 shrink-0 text-right">
+                  <div>
+                    <p className="text-[10px] text-slate-500">Billed</p>
+                    <p className="text-xs font-mono text-slate-300">{fmt(p.revenue)}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-slate-500">Costs</p>
+                    <p className="text-xs font-mono text-red-400">{fmt(p.totalCost)}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-slate-500">Net P&L</p>
+                    <p className={`text-sm font-bold font-mono ${p.netPL>=0?'text-green-400':'text-red-400'}`}>
+                      {fmt(p.netPL)}
+                      {p.margin && <span className="text-[10px] ml-1 font-normal">({p.margin}%)</span>}
+                    </p>
+                  </div>
+                  <span className={`text-slate-500 transition-transform ${isOpen?'rotate-180':''}`}>▾</span>
+                </div>
+              </button>
+
+              {/* Expanded cost breakdown */}
+              {isOpen && (
+                <div className="border-t border-dark-700 px-4 py-3 grid grid-cols-2 sm:grid-cols-3 gap-4 bg-dark-900/40">
+                  {/* Revenue side */}
+                  <div>
+                    <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-2">Revenue</p>
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-xs"><span className="text-slate-400">Total Billed</span><span className="text-slate-200 font-mono">{fmt(p.revenue)}</span></div>
+                      <div className="flex justify-between text-xs"><span className="text-slate-400">Collected</span><span className="text-green-400 font-mono">{fmt(p.collected)}</span></div>
+                      <div className="flex justify-between text-xs"><span className="text-slate-400">Outstanding</span><span className={`font-mono ${p.outstanding>0?'text-amber-400':'text-slate-500'}`}>{fmt(p.outstanding)}</span></div>
+                      <div className="flex justify-between text-xs"><span className="text-slate-400">Invoices</span><span className="text-slate-300">{p.invoiceCount}</span></div>
+                      <div className="flex justify-between text-xs"><span className="text-slate-400">Collection rate</span><span className={Number(p.collRate)<80?'text-amber-400':'text-green-400'}>{p.collRate||'—'}%</span></div>
+                    </div>
+                  </div>
+
+                  {/* Cost side */}
+                  <div>
+                    <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-2">Cost Breakdown</p>
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-xs"><span className="text-slate-400">Fuel</span><span className="text-yellow-400 font-mono">{fmt(p.fuelCost)}</span></div>
+                      <div className="flex justify-between text-xs"><span className="text-slate-400">Operator salary</span><span className="text-orange-300 font-mono">{fmt(p.opCost)}</span></div>
+                      <div className="flex justify-between text-xs"><span className="text-slate-400">Maintenance</span><span className="text-orange-400 font-mono">{fmt(p.maintCost)}</span></div>
+                      <div className="flex justify-between text-xs"><span className="text-slate-400">Direct expenses</span><span className="text-orange-400 font-mono">{fmt(p.directCost)}</span></div>
+                      <div className="flex justify-between text-xs font-semibold border-t border-dark-600 pt-1 mt-1">
+                        <span className="text-slate-300">Total Costs</span>
+                        <span className="text-red-400 font-mono">{fmt(p.totalCost)}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Net summary */}
+                  <div>
+                    <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-2">Summary</p>
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-xs"><span className="text-slate-400">Shift hours</span><span className="text-primary-400 font-mono">{fmtN(p.hrs,1)} hrs</span></div>
+                      <div className="flex justify-between text-xs"><span className="text-slate-400">Equipment deployed</span><span className="text-slate-300">{p.equipCount}</span></div>
+                      {p.hrs>0&&p.totalCost>0&&<div className="flex justify-between text-xs"><span className="text-slate-400">Cost per hour</span><span className="text-slate-300 font-mono">{fmt(p.totalCost/p.hrs)}</span></div>}
+                      <div className="flex justify-between text-sm font-bold border-t border-dark-600 pt-1 mt-1">
+                        <span className="text-slate-300">Net P&L</span>
+                        <span className={p.netPL>=0?'text-green-400':'text-red-400'}>{fmt(p.netPL)}</span>
+                      </div>
+                      {p.margin&&<div className="flex justify-between text-xs"><span className="text-slate-400">Margin</span><span className={Number(p.margin)<0?'text-red-400':Number(p.margin)<20?'text-amber-400':'text-green-400'}>{p.margin}%</span></div>}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )
+        })}
       </div>
-      <ExportBar onPrint={() => {
-        const rows = data.map(p=>`<tr><td>${p.project_name}</td><td>${p._client?.name||'—'}</td><td>${p.equipCount}</td><td>${fmtN(p.hrs)} hrs</td><td>${fmt(p.revenue)}</td><td>${fmt(p.collected)}</td><td>${p.status}</td></tr>`).join('')
-        printSection('Project Summary',`<h1>Project Summary</h1><p class="sub">${fmtDate(from)} — ${fmtDate(to)}</p><table><tr><th>Project</th><th>Client</th><th>Equipment</th><th>Shift Hrs</th><th>Revenue</th><th>Collected</th><th>Status</th></tr>${rows}</table>`)
-      }} onCSV={() => exportCSV(data.map(p=>({ project:p.project_name, code:p.project_code, client:p._client?.name, status:p.status, equip_count:p.equipCount, shift_hrs:fmtN(p.hrs), revenue:p.revenue, collected:p.collected })),
-        [{key:'project',label:'Project'},{key:'code',label:'Code'},{key:'client',label:'Client'},{key:'status',label:'Status'},{key:'equip_count',label:'Equipment'},{key:'shift_hrs',label:'Shift Hrs'},{key:'revenue',label:'Revenue'},{key:'collected',label:'Collected'}],'project_summary')} />
+
+      <ExportBar
+        onPrint={() => {
+          const rows = data.map(p=>`<tr><td>${p.project_name}</td><td>${p._client?.name||'—'}</td><td>${p.status}</td><td>${p.equipCount}</td><td>${fmtN(p.hrs,1)}</td><td>${fmt(p.revenue)}</td><td>${fmt(p.collected)}</td><td>${fmt(p.fuelCost)}</td><td>${fmt(p.opCost)}</td><td>${fmt(p.maintCost)}</td><td>${fmt(p.directCost)}</td><td style="font-weight:bold;color:${p.netPL>=0?'green':'red'}">${fmt(p.netPL)}</td><td>${p.margin||'—'}%</td></tr>`).join('')
+          printSection('Project P&L',`<h1>Project P&L</h1><p class="sub">${fmtDate(from)} — ${fmtDate(to)}</p>
+            <div><span class="stat"><span class="stat-v">${fmt(totColl)}</span><br/><span class="stat-l">Collected</span></span><span class="stat"><span class="stat-v">${fmt(totCost)}</span><br/><span class="stat-l">Total Costs</span></span><span class="stat"><span class="stat-v" style="color:${totPL>=0?'green':'red'}">${fmt(totPL)}</span><br/><span class="stat-l">Net P&L</span></span></div>
+            <table><tr><th>Project</th><th>Client</th><th>Status</th><th>Equip.</th><th>Hrs</th><th>Billed</th><th>Collected</th><th>Fuel</th><th>Operator</th><th>Maint.</th><th>Expenses</th><th>Net P&L</th><th>Margin</th></tr>${rows}</table>`)
+        }}
+        onCSV={() => exportCSV(data.map(p=>({
+          project:p.project_name, code:p.project_code, client:p._client?.name, status:p.status,
+          equip_count:p.equipCount, shift_hrs:fmtN(p.hrs,1),
+          billed:p.revenue, collected:p.collected, outstanding:p.outstanding,
+          fuel_cost:p.fuelCost, operator_cost:p.opCost, maint_cost:p.maintCost, direct_expenses:p.directCost,
+          total_cost:p.totalCost, net_pl:p.netPL, margin_pct:p.margin, collection_rate:p.collRate,
+        })),[
+          {key:'project',label:'Project'},{key:'code',label:'Code'},{key:'client',label:'Client'},{key:'status',label:'Status'},
+          {key:'equip_count',label:'Equipment'},{key:'shift_hrs',label:'Shift Hrs'},
+          {key:'billed',label:'Billed'},{key:'collected',label:'Collected'},{key:'outstanding',label:'Outstanding'},
+          {key:'fuel_cost',label:'Fuel Cost'},{key:'operator_cost',label:'Operator Cost'},{key:'maint_cost',label:'Maint. Cost'},{key:'direct_expenses',label:'Direct Expenses'},
+          {key:'total_cost',label:'Total Cost'},{key:'net_pl',label:'Net P&L'},{key:'margin_pct',label:'Margin %'},{key:'collection_rate',label:'Collection Rate %'},
+        ],'project_pl')}
+      />
     </div>
   )
 }
