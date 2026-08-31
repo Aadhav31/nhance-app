@@ -1990,7 +1990,7 @@ function ProjectPLTab({ project, companyId, projectInvoices, projectPayments, de
     queryKey: ['proj_pl_bills', project.id, companyId, from, to],
     queryFn: async () => {
       const { data } = await supabase.from('bills')
-        .select('id, bill_date, total_amount, equipment_id, equipment_name')
+        .select('id, bill_number, bill_ref, bill_date, due_date, vendor_name, total_amount, paid_amount, balance_due, status, notes, equipment_id, equipment_name')
         .eq('company_id', companyId)
         .neq('status', 'cancelled')
         .gte('bill_date', from).lte('bill_date', to)
@@ -2140,9 +2140,15 @@ function ProjectPLTab({ project, companyId, projectInvoices, projectPayments, de
     bills: () => openDrilldown('Bills', validBillsDD.map(b => ({
       date: fmtD(b.bill_date), label: b.bill_number || 'Bill', sub: b.vendor_name || b.equipment_name || eqNameMap[b.equipment_id] || '', amount: Number(b.total_amount)||0,
       extra: [
-        { k: 'Vendor',    v: b.vendor_name || '—' },
-        { k: 'Equipment', v: b.equipment_name || eqNameMap[b.equipment_id] || '—' },
-        { k: 'Status',    v: b.status || '—' },
+        { k: 'Bill No.',    v: b.bill_number || '—' },
+        { k: 'Vendor Ref',  v: b.bill_ref || '—' },
+        { k: 'Vendor',      v: b.vendor_name || '—' },
+        { k: 'Equipment',   v: b.equipment_name || eqNameMap[b.equipment_id] || '—' },
+        { k: 'Status',      v: b.status ? b.status.charAt(0).toUpperCase() + b.status.slice(1) : '—' },
+        { k: 'Paid',        v: Number(b.paid_amount) > 0 ? `₹${Number(b.paid_amount).toLocaleString('en-IN')}` : '₹0' },
+        { k: 'Balance Due', v: Number(b.balance_due) > 0 ? `₹${Number(b.balance_due).toLocaleString('en-IN')}` : '₹0' },
+        { k: 'Due Date',    v: b.due_date ? fmtD(b.due_date) : '—' },
+        { k: 'Notes',       v: b.notes || '—' },
       ],
     }))),
     other: () => openDrilldown('Other Expenses', validExpDD.filter(e=>e.source!=='field_expense'&&e.source!=='payroll'&&e.category!=='salary'&&e.source!=='purchase').map(e => ({ // field_expense excluded — tracked via projFieldExps

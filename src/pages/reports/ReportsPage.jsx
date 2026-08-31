@@ -478,7 +478,7 @@ function EquipPLReport({ companyId, from, to }) {
 
       // ── 8b. Bills tagged to equipment (vendor bills for repairs, spares, services etc.)
       const { data: billExps } = await supabase.from('bills')
-        .select('equipment_id,total_amount,bill_date,vendor_name,bill_number')
+        .select('equipment_id,total_amount,paid_amount,balance_due,bill_date,due_date,vendor_name,bill_number,bill_ref,status,notes')
         .eq('company_id', companyId)
         .gte('bill_date', from).lte('bill_date', to)
         .neq('status', 'cancelled')
@@ -772,7 +772,7 @@ function EquipPLReport({ companyId, from, to }) {
                           {/* Vendor bills as a category */}
                           {r.rawBills.length>0 && (
                             <div className="flex justify-between text-xs pl-2 py-0.5 rounded px-1 -mx-1 cursor-pointer hover:bg-dark-700/40 group transition-colors"
-                              onClick={()=>setDrillModal({ title:`${r.eq.name} — Vendor Bills`, rows: r.rawBills.map(b=>({ date:b.bill_date, label:b.bill_number||'Bill', ref:b.vendor_name||'', amount:Number(b.total_amount)||0 })) })}>
+                              onClick={()=>setDrillModal({ title:`${r.eq.name} — Vendor Bills`, rows: r.rawBills.map(b=>({ date:b.bill_date, label:b.bill_number||'Bill', ref:b.vendor_name||'', amount:Number(b.total_amount)||0, extra:[{k:'Vendor',v:b.vendor_name||'—'},{k:'Vendor Ref',v:b.bill_ref||'—'},{k:'Status',v:b.status||'—'},{k:'Paid',v:Number(b.paid_amount)>0?`₹${Number(b.paid_amount).toLocaleString('en-IN')}`:'₹0'},{k:'Balance',v:Number(b.balance_due)>0?`₹${Number(b.balance_due).toLocaleString('en-IN')}`:'₹0'},{k:'Due Date',v:b.due_date||'—'},{k:'Notes',v:b.notes||'—'}] })) })}>
                               <span className="text-slate-500 flex items-center gap-1">↳ Vendor bills <span className="opacity-0 group-hover:opacity-60 text-primary-400 text-[9px]">↗</span></span>
                               <span className="font-mono text-orange-400 underline underline-offset-2 decoration-dashed">{fmt(r.billCost)}</span>
                             </div>
@@ -781,7 +781,7 @@ function EquipPLReport({ companyId, from, to }) {
                         </>
                       ) : (
                         <div className={`flex justify-between text-xs py-0.5 rounded px-1 -mx-1 ${r.rawExps.length>0||r.rawBills.length>0?'cursor-pointer hover:bg-dark-700/40 group transition-colors':''}`}
-                          onClick={r.rawExps.length>0||r.rawBills.length>0?()=>setDrillModal({ title:`${r.eq.name} — Other Expenses`, rows: [...r.rawExps.map(e=>({ date:e.expense_date, label:e.description||e.category||'Expense', ref:e.vendor_name||'', amount:Number(e.total_amount)||0 })), ...r.rawBills.map(b=>({ date:b.bill_date, label:b.bill_number||'Bill', ref:b.vendor_name||'', amount:Number(b.total_amount)||0 }))] }):undefined}>
+                          onClick={r.rawExps.length>0||r.rawBills.length>0?()=>setDrillModal({ title:`${r.eq.name} — Other Expenses`, rows: [...r.rawExps.map(e=>({ date:e.expense_date, label:e.description||e.category||'Expense', ref:e.vendor_name||'', amount:Number(e.total_amount)||0 })), ...r.rawBills.map(b=>({ date:b.bill_date, label:b.bill_number||'Bill', ref:b.vendor_name||'', amount:Number(b.total_amount)||0, extra:[{k:'Vendor',v:b.vendor_name||'—'},{k:'Vendor Ref',v:b.bill_ref||'—'},{k:'Status',v:b.status||'—'},{k:'Paid',v:Number(b.paid_amount)>0?`₹${Number(b.paid_amount).toLocaleString('en-IN')}`:'₹0'},{k:'Balance',v:Number(b.balance_due)>0?`₹${Number(b.balance_due).toLocaleString('en-IN')}`:'₹0'},{k:'Due Date',v:b.due_date||'—'},{k:'Notes',v:b.notes||'—'}] }))] }):undefined}>
                           <span className="text-slate-400 flex items-center gap-1">Other expenses {(r.rawExps.length>0||r.rawBills.length>0)&&<span className="opacity-0 group-hover:opacity-60 text-primary-400 text-[9px]">↗</span>}</span>
                           <span className={`font-mono text-orange-400 ${r.rawExps.length>0||r.rawBills.length>0?'underline underline-offset-2 decoration-dashed':''}`}>{fmt(r.directCost + r.billCost)}</span>
                         </div>
