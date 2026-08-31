@@ -155,15 +155,66 @@ function Spinner() {
 // ─── Shared Drilldown Modal ───────────────────────────────────────────────────
 
 function DrilldownModal({ modal, onClose }) {
-  const [expandedRow, setExpandedRow] = useState(null)
+  const [selectedRow, setSelectedRow] = useState(null)
   if (!modal) return null
   const total = modal.rows.reduce((s, r) => s + (Number(r.amount) || 0), 0)
+
+  // Full detail view for selected row
+  if (selectedRow !== null) {
+    const r = modal.rows[selectedRow]
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setSelectedRow(null)}>
+        <div className="bg-dark-800 border border-dark-600 rounded-2xl w-full max-w-sm shadow-2xl flex flex-col" onClick={e=>e.stopPropagation()}>
+          <div className="flex items-center justify-between px-5 py-4 border-b border-dark-600">
+            <div>
+              <p className="text-[10px] text-slate-500 mb-0.5">{modal.title}</p>
+              <p className="text-sm font-semibold text-slate-100 capitalize">{r.label || '—'}</p>
+            </div>
+            <button onClick={() => setSelectedRow(null)} className="text-slate-400 hover:text-slate-200 text-lg leading-none">✕</button>
+          </div>
+          <div className="px-5 py-4 border-b border-dark-700/60 flex items-center justify-between">
+            <div>
+              <p className="text-[10px] text-slate-500 uppercase tracking-wider">Amount</p>
+              <p className="text-2xl font-bold text-primary-300 font-mono mt-0.5">{fmt(r.amount)}</p>
+            </div>
+            <div className="text-right">
+              <p className="text-[10px] text-slate-500 uppercase tracking-wider">Date</p>
+              <p className="text-sm text-slate-200 mt-0.5">{r.date ? fmtDate(r.date) : '—'}</p>
+            </div>
+          </div>
+          <div className="px-5 py-4 space-y-3">
+            {r.ref && (
+              <div className="flex items-start justify-between gap-4">
+                <span className="text-[11px] text-slate-500 shrink-0">Reference</span>
+                <span className="text-[11px] text-slate-200 text-right">{r.ref}</span>
+              </div>
+            )}
+            {(r.extra || []).filter(({v}) => v && v !== '—').map(({k, v}) => (
+              <div key={k} className="flex items-start justify-between gap-4">
+                <span className="text-[11px] text-slate-500 shrink-0">{k}</span>
+                <span className="text-[11px] text-slate-200 capitalize text-right">{v}</span>
+              </div>
+            ))}
+          </div>
+          <div className="px-5 pb-4">
+            <button onClick={() => setSelectedRow(null)} className="w-full text-xs text-slate-400 hover:text-slate-200 py-2 rounded-lg border border-dark-600 hover:border-dark-500 transition-colors">
+              ← Back to list
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => { setExpandedRow(null); onClose() }}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onClose}>
       <div className="bg-dark-800 border border-dark-600 rounded-2xl w-full max-w-2xl max-h-[80vh] flex flex-col shadow-2xl" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-dark-600">
-          <h3 className="text-sm font-semibold text-slate-100">{modal.title}</h3>
-          <button onClick={() => { setExpandedRow(null); onClose() }} className="text-slate-400 hover:text-slate-200 text-lg leading-none">✕</button>
+          <div>
+            <h3 className="text-sm font-semibold text-slate-100">{modal.title}</h3>
+            {modal.rows.some(r=>r.extra) && <p className="text-[10px] text-primary-400 mt-0.5">Tap a row for details</p>}
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-200 text-lg leading-none">✕</button>
         </div>
         <div className="flex-1 overflow-auto">
           {modal.rows.length === 0 ? (
@@ -180,35 +231,19 @@ function DrilldownModal({ modal, onClose }) {
               </thead>
               <tbody>
                 {modal.rows.map((r, i) => (
-                  <>
-                    <tr key={i}
-                      className={`border-b border-dark-700 transition-colors ${r.extra ? 'cursor-pointer hover:bg-dark-700/40 group' : 'hover:bg-dark-700/30'} ${expandedRow === i ? 'bg-dark-700/30' : ''}`}
-                      onClick={() => r.extra ? setExpandedRow(expandedRow === i ? null : i) : undefined}>
-                      <td className="py-2 px-4 text-xs text-slate-400 whitespace-nowrap">{r.date ? fmtDate(r.date) : '—'}</td>
-                      <td className="py-2 px-4 text-xs text-slate-200 capitalize">
-                        <span className="flex items-center gap-1">
-                          {r.label || '—'}
-                          {r.extra && <span className={`text-[9px] text-primary-400 transition-transform inline-block ${expandedRow === i ? 'rotate-180' : ''}`}>▾</span>}
-                        </span>
-                      </td>
-                      <td className="py-2 px-4 text-xs text-slate-500">{r.ref || '—'}</td>
-                      <td className="py-2 px-4 text-xs text-right font-mono text-slate-200">{fmt(r.amount)}</td>
-                    </tr>
-                    {expandedRow === i && r.extra && (
-                      <tr key={`${i}-detail`} className="border-b border-dark-700 bg-dark-900/60">
-                        <td colSpan={4} className="px-5 py-3">
-                          <div className="grid grid-cols-2 gap-x-6 gap-y-1.5">
-                            {r.extra.filter(({v}) => v && v !== '—').map(({k, v}) => (
-                              <div key={k} className="flex gap-2">
-                                <span className="text-[10px] text-slate-500 min-w-[72px] shrink-0">{k}</span>
-                                <span className="text-[10px] text-slate-300 capitalize">{v}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                  </>
+                  <tr key={i}
+                    className={`border-b border-dark-700 transition-colors ${r.extra ? 'cursor-pointer hover:bg-dark-700/40 group' : 'hover:bg-dark-700/20'}`}
+                    onClick={() => r.extra ? setSelectedRow(i) : undefined}>
+                    <td className="py-2 px-4 text-xs text-slate-400 whitespace-nowrap">{r.date ? fmtDate(r.date) : '—'}</td>
+                    <td className="py-2 px-4 text-xs text-slate-200 capitalize">
+                      <span className="flex items-center gap-1.5">
+                        {r.label || '—'}
+                        {r.extra && <span className="opacity-0 group-hover:opacity-70 text-primary-400 text-[9px] transition-opacity">→</span>}
+                      </span>
+                    </td>
+                    <td className="py-2 px-4 text-xs text-slate-500">{r.ref || '—'}</td>
+                    <td className="py-2 px-4 text-xs text-right font-mono text-slate-200">{fmt(r.amount)}</td>
+                  </tr>
                 ))}
               </tbody>
             </table>

@@ -2275,7 +2275,60 @@ function ProjectPLTab({ project, companyId, projectInvoices, projectPayments, de
 
 // Standalone drilldown detail component (used by ProjectDetail above)
 function DrilldownDetail({ drilldown, onClose, fmtM }) {
-  const [expandedRow, setExpandedRow] = useState(null)
+  const [selectedRow, setSelectedRow] = useState(null)
+
+  // Detail panel shown over the list when a row is clicked
+  if (selectedRow !== null) {
+    const r = drilldown.rows[selectedRow]
+    return (
+      <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setSelectedRow(null)}>
+        <div className="bg-dark-800 border border-dark-600 rounded-2xl shadow-2xl w-full max-w-sm flex flex-col" onClick={e=>e.stopPropagation()}>
+          {/* Detail header */}
+          <div className="flex items-center justify-between px-5 py-4 border-b border-dark-700">
+            <div>
+              <p className="text-xs text-slate-500 mb-0.5">{drilldown.title}</p>
+              <p className="text-sm font-semibold text-slate-100 capitalize">{r.label}</p>
+            </div>
+            <button onClick={() => setSelectedRow(null)} className="text-slate-500 hover:text-slate-200 p-1 rounded-lg hover:bg-dark-700">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+          </div>
+          {/* Amount hero */}
+          <div className="px-5 py-4 border-b border-dark-700/60 flex items-center justify-between">
+            <div>
+              <p className="text-[10px] text-slate-500 uppercase tracking-wider">Amount</p>
+              <p className="text-2xl font-bold text-primary-300 font-mono mt-0.5">{fmtM(r.amount)}</p>
+            </div>
+            <div className="text-right">
+              <p className="text-[10px] text-slate-500 uppercase tracking-wider">Date</p>
+              <p className="text-sm text-slate-200 mt-0.5">{r.date}</p>
+            </div>
+          </div>
+          {/* Extra fields */}
+          <div className="px-5 py-4 space-y-3">
+            {(r.extra || []).filter(({v}) => v && v !== '—').map(({k, v}) => (
+              <div key={k} className="flex items-start justify-between gap-4">
+                <span className="text-[11px] text-slate-500 shrink-0">{k}</span>
+                <span className="text-[11px] text-slate-200 capitalize text-right">{v}</span>
+              </div>
+            ))}
+            {r.sub && (
+              <div className="flex items-start justify-between gap-4">
+                <span className="text-[11px] text-slate-500 shrink-0">Reference</span>
+                <span className="text-[11px] text-slate-200 text-right">{r.sub}</span>
+              </div>
+            )}
+          </div>
+          <div className="px-5 pb-4">
+            <button onClick={() => setSelectedRow(null)} className="w-full text-xs text-slate-400 hover:text-slate-200 py-2 rounded-lg border border-dark-600 hover:border-dark-500 transition-colors">
+              ← Back to list
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-dark-800 border border-dark-600 rounded-2xl shadow-2xl w-full max-w-lg max-h-[80vh] flex flex-col" onClick={e=>e.stopPropagation()}>
@@ -2283,7 +2336,9 @@ function DrilldownDetail({ drilldown, onClose, fmtM }) {
         <div className="flex items-center justify-between px-5 py-4 border-b border-dark-700">
           <div>
             <p className="text-sm font-semibold text-slate-100">{drilldown.title}</p>
-            <p className="text-[11px] text-slate-500 mt-0.5">{drilldown.rows.length} entries · {fmtM(drilldown.rows.reduce((s,r)=>s+r.amount,0))} total</p>
+            <p className="text-[11px] text-slate-500 mt-0.5">{drilldown.rows.length} entries · {fmtM(drilldown.rows.reduce((s,r)=>s+r.amount,0))} total
+              {drilldown.rows.some(r=>r.extra) && <span className="ml-1 text-primary-400">· tap a row for details</span>}
+            </p>
           </div>
           <button onClick={onClose} className="text-slate-500 hover:text-slate-200 p-1 rounded-lg hover:bg-dark-700">
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -2305,35 +2360,19 @@ function DrilldownDetail({ drilldown, onClose, fmtM }) {
               </thead>
               <tbody>
                 {drilldown.rows.map((r, i) => (
-                  <>
-                    <tr key={i}
-                      className={`border-b border-dark-700/40 transition-colors ${r.extra ? 'cursor-pointer hover:bg-dark-700/40 group' : 'hover:bg-dark-700/30'} ${expandedRow === i ? 'bg-dark-700/30' : ''}`}
-                      onClick={() => r.extra ? setExpandedRow(expandedRow === i ? null : i) : undefined}>
-                      <td className="px-4 py-2.5 text-slate-400 whitespace-nowrap">{r.date}</td>
-                      <td className="px-4 py-2.5 text-slate-200 font-medium capitalize">
-                        <span className="flex items-center gap-1">
-                          {r.label}
-                          {r.extra && <span className={`text-[9px] text-primary-400 transition-transform inline-block ${expandedRow === i ? 'rotate-180' : ''}`}>▾</span>}
-                        </span>
-                      </td>
-                      <td className="px-4 py-2.5 text-slate-500 max-w-[120px] truncate">{r.sub || '—'}</td>
-                      <td className="px-4 py-2.5 text-right text-slate-100 font-mono font-semibold">{fmtM(r.amount)}</td>
-                    </tr>
-                    {expandedRow === i && r.extra && (
-                      <tr key={`${i}-detail`} className="border-b border-dark-700/40 bg-dark-900/60">
-                        <td colSpan={4} className="px-5 py-3">
-                          <div className="grid grid-cols-2 gap-x-6 gap-y-1.5">
-                            {r.extra.filter(({v}) => v && v !== '—').map(({k, v}) => (
-                              <div key={k} className="flex gap-2">
-                                <span className="text-[10px] text-slate-500 min-w-[72px] shrink-0">{k}</span>
-                                <span className="text-[10px] text-slate-300 capitalize">{v}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                  </>
+                  <tr key={i}
+                    className={`border-b border-dark-700/40 transition-colors ${r.extra ? 'cursor-pointer hover:bg-dark-700/40 group' : 'hover:bg-dark-700/20'}`}
+                    onClick={() => r.extra ? setSelectedRow(i) : undefined}>
+                    <td className="px-4 py-2.5 text-slate-400 whitespace-nowrap">{r.date}</td>
+                    <td className="px-4 py-2.5 text-slate-200 font-medium capitalize">
+                      <span className="flex items-center gap-1.5">
+                        {r.label}
+                        {r.extra && <span className="opacity-0 group-hover:opacity-70 text-primary-400 text-[9px] transition-opacity">→</span>}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5 text-slate-500 max-w-[120px] truncate">{r.sub || '—'}</td>
+                    <td className="px-4 py-2.5 text-right text-slate-100 font-mono font-semibold">{fmtM(r.amount)}</td>
+                  </tr>
                 ))}
               </tbody>
               <tfoot className="sticky bottom-0 bg-dark-800 border-t border-dark-600">
