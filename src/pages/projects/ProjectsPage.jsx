@@ -2021,11 +2021,67 @@ function ProjectPLTab({ project, companyId, projectInvoices, projectPayments, de
   const clrNet  = pl.netPL >= 0 ? 'text-emerald-400' : 'text-red-400'
   const clrMgn  = (pl.marginPct ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'
 
-  const PLRow = ({ label, value, sub, highlight, indent }) => (
-    <div className={`flex items-center justify-between py-1.5 ${indent ? 'pl-4' : ''} border-b border-dark-700/40 last:border-0`}>
-      <span className={`text-xs ${highlight ? 'font-semibold text-slate-200' : indent ? 'text-slate-400' : 'text-slate-400'}`}>{label}</span>
+  // ── Drilldown modal state ──────────────────────────────────────────────────
+  const [drilldown, setDrilldown] = useState(null) // { title, rows: [{date,label,amount,sub}] }
+
+  // Build equipment id→name map for enriching drilldown rows
+  const eqNameMap = useMemo(() => {
+    const m = {}
+    equipment.forEach(e => { m[e.id] = e.name })
+    deployments.forEach(d => { if (d.equipment?.id) m[d.equipment.id] = d.equipment.name })
+    return m
+  }, [equipment, deployments])
+
+  const fmtD = d => d ? new Date(d).toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' }) : '—'
+
+  const openDrilldown = (title, rows) => setDrilldown({ title, rows })
+
+  const drilldownConfig = {
+    invoiced: () => openDrilldown('Total Invoiced', projectInvoices.map(i => ({
+      date: fmtD(i.invoice_date), label: i.invoice_number || 'Invoice', sub: i.client_name || '', amount: Number(i.total_amount)||0,
+    }))),
+    received: () => openDrilldown('Total Received', projectPayments.map(p => ({
+      date: fmtD(p.payment_date), label: p.payment_number || 'Payment', sub: p.payment_mode || '', amount: Number(p.amount)||0,
+    }))),
+    outstanding: () => openDrilldown('Outstanding Invoices', projectInvoices.filter(i=>i.status!=='paid').map(i => ({
+      date: fmtD(i.invoice_date), label: i.invoice_number || 'Invoice', sub: i.status, amount: Math.max(0,(Number(i.total_amount)||0)-(Number(i.paid_amount)||0)),
+    }))),
+    fuel: () => openDrilldown('Fuel Issues', fuelIssues.map(f => ({
+      date: fmtD(f.issue_date), label: `${Number(f.qty_liters||0).toFixed(1)} L`, sub: eqNameMap[f.equipment_id] || f.equipment_id || '',
+      amount: Number(f.qty_liters||0) * (Number(f.rate_per_litre)||95),
+    }))),
+    maintenance: () => openDrilldown('Maintenance (Job Cards)', jobCards.map(j => ({
+      date: fmtD(j.closed_at), label: j.jc_type || 'Job Card', sub: eqNameMap[j.equipment_id] || '', amount: Number(j.total_cost)||0,
+    }))),
+    field: () => openDrilldown('Field Expenses', eqExp.filter(e=>e.source==='field_expense').map(e => ({
+      date: fmtD(e.expense_date), label: e.category || 'Field Expense', sub: eqNameMap[e.equipment_id] || '', amount: Number(e.total_amount)||0,
+    }))),
+    salary: () => openDrilldown('Salary (Operators)', eqExp.filter(e=>e.source==='payroll'||e.category==='salary').map(e => ({
+      date: fmtD(e.expense_date), label: 'Operator Salary', sub: eqNameMap[e.equipment_id] || '', amount: Number(e.total_amount)||0,
+    }))),
+    purchases: () => openDrilldown('Purchases', eqExp.filter(e=>e.source==='purchase').map(e => ({
+      date: fmtD(e.expense_date), label: e.category || 'Purchase', sub: eqNameMap[e.equipment_id] || '', amount: Number(e.total_amount)||0,
+    }))),
+    bills: () => openDrilldown('Bills', eqBills.map(b => ({
+      date: fmtD(b.bill_date), label: b.bill_number || 'Bill', sub: b.equipment_name || eqNameMap[b.equipment_id] || '', amount: Number(b.total_amount)||0,
+    }))),
+    other: () => openDrilldown('Other Expenses', eqExp.filter(e=>e.source!=='field_expense'&&e.source!=='payroll'&&e.category!=='salary'&&e.source!=='purchase').map(e => ({
+      date: fmtD(e.expense_date), label: e.category || e.source || 'Other', sub: eqNameMap[e.equipment_id] || '', amount: Number(e.total_amount)||0,
+    }))),
+  }
+
+  // Clickable PLRow — shows drilldown arrow when onClick provided
+  const PLRow = ({ label, value, sub, highlight, indent, onClick }) => (
+    <div
+      onClick={onClick}
+      className={`flex items-center justify-between py-1.5 border-b border-dark-700/40 last:border-0 ${indent ? 'pl-4' : ''} ${onClick ? 'cursor-pointer hover:bg-dark-700/30 rounded-lg px-2 -mx-2 transition-colors group' : ''}`}
+    >
+      <span className={`text-xs ${highlight ? 'font-semibold text-slate-200' : 'text-slate-400'} flex items-center gap-1`}>
+        {label}
+        {onClick && <span className="opacity-0 group-hover:opacity-60 text-primary-400 text-[10px] transition-opacity">↗</span>}
+      </span>
       <div className="text-right">
-        <span className={`text-xs font-medium ${highlight ? clrNet : 'text-slate-200'}`}>{value}</span>
+        <span className={`text-xs font-medium ${highlight ? clrNet : onClick ? 'text-primary-300 underline underline-offset-2 decoration-dashed' : 'text-slate-200'}`}>{value}</span>
         {sub && <span className="text-xs text-slate-500 ml-2">{sub}</span>}
       </div>
     </div>
@@ -2063,9 +2119,9 @@ function ProjectPLTab({ project, companyId, projectInvoices, projectPayments, de
               <span className="text-sm font-semibold text-slate-200">Revenue</span>
             </div>
             {pl.contractVal > 0 && <PLRow label="Contract Value"    value={fmtM(pl.contractVal)} />}
-            <PLRow label="Total Invoiced"    value={fmtM(pl.totalRaised)} />
-            <PLRow label="Total Received"    value={fmtM(pl.totalReceived)} />
-            <PLRow label="Outstanding"       value={fmtM(pl.outstanding)} />
+            <PLRow label="Total Invoiced"    value={fmtM(pl.totalRaised)}   onClick={projectInvoices.length>0?drilldownConfig.invoiced:undefined} />
+            <PLRow label="Total Received"    value={fmtM(pl.totalReceived)} onClick={projectPayments.length>0?drilldownConfig.received:undefined} />
+            <PLRow label="Outstanding"       value={fmtM(pl.outstanding)}   onClick={projectInvoices.some(i=>i.status!=='paid')?drilldownConfig.outstanding:undefined} />
             {pl.contractVal > 0 && <PLRow label="Yet to Bill"  value={fmtM(pl.yetToBill)} />}
           </div>
 
@@ -2075,13 +2131,13 @@ function ProjectPLTab({ project, companyId, projectInvoices, projectPayments, de
               <IndianRupee className="w-4 h-4 text-orange-400" />
               <span className="text-sm font-semibold text-slate-200">Costs</span>
             </div>
-            <PLRow label="Fuel"              value={fmtM(pl.fuelCost)}         sub={pl.fuelLitres > 0 ? `${pl.fuelLitres.toFixed(0)}L` : undefined} />
-            <PLRow label="Maintenance"       value={fmtM(pl.maintCost)}        sub={jobCards.length > 0 ? `${jobCards.length} JC` : undefined} />
-            <PLRow label="Field Expenses"    value={fmtM(pl.fieldCost)} />
-            <PLRow label="Salary (Operators)" value={fmtM(pl.salaryCost)} />
-            <PLRow label="Purchases"         value={fmtM(pl.purchaseExpCost)} />
-            <PLRow label="Bills"             value={fmtM(pl.billsCost)}        sub={eqBills.length > 0 ? `${eqBills.length} bills` : undefined} />
-            <PLRow label="Other"             value={fmtM(pl.otherCost)} />
+            <PLRow label="Fuel"               value={fmtM(pl.fuelCost)}         sub={pl.fuelLitres>0?`${pl.fuelLitres.toFixed(0)}L`:undefined}       onClick={fuelIssues.length>0?drilldownConfig.fuel:undefined} />
+            <PLRow label="Maintenance"        value={fmtM(pl.maintCost)}        sub={jobCards.length>0?`${jobCards.length} JC`:undefined}               onClick={jobCards.length>0?drilldownConfig.maintenance:undefined} />
+            <PLRow label="Field Expenses"     value={fmtM(pl.fieldCost)}                                                                                onClick={eqExp.filter(e=>e.source==='field_expense').length>0?drilldownConfig.field:undefined} />
+            <PLRow label="Salary (Operators)" value={fmtM(pl.salaryCost)}                                                                               onClick={eqExp.filter(e=>e.source==='payroll'||e.category==='salary').length>0?drilldownConfig.salary:undefined} />
+            <PLRow label="Purchases"          value={fmtM(pl.purchaseExpCost)}                                                                          onClick={eqExp.filter(e=>e.source==='purchase').length>0?drilldownConfig.purchases:undefined} />
+            <PLRow label="Bills"              value={fmtM(pl.billsCost)}        sub={eqBills.length>0?`${eqBills.length} bills`:undefined}               onClick={eqBills.length>0?drilldownConfig.bills:undefined} />
+            <PLRow label="Other"              value={fmtM(pl.otherCost)}                                                                                onClick={eqExp.filter(e=>e.source!=='field_expense'&&e.source!=='payroll'&&e.category!=='salary'&&e.source!=='purchase').length>0?drilldownConfig.other:undefined} />
             <p className="text-xs text-slate-500 mt-3 pt-2 border-t border-dark-700/40 leading-relaxed">
               Costs shown are for equipment deployed on this project only. Company-wide overheads (EMI, office salary) are excluded.
             </p>
@@ -2118,6 +2174,58 @@ function ProjectPLTab({ project, companyId, projectInvoices, projectPayments, de
             )}
           </div>
 
+        </div>
+      )}
+
+      {/* ── Drilldown Modal ──────────────────────────────────────────────── */}
+      {drilldown && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={()=>setDrilldown(null)}>
+          <div className="bg-dark-800 border border-dark-600 rounded-2xl shadow-2xl w-full max-w-lg max-h-[80vh] flex flex-col" onClick={e=>e.stopPropagation()}>
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-dark-700">
+              <div>
+                <p className="text-sm font-semibold text-slate-100">{drilldown.title}</p>
+                <p className="text-[11px] text-slate-500 mt-0.5">{drilldown.rows.length} entries · {fmtM(drilldown.rows.reduce((s,r)=>s+r.amount,0))} total</p>
+              </div>
+              <button onClick={()=>setDrilldown(null)} className="text-slate-500 hover:text-slate-200 p-1 rounded-lg hover:bg-dark-700">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            </div>
+
+            {/* Rows */}
+            <div className="overflow-y-auto flex-1">
+              {drilldown.rows.length === 0 ? (
+                <div className="flex items-center justify-center h-24 text-slate-500 text-sm">No records</div>
+              ) : (
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-dark-800 border-b border-dark-700">
+                    <tr>
+                      <th className="text-left px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">Date</th>
+                      <th className="text-left px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">Description</th>
+                      <th className="text-left px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">Equipment / Ref</th>
+                      <th className="text-right px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {drilldown.rows.map((r, i) => (
+                      <tr key={i} className="border-b border-dark-700/40 hover:bg-dark-700/30 transition-colors">
+                        <td className="px-4 py-2.5 text-slate-400 whitespace-nowrap">{r.date}</td>
+                        <td className="px-4 py-2.5 text-slate-200 font-medium capitalize">{r.label}</td>
+                        <td className="px-4 py-2.5 text-slate-500 max-w-[140px] truncate">{r.sub || '—'}</td>
+                        <td className="px-4 py-2.5 text-right text-slate-100 font-mono font-semibold">{fmtM(r.amount)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot className="sticky bottom-0 bg-dark-800 border-t border-dark-600">
+                    <tr>
+                      <td colSpan={3} className="px-4 py-2.5 text-xs font-semibold text-slate-300">Total</td>
+                      <td className="px-4 py-2.5 text-right text-sm font-bold text-primary-300 font-mono">{fmtM(drilldown.rows.reduce((s,r)=>s+r.amount,0))}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>
