@@ -2051,7 +2051,7 @@ function ProjectPLTab({ project, companyId, projectInvoices, projectPayments, de
       purchaseExpCost, otherCost, billsCost,
       totalCost, netPL, marginPct,
     }
-  }, [projectInvoices, projectPayments, project.contract_value, fuelIssues, jobCards, eqExp, eqBills])
+  }, [projectInvoices, projectPayments, project.contract_value, fuelIssues, jobCards, eqExp, eqBills, wasOnProject])
 
   const clrNet  = pl.netPL >= 0 ? 'text-emerald-400' : 'text-red-400'
   const clrMgn  = (pl.marginPct ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'
@@ -2206,13 +2206,13 @@ function ProjectPLTab({ project, companyId, projectInvoices, projectPayments, de
               <IndianRupee className="w-4 h-4 text-orange-400" />
               <span className="text-sm font-semibold text-slate-200">Costs</span>
             </div>
-            <PLRow label="Fuel"               value={fmtM(pl.fuelCost)}         sub={pl.fuelLitres>0?`${pl.fuelLitres.toFixed(0)}L`:undefined}       onClick={validFuelDD.length>0?drilldownConfig.fuel:undefined} />
-            <PLRow label="Maintenance"        value={fmtM(pl.maintCost)}        sub={validJobsDD.length>0?`${validJobsDD.length} JC`:undefined}          onClick={validJobsDD.length>0?drilldownConfig.maintenance:undefined} />
-            <PLRow label="Field Expenses"     value={fmtM(pl.fieldCost)}                                                                                onClick={validExpDD.filter(e=>e.source==='field_expense').length>0?drilldownConfig.field:undefined} />
-            <PLRow label="Salary (Operators)" value={fmtM(pl.salaryCost)}                                                                               onClick={validExpDD.filter(e=>e.source==='payroll'||e.category==='salary').length>0?drilldownConfig.salary:undefined} />
-            <PLRow label="Purchases"          value={fmtM(pl.purchaseExpCost)}                                                                          onClick={validExpDD.filter(e=>e.source==='purchase').length>0?drilldownConfig.purchases:undefined} />
-            <PLRow label="Bills"              value={fmtM(pl.billsCost)}        sub={validBillsDD.length>0?`${validBillsDD.length} bills`:undefined}     onClick={validBillsDD.length>0?drilldownConfig.bills:undefined} />
-            <PLRow label="Other"              value={fmtM(pl.otherCost)}                                                                                onClick={validExpDD.filter(e=>e.source!=='field_expense'&&e.source!=='payroll'&&e.category!=='salary'&&e.source!=='purchase').length>0?drilldownConfig.other:undefined} />
+            <PLRow label="Fuel"               value={fmtM(pl.fuelCost)}         sub={pl.fuelLitres>0?`${pl.fuelLitres.toFixed(0)}L`:undefined}   onClick={pl.fuelCost>0?drilldownConfig.fuel:undefined} />
+            <PLRow label="Maintenance"        value={fmtM(pl.maintCost)}        sub={validJobsDD.length>0?`${validJobsDD.length} JC`:undefined}      onClick={pl.maintCost>0?drilldownConfig.maintenance:undefined} />
+            <PLRow label="Field Expenses"     value={fmtM(pl.fieldCost)}                                                                            onClick={pl.fieldCost>0?drilldownConfig.field:undefined} />
+            <PLRow label="Salary (Operators)" value={fmtM(pl.salaryCost)}                                                                           onClick={pl.salaryCost>0?drilldownConfig.salary:undefined} />
+            <PLRow label="Purchases"          value={fmtM(pl.purchaseExpCost)}                                                                       onClick={pl.purchaseExpCost>0?drilldownConfig.purchases:undefined} />
+            <PLRow label="Bills"              value={fmtM(pl.billsCost)}        sub={validBillsDD.length>0?`${validBillsDD.length} bills`:undefined} onClick={pl.billsCost>0?drilldownConfig.bills:undefined} />
+            <PLRow label="Other"              value={fmtM(pl.otherCost)}                                                                            onClick={pl.otherCost>0?drilldownConfig.other:undefined} />
             <p className="text-xs text-slate-500 mt-3 pt-2 border-t border-dark-700/40 leading-relaxed">
               Costs shown are for equipment deployed on this project only. Company-wide overheads (EMI, office salary) are excluded.
             </p>
