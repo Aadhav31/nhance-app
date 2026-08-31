@@ -1962,6 +1962,20 @@ function ProjectPLTab({ project, companyId, projectInvoices, projectPayments, de
     enabled: eqEnabled,
   })
 
+  // 3b. Field expenses directly by project_id (catches admin-scope + any equipment not in allEqIds)
+  const { data: projFieldExps = [], isLoading: fieldExpLoad } = useQuery({
+    queryKey: ['proj_pl_field_exps', project.id, from, to],
+    queryFn: async () => {
+      const { data } = await supabase.from('field_expenses')
+        .select('id, expense_date, category, amount, equipment_id, equipment_name, payee_name, description, payment_mode, created_by_name')
+        .eq('project_id', project.id)
+        .eq('company_id', companyId)
+        .gte('expense_date', from).lte('expense_date', to)
+      return data || []
+    },
+    enabled: !!project.id,
+  })
+
   // Equipment names (for fallback matching — older bills stored name but not UUID)
   const allEqNames = useMemo(() => {
     const names = new Set([
@@ -1993,7 +2007,7 @@ function ProjectPLTab({ project, companyId, projectInvoices, projectPayments, de
     [rawBills, allEqIds, allEqNames]
   )
 
-  const isLoading = fuelLoad || jobLoad || expLoad || billLoad
+  const isLoading = fuelLoad || jobLoad || expLoad || billLoad || fieldExpLoad
 
   const pl = useMemo(() => {
     // Revenue
@@ -2014,12 +2028,12 @@ function ProjectPLTab({ project, companyId, projectInvoices, projectPayments, de
     const validJobs  = jobCards.filter(j => wasOnProject(j.equipment_id, j.closed_at?.slice(0,10)))
     const maintCost  = validJobs.reduce((s, j) => s + Number(j.total_cost || 0), 0)
 
-    // Equipment-tagged expense breakdown — filter by deployment period
-    const validExp   = eqExp.filter(e => wasOnProject(e.equipment_id, e.expense_date))
+    // Field expenses — query directly from field_expenses by project_id (captures admin-scope too)
+    const fieldCost = projFieldExps.reduce((s, e) => s + Number(e.amount || 0), 0)
 
-    const fieldCost = validExp
-      .filter(e => e.source === 'field_expense')
-      .reduce((s, e) => s + Number(e.total_amount || 0), 0)
+    // Equipment-tagged expense breakdown — filter by deployment period (excludes field expenses)
+    const validExp   = eqExp.filter(e => wasOnProject(e.equipment_id, e.expense_date))
+      .filter(e => e.source !== 'field_expense') // already counted above via projFieldExps
 
     const salaryCost = validExp
       .filter(e => e.source === 'payroll' || e.category === 'salary')
@@ -2031,7 +2045,6 @@ function ProjectPLTab({ project, companyId, projectInvoices, projectPayments, de
 
     const otherCost = validExp
       .filter(e =>
-        e.source !== 'field_expense' &&
         e.source !== 'payroll' && e.category !== 'salary' &&
         e.source !== 'purchase'
       )
@@ -2051,7 +2064,7 @@ function ProjectPLTab({ project, companyId, projectInvoices, projectPayments, de
       purchaseExpCost, otherCost, billsCost,
       totalCost, netPL, marginPct,
     }
-  }, [projectInvoices, projectPayments, project.contract_value, fuelIssues, jobCards, eqExp, eqBills, wasOnProject])
+  }, [projectInvoices, projectPayments, project.contract_value, fuelIssues, jobCards, eqExp, eqBills, wasOnProject, projFieldExps])
 
   const clrNet  = pl.netPL >= 0 ? 'text-emerald-400' : 'text-red-400'
   const clrMgn  = (pl.marginPct ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'
@@ -2094,15 +2107,15 @@ function ProjectPLTab({ project, companyId, projectInvoices, projectPayments, de
     maintenance: () => openDrilldown('Maintenance (Job Cards)', validJobsDD.map(j => ({
       date: fmtD(j.closed_at), label: j.jc_type || 'Job Card', sub: eqNameMap[j.equipment_id] || '', amount: Number(j.total_cost)||0,
     }))),
-    field: () => openDrilldown('Field Expenses', validExpDD.filter(e=>e.source==='field_expense').map(e => ({
-      date: fmtD(e.expense_date), label: e.description || e.category || 'Field Expense', sub: e.vendor_name || eqNameMap[e.equipment_id] || '', amount: Number(e.total_amount)||0,
+    field: () => openDrilldown('Field Expenses', projFieldExps.map(e => ({
+      date: fmtD(e.expense_date), label: e.description || e.category || 'Field Expense', sub: e.payee_name || e.equipment_name || eqNameMap[e.equipment_id] || '', amount: Number(e.amount)||0,
       extra: [
-        { k: 'Category',    v: e.category || '—' },
-        { k: 'Vendor',      v: e.vendor_name || '—' },
+        { k: 'Category',    v: (e.category || '—').replace(/_/g,' ') },
+        { k: 'Payee',       v: e.payee_name || '—' },
         { k: 'Description', v: e.description || '—' },
         { k: 'Payment',     v: e.payment_mode || '—' },
-        { k: 'Equipment',   v: eqNameMap[e.equipment_id] || '—' },
-        { k: 'Submitted by',v: e.submitted_by_name || '—' },
+        { k: 'Equipment',   v: e.equipment_name || eqNameMap[e.equipment_id] || '—' },
+        { k: 'Submitted by',v: e.created_by_name || '—' },
       ],
     }))),
     salary: () => openDrilldown('Salary (Operators)', validExpDD.filter(e=>e.source==='payroll'||e.category==='salary').map(e => ({
@@ -2132,7 +2145,7 @@ function ProjectPLTab({ project, companyId, projectInvoices, projectPayments, de
         { k: 'Status',    v: b.status || '—' },
       ],
     }))),
-    other: () => openDrilldown('Other Expenses', validExpDD.filter(e=>e.source!=='field_expense'&&e.source!=='payroll'&&e.category!=='salary'&&e.source!=='purchase').map(e => ({
+    other: () => openDrilldown('Other Expenses', validExpDD.filter(e=>e.source!=='field_expense'&&e.source!=='payroll'&&e.category!=='salary'&&e.source!=='purchase').map(e => ({ // field_expense excluded — tracked via projFieldExps
       date: fmtD(e.expense_date), label: e.description || e.category || e.source || 'Other', sub: e.vendor_name || eqNameMap[e.equipment_id] || '', amount: Number(e.total_amount)||0,
       extra: [
         { k: 'Category',    v: e.category || '—' },
