@@ -2337,7 +2337,7 @@ function DrilldownDetail({ drilldown, onClose, fmtM }) {
           <div>
             <p className="text-sm font-semibold text-slate-100">{drilldown.title}</p>
             <p className="text-[11px] text-slate-500 mt-0.5">{drilldown.rows.length} entries · {fmtM(drilldown.rows.reduce((s,r)=>s+r.amount,0))} total
-              {drilldown.rows.some(r=>r.extra) && <span className="ml-1 text-primary-400">· tap a row for details</span>}
+              {drilldown.rows.some(r=>r.extra) && <span className="ml-1 text-slate-500">· click amount to view details</span>}
             </p>
           </div>
           <button onClick={onClose} className="text-slate-500 hover:text-slate-200 p-1 rounded-lg hover:bg-dark-700">
@@ -2360,18 +2360,21 @@ function DrilldownDetail({ drilldown, onClose, fmtM }) {
               </thead>
               <tbody>
                 {drilldown.rows.map((r, i) => (
-                  <tr key={i}
-                    className={`border-b border-dark-700/40 transition-colors ${r.extra ? 'cursor-pointer hover:bg-dark-700/40 group' : 'hover:bg-dark-700/20'}`}
-                    onClick={() => r.extra ? setSelectedRow(i) : undefined}>
+                  <tr key={i} className="border-b border-dark-700/40 hover:bg-dark-700/20 transition-colors">
                     <td className="px-4 py-2.5 text-slate-400 whitespace-nowrap">{r.date}</td>
-                    <td className="px-4 py-2.5 text-slate-200 font-medium capitalize">
-                      <span className="flex items-center gap-1.5">
-                        {r.label}
-                        {r.extra && <span className="opacity-0 group-hover:opacity-70 text-primary-400 text-[9px] transition-opacity">→</span>}
-                      </span>
-                    </td>
+                    <td className="px-4 py-2.5 text-slate-200 font-medium capitalize">{r.label}</td>
                     <td className="px-4 py-2.5 text-slate-500 max-w-[120px] truncate">{r.sub || '—'}</td>
-                    <td className="px-4 py-2.5 text-right text-slate-100 font-mono font-semibold">{fmtM(r.amount)}</td>
+                    <td className="px-4 py-2.5 text-right">
+                      {r.extra ? (
+                        <button
+                          onClick={() => setSelectedRow(i)}
+                          className="font-mono font-semibold text-primary-300 underline underline-offset-2 decoration-dashed hover:text-primary-200 transition-colors cursor-pointer">
+                          {fmtM(r.amount)}
+                        </button>
+                      ) : (
+                        <span className="font-mono font-semibold text-slate-100">{fmtM(r.amount)}</span>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>

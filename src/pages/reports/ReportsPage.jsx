@@ -212,7 +212,7 @@ function DrilldownModal({ modal, onClose }) {
         <div className="flex items-center justify-between px-5 py-4 border-b border-dark-600">
           <div>
             <h3 className="text-sm font-semibold text-slate-100">{modal.title}</h3>
-            {modal.rows.some(r=>r.extra) && <p className="text-[10px] text-primary-400 mt-0.5">Tap a row for details</p>}
+            {modal.rows.some(r=>r.extra) && <p className="text-[10px] text-slate-500 mt-0.5">Click an amount to view details</p>}
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-200 text-lg leading-none">✕</button>
         </div>
@@ -231,18 +231,21 @@ function DrilldownModal({ modal, onClose }) {
               </thead>
               <tbody>
                 {modal.rows.map((r, i) => (
-                  <tr key={i}
-                    className={`border-b border-dark-700 transition-colors ${r.extra ? 'cursor-pointer hover:bg-dark-700/40 group' : 'hover:bg-dark-700/20'}`}
-                    onClick={() => r.extra ? setSelectedRow(i) : undefined}>
+                  <tr key={i} className="border-b border-dark-700 hover:bg-dark-700/20 transition-colors">
                     <td className="py-2 px-4 text-xs text-slate-400 whitespace-nowrap">{r.date ? fmtDate(r.date) : '—'}</td>
-                    <td className="py-2 px-4 text-xs text-slate-200 capitalize">
-                      <span className="flex items-center gap-1.5">
-                        {r.label || '—'}
-                        {r.extra && <span className="opacity-0 group-hover:opacity-70 text-primary-400 text-[9px] transition-opacity">→</span>}
-                      </span>
-                    </td>
+                    <td className="py-2 px-4 text-xs text-slate-200 capitalize">{r.label || '—'}</td>
                     <td className="py-2 px-4 text-xs text-slate-500">{r.ref || '—'}</td>
-                    <td className="py-2 px-4 text-xs text-right font-mono text-slate-200">{fmt(r.amount)}</td>
+                    <td className="py-2 px-4 text-xs text-right">
+                      {r.extra ? (
+                        <button
+                          onClick={() => setSelectedRow(i)}
+                          className="font-mono font-semibold text-primary-300 underline underline-offset-2 decoration-dashed hover:text-primary-200 transition-colors cursor-pointer">
+                          {fmt(r.amount)}
+                        </button>
+                      ) : (
+                        <span className="font-mono text-slate-200">{fmt(r.amount)}</span>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
