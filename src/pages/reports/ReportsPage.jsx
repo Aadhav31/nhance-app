@@ -478,7 +478,7 @@ function EquipPLReport({ companyId, from, to }) {
 
       // ── 8b. Bills tagged to equipment (vendor bills for repairs, spares, services etc.)
       const { data: billExps } = await supabase.from('bills')
-        .select('equipment_id,total_amount,paid_amount,balance_due,bill_date,due_date,vendor_name,bill_number,bill_ref,status,notes')
+        .select('equipment_id,total_amount,paid_amount,balance_due,bill_date,due_date,vendor_name,bill_number,bill_ref,status,notes,bill_line_items(description,quantity,unit,rate,amount)')
         .eq('company_id', companyId)
         .gte('bill_date', from).lte('bill_date', to)
         .neq('status', 'cancelled')
@@ -772,7 +772,7 @@ function EquipPLReport({ companyId, from, to }) {
                           {/* Vendor bills as a category */}
                           {r.rawBills.length>0 && (
                             <div className="flex justify-between text-xs pl-2 py-0.5 rounded px-1 -mx-1 cursor-pointer hover:bg-dark-700/40 group transition-colors"
-                              onClick={()=>setDrillModal({ title:`${r.eq.name} — Vendor Bills`, rows: r.rawBills.map(b=>({ date:b.bill_date, label:b.bill_number||'Bill', ref:b.vendor_name||'', amount:Number(b.total_amount)||0, extra:[{k:'Vendor',v:b.vendor_name||'—'},{k:'Vendor Ref',v:b.bill_ref||'—'},{k:'Status',v:b.status||'—'},{k:'Paid',v:Number(b.paid_amount)>0?`₹${Number(b.paid_amount).toLocaleString('en-IN')}`:'₹0'},{k:'Balance',v:Number(b.balance_due)>0?`₹${Number(b.balance_due).toLocaleString('en-IN')}`:'₹0'},{k:'Due Date',v:b.due_date||'—'},{k:'Notes',v:b.notes||'—'}] })) })}>
+                              onClick={()=>setDrillModal({ title:`${r.eq.name} — Vendor Bills`, rows: r.rawBills.map(b=>({ date:b.bill_date, label:b.bill_number||'Bill', ref:b.vendor_name||'', amount:Number(b.total_amount)||0, extra:[{k:'Vendor',v:b.vendor_name||'—'},{k:'Vendor Ref',v:b.bill_ref||'—'},{k:'Status',v:b.status||'—'},{k:'Paid',v:Number(b.paid_amount)>0?`₹${Number(b.paid_amount).toLocaleString('en-IN')}`:'₹0'},{k:'Balance',v:Number(b.balance_due)>0?`₹${Number(b.balance_due).toLocaleString('en-IN')}`:'₹0'},{k:'Due Date',v:b.due_date||'—'},...(b.bill_line_items||[]).map((li,idx)=>({k:idx===0?'Items':'',v:`${li.description} · ${Number(li.quantity)||1} ${li.unit||'nos'} @ ₹${Number(li.rate).toLocaleString('en-IN')} = ₹${Number(li.amount).toLocaleString('en-IN')}`})),{k:'Notes',v:b.notes||'—'}] })) })}>
                               <span className="text-slate-500 flex items-center gap-1">↳ Vendor bills <span className="opacity-0 group-hover:opacity-60 text-primary-400 text-[9px]">↗</span></span>
                               <span className="font-mono text-orange-400 underline underline-offset-2 decoration-dashed">{fmt(r.billCost)}</span>
                             </div>

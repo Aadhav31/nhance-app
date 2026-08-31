@@ -1990,7 +1990,7 @@ function ProjectPLTab({ project, companyId, projectInvoices, projectPayments, de
     queryKey: ['proj_pl_bills', project.id, companyId, from, to],
     queryFn: async () => {
       const { data } = await supabase.from('bills')
-        .select('id, bill_number, bill_ref, bill_date, due_date, vendor_name, total_amount, paid_amount, balance_due, status, notes, equipment_id, equipment_name')
+        .select('id, bill_number, bill_ref, bill_date, due_date, vendor_name, total_amount, paid_amount, balance_due, status, notes, equipment_id, equipment_name, bill_line_items(description,quantity,unit,rate,amount)')
         .eq('company_id', companyId)
         .neq('status', 'cancelled')
         .gte('bill_date', from).lte('bill_date', to)
@@ -2148,6 +2148,10 @@ function ProjectPLTab({ project, companyId, projectInvoices, projectPayments, de
         { k: 'Paid',        v: Number(b.paid_amount) > 0 ? `₹${Number(b.paid_amount).toLocaleString('en-IN')}` : '₹0' },
         { k: 'Balance Due', v: Number(b.balance_due) > 0 ? `₹${Number(b.balance_due).toLocaleString('en-IN')}` : '₹0' },
         { k: 'Due Date',    v: b.due_date ? fmtD(b.due_date) : '—' },
+        ...(b.bill_line_items || []).map((li, idx) => ({
+          k: idx === 0 ? 'Items' : '',
+          v: `${li.description} · ${Number(li.quantity)||1} ${li.unit||'nos'} @ ₹${Number(li.rate).toLocaleString('en-IN')} = ₹${Number(li.amount).toLocaleString('en-IN')}`,
+        })),
         { k: 'Notes',       v: b.notes || '—' },
       ],
     }))),
