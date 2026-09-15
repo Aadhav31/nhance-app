@@ -2767,7 +2767,7 @@ function PurchaseOrdersTab({ companyId, session }) {
       const { error } = await supabase.from('purchase_orders').delete().eq('id', po.id)
       if (error) throw error
       toast.success(`PO ${po.po_number} deleted`)
-      qc.invalidateQueries(['purchase_orders', companyId])
+      qc.invalidateQueries({ queryKey: ['purchase_orders', companyId] })
     } catch (e) { toast.error(e.message) }
   }
 
@@ -2776,13 +2776,16 @@ function PurchaseOrdersTab({ companyId, session }) {
     const { error } = await supabase.from('purchase_orders').update({ status: 'cancelled' }).eq('id', po.id)
     if (error) return toast.error(error.message)
     toast.success(`PO ${po.po_number} voided`)
-    qc.invalidateQueries(['purchase_orders', companyId])
+    qc.invalidateQueries({ queryKey: ['purchase_orders', companyId] })
   }
 
-  const { data: pos = [], isLoading } = useQuery({
+  const { data: pos = [], isLoading, error: posError, refetch: refetchPos } = useQuery({
     queryKey: ['purchase_orders', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('purchase_orders').select('*, vendors(vendor_name)').eq('company_id', companyId).order('created_at', { ascending: false }).limit(200)
+      const { data, error } = await supabase.from('purchase_orders')
+        .select('id,po_number,po_date,expected_delivery,vendor_id,vendor_name,total_amount,status,notes,created_at')
+        .eq('company_id', companyId).order('created_at', { ascending: false }).limit(200)
+      if (error) throw error
       return data || []
     },
     enabled: !!companyId,
@@ -2830,7 +2833,7 @@ function PurchaseOrdersTab({ companyId, session }) {
         if (updItems.length > 0) { const { error: le } = await supabase.from('po_line_items').insert(updItems); if (le) throw le }
         toast.success(`PO ${editing.po_number} updated`)
         closeModal()
-        qc.invalidateQueries(['purchase_orders', companyId])
+        qc.invalidateQueries({ queryKey: ['purchase_orders', companyId] })
         return
       }
 
@@ -2856,13 +2859,13 @@ function PurchaseOrdersTab({ companyId, session }) {
       if (items.length > 0) { const { error: le } = await supabase.from('po_line_items').insert(items); if (le) throw le }
       toast.success(`Purchase Order ${poNum} created`)
       closeModal()
-      qc.invalidateQueries(['purchase_orders', companyId])
+      qc.invalidateQueries({ queryKey: ['purchase_orders', companyId] })
     } catch (e) { toast.error(e.message) } finally { setSaving(false) }
   }
 
   const updateStatus = async (id, status) => {
     await supabase.from('purchase_orders').update({ status }).eq('id', id)
-    qc.invalidateQueries(['purchase_orders', companyId])
+    qc.invalidateQueries({ queryKey: ['purchase_orders', companyId] })
     toast.success(`PO ${status}`)
   }
 
@@ -2874,6 +2877,7 @@ function PurchaseOrdersTab({ companyId, session }) {
       </div>
       <div className="flex-1 overflow-y-auto px-4 pb-4 pt-3">
         {isLoading ? <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-primary-400" /></div>
+        : posError ? <div className="flex flex-col items-center py-16 gap-3 text-slate-500"><p className="text-red-400 text-sm font-semibold">Failed to load POs</p><p className="text-xs text-slate-500 max-w-sm text-center">{posError.message}</p><button onClick={() => refetchPos()} className="text-xs px-3 py-1.5 rounded-lg bg-dark-700 border border-dark-600 text-slate-300 hover:text-white">Retry</button></div>
         : pos.length === 0 ? <div className="flex flex-col items-center py-16 gap-2 text-slate-500"><ShoppingCart className="w-10 h-10 text-slate-700" /><p>No purchase orders yet</p></div>
         : <div className="space-y-2">
           {pos.map(p => (
