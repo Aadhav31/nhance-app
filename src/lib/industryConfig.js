@@ -83,6 +83,8 @@ export const INDUSTRY_NAV = {
       items: [
         { key: 'dashboard',      label: 'Dashboard',           icon: 'LayoutDashboard', module: MODULES.CORE,
           roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
+        { key: 'control_tower',  label: 'P&M Control Tower',   icon: 'Activity',        module: MODULES.FLEET,
+          roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ADMIN] },
       ],
     },
     {
