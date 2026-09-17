@@ -16,12 +16,13 @@ import { useRealtimeSync } from './hooks/useRealtimeSync'
 import {
   LayoutDashboard, Receipt, ClipboardList, BarChart3,
   Users, Wallet, Package, X, Truck, Wrench, FolderOpen,
-  Settings, ShoppingCart, TrendingUp, CalendarDays, Building2,
+  Settings, ShoppingCart, TrendingUp, CalendarDays, Building2, Activity,
   MessageSquare,
 } from 'lucide-react'
 
 // Lazy-load all pages for performance
 const DashboardPage      = lazy(() => import('./pages/dashboard/DashboardPage'))
+const ControlTowerPage   = lazy(() => import('./pages/controltower/ControlTowerPage'))
 const FleetPage          = lazy(() => import('./pages/fleet/FleetPage'))
 const OperationsPage     = lazy(() => import('./pages/operations/OperationsPage'))
 const MaintenancePage    = lazy(() => import('./pages/maintenance/MaintenancePage'))
@@ -145,6 +146,7 @@ const MOBILE_QUICK = {
 // All pages for the "More" drawer
 const ALL_PAGES = [
   { key: 'dashboard',    Icon: LayoutDashboard, label: 'Dashboard'            },
+  { key: 'control_tower',Icon: Activity,        label: 'P&M Control Tower'    },
   { key: 'fieldexpense', Icon: Receipt,         label: 'Field Expenses'       },
   { key: 'operations',   Icon: ClipboardList,   label: 'Daily Operations'     },
   { key: 'fleet',        Icon: Truck,           label: 'Equipment & Fleet'    },
@@ -301,6 +303,12 @@ function AppShell() {
             <DashboardPage onNavigate={handleNavigate} />
           </Suspense>
         )
+      case 'control_tower':
+        return hasModule(MODULES.FLEET) ? (
+          <Suspense fallback={<LoadingScreen message="Loading P&M Control Tower…" />}>
+            <ControlTowerPage onNavigate={handleNavigate} />
+          </Suspense>
+        ) : <ModuleNotActive page="P&M Control Tower" />
       case 'fleet':
         return hasModule(MODULES.FLEET) ? (
           <Suspense fallback={<LoadingScreen message="Loading fleet…" />}>
