@@ -252,9 +252,10 @@ function MobileNav({ role, activePage, onNavigate }) {
 // ── App Shell ─────────────────────────────────────────────────────────────────
 function AppShell() {
   const { loading, session, role, hasModule, isSuperAdmin } = useAuth()
+  const equipmentDeepLink = new URLSearchParams(window.location.search).get('equipment')
 
-  const [activePage,       setActivePage]       = useState('dashboard')
-  const [navExtra,         setNavExtra]         = useState({})   // deep-link extras {tab, equipmentId, …}
+  const [activePage,       setActivePage]       = useState(() => equipmentDeepLink ? 'fleet' : 'dashboard')
+  const [navExtra,         setNavExtra]         = useState(() => equipmentDeepLink ? { equipmentId: equipmentDeepLink } : {})   // deep-link extras {tab, equipmentId, …}
   const [notesOpen,        setNotesOpen]        = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const isOnline = useOnlineStatus()
@@ -312,7 +313,7 @@ function AppShell() {
       case 'fleet':
         return hasModule(MODULES.FLEET) ? (
           <Suspense fallback={<LoadingScreen message="Loading fleet…" />}>
-            <FleetPage onNavigate={handleNavigate} unloggedIds={navExtra.filterUnloggedIds || null} />
+            <FleetPage onNavigate={handleNavigate} unloggedIds={navExtra.filterUnloggedIds || null} initialEquipmentId={navExtra.equipmentId || null} />
           </Suspense>
         ) : <ModuleNotActive page={page} />
       case 'operations':
