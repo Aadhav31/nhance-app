@@ -152,10 +152,10 @@ export default function ControlTowerPage({ onNavigate }) {
             <AlertTriangle className="w-5 h-5 text-amber-400" />
           </div>
           <div className="space-y-2">
-            <AttentionRow icon={ShieldAlert} tone="bg-red-500/10 text-red-400" title={`${data.jobCards.length} open job cards`} detail={data.jobCards[0]?.complaint || 'No unresolved repair complaints'} action="Maintenance" onClick={() => onNavigate('maintenance')} />
-            <AttentionRow icon={CalendarClock} tone="bg-amber-500/10 text-amber-400" title={`${insight.pmDue.length} PM services approaching`} detail="Due within 14 days or 50 operating hours" action="Review" onClick={() => onNavigate('maintenance')} />
-            <AttentionRow icon={CircleOff} tone="bg-blue-500/10 text-blue-400" title={`${insight.idleAssets.length} idle assets without a recent log`} detail="Check deployment demand or record the idle reason" action="Fleet" onClick={() => onNavigate('fleet')} />
-            <AttentionRow icon={ShieldAlert} tone="bg-purple-500/10 text-purple-400" title={`${data.documents.length} documents expiring`} detail="Insurance, permit, fitness or compliance due in 30 days" action="Documents" onClick={() => onNavigate('fleet')} />
+            <AttentionRow icon={ShieldAlert} tone="bg-red-500/10 text-red-400" title={`${data.jobCards.length} open job cards`} detail={data.jobCards[0]?.complaint || 'No unresolved repair complaints'} action="Equipment 360" onClick={() => data.jobCards[0]?.equipment_id ? onNavigate('fleet', { equipmentId: data.jobCards[0].equipment_id }) : onNavigate('maintenance')} />
+            <AttentionRow icon={CalendarClock} tone="bg-amber-500/10 text-amber-400" title={`${insight.pmDue.length} PM services approaching`} detail="Due within 14 days or 50 operating hours" action="Equipment 360" onClick={() => insight.pmDue[0]?.equipment_id ? onNavigate('fleet', { equipmentId: insight.pmDue[0].equipment_id }) : onNavigate('maintenance')} />
+            <AttentionRow icon={CircleOff} tone="bg-blue-500/10 text-blue-400" title={`${insight.idleAssets.length} idle assets without a recent log`} detail="Check deployment demand or record the idle reason" action="Equipment 360" onClick={() => insight.idleAssets[0]?.id ? onNavigate('fleet', { equipmentId: insight.idleAssets[0].id }) : onNavigate('fleet')} />
+            <AttentionRow icon={ShieldAlert} tone="bg-purple-500/10 text-purple-400" title={`${data.documents.length} documents expiring`} detail="Insurance, permit, fitness or compliance due in 30 days" action="Equipment 360" onClick={() => data.documents[0]?.equipment_id ? onNavigate('fleet', { equipmentId: data.documents[0].equipment_id }) : onNavigate('fleet')} />
           </div>
         </section>
 

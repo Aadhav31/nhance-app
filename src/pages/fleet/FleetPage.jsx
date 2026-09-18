@@ -1,3 +1,6 @@
+Warning: truncated output (original token count: 106300)
+Total output lines: 7909
+
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { downloadTransferCertificate } from '../../lib/transferCertificatePDF'
 import { VendorPicker } from '../../components/shared/EntityPicker'
@@ -22,6 +25,7 @@ import {
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format, differenceInDays } from 'date-fns'
+import QRCode from 'qrcode'
 
 // ── Document types ────────────────────────────────────────────────────────────
 const DOC_TYPES = [
@@ -1973,12 +1977,20 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
   const [modal,         setModal]         = useState(null)
   const [showEdit,      setShowEdit]      = useState(false)
   const [equipment,     setEquipment]     = useState(equipmentProp)
-  const [detailTab,     setDetailTab]     = useState('deployment')
+  const [detailTab,     setDetailTab]     = useState('overview')
+  const [passportQr,    setPassportQr]    = useState('')
   const [remarksText,   setRemarksText]   = useState(equipmentProp.notes || '')
   const [savingRemarks, setSavingRemarks] = useState(false)
   const qc   = useQueryClient()
   const { role } = useAuth()
   const isAdmin  = ['admin', 'superadmin', 'manager'].includes(role)
+
+  useEffect(() => {
+    const passportUrl = `${window.location.origin}${window.location.pathname}?equipment=${equipmentProp.id}`
+    QRCode.toDataURL(passportUrl, { width: 220, margin: 1, errorCorrectionLevel: 'M' })
+      .then(setPassportQr)
+      .catch(() => setPassportQr(''))
+  }, [equipmentProp.id])
 
   // Always fetch fresh equipment data on mount — parent snapshot may be stale
   // (e.g. background refetch hadn't completed when user reopened the modal)
@@ -2390,7 +2402,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
         .order('interval_hours')
       return data || []
     },
-    enabled: detailTab === 'maintenance',
+    enabled: ['overview', 'maintenance', 'operator_log'].includes(detailTab),
   })
 
   const { data: jobCards = [], refetch: refetchJC } = useQuery({
@@ -2402,7 +2414,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
         .order('opened_date', { ascending: false })
       return data || []
     },
-    enabled: detailTab === 'maintenance',
+    enabled: ['overview', 'maintenance', 'operator_log'].includes(detailTab),
   })
 
   const { data: recentFuel = [] } = useQuery({
@@ -2410,6 +2422,28 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
     queryFn: async () => {
       const { data } = await supabase.from('shift_fuel_entries').select('*')
         .eq('equipment_id', equipment.id).order('created_at', { ascending: false }).limit(30)
+      return data || []
+    },
+  })
+
+  const { data: deploymentHistory = [] } = useQuery({
+    queryKey: ['equipment_deployment_history', equipment.id],
+    queryFn: async () => {
+      const { data } = await supabase.from('equipment_deployments')
+        .select('id, deployed_date, withdrawn_date, status, operator_name, hour_meter_at_deployment, tc_from_project, tc_to_project, projects:project_id(project_name)')
+        .eq('equipment_id', equipment.id)
+        .order('deployed_date', { ascending: false })
+        .limit(30)
+      return data || []
+    },
+  })
+
+  // Same queryKey as DocumentsSection so React Query deduplicates the request.
+  const { data: allEquipDocs = [] } = useQuery({
+    queryKey: ['equipment_docs', equipment.id],
+    queryFn: async () => {
+      const { data } = await supabase.from('equipment_documents')
+        .select('*').eq('equipment_id', equipment.id).order('doc_type')
       return data || []
     },
   })
@@ -2494,9 +2528,55 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
       })
     }
 
+    for (const record of maintRecords) {
+      events.push({
+        type: 'maintenance', ts: record.service_date || record.created_at, color: 'purple',
+        label: `🛠️ ${record.maintenance_type || 'Maintenance'} recorded`,
+        sub: record.description || record.work_done || null,
+        meta: Number(record.total_cost || record.cost || 0) > 0
+          ? `₹${Number(record.total_cost || record.cost).toLocaleString('en-IN')}`
+          : null,
+      })
+    }
+
+    for (const card of jobCards) {
+      events.push({
+        type: 'job_card', ts: card.closed_date || card.opened_date || card.created_at, color: card.status === 'closed' ? 'emerald' : 'orange',
+        label: `${card.status === 'closed' ? '✅' : '🔩'} Job Card ${card.status === 'closed' ? 'Closed' : 'Opened'}`,
+        sub: card.complaint || card.description || null,
+        meta: card.job_card_number || null,
+      })
+    }
+
+    for (const deployment of deploymentHistory) {
+      events.push({
+        type: 'deployment', ts: deployment.deployed_date, color: 'cyan',
+        label: '📍 Equipment Deployed',
+        sub: deployment.projects?.project_name || deployment.tc_to_project || null,
+        meta: deployment.operator_name ? `Operator: ${deployment.operator_name}` : null,
+      })
+      if (deployment.withdrawn_date) {
+        events.push({
+          type: 'withdrawal', ts: deployment.withdrawn_date, color: 'slate',
+          label: '↩️ Equipment Withdrawn',
+          sub: deployment.projects?.project_name || deployment.tc_from_project || null,
+          meta: null,
+        })
+      }
+    }
+
+    for (const doc of allEquipDocs) {
+      events.push({
+        type: 'document', ts: doc.created_at || doc.issued_date, color: 'purple',
+        label: `📄 ${doc.doc_name || DOC_TYPES.find(t => t.value === doc.doc_type)?.label || 'Document'} added`,
+        sub: doc.reference_number || null,
+        meta: doc.expiry_date ? `Expires ${format(new Date(doc.expiry_date), 'dd MMM yyyy')}` : null,
+      })
+    }
+
     events.sort((a, b) => new Date(b.ts) - new Date(a.ts))
     return events
-  }, [shiftLog, recentFuel, breakdownLog, incidentLog])
+  }, [shiftLog, recentFuel, breakdownLog, incidentLog, maintRecords, jobCards, deploymentHistory, allEquipDocs])
 
   // ── Utilization calendar queries ──────────────────────────────────────────────
   const _calY  = calMonth.getFullYear()
@@ -2564,16 +2644,25 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
     enabled: detailTab === 'shift_schedule',
   })
 
-  // Insurance doc — same queryKey as DocumentsSection so React Query deduplicates
-  const { data: allEquipDocs = [] } = useQuery({
-    queryKey: ['equipment_docs', equipment.id],
-    queryFn: async () => {
-      const { data } = await supabase.from('equipment_documents')
-        .select('*').eq('equipment_id', equipment.id).order('doc_type')
-      return data || []
-    },
-  })
   const insuranceDoc = allEquipDocs.find(d => d.doc_type === 'insurance')
+  const recentWorkingHours = shiftLog.reduce((sum, shift) => sum + Number(shift.working_hours || 0), 0)
+  const recentFuelLitres = recentFuel.reduce((sum, entry) => sum + Number(entry.quantity_liters || 0), 0)
+  const recentFuelCost = recentFuel.reduce((sum, entry) => sum + Number(entry.total_amount || 0), 0)
+  const actualFuelRate = recentWorkingHours > 0 ? recentFuelLitres / recentWorkingHours : null
+  const expectedFuelRate = Number(equipment.specific_consumption_lph || 0) || null
+  const fuelVariancePct = actualFuelRate !== null && expectedFuelRate
+    ? ((actualFuelRate - expectedFuelRate) / expectedFuelRate) * 100
+    : null
+  const openJobCards = jobCards.filter(card => card.status !== 'closed')
+  const pmDue = pmSchedules.filter(schedule => {
+    if (schedule.next_due_meter == null) return false
+    return Number(schedule.next_due_meter) - Number(equipment.current_meter_reading || 0) <= 50
+  })
+  const expiringDocuments = allEquipDocs.filter(doc => {
+    if (!doc.expiry_date) return false
+    return differenceInDays(new Date(doc.expiry_date), new Date()) <= 30
+  })
+  const passportUrl = `${window.location.origin}${window.location.pathname}?equipment=${equipment.id}`
 
   // Matched rate items (fuzzy match equipment category to item names)
   const matchedRates = rateItems.filter(r => {
@@ -2774,7 +2863,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
 
   return (
     <>
-      <Modal title={`${equipment.name}${equipment.equipment_number ? ` · ${equipment.equipment_number}` : ''}`} onClose={onClose} wide>
+      <Modal title={`Equipment 360 · ${equipment.name}${equipment.equipment_number ? ` · ${equipment.equipment_number}` : ''}`} onClose={onClose} wide>
 
         {/* ══ TOP: Two-column summary panel ══════════════════════════════════════ */}
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_260px] gap-4">
@@ -3026,12 +3115,14 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
         {/* ══ Tab Bar ═══════════════════════════════════════════════════════════ */}
         <div className="flex border-b border-dark-600 overflow-x-auto -mb-1">
           {[
+            { id: 'overview',       label: 'Overview'       },
+            { id: 'shift_schedule', label: 'Operations'     },
+            { id: 'fuel',           label: 'Fuel'           },
             { id: 'deployment',     label: 'Deployment'     },
             { id: 'maintenance',    label: 'Maintenance'    },
-            { id: 'operator_log',   label: 'Log'            },
-            { id: 'shift_schedule', label: 'Utilization' },
-            { id: 'pl',             label: 'Equipment P&L'  },
-            { id: 'remarks',        label: 'Remarks'        },
+            { id: 'pl',             label: 'Costs'          },
+            { id: 'remarks',        label: 'Documents'      },
+            { id: 'operator_log',   label: 'Timeline'       },
           ].map(t => (
             <button key={t.id} onClick={() => setDetailTab(t.id)}
               className={`shrink-0 px-4 py-2.5 text-xs font-medium border-b-2 transition-colors whitespace-nowrap ${
@@ -3045,6 +3136,174 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
         </div>
 
         {/* ══ Tab Content ═══════════════════════════════════════════════════════ */}
+
+        {/* ── EQUIPMENT 360 OVERVIEW ── */}
+        {detailTab === 'overview' && (
+          <div className="space-y-4 pt-1">
+            <div className="grid grid-cols-1 lg:grid-cols-[1fr_220px] gap-4">
+              <div className="bg-dark-700 rounded-xl border border-dark-600 p-4">
+                <div className="flex items-center justify-between gap-3 mb-4">
+                  <div>
+                    <p className="text-xs font-semibold text-primary-300 uppercase tracking-wider">Digital Asset Passport</p>
+                    <p className="text-[11px] text-slate-500 mt-0.5">One verified profile for operations, service, fuel, deployment and compliance.</p>
+                  </div>
+                  <span className="text-[10px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 rounded-full px-2 py-1">Live record</span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-5 gap-y-3">
+                  {[
+                    ['Asset ID', equipment.equipment_number],
+                    ['Registration', equipment.registration_number],
+                    ['Chassis No.', equipment.chassis_number],
+                    ['Make / Model', [equipment.make, equipment.model].filter(Boolean).join(' ')],
+                    ['Year', equipment.year_of_manufacture],
+                    ['Capacity', equipment.capacity],
+                    ['Category', equipment.category],
+                    ['Fuel', equipment.fuel_type],
+                    ['Ownership', ownerTypeLabel],
+                    ['Owner / Vendor', equipment.owner_name],
+                    ['Current Project', deployedProject?.project_name || equipment.current_site_name],
+                    ['Assigned Operator', assignments[0]?.employee_name],
+                  ].map(([label, value]) => (
+                    <div key={label} className="min-w-0">
+                      <p className="text-[10px] text-slate-500 uppercase tracking-wider">{label}</p>
+                      <p className="text-xs text-slate-200 font-medium mt-0.5 truncate">{value || '—'}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="bg-white rounded-xl p-3 flex flex-col items-center justify-center text-center">
+                {passportQr ? (
+                  <img src={passportQr} alt={`QR code for ${equipment.name}`} className="w-32 h-32" />
+                ) : (
+                  <div className="w-32 h-32 bg-slate-100 rounded-lg animate-pulse" />
+                )}
+                <p className="text-xs font-bold text-slate-900 mt-2">Scan Equipment Passport</p>
+                <p className="text-[10px] text-slate-500 mt-0.5">Sign-in required · tenant protected</p>
+                {passportQr && (
+                  <a href={passportQr} download={`${equipment.equipment_number || equipment.name}-passport-qr.png`}
+                    className="text-[10px] text-blue-600 hover:text-blue-800 mt-2 font-semibold">
+                    Download QR
+                  </a>
+                )}
+              </div>
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Attention</p>
+                <p className="text-[10px] text-slate-600">Current operational risks</p>
+              </div>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+                {[
+                  { label: 'Open job cards', value: openJobCards.length, tone: openJobCards.length ? 'text-red-400' : 'text-emerald-400', tab: 'maintenance' },
+                  { label: 'PM due / near due', value: pmDue.length, tone: pmDue.length ? 'text-amber-400' : 'text-emerald-400', tab: 'maintenance' },
+                  { label: 'Docs expiring', value: expiringDocuments.length, tone: expiringDocuments.length ? 'text-orange-400' : 'text-emerald-400', tab: 'remarks' },
+                  { label: 'Open incidents', value: openIncidents.length, tone: openIncidents.length ? 'text-red-400' : 'text-emerald-400', tab: 'operator_log' },
+                ].map(item => (
+                  <button key={item.label} onClick={() => setDetailTab(item.tab)}
+                    className="bg-dark-700 border border-dark-600 hover:border-primary-600 rounded-xl p-3 text-left transition-colors">
+                    <p className={`text-2xl font-bold ${item.tone}`}>{item.value}</p>
+                    <p className="text-[11px] text-slate-400 mt-1">{item.label}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Last 30 records snapshot</p>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+                <div className="bg-dark-700 rounded-xl p-3">
+                  <p className="text-[10px] text-slate-500">Working Hours</p>
+                  <p className="text-lg font-bold text-primary-300">{recentWorkingHours.toFixed(1)} h</p>
+                </div>
+                <div className="bg-dark-700 rounded-xl p-3">
+                  <p className="text-[10px] text-slate-500">Fuel Issued</p>
+                  <p className="text-lg font-bold text-yellow-400">{recentFuelLitres.toFixed(0)} L</p>
+                </div>
+                <div className="bg-dark-700 rounded-xl p-3">
+                  <p className="text-[10px] text-slate-500">Actual Consumption</p>
+                  <p className="text-lg font-bold text-slate-200">{actualFuelRate !== null ? `${actualFuelRate.toFixed(1)} L/h` : '—'}</p>
+                </div>
+                <div className="bg-dark-700 rounded-xl p-3">
+                  <p className="text-[10px] text-slate-500">Fuel vs Standard</p>
+                  <p className={`text-lg font-bold ${fuelVariancePct === null ? 'text-slate-500' : fuelVariancePct > 10 ? 'text-red-400' : fuelVariancePct > 0 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                    {fuelVariancePct === null ? '—' : `${fuelVariancePct > 0 ? '+' : ''}${fuelVariancePct.toFixed(1)}%`}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <button onClick={() => setDetailTab('shift_schedule')} className="btn-primary text-xs px-3 py-2">Open Operations</button>
+              <button onClick={() => setDetailTab('maintenance')} className="btn-ghost text-xs px-3 py-2">Review Maintenance</button>
+              <button onClick={() => setDetailTab('fuel')} className="btn-ghost text-xs px-3 py-2">Analyse Fuel</button>
+              <button onClick={() => navigator.clipboard?.writeText(passportUrl).then(() => toast.success('Equipment passport link copied'))}
+                className="btn-ghost text-xs px-3 py-2">Copy Passport Link</button>
+            </div>
+          </div>
+        )}
+
+        {/* ── FUEL PERFORMANCE TAB ── */}
+        {detailTab === 'fuel' && (
+          <div className="space-y-4 pt-1">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+              {[
+                ['Lifetime Fuel', `${Number(fuelStats?.totalLitres || 0).toLocaleString('en-IN')} L`, 'text-yellow-400'],
+                ['Lifetime Fuel Cost', `₹${Number(fuelStats?.totalAmount || 0).toLocaleString('en-IN')}`, 'text-primary-300'],
+                ['Actual L/hr', actualFuelRate !== null ? actualFuelRate.toFixed(2) : '—', fuelVariancePct > 10 ? 'text-red-400' : 'text-slate-200'],
+                ['Standard L/hr', expectedFuelRate !== null ? expectedFuelRate.toFixed(2) : 'Not set', 'text-emerald-400'],
+              ].map(([label, value, tone]) => (
+                <div key={label} className="bg-dark-700 rounded-xl border border-dark-600 p-3">
+                  <p className="text-[10px] text-slate-500 uppercase tracking-wider">{label}</p>
+                  <p className={`text-lg font-bold mt-1 ${tone}`}>{value}</p>
+                </div>
+              ))}
+            </div>
+
+            {fuelVariancePct !== null && fuelVariancePct > 10 && (
+              <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-3 flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-xs font-semibold text-red-300">Fuel consumption is {fuelVariancePct.toFixed(1)}% above standard</p>
+                  <p className="text-[11px] text-red-400/80 mt-0.5">Review idle time, operator practice, leakage and engine condition.</p>
+                </div>
+              </div>
+            )}
+
+            <div className="bg-dark-700 rounded-xl border border-dark-600 overflow-hidden">
+              <div className="px-4 py-3 border-b border-dark-600 flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-semibold text-slate-300 uppercase tracking-wider">Recent Fuel Entries</p>
+                  <p className="text-[10px] text-slate-500 mt-0.5">Latest 30 issues for this machine</p>
+                </div>
+                <button onClick={() => setModal('fuel')} className="btn-primary text-xs px-3 py-1.5">Log Fuel</button>
+              </div>
+              {recentFuel.length === 0 ? (
+                <p className="text-xs text-slate-500 text-center py-8">No fuel entries recorded</p>
+              ) : (
+                <div className="divide-y divide-dark-600/70">
+                  {recentFuel.map(entry => (
+                    <div key={entry.id} className="px-4 py-3 grid grid-cols-[1fr_auto] gap-3">
+                      <div className="min-w-0">
+                        <p className="text-xs font-medium text-slate-200">{format(new Date(entry.created_at), 'dd MMM yyyy · HH:mm')}</p>
+                        <p className="text-[10px] text-slate-500 mt-0.5 truncate">{entry.vendor_name || entry.delivered_by_name || entry.fuel_source || 'Fuel entry'}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-sm font-bold text-yellow-400">{Number(entry.quantity_liters || 0).toFixed(1)} L</p>
+                        {Number(entry.total_amount || 0) > 0 && <p className="text-[10px] text-slate-500">₹{Number(entry.total_amount).toLocaleString('en-IN')}</p>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="px-4 py-2.5 bg-dark-800/60 border-t border-dark-600 flex justify-between text-xs">
+                <span className="text-slate-500">Recent total</span>
+                <span className="text-slate-200 font-semibold">{recentFuelLitres.toFixed(1)} L · ₹{recentFuelCost.toLocaleString('en-IN')}</span>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ── DEPLOYMENT TAB ── */}
         {detailTab === 'deployment' && (
@@ -3479,412 +3738,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
                                   {jc.parts_cost > 0 && (
                                     <div className="flex justify-between text-[11px] pt-1 border-t border-dark-600 font-medium">
                                       <span className="text-slate-400">Parts total</span>
-                                      <span className="text-slate-200">₹{Number(jc.parts_cost).toLocaleString('en-IN')}</span>
-                                    </div>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  )
-                })()}
-
-                {jcModal !== null && (
-                  <JobCardModal
-                    equipment={equipment}
-                    companyId={companyId}
-                    initialValues={jcModal}
-                    onClose={() => setJcModal(null)}
-                    onSaved={() => { refetchJC(); setJcModal(null) }}
-                  />
-                )}
-              </div>
-            )}
-
-            {/* ════ PM SCHEDULES ════ */}
-            {maintSubTab === 'pm_schedules' && (
-              <div className="space-y-3 pt-1">
-                <div className="flex justify-end">
-                  {isAdmin && (
-                    <button onClick={() => setPmModal({})}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-600 hover:bg-primary-700 text-white text-xs font-medium rounded-lg transition-colors">
-                      <Plus className="w-3.5 h-3.5" /> Add PM Schedule
-                    </button>
-                  )}
-                </div>
-
-                {pmSchedules.length === 0 ? (
-                  <div className="text-center py-10">
-                    <BookOpen className="w-8 h-8 text-slate-600 mx-auto mb-2" />
-                    <p className="text-sm text-slate-500">No PM schedules defined</p>
-                    <p className="text-xs text-slate-600 mt-1">Add intervals like 250hr or 500hr service with task checklists</p>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {pmSchedules.map(pm => {
-                      const meter     = Number(equipment.current_meter_reading || 0)
-                      const due       = Number(pm.next_due_meter || 0)
-                      const remaining = pm.next_due_meter ? due - meter : null
-                      const overdue   = remaining !== null && remaining <= 0
-                      const nearDue   = remaining !== null && remaining > 0 && remaining <= 50
-                      const tasks     = Array.isArray(pm.tasks) ? pm.tasks : []
-                      return (
-                        <div key={pm.id} className={`border rounded-xl overflow-hidden ${overdue ? 'border-red-600/50' : nearDue ? 'border-orange-500/50' : 'border-dark-600'}`}>
-                          <div className={`px-4 py-2.5 flex items-center justify-between ${overdue ? 'bg-red-900/20' : nearDue ? 'bg-orange-900/15' : 'bg-dark-700'}`}>
-                            <div className="flex items-center gap-2">
-                              <Wrench className={`w-4 h-4 ${overdue ? 'text-red-400' : nearDue ? 'text-orange-400' : 'text-slate-400'}`} />
-                              <span className="text-xs font-semibold text-slate-200">{pm.schedule_name}</span>
-                              <span className="text-[10px] text-slate-500">Every {pm.interval_hours}hrs</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              {overdue  && <span className="text-[10px] bg-red-500/20 text-red-400 px-2 py-0.5 rounded-full font-medium">Overdue {Math.abs(remaining).toFixed(0)}hrs</span>}
-                              {nearDue  && <span className="text-[10px] bg-orange-500/20 text-orange-400 px-2 py-0.5 rounded-full font-medium">Due in {remaining.toFixed(0)}hrs</span>}
-                              {isAdmin && (
-                                <button onClick={() => setPmModal(pm)} className="text-slate-500 hover:text-primary-400 transition-colors">
-                                  <Edit2 className="w-3.5 h-3.5" />
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                          <div className="px-4 py-3 space-y-2 text-xs">
-                            <div className="flex gap-6 flex-wrap">
-                              {pm.last_done_meter != null && (
-                                <div>
-                                  <p className="text-slate-500">Last done at</p>
-                                  <p className="text-slate-200 font-medium">
-                                    {pm.last_done_meter} hrs
-                                    {pm.last_done_date ? ` · ${format(new Date(pm.last_done_date), 'dd MMM yyyy')}` : ''}
-                                  </p>
-                                </div>
-                              )}
-                              {pm.next_due_meter != null && (
-                                <div>
-                                  <p className="text-slate-500">Next due at</p>
-                                  <p className={`font-medium ${overdue ? 'text-red-400' : nearDue ? 'text-orange-400' : 'text-emerald-400'}`}>
-                                    {pm.next_due_meter} hrs
-                                    {remaining !== null && ` (${overdue ? `overdue ${Math.abs(remaining).toFixed(0)}hrs` : `${remaining.toFixed(0)}hrs away`})`}
-                                  </p>
-                                </div>
-                              )}
-                            </div>
-                            {tasks.length > 0 && (
-                              <div className="space-y-1 pt-2 border-t border-dark-600">
-                                <p className="text-[10px] text-slate-500 uppercase tracking-wider font-medium">Checklist ({tasks.length})</p>
-                                {tasks.map((t, i) => (
-                                  <div key={i} className="flex items-start gap-2">
-                                    <span className="text-slate-600 mt-0.5 shrink-0">□</span>
-                                    <span className="text-slate-300">{typeof t === 'string' ? t : t.task}</span>
-                                    {t.required && <span className="text-[9px] bg-red-500/10 text-red-400 px-1 rounded shrink-0">req</span>}
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                            {isAdmin && (overdue || nearDue) && (
-                              <button
-                                onClick={() => { setMaintSubTab('job_cards'); setJcModal({ jc_type: 'pm_service', pm_schedule_id: pm.id }) }}
-                                className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-600/80 hover:bg-primary-600 text-white text-[11px] font-medium rounded-lg transition-colors"
-                              >
-                                <Plus className="w-3 h-3" /> Raise Job Card for this PM
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
-
-                {pmModal !== null && (
-                  <PMScheduleModal
-                    equipment={equipment}
-                    companyId={companyId}
-                    initialValues={pmModal}
-                    onClose={() => setPmModal(null)}
-                    onSaved={() => { refetchPM(); setPmModal(null) }}
-                  />
-                )}
-              </div>
-            )}
-
-            {/* ════ HISTORY ════ */}
-            {maintSubTab === 'history' && (
-              <div className="space-y-4 pt-1">
-                <div className="border border-dark-600 rounded-xl overflow-hidden">
-                  <div className="bg-dark-700 px-4 py-2.5 flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <AlertTriangle className="w-4 h-4 text-slate-400" />
-                      <span className="text-xs font-semibold text-slate-300 uppercase tracking-wider">Maintenance Records</span>
-                    </div>
-                    <span className="text-xs text-slate-500">{maintRecords.length} record{maintRecords.length !== 1 ? 's' : ''}</span>
-                  </div>
-
-                  {maintRecords.length === 0 ? (
-                    <div className="p-6 text-center">
-                      <Wrench className="w-8 h-8 text-slate-600 mx-auto mb-2" />
-                      <p className="text-sm text-slate-500">No maintenance records yet</p>
-                    </div>
-                  ) : (
-                    <div className="divide-y divide-dark-600">
-                      {maintRecords.map(rec => {
-                        const MTYPE = {
-                          preventive:  { label: 'Preventive Maintenance', dot: 'bg-blue-400',   text: 'text-blue-400'   },
-                          breakdown:   { label: 'Breakdown Repair',       dot: 'bg-red-400',    text: 'text-red-400'    },
-                          accidental:  { label: 'Accidental Damage',      dot: 'bg-red-400',    text: 'text-red-400'    },
-                          overhaul:    { label: 'Overhaul',               dot: 'bg-orange-400', text: 'text-orange-400' },
-                          inspection:  { label: 'Inspection',             dot: 'bg-teal-400',   text: 'text-teal-400'   },
-                          other:       { label: 'Other',                  dot: 'bg-slate-400',  text: 'text-slate-400'  },
-                        }
-                        const mt = MTYPE[rec.maintenance_type] || MTYPE.other
-                        const statusPill = rec.status === 'completed'
-                          ? <span className="text-[10px] bg-emerald-500/15 text-emerald-600 px-1.5 py-0.5 rounded-full font-medium">Completed</span>
-                          : rec.status === 'in_progress'
-                          ? <span className="text-[10px] bg-blue-500/15 text-blue-500 px-1.5 py-0.5 rounded-full font-medium">In Progress</span>
-                          : <span className="text-[10px] bg-amber-500/15 text-amber-600 px-1.5 py-0.5 rounded-full font-medium">Open</span>
-                        return (
-                          <div key={rec.id} className="px-4 py-3 space-y-2">
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="flex items-center gap-2 flex-wrap min-w-0">
-                                <span className={`w-2 h-2 rounded-full shrink-0 ${mt.dot}`} />
-                                <span className={`text-xs font-semibold ${mt.text}`}>{mt.label}</span>
-                                {statusPill}
-                                {rec.priority === 'high' && (
-                                  <span className="text-[10px] bg-red-500/10 text-red-400 px-1.5 py-0.5 rounded-full font-medium">High Priority</span>
-                                )}
-                              </div>
-                              <span className="text-[10px] text-slate-500 shrink-0">
-                                {format(new Date(rec.service_date), 'dd MMM yyyy')}
-                              </span>
-                            </div>
-                            <p className="text-xs text-slate-300 ml-4 leading-relaxed">{rec.description}</p>
-                            {rec.technician_name && (
-                              <p className="text-xs text-slate-500 ml-4">
-                                🔧 {rec.technician_name}
-                                {rec.done_by === 'vendor' ? ' (Vendor)' : rec.done_by === 'inhouse' ? ' (In-house)' : ''}
-                              </p>
-                            )}
-                            {(rec.labour_cost > 0 || rec.total_cost > 0 || rec.downtime_hours > 0) && (
-                              <div className="ml-4 flex gap-4 text-xs">
-                                {rec.labour_cost > 0 && <span className="text-slate-400">Labour <span className="text-slate-200 font-medium">₹{Number(rec.labour_cost).toLocaleString('en-IN')}</span></span>}
-                                {rec.total_cost > 0 && <span className="text-slate-400">Total <span className="text-primary-400 font-semibold">₹{Number(rec.total_cost).toLocaleString('en-IN')}</span></span>}
-                                {rec.downtime_hours > 0 && <span className="text-slate-400">Downtime <span className="text-orange-400 font-medium">{rec.downtime_hours}h</span></span>}
-                              </div>
-                            )}
-                            {rec.projects?.project_name && (
-                              <p className="text-[10px] text-slate-500 ml-4">📍 {rec.projects.project_name}</p>
-                            )}
-                            {isAdmin && rec.status !== 'completed' && (
-                              <button
-                                onClick={async () => {
-                                  const { error } = await supabase.from('maintenance_records')
-                                    .update({ status: 'completed', completed_date: new Date().toISOString().split('T')[0] })
-                                    .eq('id', rec.id)
-                                  if (!error) { toast.success('Marked as completed'); refetchMaint() }
-                                  else toast.error(error.message)
-                                }}
-                                className="ml-4 self-start text-[11px] flex items-center gap-1 text-emerald-500 hover:text-emerald-400 transition-colors"
-                              >
-                                <CheckCircle className="w-3 h-3" /> Mark Complete
-                              </button>
-                            )}
-                          </div>
-                        )
-                      })}
-                    </div>
-                  )}
-                </div>
-
-                {/* Legacy service schedule from equipment fields */}
-                {(equipment.last_service_date || equipment.next_service_date || equipment.next_service_meter) && (
-                  <div className="border border-dark-600 rounded-xl overflow-hidden">
-                    <div className="bg-dark-700 px-4 py-2.5 flex items-center gap-2">
-                      <Wrench className="w-4 h-4 text-slate-400" />
-                      <span className="text-xs font-semibold text-slate-300 uppercase tracking-wider">Legacy Service Schedule</span>
-                    </div>
-                    <div className="p-4 space-y-2 text-xs">
-                      {equipment.last_service_date && (
-                        <div className="flex justify-between">
-                          <span className="text-slate-400">Last service</span>
-                          <span className="text-slate-200 font-medium">
-                            {format(new Date(equipment.last_service_date), 'dd MMM yyyy')}
-                            {equipment.last_service_meter ? ` · ${equipment.last_service_meter} hrs` : ''}
-                          </span>
-                        </div>
-                      )}
-                      {equipment.next_service_meter && (
-                        <div className="flex justify-between">
-                          <span className="text-slate-400">Next service due at</span>
-                          <span className={`font-medium ${serviceHrsRemaining !== null && serviceHrsRemaining < 50 ? 'text-orange-400' : 'text-emerald-400'}`}>
-                            {equipment.next_service_meter} hrs
-                            {serviceHrsRemaining !== null && ` (${serviceHrsRemaining > 0 ? `${serviceHrsRemaining.toFixed(0)} hrs away` : `Overdue by ${Math.abs(serviceHrsRemaining).toFixed(0)} hrs`})`}
-                          </span>
-                        </div>
-                      )}
-                      {equipment.next_service_date && (
-                        <div className="flex justify-between">
-                          <span className="text-slate-400">Next service date</span>
-                          <span className="text-slate-200">{format(new Date(equipment.next_service_date), 'dd MMM yyyy')}</span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ── LOG TAB — Unified Activity Timeline ── */}
-        {detailTab === 'operator_log' && (
-          <div className="pt-1">
-
-            {/* Stats strip */}
-            {(fuelStats && Number(fuelStats.totalLitres) > 0) && (
-              <div className="grid grid-cols-2 gap-2 mb-4">
-                <div className="bg-dark-700 rounded-xl px-3 py-2.5">
-                  <p className="text-[10px] text-slate-500">Total Fuel</p>
-                  <p className="text-base font-bold text-yellow-400">{fuelStats.totalLitres} <span className="text-xs font-normal text-slate-400">L</span></p>
-                </div>
-                {fuelStats.totalAmount > 0 && (
-                  <div className="bg-dark-700 rounded-xl px-3 py-2.5">
-                    <p className="text-[10px] text-slate-500">Fuel Cost</p>
-                    <p className="text-base font-bold text-primary-300">₹{Number(fuelStats.totalAmount).toLocaleString('en-IN')}</p>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {activityEvents.length === 0 ? (
-              <div className="bg-dark-700/50 rounded-xl border border-dashed border-dark-600 p-8 text-center">
-                <History className="w-8 h-8 text-slate-600 mx-auto mb-2" />
-                <p className="text-sm text-slate-500">No activity recorded yet</p>
-                <p className="text-[11px] text-slate-600 mt-1">Shifts, fuel, and incidents will appear here</p>
-              </div>
-            ) : (() => {
-              // Group events by date for section headers
-              let lastDate = null
-              return (
-                <div className="relative">
-                  {/* Vertical guide line */}
-                  <div className="absolute left-[11px] top-2 bottom-2 w-px bg-dark-600" />
-                  <div className="space-y-0">
-                    {activityEvents.map((ev, i) => {
-                      const evDate = ev.ts ? format(new Date(ev.ts), 'dd MMM yyyy') : '—'
-                      const showDateHeader = evDate !== lastDate
-                      lastDate = evDate
-                      const timeStr = ev.ts ? format(new Date(ev.ts), 'HH:mm') : ''
-
-                      // Dot color classes
-                      const dotClass = {
-                        blue:    'bg-blue-400',
-                        emerald: 'bg-emerald-400',
-                        yellow:  'bg-yellow-400',
-                        red:     'bg-red-500',
-                        amber:   'bg-amber-400',
-                      }[ev.color] || 'bg-slate-500'
-
-                      const labelClass = {
-                        blue:    'text-blue-300',
-                        emerald: 'text-emerald-300',
-                        yellow:  'text-yellow-300',
-                        red:     'text-red-300',
-                        amber:   'text-amber-300',
-                      }[ev.color] || 'text-slate-200'
-
-                      return (
-                        <div key={i}>
-                          {showDateHeader && (
-                            <div className="flex items-center gap-2 pt-4 pb-2 pl-7">
-                              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">{evDate}</p>
-                            </div>
-                          )}
-                          <div className="flex items-start gap-3 py-2">
-                            {/* Dot */}
-                            <div className="relative z-10 mt-1 shrink-0">
-                              <span className={`flex w-[9px] h-[9px] rounded-full ${ev.type === 'breakdown_reported' ? 'bg-red-500 ring-2 ring-red-500/30' : dotClass} ${ev.type === 'shift_start' && 'ring-2 ring-blue-500/30'}`} />
-                            </div>
-                            {/* Content */}
-                            <div className="flex-1 min-w-0 pb-1 border-b border-dark-700/60 last:border-0">
-                              <div className="flex items-start justify-between gap-2">
-                                <p className={`text-xs font-semibold leading-snug ${labelClass}`}>{ev.label}</p>
-                                <span className="text-[10px] text-slate-600 shrink-0 mt-0.5">{timeStr}</span>
-                              </div>
-                              {ev.sub && <p className="text-[11px] text-slate-400 mt-0.5 truncate">{ev.sub}</p>}
-                              {ev.meta && <p className="text-[10px] text-slate-500 mt-0.5">{ev.meta}</p>}
-                            </div>
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              )
-            })()}
-          </div>
-        )}
-
-        {/* ── UTILIZATION TAB ── */}
-        {detailTab === 'shift_schedule' && (() => {
-          // ── calendar helpers ──────────────────────────────────────────────────
-          const opsByDate = {}
-          for (const op of monthlyOps) {
-            if (!opsByDate[op.ops_date]) opsByDate[op.ops_date] = []
-            opsByDate[op.ops_date].push(op)
-          }
-          const fuelByDate = {}
-          for (const f of monthlyFuel) {
-            const d = (f.entry_time || '').slice(0, 10)
-            if (!d) continue
-            fuelByDate[d] = (fuelByDate[d] || 0) + (Number(f.quantity_liters) || 0)
-          }
-
-          const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December']
-          const DAY_LABELS  = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']
-
-          // Build calendar grid: array of weeks, each week has 7 day-slots (null = padding)
-          const firstDay  = new Date(_calY, _calM, 1).getDay()   // 0=Sun
-          const daysInMon = new Date(_calY, _calM + 1, 0).getDate()
-          const slots = []
-          for (let i = 0; i < firstDay; i++) slots.push(null)
-          for (let d = 1; d <= daysInMon; d++) slots.push(d)
-          while (slots.length % 7 !== 0) slots.push(null)
-          const weeks = []
-          for (let i = 0; i < slots.length; i += 7) weeks.push(slots.slice(i, i + 7))
-
-          const toDateStr = (day) => `${_calY}-${String(_calM + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
-
-          const getTileKind = (day) => {
-            if (!day) return 'pad'
-            const ds    = toDateStr(day)
-            const date  = new Date(ds + 'T00:00:00')
-            const isSun = date.getDay() === 0
-            const ops   = opsByDate[ds] || []
-            const hasOps = ops.length > 0
-            if (isSun)  return hasOps ? 'gold' : 'blue'
-            if (!hasOps) return 'empty'
-            const statuses    = ops.map(o => o.status)
-            const hasBreakdown = statuses.includes('breakdown')
-            const hasWorking   = statuses.some(s => s === 'working' || s === 'idle' || s === 'maintenance')
-            if (hasBreakdown && hasWorking) return 'diagonal'
-            if (hasBreakdown) return 'red'
-            return 'green'
-          }
-
-          const TILE_STYLES = {
-            green:    { bg: 'bg-green-500/80',          border: 'border-green-500/60',  text: 'text-white',          label: 'Worked' },
-            red:      { bg: 'bg-red-500/80',             border: 'border-red-500/60',    text: 'text-white',          label: 'Breakdown' },
-            blue:     { bg: 'bg-blue-500/20',            border: 'border-blue-500/40',   text: 'text-blue-300',       label: 'Sunday' },
-            gold:     { bg: 'bg-yellow-500/80',          border: 'border-yellow-500/60', text: 'text-yellow-900',     label: 'Sunday — Worked' },
-            empty:    { bg: 'bg-dark-700/20',            border: 'border-dark-600/30',   text: 'text-slate-600',      label: 'No data' },
-            diagonal: { bg: '',                          border: 'border-orange-400/60', text: 'text-white',          label: 'Breakdown Resolved' },
-            pad:      { bg: 'bg-transparent',            border: 'border-transparent',   text: '',                    label: '' },
-          }
-
-          // Detail for selected day
-          const selOps  = calSelectedDay ? (opsByDate[calSelectedDay] || []) : []
-          const selFuel = calSelectedDay ? (fuelByDate[calSelectedDay] || 0)  : 0
+                                    …6300 tokens truncated…fuelByDate[calSelectedDay] || 0)  : 0
           const selRunHours  = selOps.reduce((s, o) => s + (Number(o.running_hours) || 0), 0)
           const selFuelCons  = selOps.reduce((s, o) => s + (Number(o.fuel_consumed) || 0), 0)
           const selKind = calSelectedDay ? getTileKind(Number(calSelectedDay.slice(8))) : null
@@ -4399,7 +4253,7 @@ function EquipmentCard({ equipment, onClick, todayShiftMap = {}, projectShiftMap
 }
 
 // ── Fleet Tab ─────────────────────────────────────────────────────────────────
-function FleetTab({ companyId, showAdd, setShowAdd, onNavigate, unloggedIds = null }) {
+function FleetTab({ companyId, showAdd, setShowAdd, onNavigate, unloggedIds = null, initialEquipmentId = null }) {
   const [selected,        setSelected]        = useState(null)
   const [search,          setSearch]          = useState('')
   const [filterStatus,    setFilterStatus]    = useState('all')
@@ -4412,6 +4266,7 @@ function FleetTab({ companyId, showAdd, setShowAdd, onNavigate, unloggedIds = nu
   const [costGroupBy,     setCostGroupBy]     = useState('project') // 'project' | 'machine'
   // Shared month state for utilization grid + cost allocation
   const [gridMonth, setGridMonth] = useState(() => { const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), 1) })
+  const deepLinkHandled = useRef(false)
 
   const { data: equipment = [], isLoading } = useQuery({
     queryKey: ['equipment', companyId],
@@ -4422,6 +4277,13 @@ function FleetTab({ companyId, showAdd, setShowAdd, onNavigate, unloggedIds = nu
     },
     refetchInterval: 60_000, // keep breakdown/status badges fresh
   })
+
+  useEffect(() => {
+    if (deepLinkHandled.current || !initialEquipmentId || equipment.length === 0) return
+    const match = equipment.find(item => item.id === initialEquipmentId)
+    if (match) setSelected(match)
+    deepLinkHandled.current = true
+  }, [equipment, initialEquipmentId])
 
   // Also fetch equipment_documents expiry alerts
   const { data: docAlerts = [] } = useQuery({
@@ -7585,7 +7447,7 @@ function LedgerTab({ companyId }) {
 }
 
 // ── Main FleetPage ────────────────────────────────────────────────────────────
-export default function FleetPage({ onNavigate, unloggedIds = null }) {
+export default function FleetPage({ onNavigate, unloggedIds = null, initialEquipmentId = null }) {
   const { companyId } = useAuth()
   const [activeTab,  setActiveTab]  = useState('fleet')
   const [showAdd,    setShowAdd]    = useState(false)
@@ -7625,7 +7487,7 @@ export default function FleetPage({ onNavigate, unloggedIds = null }) {
         })}
       </div>
       <div className="flex-1 overflow-hidden">
-        {activeTab === 'fleet'     && <FleetTab     companyId={companyId} showAdd={showAdd} setShowAdd={setShowAdd} onNavigate={onNavigate} unloggedIds={unloggedIds} />}
+        {activeTab === 'fleet'     && <FleetTab     companyId={companyId} showAdd={showAdd} setShowAdd={setShowAdd} onNavigate={onNavigate} unloggedIds={unloggedIds} initialEquipmentId={initialEquipmentId} />}
         {activeTab === 'fuel'      && <FuelTab      companyId={companyId} />}
         {activeTab === 'incidents' && <IncidentsTab companyId={companyId} />}
         {activeTab === 'history'   && <HistoryTab   companyId={companyId} />}

@@ -211,6 +211,10 @@ function EmployeeFormModal({ companyId, initialValues, onClose }) {
 
   const handleSave = async () => {
     if (!form.name.trim()) { toast.error('Name is required'); return }
+    if ((form.login_password || '').trim().length > 0 && (form.login_password || '').trim().length < 8) {
+      toast.error('Login password must be at least 8 characters')
+      return
+    }
     if (form.date_of_birth) {
       const age = calcAge(form.date_of_birth)
       if (age < 18) {
@@ -283,7 +287,7 @@ function EmployeeFormModal({ companyId, initialValues, onClose }) {
       // Create login account if email + password provided
       const loginEmail = (form.login_email || form.email || '').trim().toLowerCase()
       const loginPwd   = (form.login_password || '').trim()
-      if (loginEmail && loginPwd.length >= 6 && !form.user_id) {
+      if (loginEmail && loginPwd.length >= 8 && !form.user_id) {
         const { data: loginData, error: loginErr } = await supabase.functions.invoke('create-employee-login', {
           body: {
             email: loginEmail,
@@ -550,7 +554,7 @@ function EmployeeFormModal({ companyId, initialValues, onClose }) {
                   <input
                     type={form.showLoginPwd ? 'text' : 'password'} className={`${inp()} pr-14 font-mono`}
                     value={form.login_password || ''} onChange={e => set('login_password', e.target.value)}
-                    placeholder="Min. 6 characters"
+                    placeholder="Min. 8 characters"
                   />
                   <button type="button" onClick={() => set('showLoginPwd', !form.showLoginPwd)}
                     className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 text-xs">
@@ -664,7 +668,7 @@ function InviteAndLinkModal({ emp, companyId, onClose, onDone }) {
 
   const handleCreate = async () => {
     if (!email.trim() || !email.includes('@')) return toast.error('Valid email required')
-    if (password.length < 6) return toast.error('Password must be at least 6 characters')
+    if (password.length < 8) return toast.error('Password must be at least 8 characters')
     setSaving(true)
     try {
       const { data, error } = await supabase.functions.invoke('create-employee-login', {
@@ -742,7 +746,7 @@ function InviteAndLinkModal({ emp, companyId, onClose, onDone }) {
                   <input
                     type={showPwd ? 'text' : 'password'}
                     className="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 font-mono focus:outline-none focus:border-primary-500 pr-14"
-                    placeholder="Min. 6 characters"
+                    placeholder="Min. 8 characters"
                     value={password}
                     onChange={e => setPassword(e.target.value)}
                   />
@@ -756,7 +760,7 @@ function InviteAndLinkModal({ emp, companyId, onClose, onDone }) {
 
               <div className="flex gap-3 pt-1">
                 <button onClick={onClose} className="btn-ghost flex-1">Cancel</button>
-                <button onClick={handleCreate} disabled={saving || !email || password.length < 6} className="btn-primary flex-1">
+                <button onClick={handleCreate} disabled={saving || !email || password.length < 8} className="btn-primary flex-1">
                   {saving ? <><Loader2 className="w-4 h-4 animate-spin" /> Creating…</> : 'Create Login'}
                 </button>
               </div>
@@ -821,7 +825,7 @@ function SetPasswordModal({ emp, onClose, onDone: onDoneProp }) {
 
   const savePassword = async () => {
     if (!emp.user_id) return toast.error('No login account linked to this employee')
-    if (password.length < 6) return toast.error('Password must be at least 6 characters')
+    if (password.length < 8) return toast.error('Password must be at least 8 characters')
     setSaving(true)
     try {
       const { error } = await supabase.rpc('reset_employee_password', {
@@ -908,7 +912,7 @@ function SetPasswordModal({ emp, onClose, onDone: onDoneProp }) {
                   <input
                     type={showPwd ? 'text' : 'password'}
                     className="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 font-mono focus:outline-none focus:border-primary-500 pr-14"
-                    placeholder="Min. 6 characters"
+                    placeholder="Min. 8 characters"
                     value={password}
                     onChange={e => setPassword(e.target.value)}
                   />
@@ -921,7 +925,7 @@ function SetPasswordModal({ emp, onClose, onDone: onDoneProp }) {
               </div>
               <div className="flex gap-3">
                 <button onClick={onClose} className="btn-ghost flex-1">Cancel</button>
-                <button onClick={savePassword} disabled={saving || password.length < 6} className="btn-primary flex-1">
+                <button onClick={savePassword} disabled={saving || password.length < 8} className="btn-primary flex-1">
                   {saving ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving…</> : 'Reset Password'}
                 </button>
               </div>
