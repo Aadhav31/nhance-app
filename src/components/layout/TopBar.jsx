@@ -8,6 +8,7 @@ import { supabase } from '../../lib/supabase'
 
 const PAGE_TITLES = {
   dashboard:   { title: 'Dashboard',               subtitle: 'Overview of your operations' },
+  control_tower: { title: 'P&M Control Tower',      subtitle: 'Fleet health, deployment & performance' },
   fleet:       { title: 'Equipments & Machineries', subtitle: 'Equipment registry & status' },
   operations:  { title: 'Daily Operations',         subtitle: 'Shifts, fuel & incidents' },
   maintenance: { title: 'Maintenance',              subtitle: 'Preventive & breakdown tracking' },

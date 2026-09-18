@@ -69,6 +69,52 @@ function useOnlineStatus() {
   return online
 }
 
+// Keep Control Tower drill-downs in the URL so the selected Fleet filter
+// survives refreshes and can be verified/shared directly.
+function readNavigationFromUrl() {
+  const params = new URLSearchParams(window.location.search)
+  const equipmentId = params.get('equipment')
+  const page = params.get('page') || (equipmentId ? 'fleet' : 'dashboard')
+  const extra = equipmentId ? { equipmentId } : {}
+
+  if (page === 'fleet') {
+    const kind = params.get('fleetFilter')
+    const label = params.get('fleetLabel') || ''
+    if (kind === 'status' && params.get('fleetValue')) {
+      extra.fleetFilter = { kind, value: params.get('fleetValue'), label }
+    } else if (kind === 'available' || kind === 'all') {
+      extra.fleetFilter = { kind, label }
+    } else if (kind === 'equipment_ids') {
+      extra.fleetFilter = {
+        kind,
+        ids: (params.get('fleetIds') || '').split(',').filter(Boolean),
+        label,
+      }
+    }
+  }
+
+  return { page, extra }
+}
+
+function writeNavigationToUrl(page, extra) {
+  const url = new URL(window.location.href)
+  const navigationKeys = ['page', 'equipment', 'fleetFilter', 'fleetValue', 'fleetLabel', 'fleetIds']
+  navigationKeys.forEach(key => url.searchParams.delete(key))
+
+  if (page !== 'dashboard') url.searchParams.set('page', page)
+  if (extra.equipmentId) url.searchParams.set('equipment', extra.equipmentId)
+
+  const filter = extra.fleetFilter
+  if (page === 'fleet' && filter?.kind) {
+    url.searchParams.set('fleetFilter', filter.kind)
+    if (filter.value) url.searchParams.set('fleetValue', filter.value)
+    if (filter.label) url.searchParams.set('fleetLabel', filter.label)
+    if (filter.kind === 'equipment_ids') url.searchParams.set('fleetIds', (filter.ids || []).join(','))
+  }
+
+  window.history.pushState(null, '', url)
+}
+
 // ── Contextual error screens ───────────────────────────────────────────────────
 function OfflineScreen() {
   const [checking, setChecking] = useState(false)
@@ -252,13 +298,17 @@ function MobileNav({ role, activePage, onNavigate }) {
 // ── App Shell ─────────────────────────────────────────────────────────────────
 function AppShell() {
   const { loading, session, role, hasModule, isSuperAdmin } = useAuth()
-  const equipmentDeepLink = new URLSearchParams(window.location.search).get('equipment')
-
-  const [activePage,       setActivePage]       = useState(() => equipmentDeepLink ? 'fleet' : 'dashboard')
-  const [navExtra,         setNavExtra]         = useState(() => equipmentDeepLink ? { equipmentId: equipmentDeepLink } : {})   // deep-link extras {tab, equipmentId, …}
+  const [navigation,       setNavigation]       = useState(readNavigationFromUrl)
   const [notesOpen,        setNotesOpen]        = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const isOnline = useOnlineStatus()
+  const { page: activePage, extra: navExtra } = navigation
+
+  useEffect(() => {
+    const syncFromHistory = () => setNavigation(readNavigationFromUrl())
+    window.addEventListener('popstate', syncFromHistory)
+    return () => window.removeEventListener('popstate', syncFromHistory)
+  }, [])
 
   // Live sync — invalidates React Query cache the moment any table row changes
   useRealtimeSync()
@@ -269,7 +319,10 @@ function AppShell() {
   // Operators get their own dedicated mobile portal
   if (role === 'operator') return <OperatorPortal />
 
-  const handleNavigate = (page, extra = {}) => { setActivePage(page); setNavExtra(extra) }
+  const handleNavigate = (page, extra = {}) => {
+    setNavigation({ page, extra })
+    writeNavigationToUrl(page, extra)
+  }
 
   const defaultPage = isSuperAdmin() ? 'superadmin' : 'dashboard'
   const effectivePage = activePage === 'dashboard' ? defaultPage : activePage
@@ -313,7 +366,12 @@ function AppShell() {
       case 'fleet':
         return hasModule(MODULES.FLEET) ? (
           <Suspense fallback={<LoadingScreen message="Loading fleet…" />}>
-            <FleetPage onNavigate={handleNavigate} unloggedIds={navExtra.filterUnloggedIds || null} initialEquipmentId={navExtra.equipmentId || null} />
+            <FleetPage
+              onNavigate={handleNavigate}
+              unloggedIds={navExtra.filterUnloggedIds || null}
+              initialEquipmentId={navExtra.equipmentId || null}
+              initialFleetFilter={navExtra.fleetFilter || null}
+            />
           </Suspense>
         ) : <ModuleNotActive page={page} />
       case 'operations':
