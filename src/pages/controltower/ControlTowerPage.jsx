@@ -67,7 +67,8 @@ function useControlTower(companyId) {
 
 function Metric({ icon: Icon, label, value, tone = 'text-primary-400', onClick }) {
   return (
-    <button onClick={onClick} className="card p-4 text-left hover:border-primary-500/40 transition-colors">
+    <button type="button" onClick={onClick} aria-label={`Show ${label} equipment`}
+      className="card p-4 text-left hover:border-primary-500/60 hover:bg-dark-700/30 transition-colors">
       <div className="flex items-center justify-between">
         <span className="text-xs text-slate-500">{label}</span>
         <Icon className={`w-4 h-4 ${tone}`} />
@@ -137,12 +138,12 @@ export default function ControlTowerPage({ onNavigate }) {
       )}
 
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
-        <Metric icon={Truck} label="Total fleet" value={data.equipment.length} onClick={() => onNavigate('fleet')} />
-        <Metric icon={CheckCircle2} label="Working" value={counts.active || 0} tone="text-emerald-400" onClick={() => onNavigate('fleet')} />
-        <Metric icon={CircleOff} label="Idle" value={counts.idle || 0} tone="text-blue-400" onClick={() => onNavigate('fleet')} />
-        <Metric icon={ShieldAlert} label="Breakdown" value={counts.breakdown || 0} tone="text-red-400" onClick={() => onNavigate('maintenance')} />
-        <Metric icon={Wrench} label="Maintenance" value={counts.maintenance || 0} tone="text-amber-400" onClick={() => onNavigate('maintenance')} />
-        <Metric icon={MapPin} label="Available" value={available} tone="text-purple-400" onClick={() => onNavigate('availability')} />
+        <Metric icon={Truck} label="Total fleet" value={data.equipment.length} onClick={() => onNavigate('fleet', { fleetFilter: { kind: 'all', label: 'Total fleet' } })} />
+        <Metric icon={CheckCircle2} label="Working" value={counts.active || 0} tone="text-emerald-400" onClick={() => onNavigate('fleet', { fleetFilter: { kind: 'status', value: 'active', label: 'Working' } })} />
+        <Metric icon={CircleOff} label="Idle" value={counts.idle || 0} tone="text-blue-400" onClick={() => onNavigate('fleet', { fleetFilter: { kind: 'status', value: 'idle', label: 'Idle' } })} />
+        <Metric icon={ShieldAlert} label="Breakdown" value={counts.breakdown || 0} tone="text-red-400" onClick={() => onNavigate('fleet', { fleetFilter: { kind: 'status', value: 'breakdown', label: 'Breakdown' } })} />
+        <Metric icon={Wrench} label="Maintenance" value={counts.maintenance || 0} tone="text-amber-400" onClick={() => onNavigate('fleet', { fleetFilter: { kind: 'status', value: 'maintenance', label: 'Maintenance' } })} />
+        <Metric icon={MapPin} label="Available" value={available} tone="text-purple-400" onClick={() => onNavigate('fleet', { fleetFilter: { kind: 'available', label: 'Available' } })} />
       </div>
 
       <div className="grid lg:grid-cols-[1.15fr_0.85fr] gap-4">
@@ -152,10 +153,10 @@ export default function ControlTowerPage({ onNavigate }) {
             <AlertTriangle className="w-5 h-5 text-amber-400" />
           </div>
           <div className="space-y-2">
-            <AttentionRow icon={ShieldAlert} tone="bg-red-500/10 text-red-400" title={`${data.jobCards.length} open job cards`} detail={data.jobCards[0]?.complaint || 'No unresolved repair complaints'} action="Equipment 360" onClick={() => data.jobCards[0]?.equipment_id ? onNavigate('fleet', { equipmentId: data.jobCards[0].equipment_id }) : onNavigate('maintenance')} />
-            <AttentionRow icon={CalendarClock} tone="bg-amber-500/10 text-amber-400" title={`${insight.pmDue.length} PM services approaching`} detail="Due within 14 days or 50 operating hours" action="Equipment 360" onClick={() => insight.pmDue[0]?.equipment_id ? onNavigate('fleet', { equipmentId: insight.pmDue[0].equipment_id }) : onNavigate('maintenance')} />
-            <AttentionRow icon={CircleOff} tone="bg-blue-500/10 text-blue-400" title={`${insight.idleAssets.length} idle assets without a recent log`} detail="Check deployment demand or record the idle reason" action="Equipment 360" onClick={() => insight.idleAssets[0]?.id ? onNavigate('fleet', { equipmentId: insight.idleAssets[0].id }) : onNavigate('fleet')} />
-            <AttentionRow icon={ShieldAlert} tone="bg-purple-500/10 text-purple-400" title={`${data.documents.length} documents expiring`} detail="Insurance, permit, fitness or compliance due in 30 days" action="Equipment 360" onClick={() => data.documents[0]?.equipment_id ? onNavigate('fleet', { equipmentId: data.documents[0].equipment_id }) : onNavigate('fleet')} />
+            <AttentionRow icon={ShieldAlert} tone="bg-red-500/10 text-red-400" title={`${data.jobCards.length} open job cards`} detail={data.jobCards[0]?.complaint || 'No unresolved repair complaints'} action="View filtered" onClick={() => onNavigate('fleet', { fleetFilter: { kind: 'equipment_ids', ids: [...new Set(data.jobCards.map(item => item.equipment_id).filter(Boolean))], label: 'Open job cards' } })} />
+            <AttentionRow icon={CalendarClock} tone="bg-amber-500/10 text-amber-400" title={`${insight.pmDue.length} PM services approaching`} detail="Due within 14 days or 50 operating hours" action="View filtered" onClick={() => onNavigate('fleet', { fleetFilter: { kind: 'equipment_ids', ids: [...new Set(insight.pmDue.map(item => item.equipment_id).filter(Boolean))], label: 'PM due' } })} />
+            <AttentionRow icon={CircleOff} tone="bg-blue-500/10 text-blue-400" title={`${insight.idleAssets.length} idle assets without a recent log`} detail="Check deployment demand or record the idle reason" action="View filtered" onClick={() => onNavigate('fleet', { fleetFilter: { kind: 'equipment_ids', ids: insight.idleAssets.map(item => item.id), label: 'Idle without recent log' } })} />
+            <AttentionRow icon={ShieldAlert} tone="bg-purple-500/10 text-purple-400" title={`${data.documents.length} documents expiring`} detail="Insurance, permit, fitness or compliance due in 30 days" action="View filtered" onClick={() => onNavigate('fleet', { fleetFilter: { kind: 'equipment_ids', ids: [...new Set(data.documents.map(item => item.equipment_id).filter(Boolean))], label: 'Expiring documents' } })} />
           </div>
         </section>
 
@@ -176,7 +177,16 @@ export default function ControlTowerPage({ onNavigate }) {
           {Object.entries(STATUS).map(([key, meta]) => {
             const count = counts[key] || 0
             const pct = data.equipment.length ? Math.round((count / data.equipment.length) * 100) : 0
-            return <div key={key} className={`rounded-xl p-3 ${meta.bg}`}><div className="flex justify-between text-xs"><span className={meta.color}>{meta.label}</span><span className="text-slate-400">{pct}%</span></div><div className="h-1.5 bg-dark-900/50 rounded-full mt-3 overflow-hidden"><div className="h-full bg-current rounded-full" style={{ width: `${pct}%` }} /></div><p className={`text-xl font-bold mt-2 ${meta.color}`}>{count}</p></div>
+            return (
+              <button key={key} type="button"
+                onClick={() => onNavigate('fleet', { fleetFilter: { kind: 'status', value: key, label: meta.label } })}
+                aria-label={`Show ${meta.label} equipment`}
+                className={`rounded-xl p-3 text-left hover:ring-1 hover:ring-primary-500/50 transition-all ${meta.bg}`}>
+                <div className="flex justify-between text-xs"><span className={meta.color}>{meta.label}</span><span className="text-slate-400">{pct}%</span></div>
+                <div className="h-1.5 bg-dark-900/50 rounded-full mt-3 overflow-hidden"><div className="h-full bg-current rounded-full" style={{ width: `${pct}%` }} /></div>
+                <p className={`text-xl font-bold mt-2 ${meta.color}`}>{count}</p>
+              </button>
+            )
           })}
         </div>
       </section>

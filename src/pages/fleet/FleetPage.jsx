@@ -4663,10 +4663,13 @@ function EquipmentCard({ equipment, onClick, todayShiftMap = {}, projectShiftMap
 }
 
 // ── Fleet Tab ─────────────────────────────────────────────────────────────────
-function FleetTab({ companyId, showAdd, setShowAdd, onNavigate, unloggedIds = null, initialEquipmentId = null }) {
+function FleetTab({ companyId, showAdd, setShowAdd, onNavigate, unloggedIds = null, initialEquipmentId = null, initialFleetFilter = null }) {
   const [selected,        setSelected]        = useState(null)
   const [search,          setSearch]          = useState('')
-  const [filterStatus,    setFilterStatus]    = useState('all')
+  const [filterStatus,    setFilterStatus]    = useState(() => initialFleetFilter?.kind === 'status' ? initialFleetFilter.value : 'all')
+  const [availableOnly,   setAvailableOnly]   = useState(() => initialFleetFilter?.kind === 'available')
+  const [drilldownIds,    setDrilldownIds]    = useState(() => initialFleetFilter?.kind === 'equipment_ids' ? initialFleetFilter.ids : null)
+  const [drilldownLabel,  setDrilldownLabel]  = useState(() => initialFleetFilter?.kind !== 'all' ? (initialFleetFilter?.label || '') : '')
   const [filterOwnership, setFilterOwnership] = useState('all')
   const [viewMode,        setViewMode]        = useState('grid')    // 'grid' | 'site' | 'utilization' | 'cost'
   const [alertDismissed,  setAlertDismissed]  = useState(false)
@@ -4694,6 +4697,16 @@ function FleetTab({ companyId, showAdd, setShowAdd, onNavigate, unloggedIds = nu
     if (match) setSelected(match)
     deepLinkHandled.current = true
   }, [equipment, initialEquipmentId])
+
+  useEffect(() => {
+    const kind = initialFleetFilter?.kind || 'all'
+    setFilterStatus(kind === 'status' ? initialFleetFilter.value : 'all')
+    setAvailableOnly(kind === 'available')
+    setDrilldownIds(kind === 'equipment_ids' ? (initialFleetFilter.ids || []) : null)
+    setDrilldownLabel(kind === 'all' ? '' : (initialFleetFilter?.label || ''))
+    setSearch('')
+    setFilterOwnership('all')
+  }, [initialFleetFilter?.ids, initialFleetFilter?.kind, initialFleetFilter?.label, initialFleetFilter?.value])
 
   // Also fetch equipment_documents expiry alerts
   const { data: docAlerts = [] } = useQuery({
@@ -4917,13 +4930,16 @@ function FleetTab({ companyId, showAdd, setShowAdd, onNavigate, unloggedIds = nu
   const MONTH_NAMES_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 
   const unloggedSet = unloggedFilter?.length ? new Set(unloggedFilter) : null
+  const drilldownIdSet = useMemo(() => drilldownIds === null ? null : new Set(drilldownIds), [drilldownIds])
 
   const filtered = equipment.filter(e =>
     // If deep-linked from "not logged today" alert, restrict to those machines only
     (!unloggedSet || unloggedSet.has(e.id)) &&
+    (drilldownIdSet === null || drilldownIdSet.has(e.id)) &&
     (!search || e.name.toLowerCase().includes(search.toLowerCase()) ||
       (e.registration_number || '').toLowerCase().includes(search.toLowerCase()) ||
       (e.category || '').toLowerCase().includes(search.toLowerCase())) &&
+    (!availableOnly || (!e.current_project_id && !['breakdown', 'maintenance', 'disposed'].includes(e.status))) &&
     (filterStatus === 'all'    || e.status === filterStatus) &&
     (filterOwnership === 'all' || (e.ownership_type || 'own') === filterOwnership)
   )
@@ -4990,13 +5006,34 @@ function FleetTab({ companyId, showAdd, setShowAdd, onNavigate, unloggedIds = nu
           {Object.entries(counts).map(([status, count]) => {
             const st = STATUS_COLORS[status]
             return (
-              <button key={status} onClick={() => setFilterStatus(filterStatus === status ? 'all' : status)}
+              <button key={status} onClick={() => {
+                setAvailableOnly(false)
+                setDrilldownIds(null)
+                setDrilldownLabel('')
+                setFilterStatus(filterStatus === status ? 'all' : status)
+              }}
                 className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-medium transition-all
                   ${filterStatus === status ? `${st.bg} ${st.text} ${st.border}` : 'border-dark-600 text-slate-500'}`}>
                 {count} {st.label}
               </button>
             )
           })}
+        </div>
+      )}
+
+      {(availableOnly || filterStatus !== 'all' || drilldownIds !== null) && (
+        <div className="mx-4 mb-2 shrink-0 bg-primary-500/10 border border-primary-500/30 rounded-xl px-3 py-2 flex items-center justify-between gap-2">
+          <p className="text-primary-300 text-xs font-semibold">
+            Showing {filtered.length} {drilldownLabel || (availableOnly ? 'Available' : STATUS_COLORS[filterStatus]?.label)} machine{filtered.length !== 1 ? 's' : ''}
+          </p>
+          <button type="button" onClick={() => {
+            setFilterStatus('all')
+            setAvailableOnly(false)
+            setDrilldownIds(null)
+            setDrilldownLabel('')
+          }} className="text-primary-400 hover:text-primary-200 text-xs font-medium shrink-0">
+            Show all ×
+          </button>
         </div>
       )}
 
@@ -7857,7 +7894,7 @@ function LedgerTab({ companyId }) {
 }
 
 // ── Main FleetPage ────────────────────────────────────────────────────────────
-export default function FleetPage({ onNavigate, unloggedIds = null, initialEquipmentId = null }) {
+export default function FleetPage({ onNavigate, unloggedIds = null, initialEquipmentId = null, initialFleetFilter = null }) {
   const { companyId } = useAuth()
   const [activeTab,  setActiveTab]  = useState('fleet')
   const [showAdd,    setShowAdd]    = useState(false)
@@ -7897,7 +7934,7 @@ export default function FleetPage({ onNavigate, unloggedIds = null, initialEquip
         })}
       </div>
       <div className="flex-1 overflow-hidden">
-        {activeTab === 'fleet'     && <FleetTab     companyId={companyId} showAdd={showAdd} setShowAdd={setShowAdd} onNavigate={onNavigate} unloggedIds={unloggedIds} initialEquipmentId={initialEquipmentId} />}
+        {activeTab === 'fleet'     && <FleetTab     companyId={companyId} showAdd={showAdd} setShowAdd={setShowAdd} onNavigate={onNavigate} unloggedIds={unloggedIds} initialEquipmentId={initialEquipmentId} initialFleetFilter={initialFleetFilter} />}
         {activeTab === 'fuel'      && <FuelTab      companyId={companyId} />}
         {activeTab === 'incidents' && <IncidentsTab companyId={companyId} />}
         {activeTab === 'history'   && <HistoryTab   companyId={companyId} />}
