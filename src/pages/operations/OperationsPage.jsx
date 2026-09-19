@@ -8,11 +8,12 @@ import {
   Truck, Plus, Fuel, AlertTriangle, X, Loader2, CheckCircle,
   Gauge, User, Mic, MicOff, MapPin, Camera,
   Clock, Activity, PlayCircle, StopCircle, ChevronRight, Lock, Bell,
-  ExternalLink, ZoomIn, Edit2, Trash2, PauseCircle, AlertOctagon, BarChart3,
+  ExternalLink, ZoomIn, Edit2, Trash2, PauseCircle, AlertOctagon, BarChart3, ClipboardCheck,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format } from 'date-fns'
 import OperationsIntelligenceTab from './OperationsIntelligenceTab'
+import SiteDailyLogsTab from './SiteDailyLogsTab'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function today() { return new Date().toISOString().split('T')[0] }
@@ -1239,7 +1240,6 @@ function IncidentModal({ equipment, shift, companyId, onClose }) {
 
 // ── Mark Status Modal (idle / breakdown) — supervisor/manager/admin only ──────
 function MarkStatusModal({ equipment, companyId, statusType, onClose }) {
-  const { userProfile } = useAuth()
   const qc = useQueryClient()
   const isBreakdown = statusType === 'breakdown'
   const inp = 'w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500'
@@ -1259,21 +1259,23 @@ function MarkStatusModal({ equipment, companyId, statusType, onClose }) {
 
   const handleSave = async () => {
     if (isBreakdown && !description.trim()) return toast.error('Describe the breakdown')
+    if (!isBreakdown && !idleReason) return toast.error('Select the idle reason')
     setSaving(true)
     try {
       const today = new Date().toISOString().slice(0, 10)
 
-      // 1. Insert daily_operations record with the new status
-      const { error: opsErr } = await supabase.from('daily_operations').insert({
-        company_id:    companyId,
-        equipment_id:  equipment.id,
-        equipment_name: equipment.name,
-        ops_date:      today,
-        status:        statusType,
-        idle_reason:   !isBreakdown ? (idleReason || null) : null,
-        notes:         description.trim() || null,
-        logged_by:     userProfile?.id   || null,
-        logged_by_name: userProfile?.full_name || null,
+      // 1. Save through the duplicate-safe daily-log workflow.
+      const { error: opsErr } = await supabase.rpc('save_daily_log_batch', {
+        p_entries: [{
+          equipment_id: equipment.id,
+          project_id: equipment.current_project_id || null,
+          ops_date: today,
+          shift_type: 'general',
+          status: statusType,
+          idle_reason: !isBreakdown ? idleReason : null,
+          notes: description.trim() || null,
+        }],
+        p_submit: true,
       })
       if (opsErr) throw opsErr
 
@@ -1377,7 +1379,6 @@ function MarkStatusModal({ equipment, companyId, statusType, onClose }) {
 
 // ── Recover from Breakdown Modal ──────────────────────────────────────────────
 function RecoverModal({ equipment, companyId, onClose }) {
-  const { userProfile } = useAuth()
   const qc = useQueryClient()
   const [notes, setNotes] = useState('')
   const [saving, setSaving] = useState(false)
@@ -1388,27 +1389,32 @@ function RecoverModal({ equipment, companyId, onClose }) {
     try {
       const today = new Date().toISOString().slice(0, 10)
 
-      // 1. Mark equipment as active
-      await supabase.from('equipment').update({ status: 'active' }).eq('id', equipment.id)
+      // 1. Update today's authoritative log before changing the live machine state.
+      const { error: logError } = await supabase.rpc('save_daily_log_batch', {
+        p_entries: [{
+          equipment_id: equipment.id,
+          project_id: equipment.current_project_id || null,
+          ops_date: today,
+          shift_type: 'general',
+          status: 'working',
+          running_hours: 0,
+          notes: notes.trim() ? `Recovered from breakdown: ${notes.trim()}` : 'Recovered from breakdown',
+        }],
+        p_submit: true,
+      })
+      if (logError) throw logError
 
-      // 2. Close any open breakdown incidents for this machine
-      await supabase.from('shift_incidents')
+      // 2. Mark equipment as active.
+      const { error: equipmentError } = await supabase.from('equipment').update({ status: 'active' }).eq('id', equipment.id)
+      if (equipmentError) throw equipmentError
+
+      // 3. Close any open breakdown incidents for this machine.
+      const { error: incidentError } = await supabase.from('shift_incidents')
         .update({ resolved: true, resolved_at: new Date().toISOString() })
         .eq('equipment_id', equipment.id)
         .eq('incident_type', 'breakdown')
         .eq('resolved', false)
-
-      // 3. Log a daily_operations entry for the recovery
-      await supabase.from('daily_operations').insert({
-        company_id:     companyId,
-        equipment_id:   equipment.id,
-        equipment_name: equipment.name,
-        ops_date:       today,
-        status:         'active',
-        notes:          notes.trim() ? `Recovered from breakdown: ${notes.trim()}` : 'Recovered from breakdown',
-        logged_by:      userProfile?.id || null,
-        logged_by_name: userProfile?.full_name || null,
-      })
+      if (incidentError) throw incidentError
 
       toast.success('Equipment marked as operational')
       qc.invalidateQueries({ queryKey: ['today_ops',   companyId] })
@@ -3272,6 +3278,7 @@ export default function OperationsPage({ onNavigate, initialTab, initialMetric, 
 
   const tabs = [
     { id: 'today',     label: "Today's Ops", icon: Activity },
+    { id: 'site_logs', label: 'Site Logs', icon: ClipboardCheck },
     { id: 'intelligence', label: 'Utilization', icon: BarChart3 },
     { id: 'shifts',    label: 'Shifts',      icon: Clock },
     { id: 'fuel',      label: 'Fuel',        icon: Fuel },
@@ -3282,7 +3289,7 @@ export default function OperationsPage({ onNavigate, initialTab, initialMetric, 
     <div className="flex flex-col h-full bg-dark-900">
       <div className="px-4 pt-4 pb-2 shrink-0">
         <h1 className="text-lg font-bold text-slate-100">Daily Operations</h1>
-        <p className="text-xs text-slate-400">Shifts · Fuel · Incidents · {format(new Date(), 'dd MMM yyyy')}</p>
+        <p className="text-xs text-slate-400">Site logs · Utilization · Shifts · Fuel · {format(new Date(), 'dd MMM yyyy')}</p>
       </div>
       <div className="flex border-b border-dark-700 shrink-0 px-2 overflow-x-auto">
         {tabs.map(t => {
@@ -3298,6 +3305,7 @@ export default function OperationsPage({ onNavigate, initialTab, initialMetric, 
       </div>
       <div className="flex-1 overflow-hidden">
         {activeTab === 'today'     && <TodayTab companyId={companyId} initialEquipmentId={focusedEquipment?.id} initialEquipmentName={focusedEquipment?.name} />}
+        {activeTab === 'site_logs' && <SiteDailyLogsTab companyId={companyId} initialEquipmentId={focusedEquipment?.id || filterEquipmentId} />}
         {activeTab === 'intelligence' && <OperationsIntelligenceTab
           companyId={companyId}
           initialMetric={initialMetric}
@@ -3307,8 +3315,8 @@ export default function OperationsPage({ onNavigate, initialTab, initialMetric, 
           onNavigate={onNavigate}
           onRecord={(equipment) => {
             setFocusedEquipment({ id: equipment.id, name: equipment.name })
-            setActiveTab('today')
-            onNavigate?.('operations', { tab: 'today', equipmentId: equipment.id, equipmentName: equipment.name })
+            setActiveTab('site_logs')
+            onNavigate?.('operations', { tab: 'site_logs', equipmentId: equipment.id, equipmentName: equipment.name })
           }}
         />}
         {activeTab === 'shifts'    && <ShiftsTab    companyId={companyId} />}
