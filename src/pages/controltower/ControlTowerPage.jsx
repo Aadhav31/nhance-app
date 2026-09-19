@@ -176,7 +176,10 @@ export default function ControlTowerPage({ onNavigate }) {
             <button onClick={() => onNavigate('operations', { tab: 'intelligence', metric: 'hours' })} className="rounded-xl bg-dark-700/60 border border-dark-700 hover:border-primary-500/50 p-4 text-left"><Gauge className="w-5 h-5 text-primary-400" /><p className="text-2xl font-bold text-slate-100 mt-3">{insight.hours.toFixed(1)}</p><p className="text-xs text-slate-500">Operating hours · view machines</p></button>
             <button onClick={() => onNavigate('operations', { tab: 'intelligence', metric: 'fuel' })} className="rounded-xl bg-dark-700/60 border border-dark-700 hover:border-primary-500/50 p-4 text-left"><Fuel className="w-5 h-5 text-amber-400" /><p className="text-2xl font-bold text-slate-100 mt-3">{insight.fuel.toFixed(0)} L</p><p className="text-xs text-slate-500">Fuel consumed · view machines</p></button>
           </div>
-          <button onClick={() => onNavigate('operations', { tab: 'intelligence' })} className="btn-primary w-full justify-center mt-3 text-sm">Open utilization intelligence</button>
+          <div className="grid sm:grid-cols-2 gap-2 mt-3">
+            <button onClick={() => onNavigate('operations', { tab: 'site_logs' })} className="btn-primary w-full justify-center text-sm">Record today&apos;s logs</button>
+            <button onClick={() => onNavigate('operations', { tab: 'intelligence' })} className="btn-secondary w-full justify-center text-sm">Open utilization</button>
+          </div>
         </section>
       </div>
 
