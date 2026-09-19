@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
+import { equipmentPlanningState, localDateKey } from '../../lib/deploymentPlanner'
 
 const STATUS = {
   active:      { label: 'Working', color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
@@ -14,7 +15,7 @@ const STATUS = {
   maintenance: { label: 'Maintenance', color: 'text-amber-400', bg: 'bg-amber-500/10' },
 }
 
-const today = () => new Date().toISOString().slice(0, 10)
+const today = localDateKey
 const dateAfter = (days) => {
   const value = new Date()
   value.setDate(value.getDate() + days)
@@ -29,7 +30,7 @@ function useControlTower(companyId) {
     queryFn: async () => {
       const requests = await Promise.all([
         supabase.from('equipment')
-          .select('id,name,equipment_number,category,status,current_meter_reading')
+          .select('id,name,equipment_number,category,status,current_meter_reading,current_project_id')
           .eq('company_id', companyId),
         supabase.from('pm_schedules')
           .select('id,equipment_id,equipment_name,schedule_name,next_due_meter,next_due_date,is_active')
@@ -43,14 +44,18 @@ function useControlTower(companyId) {
           .eq('company_id', companyId).gte('expiry_date', today()).lte('expiry_date', dateAfter(30))
           .order('expiry_date'),
         supabase.from('equipment_deployments')
-          .select('id,equipment_id,project_id,deployed_date,status')
-          .eq('company_id', companyId).eq('status', 'active'),
+          .select('id,equipment_id,project_id,deployed_date,withdrawn_date,expected_return_date,status')
+          .eq('company_id', companyId).lte('deployed_date', today()).or(`status.eq.active,withdrawn_date.gte.${today()}`),
         supabase.from('daily_operations')
           .select('equipment_id,ops_date,status,running_hours,fuel_consumed')
           .eq('company_id', companyId).gte('ops_date', dateAfter(-7)),
+        supabase.from('equipment_deployment_plans')
+          .select('id,equipment_id,project_id,mobilisation_date,expected_return_date,status')
+          .eq('company_id', companyId).in('status', ['planned', 'confirmed'])
+          .lte('mobilisation_date', today()).gte('expected_return_date', today()),
       ])
 
-      const names = ['equipment', 'pmSchedules', 'jobCards', 'documents', 'deployments', 'operations']
+      const names = ['equipment', 'pmSchedules', 'jobCards', 'documents', 'deployments', 'operations', 'plans']
       const failures = requests.flatMap((result, index) => result.error ? [names[index]] : [])
       return {
         equipment:   requests[0].data || [],
@@ -59,6 +64,7 @@ function useControlTower(companyId) {
         documents:   requests[3].data || [],
         deployments: requests[4].data || [],
         operations:  requests[5].data || [],
+        plans:       requests[6].data || [],
         failures,
       }
     },
@@ -118,7 +124,7 @@ export default function ControlTowerPage({ onNavigate }) {
   if (isError || !data || !insight) return <div className="p-6 text-sm text-red-400">Control Tower data could not be loaded.</div>
 
   const counts = data.equipment.reduce((acc, item) => ({ ...acc, [item.status]: (acc[item.status] || 0) + 1 }), {})
-  const available = data.equipment.filter(item => !insight.deployed.has(item.id) && !['breakdown', 'maintenance', 'disposed'].includes(item.status)).length
+  const available = data.equipment.filter(item => item.status !== 'disposed' && equipmentPlanningState(item, data.deployments, data.plans, today(), today()).status === 'available').length
 
   return (
     <div className="p-4 md:p-6 space-y-6 max-w-7xl mx-auto">
@@ -143,7 +149,7 @@ export default function ControlTowerPage({ onNavigate }) {
         <Metric icon={CircleOff} label="Idle" value={counts.idle || 0} tone="text-blue-400" onClick={() => onNavigate('fleet', { fleetFilter: { kind: 'status', value: 'idle', label: 'Idle' } })} />
         <Metric icon={ShieldAlert} label="Breakdown" value={counts.breakdown || 0} tone="text-red-400" onClick={() => onNavigate('fleet', { fleetFilter: { kind: 'status', value: 'breakdown', label: 'Breakdown' } })} />
         <Metric icon={Wrench} label="Maintenance" value={counts.maintenance || 0} tone="text-amber-400" onClick={() => onNavigate('fleet', { fleetFilter: { kind: 'status', value: 'maintenance', label: 'Maintenance' } })} />
-        <Metric icon={MapPin} label="Available" value={available} tone="text-purple-400" onClick={() => onNavigate('fleet', { fleetFilter: { kind: 'available', label: 'Available' } })} />
+        <Metric icon={MapPin} label="Available" value={available} tone="text-purple-400" onClick={() => onNavigate('deployment_planner', { plannerStatus: 'available' })} />
       </div>
 
       <div className="grid lg:grid-cols-[1.15fr_0.85fr] gap-4">

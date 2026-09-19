@@ -2019,6 +2019,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
   const [deployProjectId,  setDeployProjectId]  = useState(equipmentProp.current_project_id || '')
   const [deploySiteName,   setDeploySiteName]   = useState(equipmentProp.current_site_name  || '')
   const [deployRateItemId, setDeployRateItemId] = useState('')
+  const [deployExpectedReturn, setDeployExpectedReturn] = useState('')
   const [deployFuelByClient, setDeployFuelByClient] = useState(equipmentProp.fuel_by_client || false)
   const [deployFormSynced, setDeployFormSynced] = useState(false)
 
@@ -2684,10 +2685,11 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
     if (!deployProjectId) { toast.error('Select a project to deploy'); return }
     setDeploySaving(true)
     try {
-      const { data: existingDep } = await supabase.from('equipment_deployments')
-        .select('id, project_id, projects:project_id(project_name)')
-        .eq('equipment_id', equipment.id).eq('status', 'active').maybeSingle()
-      const fromProjectName = existingDep?.projects?.project_name || null
+      const { data: existingDep, error } = await supabase.from('equipment_deployments')
+        .select('id, project_id')
+        .eq('company_id', companyId).eq('equipment_id', equipment.id).eq('status', 'active').maybeSingle()
+      if (error) throw error
+      const fromProjectName = existingDep ? (projects.find(p => p.id === existingDep.project_id)?.project_name || 'Current project') : null
       const toProjectName   = projects.find(p => p.id === deployProjectId)?.project_name || deployProjectId
 
       if (fromProjectName) {
@@ -2713,45 +2715,23 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
       const toProjectName = projects.find(p => p.id === deployProjectId)?.project_name || deployProjectId
       const today         = new Date().toISOString().slice(0, 10)
 
-      // Update equipment current deployment fields
-      const { error } = await supabase.from('equipment').update({
-        current_client_id:  deployClientId  || null,
-        current_project_id: deployProjectId || null,
-        current_site_name:  deploySiteName  || null,
-        fuel_by_client:     deployFuelByClient,
-      }).eq('id', equipment.id)
-      if (error) throw error
-
-      // Close active deployment — stamp TC snapshot if it was a transfer
-      if (fromDepId) {
-        await supabase.from('equipment_deployments')
-          .update({
-            status:          'withdrawn',
-            withdrawn_date:  today,
-            tc_from_project: fromProjectName,
-            tc_to_project:   toProjectName,
-            tc_generated_at: tcDetails ? new Date().toISOString() : null,
-          })
-          .eq('id', fromDepId)
-      } else {
-        await supabase.from('equipment_deployments')
-          .update({ status: 'withdrawn', withdrawn_date: today })
-          .eq('equipment_id', equipment.id).eq('status', 'active')
-      }
-
-      // Insert new deployment record
+      // The database transaction closes any transfer, checks reservations,
+      // creates the billing snapshot, and changes the equipment site atomically.
       const legacyRate = effectiveRate
         ? (Number(effectiveRate.rate_per_hour) || Number(effectiveRate.rate_per_day) || Number(effectiveRate.rate_per_month) || 0)
         : 0
       const legacyUnit = effectiveRate?.billing_basis === 'hourly' ? 'per_hour'
         : effectiveRate?.billing_basis === 'monthly' ? 'per_month' : 'per_day'
 
-      await supabase.from('equipment_deployments').insert({
+      const deploymentData = {
         company_id:          companyId,
         equipment_id:        equipment.id,
         project_id:          deployProjectId,
         client_id:           deployClientId || null,
         deployed_date:       today,
+        expected_return_date: deployExpectedReturn || null,
+        tc_from_project:     fromProjectName,
+        tc_generated_at:     tcDetails ? new Date().toISOString() : null,
         status:              'active',
         rental_rate:         legacyRate,
         rate_unit:           legacyUnit,
@@ -2773,11 +2753,17 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
         machine_photo_url:    deployMachinePhotoUrl || null,
         hour_meter_photo_url: deployMeterPhotoUrl   || null,
         deployment_location:  deployGpsLoc?.address || deploySiteName || null,
+      }
+      const { error } = await supabase.rpc('planner_deploy_equipment', {
+        p_data: deploymentData, p_from_deployment_id: fromDepId || null,
       })
+      if (error) throw error
 
-      setEquipment(e => ({ ...e, current_client_id: deployClientId, current_project_id: deployProjectId, current_site_name: deploySiteName, fuel_by_client: deployFuelByClient }))
-      qc.invalidateQueries(['equipment', companyId])
-      qc.invalidateQueries(['project_detail', deployProjectId])
+      await refreshEquipment()
+      qc.invalidateQueries({ queryKey: ['equipment', companyId] })
+      qc.invalidateQueries({ queryKey: ['project_detail', deployProjectId] })
+      qc.invalidateQueries({ queryKey: ['deployment-planner', companyId] })
+      qc.invalidateQueries({ queryKey: ['active_eq_deployments', companyId] })
       setShowTCModal(false)
       setTcPending(null)
 
@@ -3585,6 +3571,13 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
                           : <MapPin className="w-3.5 h-3.5" />}
                       </button>
                     </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-500 mb-1" htmlFor="deploy-expected-return">Expected return date</label>
+                    <input id="deploy-expected-return" type="date" min={new Date().toISOString().slice(0, 10)}
+                      className="w-full bg-dark-700 border border-dark-600 rounded-lg px-2.5 py-2 text-sm text-slate-100"
+                      value={deployExpectedReturn} onChange={e => setDeployExpectedReturn(e.target.value)} />
+                    <p className="text-xs text-slate-500 mt-1">Needed to plan another booking after this deployment.</p>
                   </div>
                   {/* Fuel by client toggle */}
                   <label className="flex items-center gap-2 cursor-pointer select-none">

@@ -15,6 +15,8 @@ const WATCHED_TABLES = [
   'invoice_line_items',
   'invoice_payments',
   'equipment',
+  'equipment_deployments',
+  'equipment_deployment_plans',
   'daily_operations',
   'hr_employees',
   'maintenance_logs',

@@ -48,6 +48,7 @@ const CompanyProfilePage      = lazy(() => import('./pages/company/CompanyProfil
 const HireContractsPage       = lazy(() => import('./pages/hire/HireContractsPage'))
 const ActiveDeploymentsPage   = lazy(() => import('./pages/hire/ActiveDeploymentsPage'))
 const AvailabilityPage        = lazy(() => import('./pages/hire/AvailabilityPage'))
+const DeploymentPlannerPage   = lazy(() => import('./pages/hire/DeploymentPlannerPage'))
 const UsageBillingPage        = lazy(() => import('./pages/hire/UsageBillingPage'))
 const BOQPage                 = lazy(() => import('./pages/boq/BOQPage'))
 const RABillingPage           = lazy(() => import('./pages/ra_billing/RABillingPage'))
@@ -92,17 +93,21 @@ function readNavigationFromUrl() {
       }
     }
   }
+  if (page === 'deployment_planner') extra.plannerStatus = params.get('plannerStatus') || 'all'
+  if (page === 'projects' && params.get('project')) extra.projectId = params.get('project')
 
   return { page, extra }
 }
 
 function writeNavigationToUrl(page, extra) {
   const url = new URL(window.location.href)
-  const navigationKeys = ['page', 'equipment', 'fleetFilter', 'fleetValue', 'fleetLabel', 'fleetIds']
+  const navigationKeys = ['page', 'equipment', 'fleetFilter', 'fleetValue', 'fleetLabel', 'fleetIds', 'plannerStatus', 'project']
   navigationKeys.forEach(key => url.searchParams.delete(key))
 
   if (page !== 'dashboard') url.searchParams.set('page', page)
   if (extra.equipmentId) url.searchParams.set('equipment', extra.equipmentId)
+  if (page === 'deployment_planner' && extra.plannerStatus) url.searchParams.set('plannerStatus', extra.plannerStatus)
+  if (page === 'projects' && extra.projectId) url.searchParams.set('project', extra.projectId)
 
   const filter = extra.fleetFilter
   if (page === 'fleet' && filter?.kind) {
@@ -196,6 +201,7 @@ const ALL_PAGES = [
   { key: 'fieldexpense', Icon: Receipt,         label: 'Field Expenses'       },
   { key: 'operations',   Icon: ClipboardList,   label: 'Daily Operations'     },
   { key: 'fleet',        Icon: Truck,           label: 'Equipment & Fleet'    },
+  { key: 'deployment_planner', Icon: CalendarDays, label: 'Deployment Planner' },
   { key: 'maintenance',  Icon: Wrench,          label: 'Maintenance'          },
   { key: 'inventory',    Icon: Package,         label: 'Inventory'            },
   { key: 'projects',     Icon: FolderOpen,      label: 'Projects'             },
@@ -337,14 +343,14 @@ function AppShell() {
     }
 
     const page = effectivePage
-    const wrap = (Component, module) => {
+    const wrap = (Component, module, props = {}) => {
       if (module && !hasModule(module)) {
         if (!isOnline) return <OfflineScreen />
         return <ModuleNotActive page={page} />
       }
       return (
         <Suspense fallback={<LoadingScreen message={`Loading ${page}…`} />}>
-          <Component />
+          <Component {...props} />
         </Suspense>
       )
     }
@@ -389,7 +395,7 @@ function AppShell() {
           </Suspense>
         )
       case 'clients':      return wrap(ClientsPage,        MODULES.CLIENTS_PROJECTS)
-      case 'projects':     return wrap(ProjectsPage,       MODULES.CLIENTS_PROJECTS)
+      case 'projects':     return wrap(ProjectsPage,       MODULES.CLIENTS_PROJECTS, { initialProjectId: navExtra.projectId })
       case 'boq':          return wrap(BOQPage,            MODULES.CLIENTS_PROJECTS)
       case 'ra_billing':
         return hasModule(MODULES.CLIENTS_PROJECTS) ? (
@@ -475,6 +481,12 @@ function AppShell() {
             <AvailabilityPage />
           </Suspense>
         )
+      case 'deployment_planner':
+        return hasModule(MODULES.FLEET) ? (
+          <Suspense fallback={<LoadingScreen message="Loading Deployment Planner…" />}>
+            <DeploymentPlannerPage key={navExtra.plannerStatus || 'all'} onNavigate={handleNavigate} initialStatus={navExtra.plannerStatus || 'all'} />
+          </Suspense>
+        ) : <ModuleNotActive page="Deployment Planner" />
       case 'usage_billing':
         return (
           <Suspense fallback={<LoadingScreen message="Loading billing…" />}>
