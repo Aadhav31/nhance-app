@@ -94,7 +94,7 @@ export const INDUSTRY_NAV = {
           roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
         { key: 'maintenance',    label: 'Maintenance',         icon: 'Wrench',          module: MODULES.MAINTENANCE,
           roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ADMIN] },
-        { key: 'availability',   label: 'Availability',        icon: 'CalendarDays',    module: MODULES.FLEET,
+        { key: 'deployment_planner', label: 'Deployment Planner', icon: 'CalendarDays', module: MODULES.FLEET,
           roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
       ],
     },

@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback } from 'react'
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import PagePanel from '../../components/shared/PagePanel'
@@ -3011,7 +3011,7 @@ function ProjectCard({ project, docTotals, onClick }) {
 
 // ── Main Page ──────────────────────────────────────────────────────────────────
 
-export default function ProjectsPage() {
+export default function ProjectsPage({ initialProjectId = null }) {
   const { userProfile, role } = useAuth()
   const qc = useQueryClient()
   const isAdmin = ['admin','superadmin','manager'].includes(role)
@@ -3022,6 +3022,7 @@ export default function ProjectsPage() {
   const [showAdd, setShowAdd]   = useState(false)
   const [editing, setEditing]   = useState(null)
   const [viewing, setViewing]   = useState(null)
+  const openedProjectId = useRef(null)
 
   const { data: projects = [], isLoading } = useQuery({
     queryKey: ['projects', companyId],
@@ -3037,6 +3038,12 @@ export default function ProjectsPage() {
     },
     enabled: !!companyId,
   })
+
+  useEffect(() => {
+    if (!initialProjectId || openedProjectId.current === initialProjectId) return
+    const project = projects.find(item => item.id === initialProjectId)
+    if (project) { setViewing(project); openedProjectId.current = initialProjectId }
+  }, [initialProjectId, projects])
 
   const { data: clients = [] } = useQuery({
     queryKey: ['clients_dropdown', companyId],
