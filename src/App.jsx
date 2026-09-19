@@ -95,19 +95,35 @@ function readNavigationFromUrl() {
   }
   if (page === 'deployment_planner') extra.plannerStatus = params.get('plannerStatus') || 'all'
   if (page === 'projects' && params.get('project')) extra.projectId = params.get('project')
+  if (page === 'operations') {
+    extra.tab = params.get('opsTab') || 'today'
+    extra.metric = params.get('opsMetric') || 'all'
+    extra.from = params.get('opsFrom') || null
+    extra.to = params.get('opsTo') || null
+    extra.projectId = params.get('opsProject') || 'all'
+    if (params.get('equipmentName')) extra.equipmentName = params.get('equipmentName')
+  }
 
   return { page, extra }
 }
 
 function writeNavigationToUrl(page, extra) {
   const url = new URL(window.location.href)
-  const navigationKeys = ['page', 'equipment', 'fleetFilter', 'fleetValue', 'fleetLabel', 'fleetIds', 'plannerStatus', 'project']
+  const navigationKeys = ['page', 'equipment', 'equipmentName', 'fleetFilter', 'fleetValue', 'fleetLabel', 'fleetIds', 'plannerStatus', 'project', 'opsTab', 'opsMetric', 'opsFrom', 'opsTo', 'opsProject']
   navigationKeys.forEach(key => url.searchParams.delete(key))
 
   if (page !== 'dashboard') url.searchParams.set('page', page)
   if (extra.equipmentId) url.searchParams.set('equipment', extra.equipmentId)
   if (page === 'deployment_planner' && extra.plannerStatus) url.searchParams.set('plannerStatus', extra.plannerStatus)
   if (page === 'projects' && extra.projectId) url.searchParams.set('project', extra.projectId)
+  if (page === 'operations') {
+    if (extra.tab && extra.tab !== 'today') url.searchParams.set('opsTab', extra.tab)
+    if (extra.metric && extra.metric !== 'all') url.searchParams.set('opsMetric', extra.metric)
+    if (extra.from) url.searchParams.set('opsFrom', extra.from)
+    if (extra.to) url.searchParams.set('opsTo', extra.to)
+    if (extra.projectId && extra.projectId !== 'all') url.searchParams.set('opsProject', extra.projectId)
+    if (extra.equipmentName) url.searchParams.set('equipmentName', extra.equipmentName)
+  }
 
   const filter = extra.fleetFilter
   if (page === 'fleet' && filter?.kind) {
@@ -383,7 +399,16 @@ function AppShell() {
       case 'operations':
         return hasModule(MODULES.OPERATIONS) ? (
           <Suspense fallback={<LoadingScreen message="Loading operations…" />}>
-            <OperationsPage initialTab={navExtra.tab} filterEquipmentId={navExtra.equipmentId} filterEquipmentName={navExtra.equipmentName} />
+            <OperationsPage
+              onNavigate={handleNavigate}
+              initialTab={navExtra.tab}
+              initialMetric={navExtra.metric}
+              initialFrom={navExtra.from}
+              initialTo={navExtra.to}
+              initialProjectId={navExtra.projectId}
+              filterEquipmentId={navExtra.equipmentId}
+              filterEquipmentName={navExtra.equipmentName}
+            />
           </Suspense>
         ) : <ModuleNotActive page={page} />
       case 'maintenance':  return wrap(MaintenancePage,    MODULES.MAINTENANCE)
