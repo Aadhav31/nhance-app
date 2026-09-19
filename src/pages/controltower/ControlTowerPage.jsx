@@ -7,6 +7,7 @@ import {
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import { equipmentPlanningState, localDateKey } from '../../lib/deploymentPlanner'
+import { buildOperationsIntelligence } from '../../lib/operationsIntelligence'
 
 const STATUS = {
   active:      { label: 'Working', color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
@@ -48,7 +49,7 @@ function useControlTower(companyId) {
           .eq('company_id', companyId).lte('deployed_date', today()).or(`status.eq.active,withdrawn_date.gte.${today()}`),
         supabase.from('daily_operations')
           .select('equipment_id,ops_date,status,running_hours,fuel_consumed')
-          .eq('company_id', companyId).gte('ops_date', dateAfter(-7)),
+          .eq('company_id', companyId).gte('ops_date', dateAfter(-6)),
         supabase.from('equipment_deployment_plans')
           .select('id,equipment_id,project_id,mobilisation_date,expected_return_date,status')
           .eq('company_id', companyId).in('status', ['planned', 'confirmed'])
@@ -104,12 +105,14 @@ export default function ControlTowerPage({ onNavigate }) {
   const insight = useMemo(() => {
     if (!data) return null
     const equipmentById = Object.fromEntries(data.equipment.map(item => [item.id, item]))
-    const lastOperation = {}
-    data.operations.forEach(op => {
-      if (!lastOperation[op.equipment_id] || op.ops_date > lastOperation[op.equipment_id]) lastOperation[op.equipment_id] = op.ops_date
-    })
-    const deployed = new Set(data.deployments.map(item => item.equipment_id))
-    const idleAssets = data.equipment.filter(item => item.status === 'idle' && !lastOperation[item.id])
+    const missingLogAssets = buildOperationsIntelligence({
+      equipment: data.equipment,
+      deployments: data.deployments,
+      operations: data.operations,
+      startDate: dateAfter(-6),
+      endDate: today(),
+      today: today(),
+    }).filter(item => item.missingLogDays > 0).map(item => item.equipment)
     const pmDue = data.pmSchedules.filter(item => {
       const meter = Number(equipmentById[item.equipment_id]?.current_meter_reading || 0)
       return (item.next_due_date && item.next_due_date <= dateAfter(14)) ||
@@ -117,7 +120,7 @@ export default function ControlTowerPage({ onNavigate }) {
     })
     const hours = data.operations.reduce((sum, item) => sum + Number(item.running_hours || 0), 0)
     const fuel = data.operations.reduce((sum, item) => sum + Number(item.fuel_consumed || 0), 0)
-    return { equipmentById, deployed, idleAssets, pmDue, hours, fuel }
+    return { equipmentById, missingLogAssets, pmDue, hours, fuel }
   }, [data])
 
   if (isLoading) return <div className="p-6 text-sm text-slate-500">Loading P&amp;M Control Tower…</div>
@@ -161,7 +164,7 @@ export default function ControlTowerPage({ onNavigate }) {
           <div className="space-y-2">
             <AttentionRow icon={ShieldAlert} tone="bg-red-500/10 text-red-400" title={`${data.jobCards.length} open job cards`} detail={data.jobCards[0]?.complaint || 'No unresolved repair complaints'} action="View filtered" onClick={() => onNavigate('fleet', { fleetFilter: { kind: 'equipment_ids', ids: [...new Set(data.jobCards.map(item => item.equipment_id).filter(Boolean))], label: 'Open job cards' } })} />
             <AttentionRow icon={CalendarClock} tone="bg-amber-500/10 text-amber-400" title={`${insight.pmDue.length} PM services approaching`} detail="Due within 14 days or 50 operating hours" action="View filtered" onClick={() => onNavigate('fleet', { fleetFilter: { kind: 'equipment_ids', ids: [...new Set(insight.pmDue.map(item => item.equipment_id).filter(Boolean))], label: 'PM due' } })} />
-            <AttentionRow icon={CircleOff} tone="bg-blue-500/10 text-blue-400" title={`${insight.idleAssets.length} idle assets without a recent log`} detail="Check deployment demand or record the idle reason" action="View filtered" onClick={() => onNavigate('fleet', { fleetFilter: { kind: 'equipment_ids', ids: insight.idleAssets.map(item => item.id), label: 'Idle without recent log' } })} />
+            <AttentionRow icon={CircleOff} tone="bg-blue-500/10 text-blue-400" title={`${insight.missingLogAssets.length} deployed assets with missing daily logs`} detail="Open the exact machine and site drill-down" action="View filtered" onClick={() => onNavigate('operations', { tab: 'intelligence', metric: 'missing_logs' })} />
             <AttentionRow icon={ShieldAlert} tone="bg-purple-500/10 text-purple-400" title={`${data.documents.length} documents expiring`} detail="Insurance, permit, fitness or compliance due in 30 days" action="View filtered" onClick={() => onNavigate('fleet', { fleetFilter: { kind: 'equipment_ids', ids: [...new Set(data.documents.map(item => item.equipment_id).filter(Boolean))], label: 'Expiring documents' } })} />
           </div>
         </section>
@@ -170,10 +173,10 @@ export default function ControlTowerPage({ onNavigate }) {
           <h2 className="text-sm font-bold text-slate-100">Seven-day performance</h2>
           <p className="text-xs text-slate-500 mt-0.5 mb-4">Based on daily operations entries</p>
           <div className="grid grid-cols-2 gap-3">
-            <div className="rounded-xl bg-dark-700/60 border border-dark-700 p-4"><Gauge className="w-5 h-5 text-primary-400" /><p className="text-2xl font-bold text-slate-100 mt-3">{insight.hours.toFixed(1)}</p><p className="text-xs text-slate-500">Operating hours</p></div>
-            <div className="rounded-xl bg-dark-700/60 border border-dark-700 p-4"><Fuel className="w-5 h-5 text-amber-400" /><p className="text-2xl font-bold text-slate-100 mt-3">{insight.fuel.toFixed(0)} L</p><p className="text-xs text-slate-500">Fuel consumed</p></div>
+            <button onClick={() => onNavigate('operations', { tab: 'intelligence', metric: 'hours' })} className="rounded-xl bg-dark-700/60 border border-dark-700 hover:border-primary-500/50 p-4 text-left"><Gauge className="w-5 h-5 text-primary-400" /><p className="text-2xl font-bold text-slate-100 mt-3">{insight.hours.toFixed(1)}</p><p className="text-xs text-slate-500">Operating hours · view machines</p></button>
+            <button onClick={() => onNavigate('operations', { tab: 'intelligence', metric: 'fuel' })} className="rounded-xl bg-dark-700/60 border border-dark-700 hover:border-primary-500/50 p-4 text-left"><Fuel className="w-5 h-5 text-amber-400" /><p className="text-2xl font-bold text-slate-100 mt-3">{insight.fuel.toFixed(0)} L</p><p className="text-xs text-slate-500">Fuel consumed · view machines</p></button>
           </div>
-          <button onClick={() => onNavigate('operations')} className="btn-primary w-full justify-center mt-3 text-sm">Open daily operations</button>
+          <button onClick={() => onNavigate('operations', { tab: 'intelligence' })} className="btn-primary w-full justify-center mt-3 text-sm">Open utilization intelligence</button>
         </section>
       </div>
 

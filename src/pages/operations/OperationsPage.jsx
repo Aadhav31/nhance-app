@@ -8,10 +8,11 @@ import {
   Truck, Plus, Fuel, AlertTriangle, X, Loader2, CheckCircle,
   Gauge, User, Mic, MicOff, MapPin, Camera,
   Clock, Activity, PlayCircle, StopCircle, ChevronRight, Lock, Bell,
-  ExternalLink, ZoomIn, Edit2, Trash2, PauseCircle, AlertOctagon,
+  ExternalLink, ZoomIn, Edit2, Trash2, PauseCircle, AlertOctagon, BarChart3,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format } from 'date-fns'
+import OperationsIntelligenceTab from './OperationsIntelligenceTab'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function today() { return new Date().toISOString().split('T')[0] }
@@ -1569,9 +1570,10 @@ function EquipmentOpCard({ equipment, companyId }) {
 }
 
 // ── Today Tab ─────────────────────────────────────────────────────────────────
-function TodayTab({ companyId }) {
+function TodayTab({ companyId, initialEquipmentId, initialEquipmentName }) {
   const [search, setSearch] = useState('')
   const [filterStatus, setFilterStatus] = useState('all')
+  const [focusedEquipmentId, setFocusedEquipmentId] = useState(initialEquipmentId || null)
   const { role, session } = useAuth()
   const isOperator = role === 'operator'
 
@@ -1707,6 +1709,7 @@ function TodayTab({ companyId }) {
   const filtered = equipment.filter(e =>
     // Operators see only their assigned equipment
     (!isOperator || !myEmployee || myEquipmentIds.includes(e.id)) &&
+    (!focusedEquipmentId || e.id === focusedEquipmentId) &&
     (filterStatus === 'all' || e.status === filterStatus) &&
     (!search || e.name.toLowerCase().includes(search.toLowerCase()) ||
       (e.registration_number || '').toLowerCase().includes(search.toLowerCase()) ||
@@ -1789,6 +1792,12 @@ function TodayTab({ companyId }) {
 
       {/* Search */}
       <div className="px-4 pb-2 shrink-0">
+        {focusedEquipmentId && (
+          <div className="flex items-center justify-between gap-2 mb-2 rounded-lg border border-primary-500/30 bg-primary-500/10 px-3 py-2">
+            <p className="text-xs text-primary-300">Focused machine: <span className="font-semibold">{initialEquipmentName || equipment.find(item => item.id === focusedEquipmentId)?.name || 'Selected equipment'}</span></p>
+            <button onClick={() => setFocusedEquipmentId(null)} className="text-xs text-primary-400 hover:text-primary-200">Show all</button>
+          </div>
+        )}
         <input className="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500 placeholder-slate-500"
           placeholder="Search equipment or site…" value={search} onChange={e => setSearch(e.target.value)} />
       </div>
@@ -3248,12 +3257,22 @@ function IncidentsTab({ companyId }) {
 }
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
-export default function OperationsPage({ initialTab, filterEquipmentId, filterEquipmentName }) {
+export default function OperationsPage({ onNavigate, initialTab, initialMetric, initialFrom, initialTo, initialProjectId, filterEquipmentId, filterEquipmentName }) {
   const { companyId } = useAuth()
   const [activeTab, setActiveTab] = useState(initialTab || 'today')
+  const [focusedEquipment, setFocusedEquipment] = useState(filterEquipmentId ? { id: filterEquipmentId, name: filterEquipmentName } : null)
+
+  useEffect(() => {
+    if (initialTab) setActiveTab(initialTab)
+  }, [initialTab])
+
+  useEffect(() => {
+    if (filterEquipmentId) setFocusedEquipment({ id: filterEquipmentId, name: filterEquipmentName })
+  }, [filterEquipmentId, filterEquipmentName])
 
   const tabs = [
     { id: 'today',     label: "Today's Ops", icon: Activity },
+    { id: 'intelligence', label: 'Utilization', icon: BarChart3 },
     { id: 'shifts',    label: 'Shifts',      icon: Clock },
     { id: 'fuel',      label: 'Fuel',        icon: Fuel },
     { id: 'incidents', label: 'Incidents',   icon: AlertTriangle },
@@ -3269,7 +3288,7 @@ export default function OperationsPage({ initialTab, filterEquipmentId, filterEq
         {tabs.map(t => {
           const Icon = t.icon
           return (
-            <button key={t.id} onClick={() => setActiveTab(t.id)}
+            <button key={t.id} onClick={() => { setActiveTab(t.id); onNavigate?.('operations', { tab: t.id }) }}
               className={`shrink-0 flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium border-b-2 transition-colors
                 ${activeTab === t.id ? 'border-primary-500 text-primary-400' : 'border-transparent text-slate-500 hover:text-slate-300'}`}>
               <Icon className="w-3.5 h-3.5" />{t.label}
@@ -3278,7 +3297,20 @@ export default function OperationsPage({ initialTab, filterEquipmentId, filterEq
         })}
       </div>
       <div className="flex-1 overflow-hidden">
-        {activeTab === 'today'     && <TodayTab     companyId={companyId} />}
+        {activeTab === 'today'     && <TodayTab companyId={companyId} initialEquipmentId={focusedEquipment?.id} initialEquipmentName={focusedEquipment?.name} />}
+        {activeTab === 'intelligence' && <OperationsIntelligenceTab
+          companyId={companyId}
+          initialMetric={initialMetric}
+          initialFrom={initialFrom}
+          initialTo={initialTo}
+          initialProjectId={initialProjectId}
+          onNavigate={onNavigate}
+          onRecord={(equipment) => {
+            setFocusedEquipment({ id: equipment.id, name: equipment.name })
+            setActiveTab('today')
+            onNavigate?.('operations', { tab: 'today', equipmentId: equipment.id, equipmentName: equipment.name })
+          }}
+        />}
         {activeTab === 'shifts'    && <ShiftsTab    companyId={companyId} />}
         {activeTab === 'fuel'      && <FuelTab      companyId={companyId} initialEquipmentId={filterEquipmentId} initialEquipmentName={filterEquipmentName} />}
         {activeTab === 'incidents' && <IncidentsTab companyId={companyId} />}
