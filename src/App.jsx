@@ -17,13 +17,14 @@ import {
   LayoutDashboard, Receipt, ClipboardList, BarChart3,
   Users, Wallet, Package, X, Truck, Wrench, FolderOpen,
   Settings, ShoppingCart, TrendingUp, CalendarDays, Building2, Activity,
-  MessageSquare,
+  MessageSquare, Fuel,
 } from 'lucide-react'
 
 // Lazy-load all pages for performance
 const DashboardPage      = lazy(() => import('./pages/dashboard/DashboardPage'))
 const ControlTowerPage   = lazy(() => import('./pages/controltower/ControlTowerPage'))
 const FleetPage          = lazy(() => import('./pages/fleet/FleetPage'))
+const FuelReconciliationPage = lazy(() => import('./pages/fuel/FuelReconciliationPage'))
 const OperationsPage     = lazy(() => import('./pages/operations/OperationsPage'))
 const MaintenancePage    = lazy(() => import('./pages/maintenance/MaintenancePage'))
 const InventoryPage      = lazy(() => import('./pages/inventory/InventoryPage'))
@@ -225,6 +226,7 @@ const ALL_PAGES = [
   { key: 'fieldexpense', Icon: Receipt,         label: 'Field Expenses'       },
   { key: 'operations',   Icon: ClipboardList,   label: 'Daily Operations'     },
   { key: 'fleet',        Icon: Truck,           label: 'Equipment & Fleet'    },
+  { key: 'fuel_reconciliation', Icon: Fuel,     label: 'Fuel Reconciliation'  },
   { key: 'deployment_planner', Icon: CalendarDays, label: 'Deployment Planner' },
   { key: 'maintenance',  Icon: Wrench,          label: 'Maintenance'          },
   { key: 'inventory',    Icon: Package,         label: 'Inventory'            },
@@ -404,6 +406,12 @@ function AppShell() {
             />
           </Suspense>
         ) : <ModuleNotActive page={page} />
+      case 'fuel_reconciliation':
+        return hasModule(MODULES.FLEET) ? (
+          <Suspense fallback={<LoadingScreen message="Loading fuel reconciliation…" />}>
+            <FuelReconciliationPage onNavigate={handleNavigate} />
+          </Suspense>
+        ) : <ModuleNotActive page="Fuel Reconciliation" />
       case 'operations':
         return hasModule(MODULES.OPERATIONS) ? (
           <Suspense fallback={<LoadingScreen message="Loading operations…" />}>
