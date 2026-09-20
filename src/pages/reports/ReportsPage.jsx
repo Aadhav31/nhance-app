@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react'
+import { useState, useMemo, useCallback, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
@@ -27,6 +27,7 @@ const REPORTS = [
 
 const CATS = ['P&M Reports', 'Operations', 'HR & Payroll', 'Maintenance', 'Finance', 'Projects', 'Clients', 'Inventory']
 const CAT_ICONS = { 'Operations':'⚙️', 'HR & Payroll':'👥', 'Maintenance':'🔧', 'Finance':'💰', 'Projects':'🏗️', 'Clients':'🤝', 'Inventory':'📦' }
+const REPORT_IDS = new Set(REPORTS.map(report => report.id))
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
@@ -112,12 +113,12 @@ function FilterBar({ from, setFrom, to, setTo, children }) {
     <div className="flex flex-wrap items-center gap-3 mb-5 p-3 bg-dark-800 border border-dark-600 rounded-xl">
       <div className="flex items-center gap-2">
         <label className="text-[11px] text-slate-400">From</label>
-        <input type="date" value={from} onChange={e=>setFrom(e.target.value)}
+        <input type="date" aria-label="Report period start" value={from} onChange={e=>setFrom(e.target.value)}
           className="bg-dark-700 border border-dark-500 rounded-lg px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-primary-500" />
       </div>
       <div className="flex items-center gap-2">
         <label className="text-[11px] text-slate-400">To</label>
-        <input type="date" value={to} onChange={e=>setTo(e.target.value)}
+        <input type="date" aria-label="Report period end" value={to} onChange={e=>setTo(e.target.value)}
           className="bg-dark-700 border border-dark-500 rounded-lg px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-primary-500" />
       </div>
       {children}
@@ -2373,18 +2374,35 @@ function ReportContent({ reportId, companyId, from, to }) {
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
-export default function ReportsPage() {
+export default function ReportsPage({
+  onNavigate, initialReport = 'equip_utilization', initialFrom = '', initialTo = '',
+}) {
   const { companyId } = useAuth()
-  const [activeReport, setActiveReport] = useState('equip_utilization')
-  const [from, setFrom] = useState(monthStart())
-  const [to,   setTo]   = useState(todayStr())
+  const [activeReport, setActiveReport] = useState(() => REPORT_IDS.has(initialReport) ? initialReport : 'equip_utilization')
+  const [from, setFrom] = useState(initialFrom || monthStart())
+  const [to,   setTo]   = useState(initialTo || todayStr())
+
+  useEffect(() => {
+    setActiveReport(REPORT_IDS.has(initialReport) ? initialReport : 'equip_utilization')
+    setFrom(initialFrom || monthStart())
+    setTo(initialTo || todayStr())
+  }, [initialFrom, initialReport, initialTo])
+
+  const persistReport = next => onNavigate?.('reports', {
+    reportId: next.reportId ?? activeReport,
+    from: next.from ?? from,
+    to: next.to ?? to,
+  }, { replace: true })
+  const selectReport = value => { setActiveReport(value); persistReport({ reportId: value }) }
+  const selectFrom = value => { setFrom(value); persistReport({ from: value }) }
+  const selectTo = value => { setTo(value); persistReport({ to: value }) }
 
   const current = REPORTS.find(r=>r.id===activeReport)
 
   return (
-    <div className="flex h-full overflow-hidden">
+    <div className="flex flex-col md:flex-row h-full overflow-hidden">
       {/* Sidebar */}
-      <aside className="w-56 flex-shrink-0 bg-dark-900 border-r border-dark-700 flex flex-col overflow-y-auto">
+      <aside className="w-full md:w-56 max-h-56 md:max-h-none flex-shrink-0 bg-dark-900 border-b md:border-b-0 md:border-r border-dark-700 flex flex-col overflow-y-auto">
         <div className="px-4 py-4 border-b border-dark-700">
           <h2 className="text-sm font-semibold text-slate-200">Reports</h2>
           <p className="text-[10px] text-slate-500 mt-0.5">Analytics & exports</p>
@@ -2400,7 +2418,7 @@ export default function ReportsPage() {
                   <span className="text-[9px] font-semibold text-slate-500 uppercase tracking-widest">{cat}</span>
                 </div>
                 {catReports.map(r => (
-                  <button key={r.id} onClick={()=>setActiveReport(r.id)}
+                  <button key={r.id} onClick={()=>selectReport(r.id)} aria-pressed={activeReport === r.id}
                     className={`w-full text-left px-4 py-1.5 text-[11px] transition-colors ${activeReport===r.id?'bg-primary-500/10 text-primary-400 border-r-2 border-primary-500':'text-slate-400 hover:text-slate-200 hover:bg-dark-800'}`}>
                     {r.label}
                   </button>
@@ -2413,13 +2431,13 @@ export default function ReportsPage() {
 
       {/* Main content */}
       <main className="flex-1 flex flex-col overflow-hidden">
-        <div className="flex-shrink-0 px-6 pt-5 pb-3 border-b border-dark-700">
+        <div className="flex-shrink-0 px-4 md:px-6 pt-5 pb-3 border-b border-dark-700">
           <h1 className="text-base font-semibold text-slate-100">{current?.label||'Report'}</h1>
           <p className="text-[11px] text-slate-500 mt-0.5">{current?.desc}</p>
         </div>
-        <div className="flex-1 overflow-y-auto px-6 pt-4 pb-8">
+        <div className="flex-1 overflow-y-auto px-4 md:px-6 pt-4 pb-8">
           {!['payroll','invoice_aging','stock_status'].includes(activeReport) && (
-            <FilterBar from={from} setFrom={setFrom} to={to} setTo={setTo} />
+            <FilterBar from={from} setFrom={selectFrom} to={to} setTo={selectTo} />
           )}
           <ReportContent reportId={activeReport} companyId={companyId} from={from} to={to} />
         </div>

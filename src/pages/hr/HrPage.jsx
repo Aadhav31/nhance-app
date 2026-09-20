@@ -3690,10 +3690,28 @@ function SubstitutionFormModal({ companyId, userProfile, existing, onClose, onSa
 }
 
 // ── Main HRPage ───────────────────────────────────────────────────────────────
-export default function HRPage({ onNavigate }) {
+const HR_TABS = [
+  { id: 'employees', label: 'Employees', icon: Users },
+  { id: 'attendance', label: 'Attendance', icon: CheckCircle },
+  { id: 'payroll', label: 'Payroll', icon: Banknote },
+  { id: 'leaves', label: 'Leaves', icon: Calendar },
+  { id: 'substitutions', label: 'Substitutions', icon: RefreshCw },
+]
+const HR_TAB_IDS = new Set(HR_TABS.map(tab => tab.id))
+
+export default function HRPage({ onNavigate, initialTab = 'employees' }) {
   const { companyId } = useAuth()
-  const [activeTab, setActiveTab] = useState('employees')
+  const [activeTab, setActiveTab] = useState(() => HR_TAB_IDS.has(initialTab) ? initialTab : 'employees')
   const [showAdd, setShowAdd] = useState(false)
+
+  useEffect(() => {
+    setActiveTab(HR_TAB_IDS.has(initialTab) ? initialTab : 'employees')
+  }, [initialTab])
+
+  const selectTab = tab => {
+    setActiveTab(tab)
+    onNavigate?.('hr', { tab }, { replace: true })
+  }
 
   const { data: empCount = 0 } = useQuery({
     queryKey: ['hr_emp_count', companyId],
@@ -3704,14 +3722,6 @@ export default function HRPage({ onNavigate }) {
     },
     enabled: !!companyId,
   })
-
-  const tabs = [
-    { id: 'employees',     label: 'Employees',    icon: Users },
-    { id: 'attendance',    label: 'Attendance',   icon: CheckCircle },
-    { id: 'payroll',       label: 'Payroll',      icon: Banknote },
-    { id: 'leaves',        label: 'Leaves',       icon: Calendar },
-    { id: 'substitutions', label: 'Substitutions',icon: RefreshCw },
-  ]
 
   return (
     <div className="flex flex-col h-full bg-dark-900">
@@ -3728,10 +3738,10 @@ export default function HRPage({ onNavigate }) {
       </div>
 
       <div className="flex border-b border-dark-700 shrink-0 px-2 overflow-x-auto">
-        {tabs.map(t => {
+        {HR_TABS.map(t => {
           const Icon = t.icon
           return (
-            <button key={t.id} onClick={() => setActiveTab(t.id)}
+            <button key={t.id} onClick={() => selectTab(t.id)} aria-pressed={activeTab === t.id}
               className={`shrink-0 flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium border-b-2 transition-colors
                 ${activeTab === t.id ? 'border-primary-500 text-primary-400' : 'border-transparent text-slate-500 hover:text-slate-300'}`}>
               <Icon className="w-3.5 h-3.5" />{t.label}
