@@ -13,6 +13,7 @@ const PAGE_TITLES = {
   availability: { title: 'Daily Availability', subtitle: 'Equipment activity by day' },
   active_deployments: { title: 'Active Deployments', subtitle: 'Machines currently on site' },
   fleet:       { title: 'Equipments & Machineries', subtitle: 'Equipment registry & status' },
+  fuel_reconciliation: { title: 'Fuel Reconciliation', subtitle: 'Diesel variance, efficiency & cost exposure' },
   operations:  { title: 'Daily Operations',         subtitle: 'Shifts, fuel & incidents' },
   maintenance: { title: 'Maintenance',              subtitle: 'Preventive & breakdown tracking' },
   inventory:   { title: 'Inventory',                subtitle: 'Spare parts & consumables' },
