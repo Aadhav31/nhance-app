@@ -92,6 +92,8 @@ export const INDUSTRY_NAV = {
       items: [
         { key: 'fleet',          label: 'Equipment & Machines',icon: 'Truck',           module: MODULES.FLEET,
           roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
+        { key: 'fuel_reconciliation', label: 'Fuel Reconciliation', icon: 'Fuel',        module: MODULES.FLEET,
+          roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
         { key: 'maintenance',    label: 'Maintenance',         icon: 'Wrench',          module: MODULES.MAINTENANCE,
           roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ADMIN] },
         { key: 'deployment_planner', label: 'Deployment Planner', icon: 'CalendarDays', module: MODULES.FLEET,
