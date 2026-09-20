@@ -80,14 +80,14 @@ export default function TopBar({ activePage, onMenuToggle, onNavigate }) {
   })
 
   return (
-    <header className="h-16 bg-dark-800 border-b border-dark-600 flex items-center px-6 gap-4 flex-shrink-0">
+    <header className="nhance-topbar h-16 bg-dark-800 border-b border-dark-600 flex items-center px-4 sm:px-6 gap-4 flex-shrink-0">
       {/* Mobile menu toggle */}
       <button type="button" onClick={onMenuToggle} aria-label="Open navigation" className="lg:hidden btn-ghost p-2">
         <Menu className="w-5 h-5" />
       </button>
 
       {/* Page info */}
-      <div className="flex-1 min-w-0">
+      <div className="flex-1 min-w-0" aria-live="polite">
         <h1 className="text-base font-bold truncate" style={{ color: 'rgb(var(--t1))' }}>{info.title}</h1>
         <p className="text-xs hidden sm:block" style={{ color: 'rgb(var(--t3))' }}>{info.subtitle}</p>
       </div>
@@ -98,7 +98,7 @@ export default function TopBar({ activePage, onMenuToggle, onNavigate }) {
 
         {/* Basic / Advanced mode toggle */}
         {session && (
-          <div className="flex items-center bg-dark-700 border border-dark-600 rounded-lg p-0.5">
+          <div className="hidden sm:flex items-center bg-dark-700 border border-dark-600 rounded-lg p-0.5" role="group" aria-label="Display detail">
             <button
               type="button"
               onClick={() => setMode('basic')}

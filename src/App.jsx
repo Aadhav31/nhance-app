@@ -1,4 +1,4 @@
-import { useState, lazy, Suspense, useEffect } from 'react'
+import { useState, lazy, Suspense, useEffect, useRef } from 'react'
 import VerifyPage from './pages/verify/VerifyPage'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { DisplayModeProvider } from './contexts/DisplayModeContext'
@@ -322,19 +322,53 @@ const MOBILE_QUICK = {
 // ── Mobile bottom nav + "More" drawer ────────────────────────────────────────
 function MobileNav({ role, industryType, hasModule, activePage, onNavigate, moreOpen, onMoreOpenChange }) {
   const allPages = getAccessibleMobilePages(industryType, role, hasModule)
+  const [navQuery, setNavQuery] = useState('')
+  const drawerRef = useRef(null)
+  const searchInputRef = useRef(null)
   const pageByKey = new Map(allPages.map(item => [item.key, item]))
   const quickItems = (MOBILE_QUICK[role] || MOBILE_QUICK.manager)
     .map(key => pageByKey.get(key))
     .filter(Boolean)
   const moreIsActive = moreOpen || (!quickItems.some(item => item.key === activePage) && allPages.some(item => item.key === activePage))
+  const normalizedQuery = navQuery.trim().toLowerCase()
+  const visiblePages = normalizedQuery
+    ? allPages.filter(item => item.label.toLowerCase().includes(normalizedQuery))
+    : allPages
 
   useEffect(() => {
     if (!moreOpen) return undefined
-    const closeOnEscape = event => {
-      if (event.key === 'Escape') onMoreOpenChange(false)
+    const previousFocus = document.activeElement
+    const drawer = drawerRef.current
+    searchInputRef.current?.focus()
+
+    const handleKeyboard = event => {
+      if (event.key === 'Escape') {
+        onMoreOpenChange(false)
+        return
+      }
+      if (event.key !== 'Tab' || !drawer) return
+
+      const controls = [...drawer.querySelectorAll(
+        'button:not([disabled]), input:not([disabled]), a[href], [tabindex="0"]',
+      )].filter(element => element.offsetParent !== null)
+      const first = controls[0]
+      const last = controls[controls.length - 1]
+      if (!first) {
+        event.preventDefault()
+      } else if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
     }
-    document.addEventListener('keydown', closeOnEscape)
-    return () => document.removeEventListener('keydown', closeOnEscape)
+    document.addEventListener('keydown', handleKeyboard)
+    return () => {
+      document.removeEventListener('keydown', handleKeyboard)
+      previousFocus?.focus?.()
+      setNavQuery('')
+    }
   }, [moreOpen, onMoreOpenChange])
 
   const go = (key) => {
@@ -345,7 +379,7 @@ function MobileNav({ role, industryType, hasModule, activePage, onNavigate, more
   return (
     <>
       {/* Bottom nav bar — visible only on mobile (hidden on lg+) */}
-      <div className="lg:hidden shrink-0 fixed bottom-0 left-0 right-0 z-40 bg-dark-800/95 backdrop-blur-md border-t border-dark-700 safe-area-bottom">
+      <div className="nhance-mobile-nav lg:hidden shrink-0 fixed bottom-0 left-0 right-0 z-40 bg-dark-800/95 backdrop-blur-md border-t border-dark-700 safe-area-bottom">
         <div className="flex">
           {quickItems.map(({ key, icon, label }) => {
             const active = activePage === key
@@ -356,7 +390,7 @@ function MobileNav({ role, industryType, hasModule, activePage, onNavigate, more
                 key={key}
                 onClick={() => go(key)}
                 aria-current={active ? 'page' : undefined}
-                className={`flex-1 flex flex-col items-center py-2.5 gap-0.5 transition-colors ${active ? 'text-primary-400' : 'text-slate-500'}`}
+                className={`min-h-14 flex-1 flex flex-col items-center justify-center py-2 gap-0.5 transition-colors ${active ? 'bg-primary-600/10 text-primary-400' : 'text-slate-500'}`}
               >
                 <Icon className="w-5 h-5" />
                 <span className="text-[10px] font-medium leading-none">{key === 'dashboard' ? 'Home' : label}</span>
@@ -370,7 +404,7 @@ function MobileNav({ role, industryType, hasModule, activePage, onNavigate, more
             onClick={() => onMoreOpenChange(true)}
             aria-haspopup="dialog"
             aria-expanded={moreOpen}
-            className={`flex-1 flex flex-col items-center py-2.5 gap-0.5 transition-colors ${moreIsActive ? 'text-primary-400' : 'text-slate-500'}`}
+            className={`min-h-14 flex-1 flex flex-col items-center justify-center py-2 gap-0.5 transition-colors ${moreIsActive ? 'bg-primary-600/10 text-primary-400' : 'text-slate-500'}`}
           >
             <div className="w-5 h-5 flex flex-col justify-center items-center gap-[3px]">
               <span className="w-4 h-0.5 bg-current rounded-full" />
@@ -389,15 +423,33 @@ function MobileNav({ role, industryType, hasModule, activePage, onNavigate, more
           <button type="button" aria-label="Close navigation" className="absolute inset-0 bg-black/60" onClick={() => onMoreOpenChange(false)} />
 
           {/* Drawer */}
-          <div className="relative bg-dark-800 border-t border-dark-700 rounded-t-2xl max-h-[75vh] overflow-y-auto safe-area-bottom">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-dark-700 sticky top-0 bg-dark-800">
-              <p id="mobile-navigation-title" className="text-sm font-bold text-slate-100">All Sections</p>
-              <button type="button" onClick={() => onMoreOpenChange(false)} aria-label="Close navigation" className="text-slate-400 hover:text-slate-100">
-                <Icons.X className="w-5 h-5" />
-              </button>
+          <div ref={drawerRef} className="relative bg-dark-800 border-t border-dark-700 rounded-t-2xl max-h-[78vh] overflow-y-auto safe-area-bottom shadow-2xl">
+            <div className="sticky top-0 z-10 border-b border-dark-700 bg-dark-800/95 px-4 pb-3 pt-2 backdrop-blur-md">
+              <div className="mx-auto mb-2 h-1 w-10 rounded-full bg-dark-500" aria-hidden="true" />
+              <div className="flex items-center justify-between px-1 py-2">
+                <div>
+                  <p id="mobile-navigation-title" className="text-sm font-bold text-slate-100">All Sections</p>
+                  <p className="text-[11px] text-slate-500">Choose where you want to work</p>
+                </div>
+                <button type="button" onClick={() => onMoreOpenChange(false)} aria-label="Close navigation" className="flex h-10 w-10 items-center justify-center rounded-xl text-slate-400 hover:bg-dark-700 hover:text-slate-100">
+                  <Icons.X aria-hidden="true" className="w-5 h-5" />
+                </button>
+              </div>
+              <label className="relative block">
+                <span className="sr-only">Find a page</span>
+                <Icons.Search aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+                <input
+                  ref={searchInputRef}
+                  type="search"
+                  value={navQuery}
+                  onChange={event => setNavQuery(event.target.value)}
+                  placeholder="Find a page…"
+                  className="h-11 w-full rounded-xl border border-dark-600 bg-dark-700 pl-9 pr-3 text-sm text-slate-100 placeholder:text-slate-500 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/25"
+                />
+              </label>
             </div>
             <div className="grid grid-cols-3 gap-2 p-4">
-              {allPages.map(({ key, icon, label }) => {
+              {visiblePages.map(({ key, icon, label }) => {
                 const active = activePage === key
                 const Icon = Icons[icon] || Icons.Circle
                 return (
@@ -417,6 +469,14 @@ function MobileNav({ role, industryType, hasModule, activePage, onNavigate, more
                   </button>
                 )
               })}
+              {visiblePages.length === 0 && (
+                <div className="col-span-3 rounded-xl border border-dashed border-dark-600 px-4 py-8 text-center">
+                  <p className="text-sm font-semibold text-slate-300">No matching page</p>
+                  <button type="button" onClick={() => setNavQuery('')} className="mt-2 text-xs font-semibold text-primary-400 hover:text-primary-300">
+                    Clear search
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -684,6 +744,12 @@ function AppShell() {
 
   return (
     <DisplayModeProvider>
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only fixed left-4 top-4 z-[100] rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white shadow-xl"
+      >
+        Skip to main content
+      </a>
       <div className="app-container flex h-screen overflow-hidden">
         {/* Left sidebar — desktop only */}
         <Sidebar
@@ -698,12 +764,12 @@ function AppShell() {
           <TopBar activePage={effectivePage} onMenuToggle={() => setMobileMenuOpen(true)} onNavigate={handleNavigate} />
           {/* Offline banner — shown mid-session when connection drops */}
           {!isOnline && (
-            <div className="shrink-0 flex items-center justify-center gap-2 bg-amber-500/20 border-b border-amber-600/40 text-amber-300 text-xs font-semibold py-2 px-4">
+            <div role="status" aria-live="polite" className="shrink-0 flex items-center justify-center gap-2 bg-amber-500/20 border-b border-amber-600/40 text-amber-300 text-xs font-semibold py-2 px-4">
               📡 No internet connection — some features may not work until you reconnect.
             </div>
           )}
           {/* pb-16 on mobile to avoid content hiding behind bottom nav */}
-          <main className="flex-1 overflow-y-auto bg-dark-900 lg:pb-0 pb-16 relative overflow-hidden">
+          <main id="main-content" tabIndex="-1" className="flex-1 min-w-0 overflow-y-auto bg-dark-900 lg:pb-0 pb-16 relative overflow-hidden">
             <PageErrorBoundary key={effectivePage}>
               {renderPage()}
             </PageErrorBoundary>
