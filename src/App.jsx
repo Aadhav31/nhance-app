@@ -25,6 +25,7 @@ const DashboardPage      = lazy(() => import('./pages/dashboard/DashboardPage'))
 const ControlTowerPage   = lazy(() => import('./pages/controltower/ControlTowerPage'))
 const FleetPage          = lazy(() => import('./pages/fleet/FleetPage'))
 const FuelReconciliationPage = lazy(() => import('./pages/fuel/FuelReconciliationPage'))
+const ProfitabilityPage   = lazy(() => import('./pages/profitability/ProfitabilityPage'))
 const OperationsPage     = lazy(() => import('./pages/operations/OperationsPage'))
 const MaintenancePage    = lazy(() => import('./pages/maintenance/MaintenancePage'))
 const InventoryPage      = lazy(() => import('./pages/inventory/InventoryPage'))
@@ -109,13 +110,17 @@ function readNavigationFromUrl() {
     extra.pmState = params.get('pmState') || 'all'
     extra.workshopStatus = params.get('workshopStatus') || 'active'
   }
+  if (page === 'profitability') {
+    extra.dimension = params.get('profitDimension') || 'project'
+    extra.metric = params.get('profitMetric') || 'all'
+  }
 
   return { page, extra }
 }
 
 function writeNavigationToUrl(page, extra) {
   const url = new URL(window.location.href)
-  const navigationKeys = ['page', 'equipment', 'equipmentName', 'fleetFilter', 'fleetValue', 'fleetLabel', 'fleetIds', 'plannerStatus', 'project', 'opsTab', 'opsMetric', 'opsFrom', 'opsTo', 'opsProject', 'maintTab', 'pmState', 'workshopStatus']
+  const navigationKeys = ['page', 'equipment', 'equipmentName', 'fleetFilter', 'fleetValue', 'fleetLabel', 'fleetIds', 'plannerStatus', 'project', 'opsTab', 'opsMetric', 'opsFrom', 'opsTo', 'opsProject', 'maintTab', 'pmState', 'workshopStatus', 'profitDimension', 'profitMetric']
   navigationKeys.forEach(key => url.searchParams.delete(key))
 
   if (page !== 'dashboard') url.searchParams.set('page', page)
@@ -134,6 +139,10 @@ function writeNavigationToUrl(page, extra) {
     if (extra.tab && extra.tab !== 'workshop') url.searchParams.set('maintTab', extra.tab)
     if (extra.pmState && extra.pmState !== 'all') url.searchParams.set('pmState', extra.pmState)
     if (extra.workshopStatus && extra.workshopStatus !== 'active') url.searchParams.set('workshopStatus', extra.workshopStatus)
+  }
+  if (page === 'profitability') {
+    if (extra.dimension && extra.dimension !== 'project') url.searchParams.set('profitDimension', extra.dimension)
+    if (extra.metric && extra.metric !== 'all') url.searchParams.set('profitMetric', extra.metric)
   }
 
   const filter = extra.fleetFilter
@@ -239,6 +248,7 @@ const ALL_PAGES = [
   { key: 'sales',        Icon: TrendingUp,      label: 'Sales'                },
   { key: 'purchase',     Icon: ShoppingCart,    label: 'Purchase'             },
   { key: 'reports',      Icon: BarChart3,       label: 'Reports'              },
+  { key: 'profitability',Icon: TrendingUp,      label: 'Profitability'        },
   { key: 'financials',   Icon: BarChart3,       label: 'Financial Statements' },
   { key: 'hr',           Icon: Users,           label: 'Employee Management'  },
   { key: 'settings',     Icon: Settings,        label: 'Settings'             },
@@ -470,6 +480,16 @@ function AppShell() {
           </Suspense>
         )
       case 'reports':      return wrap(ReportsPage,        MODULES.REPORTS)
+      case 'profitability':
+        return hasModule(MODULES.REPORTS) ? (
+          <Suspense fallback={<LoadingScreen message="Loading profitability…" />}>
+            <ProfitabilityPage
+              onNavigate={handleNavigate}
+              initialDimension={navExtra.dimension}
+              initialMetric={navExtra.metric}
+            />
+          </Suspense>
+        ) : <ModuleNotActive page="Profitability" />
       case 'financials':   return wrap(FinancialsPage,     MODULES.ACCOUNTS)
       case 'expenses':
         return hasModule(MODULES.ACCOUNTS) ? (
