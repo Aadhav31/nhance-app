@@ -158,6 +158,8 @@ export const NAV_ITEMS = [
         roles: [ROLES.OPERATOR, ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ADMIN] },
       { key: 'fleet',      label: 'Equipments & Machineries', icon: 'Truck', module: MODULES.FLEET,
         roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
+      { key: 'fuel_reconciliation', label: 'Fuel Reconciliation', icon: 'Fuel', module: MODULES.FLEET,
+        roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
       { key: 'deployment_planner', label: 'Deployment Planner', icon: 'CalendarDays', module: MODULES.FLEET,
         roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
       { key: 'maintenance',label: 'Maintenance',       icon: 'Wrench',        module: MODULES.MAINTENANCE,
