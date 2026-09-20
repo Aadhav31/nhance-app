@@ -21,12 +21,13 @@ import { useAuth } from '../../contexts/AuthContext'
 import { nextDocNumber } from '../../utils/docNumbers'
 import { generateRABillPDF } from '../../lib/raBillPDF'
 import { logAction } from '../../lib/auditLog'
+import { filterRABills } from '../../lib/commercialFilters'
 import toast from 'react-hot-toast'
 import {
   Plus, X, Search, Loader2, ArrowLeft, FileText, Pencil, Trash2,
   Receipt, Check, ChevronDown, ChevronRight, Download, IndianRupee,
   CalendarDays, Building2, ClipboardList, AlertTriangle, TrendingDown,
-  BadgeCheck, Banknote, CreditCard, CircleDollarSign, Send,
+  BadgeCheck, Banknote, CreditCard, CircleDollarSign, Send, RefreshCw,
 } from 'lucide-react'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -43,6 +44,8 @@ const STATUS_CFG = {
   approved:  { label: 'Approved',  cls: 'bg-emerald-500/10 text-emerald-400 border-emerald-700/40', dot: 'bg-emerald-500' },
   paid:      { label: 'Paid',      cls: 'bg-blue-500/10 text-blue-400 border-blue-700/40',       dot: 'bg-blue-500' },
 }
+const VALID_RA_METRICS = new Set(['all', 'billed', 'outstanding', 'paid', 'approved'])
+const VALID_RA_STATUSES = new Set(['all', ...Object.keys(STATUS_CFG)])
 
 const PAYMENT_MODES = ['NEFT','RTGS','Cheque','UPI','Cash','Bank Transfer']
 
@@ -867,16 +870,17 @@ function RABillDetail({ ra: initialRa, companyId, session, company, profile, onB
 }
 
 // ── RA Billing List ───────────────────────────────────────────────────────────
-function RABillingList({ companyId, session, company, onSelect }) {
+function RABillingList({
+  companyId, session, company, onSelect, metricFilter, statusFilter, boqFilter,
+  onFiltersChange, initialRaId,
+}) {
   const [search, setSearch] = useState('')
-  const [statusFilter, setStatusFilter] = useState('all')
-  const [boqFilter, setBoqFilter] = useState('all')
   const [showRaise, setShowRaise] = useState(false)
 
-  const { data: raBills = [], isLoading, refetch } = useQuery({
+  const { data: raBills = [], isLoading, isError, error, refetch } = useQuery({
     queryKey: ['ra_bills_global', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('ra_bills')
+      const { data, error } = await supabase.from('ra_bills')
         .select(`
           *,
           boq:boq_documents(boq_number, title, contract_number, work_order_number, client_name, project_name,
@@ -884,6 +888,7 @@ function RABillingList({ companyId, session, company, onSelect }) {
         `)
         .eq('company_id', companyId)
         .order('created_at', { ascending: false })
+      if (error) throw error
       return data || []
     },
     enabled: !!companyId,
@@ -916,19 +921,15 @@ function RABillingList({ companyId, session, company, onSelect }) {
     }, [])
   }, [raBills])
 
-  const filtered = useMemo(() => {
-    const q = search.toLowerCase().trim()
-    return raBills.filter(r =>
-      (statusFilter === 'all' || r.status === statusFilter) &&
-      (boqFilter === 'all' || r.boq_id === boqFilter) &&
-      (!q ||
-        r.ra_number.toLowerCase().includes(q) ||
-        (r.boq?.client_name || '').toLowerCase().includes(q) ||
-        (r.boq?.title || '').toLowerCase().includes(q) ||
-        (r.boq?.contract_number || '').toLowerCase().includes(q)
-      )
-    )
-  }, [raBills, statusFilter, boqFilter, search])
+  const filtered = useMemo(() => filterRABills(raBills, {
+    metric: metricFilter, status: statusFilter, boqId: boqFilter, search,
+  }), [raBills, metricFilter, statusFilter, boqFilter, search])
+
+  useEffect(() => {
+    if (!initialRaId || raBills.length === 0) return
+    const match = raBills.find(ra => ra.id === initialRaId)
+    if (match) onSelect(match, { fromUrl: true })
+  }, [initialRaId, onSelect, raBills])
 
   return (
     <div className="flex flex-col h-full">
@@ -936,14 +937,16 @@ function RABillingList({ companyId, session, company, onSelect }) {
       <div className="px-4 py-3 border-b border-dark-800 shrink-0">
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {[
-            { label: 'Total Billed',       value: fmtINR(kpi.totalBilled),   color: 'text-slate-100',   icon: CircleDollarSign },
-            { label: 'Outstanding',        value: fmtINR(kpi.outstanding),   color: 'text-amber-400',   icon: AlertTriangle },
-            { label: 'Paid Out',           value: fmtINR(kpi.paid),          color: 'text-blue-400',    icon: Banknote },
-            { label: 'Approved Pending',   value: String(kpi.approvedCount), color: 'text-emerald-400', icon: BadgeCheck },
+            { metric: 'billed', label: 'Total Billed', value: fmtINR(kpi.totalBilled), color: 'text-slate-100', icon: CircleDollarSign },
+            { metric: 'outstanding', label: 'Outstanding', value: fmtINR(kpi.outstanding), color: 'text-amber-400', icon: AlertTriangle },
+            { metric: 'paid', label: 'Paid Out', value: fmtINR(kpi.paid), color: 'text-blue-400', icon: Banknote },
+            { metric: 'approved', label: 'Approved Pending', value: String(kpi.approvedCount), color: 'text-emerald-400', icon: BadgeCheck },
           ].map(t => {
             const Icon = t.icon
             return (
-              <div key={t.label} className="bg-dark-800 border border-dark-700 rounded-xl p-3 flex items-center gap-3">
+              <button type="button" key={t.label} aria-pressed={metricFilter === t.metric}
+                onClick={() => onFiltersChange({ metric: metricFilter === t.metric ? 'all' : t.metric })}
+                className={`bg-dark-800 border rounded-xl p-3 flex items-center gap-3 text-left transition-colors ${metricFilter === t.metric ? 'border-primary-500 ring-1 ring-primary-500/30' : 'border-dark-700 hover:border-primary-600/50'}`}>
                 <div className="w-8 h-8 rounded-lg bg-dark-700 flex items-center justify-center shrink-0">
                   <Icon className={`w-4 h-4 ${t.color}`} />
                 </div>
@@ -951,7 +954,7 @@ function RABillingList({ companyId, session, company, onSelect }) {
                   <p className="text-[10px] text-slate-500">{t.label}</p>
                   <p className={`text-sm font-black truncate ${t.color}`}>{t.value}</p>
                 </div>
-              </div>
+              </button>
             )
           })}
         </div>
@@ -968,13 +971,15 @@ function RABillingList({ companyId, session, company, onSelect }) {
           />
         </div>
         <select className="text-xs bg-dark-700 border border-dark-600 rounded-lg px-2 py-1.5 text-slate-300"
-          value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+          aria-label="Filter RA bills by status"
+          value={statusFilter} onChange={e => onFiltersChange({ status: e.target.value })}>
           <option value="all">All Status</option>
           {Object.entries(STATUS_CFG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
         </select>
         {boqOptions.length > 1 && (
           <select className="text-xs bg-dark-700 border border-dark-600 rounded-lg px-2 py-1.5 text-slate-300 max-w-[160px] truncate"
-            value={boqFilter} onChange={e => setBoqFilter(e.target.value)}>
+            aria-label="Filter RA bills by BOQ"
+            value={boqFilter} onChange={e => onFiltersChange({ boqId: e.target.value })}>
             <option value="all">All BOQs</option>
             {boqOptions.map(b => <option key={b.id} value={b.id}>{b.label}</option>)}
           </select>
@@ -987,12 +992,24 @@ function RABillingList({ companyId, session, company, onSelect }) {
 
       {/* List */}
       <div className="flex-1 overflow-y-auto px-4 pb-4 pt-3 space-y-2">
+        {!isLoading && !isError && (metricFilter !== 'all' || statusFilter !== 'all' || boqFilter !== 'all' || search.trim()) && (
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-primary-500/20 bg-primary-500/5 px-3 py-2">
+            <p className="text-xs text-slate-400">{filtered.length} RA bill{filtered.length === 1 ? '' : 's'} match the active filters</p>
+            <button type="button" onClick={() => { setSearch(''); onFiltersChange({ metric: 'all', status: 'all', boqId: 'all' }) }} className="text-xs text-primary-400 hover:text-primary-300">Clear filters</button>
+          </div>
+        )}
         {isLoading ? (
           <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-primary-400" /></div>
+        ) : isError ? (
+          <div className="flex flex-col items-center py-16 gap-3 text-center">
+            <AlertTriangle className="w-10 h-10 text-red-400" />
+            <div><p className="text-sm font-medium text-red-300">RA bills could not be loaded</p><p className="mt-1 text-xs text-slate-500">{error?.message || 'Please retry the billing register.'}</p></div>
+            <button type="button" onClick={() => refetch()} className="btn-secondary text-sm"><RefreshCw className="w-4 h-4" />Retry</button>
+          </div>
         ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center py-16 gap-3 text-slate-500">
             <Receipt className="w-12 h-12 text-slate-700" />
-            <p className="text-sm">{search || statusFilter !== 'all' ? 'No bills match your filters' : 'No RA bills raised yet'}</p>
+            <p className="text-sm">{search || metricFilter !== 'all' || statusFilter !== 'all' || boqFilter !== 'all' ? 'No bills match your filters' : 'No RA bills raised yet'}</p>
             <button onClick={() => setShowRaise(true)}
               className="flex items-center gap-1.5 text-xs font-bold px-4 py-2 bg-primary-600 hover:bg-primary-500 text-white rounded-lg">
               <Plus className="w-3.5 h-3.5" /> Raise First RA Bill
@@ -1062,10 +1079,51 @@ function RABillingList({ companyId, session, company, onSelect }) {
 }
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
-export default function RABillingPage() {
+export default function RABillingPage({
+  onNavigate, initialMetric = 'all', initialStatus = 'all', initialBoqId = 'all', initialRaId = null,
+}) {
   const { companyId, session, company, profile } = useAuth()
   const qc = useQueryClient()
   const [selectedRA, setSelectedRA] = useState(null)
+  const [metricFilter, setMetricFilter] = useState(() => VALID_RA_METRICS.has(initialMetric) ? initialMetric : 'all')
+  const [statusFilter, setStatusFilter] = useState(() => VALID_RA_STATUSES.has(initialStatus) ? initialStatus : 'all')
+  const [boqFilter, setBoqFilter] = useState(initialBoqId || 'all')
+
+  useEffect(() => {
+    setMetricFilter(VALID_RA_METRICS.has(initialMetric) ? initialMetric : 'all')
+    setStatusFilter(VALID_RA_STATUSES.has(initialStatus) ? initialStatus : 'all')
+    setBoqFilter(initialBoqId || 'all')
+  }, [initialBoqId, initialMetric, initialStatus])
+
+  useEffect(() => {
+    if (!initialRaId) setSelectedRA(null)
+  }, [initialRaId])
+
+  const handleFiltersChange = useCallback((patch) => {
+    const next = {
+      metric: patch.metric ?? metricFilter,
+      status: patch.status ?? statusFilter,
+      boqId: patch.boqId ?? boqFilter,
+    }
+    setMetricFilter(next.metric)
+    setStatusFilter(next.status)
+    setBoqFilter(next.boqId)
+    onNavigate?.('ra_billing', next, { replace: true })
+  }, [boqFilter, metricFilter, onNavigate, statusFilter])
+
+  const handleSelect = useCallback((ra, { fromUrl = false } = {}) => {
+    setSelectedRA(ra)
+    if (!fromUrl) {
+      onNavigate?.('ra_billing', {
+        metric: metricFilter, status: statusFilter, boqId: boqFilter, raId: ra.id,
+      })
+    }
+  }, [boqFilter, metricFilter, onNavigate, statusFilter])
+
+  const handleBack = () => {
+    setSelectedRA(null)
+    onNavigate?.('ra_billing', { metric: metricFilter, status: statusFilter, boqId: boqFilter }, { replace: true })
+  }
 
   const handleRefresh = () => {
     qc.invalidateQueries({ queryKey: ['ra_bills_global', companyId] })
@@ -1096,7 +1154,7 @@ export default function RABillingPage() {
             session={session}
             company={company}
             profile={profile}
-            onBack={() => setSelectedRA(null)}
+            onBack={handleBack}
             onRefresh={handleRefresh}
           />
         ) : (
@@ -1104,7 +1162,12 @@ export default function RABillingPage() {
             companyId={companyId}
             session={session}
             company={company}
-            onSelect={setSelectedRA}
+            onSelect={handleSelect}
+            metricFilter={metricFilter}
+            statusFilter={statusFilter}
+            boqFilter={boqFilter}
+            onFiltersChange={handleFiltersChange}
+            initialRaId={initialRaId}
           />
         )}
       </div>
