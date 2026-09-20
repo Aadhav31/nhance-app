@@ -2017,9 +2017,25 @@ function PaymentsReceivedTab({ companyId, session }) {
 }
 
 // ── MAIN SALES PAGE ───────────────────────────────────────────────────────────
-export default function SalesPage({ onNavigate }) {
+const SALES_TAB_IDS = new Set(['clients', 'invoices', 'quotes', 'orders', 'challans', 'credit', 'payments'])
+const normalizeSalesTab = (value, industryType) => {
+  if (!SALES_TAB_IDS.has(value)) return industryType === 'equipment_rental' ? 'invoices' : 'clients'
+  if (industryType === 'equipment_rental' && value === 'clients') return 'invoices'
+  return value
+}
+
+export default function SalesPage({ onNavigate, initialTab = 'clients' }) {
   const { companyId, session, industryType } = useAuth()
-  const [activeTab, setActiveTab] = useState('clients')
+  const [activeTab, setActiveTab] = useState(() => normalizeSalesTab(initialTab, industryType))
+
+  useEffect(() => {
+    setActiveTab(normalizeSalesTab(initialTab, industryType))
+  }, [initialTab, industryType])
+
+  const selectTab = tab => {
+    setActiveTab(tab)
+    onNavigate?.('sales', { tab }, { replace: true })
+  }
 
   const tabs = [
     { id: 'clients',   label: 'Clients',            icon: Building2 },
@@ -2051,7 +2067,7 @@ export default function SalesPage({ onNavigate }) {
         {/* Tabs */}
         <div className="flex gap-0 overflow-x-auto">
           {tabs.map(t => (
-            <button key={t.id} onClick={() => setActiveTab(t.id)}
+            <button key={t.id} onClick={() => selectTab(t.id)} aria-pressed={activeTab === t.id}
               className={`flex items-center gap-1.5 px-4 py-2.5 text-xs font-medium border-b-2 whitespace-nowrap transition-colors ${
                 activeTab === t.id ? 'border-emerald-500 text-emerald-400' : 'border-transparent text-slate-500 hover:text-slate-300'
               }`}>
