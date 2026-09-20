@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import {
@@ -149,7 +149,7 @@ function CompleteModal({ row, onClose, onCompleted }) {
   )
 }
 
-export default function PreventiveMaintenanceTab({ companyId, role, initialState = 'all' }) {
+export default function PreventiveMaintenanceTab({ companyId, role, initialState = 'all', onFilterChange }) {
   const qc = useQueryClient()
   const canManage = ['supervisor', 'manager', 'admin', 'superadmin'].includes(role)
   const [stateFilter, setStateFilter] = useState(initialState || 'all')
@@ -158,6 +158,10 @@ export default function PreventiveMaintenanceTab({ companyId, role, initialState
   const [showCreate, setShowCreate] = useState(false)
   const [completing, setCompleting] = useState(null)
   const [opening, setOpening] = useState(null)
+
+  useEffect(() => {
+    setStateFilter(initialState || 'all')
+  }, [initialState])
 
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['pm-planner', companyId],
@@ -215,6 +219,11 @@ export default function PreventiveMaintenanceTab({ companyId, role, initialState
     { key: 'work_order', label: 'Work orders', value: summary.work_order, icon: Wrench, tone: 'text-blue-400' },
     { key: 'on_track', label: 'On track', value: summary.on_track, icon: ShieldCheck, tone: 'text-emerald-400' },
   ]
+  const activeLabel = tiles.find(tile => tile.key === stateFilter)?.label || 'All schedules'
+  const selectState = value => {
+    setStateFilter(value)
+    onFilterChange?.(value)
+  }
 
   if (isLoading) return <div className="flex justify-center py-20"><Loader2 className="h-6 w-6 animate-spin text-primary-400" /></div>
   if (isError) return <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-5 text-sm text-red-300">PM planner could not be loaded. <button type="button" onClick={() => refetch()} className="ml-2 underline">Retry</button></div>
@@ -223,9 +232,11 @@ export default function PreventiveMaintenanceTab({ companyId, role, initialState
     <div className="space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-base font-bold text-slate-100">Preventive Maintenance Planner</h2><p className="text-xs text-slate-500">Approved Site Log meters drive service alerts and work orders automatically.</p></div>{canManage ? <button type="button" onClick={() => setShowCreate(true)} className="btn-primary text-sm"><Plus className="h-4 w-4" />New schedule</button> : null}</div>
 
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">{tiles.map(tile => <button key={tile.key} type="button" onClick={() => setStateFilter(tile.key)} className={`rounded-xl border p-3 text-left transition-colors ${stateFilter === tile.key ? 'border-primary-500 bg-primary-500/10' : 'border-dark-700 bg-dark-800 hover:border-dark-600'}`}><div className="flex items-center justify-between"><tile.icon className={`h-4 w-4 ${tile.tone}`} /><span className="text-[10px] text-slate-500">View filtered</span></div><p className={`mt-2 text-xl font-bold ${tile.tone}`}>{tile.value}</p><p className="text-[10px] text-slate-500">{tile.label}</p></button>)}</div>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">{tiles.map(tile => <button key={tile.key} type="button" onClick={() => selectState(tile.key)} aria-pressed={stateFilter === tile.key} className={`rounded-xl border p-3 text-left transition-colors ${stateFilter === tile.key ? 'border-primary-500 bg-primary-500/10' : 'border-dark-700 bg-dark-800 hover:border-dark-600'}`}><div className="flex items-center justify-between"><tile.icon className={`h-4 w-4 ${tile.tone}`} /><span className="text-[10px] text-slate-500">View filtered</span></div><p className={`mt-2 text-xl font-bold ${tile.tone}`}>{tile.value}</p><p className="text-[10px] text-slate-500">{tile.label}</p></button>)}</div>
 
       <div className="flex items-center gap-2"><div className="relative flex-1"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" /><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search machine or schedule…" className={`${fieldClass} pl-9`} /></div><button type="button" onClick={() => refetch()} className="btn-secondary text-sm">Refresh</button></div>
+
+      <div className="flex items-center justify-between gap-3"><div><p className="text-sm font-bold text-slate-200">{activeLabel}</p><p className="text-xs text-slate-500">{filtered.length} matching schedule{filtered.length === 1 ? '' : 's'} — tile filter applied exactly</p></div>{stateFilter !== 'all' ? <button type="button" onClick={() => selectState('all')} className="text-xs text-primary-400 hover:text-primary-300">Clear filter</button> : null}</div>
 
       {filtered.length === 0 ? <div className="card py-16 text-center"><ShieldCheck className="mx-auto h-10 w-10 text-emerald-500/40" /><p className="mt-3 text-sm font-semibold text-slate-300">No schedules in this filter</p><p className="mt-1 text-xs text-slate-500">Select another status tile or create a PM schedule.</p></div> : <div className="grid gap-3 lg:grid-cols-2">{filtered.map(row => {
         const meta = STATE_META[row.pm.state]

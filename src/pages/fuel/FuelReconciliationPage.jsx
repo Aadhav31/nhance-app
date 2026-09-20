@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { format, subDays } from 'date-fns'
 import {
@@ -64,6 +64,7 @@ function KpiTile({ active, title, value, note, icon: Icon, tone, onClick }) {
     <button
       type="button"
       onClick={onClick}
+      aria-pressed={active}
       className={`min-w-0 rounded-xl border p-3 text-left transition-all hover:-translate-y-0.5 ${
         active ? 'border-primary-400 ring-1 ring-primary-400/50 bg-primary-500/10' : 'border-dark-600 bg-dark-800 hover:border-dark-500'
       }`}
@@ -143,13 +144,36 @@ function EvidenceCard({ row }) {
   )
 }
 
-export default function FuelReconciliationPage({ onNavigate }) {
+export default function FuelReconciliationPage({
+  onNavigate,
+  initialRangeDays = 90,
+  initialMetric = 'all',
+  initialEquipmentId = 'all',
+  initialProjectId = 'all',
+}) {
   const { companyId } = useAuth()
-  const [rangeDays, setRangeDays] = useState(90)
-  const [metric, setMetric] = useState('all')
-  const [equipmentId, setEquipmentId] = useState('all')
-  const [projectId, setProjectId] = useState('all')
+  const [rangeDays, setRangeDays] = useState(() => RANGE_OPTIONS.some(option => option.value === Number(initialRangeDays)) ? Number(initialRangeDays) : 90)
+  const [metric, setMetric] = useState(() => METRIC_LABELS[initialMetric] ? initialMetric : 'all')
+  const [equipmentId, setEquipmentId] = useState(initialEquipmentId || 'all')
+  const [projectId, setProjectId] = useState(initialProjectId || 'all')
   const [search, setSearch] = useState('')
+
+  useEffect(() => {
+    const nextRange = Number(initialRangeDays)
+    setRangeDays(RANGE_OPTIONS.some(option => option.value === nextRange) ? nextRange : 90)
+  }, [initialRangeDays])
+
+  useEffect(() => {
+    setMetric(METRIC_LABELS[initialMetric] ? initialMetric : 'all')
+  }, [initialMetric])
+
+  useEffect(() => {
+    setEquipmentId(initialEquipmentId || 'all')
+  }, [initialEquipmentId])
+
+  useEffect(() => {
+    setProjectId(initialProjectId || 'all')
+  }, [initialProjectId])
 
   const endDate = format(new Date(), 'yyyy-MM-dd')
   const startDate = format(subDays(new Date(), rangeDays - 1), 'yyyy-MM-dd')
@@ -262,7 +286,25 @@ export default function FuelReconciliationPage({ onNavigate }) {
     return (equipmentQuery.data || []).filter(machine => ids.has(machine.id))
   }, [equipmentQuery.data, report.rows])
 
-  const setTileMetric = value => setMetric(current => current === value ? 'all' : value)
+  const persistFilters = next => onNavigate?.('fuel_reconciliation', {
+    rangeDays: next.rangeDays ?? rangeDays,
+    metric: next.metric ?? metric,
+    equipmentId: next.equipmentId ?? equipmentId,
+    projectId: next.projectId ?? projectId,
+  }, { replace: true })
+  const selectRange = value => { setRangeDays(value); persistFilters({ rangeDays: value }) }
+  const selectMetric = value => { setMetric(value); persistFilters({ metric: value }) }
+  const setTileMetric = value => selectMetric(metric === value ? 'all' : value)
+  const selectEquipment = value => { setEquipmentId(value); persistFilters({ equipmentId: value }) }
+  const selectProject = value => { setProjectId(value); persistFilters({ projectId: value }) }
+  const clearFilters = () => {
+    setMetric('all')
+    setEquipmentId('all')
+    setProjectId('all')
+    setSearch('')
+    persistFilters({ metric: 'all', equipmentId: 'all', projectId: 'all' })
+  }
+  const hasFilters = metric !== 'all' || equipmentId !== 'all' || projectId !== 'all' || Boolean(search.trim())
   const summary = report.summary
 
   return (
@@ -275,7 +317,7 @@ export default function FuelReconciliationPage({ onNavigate }) {
             <p className="mt-1 text-xs text-slate-500">Match every fuel issue or fill against approved site consumption, machine standards, project and cost.</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <select value={rangeDays} onChange={event => setRangeDays(Number(event.target.value))} className={selectClass()} aria-label="Reconciliation period">
+            <select value={rangeDays} onChange={event => selectRange(Number(event.target.value))} className={selectClass()} aria-label="Reconciliation period">
               {RANGE_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
             </select>
             <button onClick={() => onNavigate?.('fleet')} className="btn-ghost px-3 py-2 text-xs">
@@ -372,11 +414,11 @@ export default function FuelReconciliationPage({ onNavigate }) {
               <Search className="absolute left-3 top-2.5 h-3.5 w-3.5 text-slate-600" />
               <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Machine, registration, project or date…" className="w-full rounded-lg border border-dark-600 bg-dark-800 py-2 pl-9 pr-3 text-xs text-slate-200 placeholder:text-slate-600 focus:border-primary-500 focus:outline-none" />
             </div>
-            <select value={equipmentId} onChange={event => setEquipmentId(event.target.value)} className={selectClass()}>
+            <select value={equipmentId} onChange={event => selectEquipment(event.target.value)} className={selectClass()} aria-label="Filter reconciliation by equipment">
               <option value="all">All equipment</option>
               {visibleEquipment.map(machine => <option key={machine.id} value={machine.id}>{machine.name} {machine.equipment_number ? `· ${machine.equipment_number}` : ''}</option>)}
             </select>
-            <select value={projectId} onChange={event => setProjectId(event.target.value)} className={selectClass()}>
+            <select value={projectId} onChange={event => selectProject(event.target.value)} className={selectClass()} aria-label="Filter reconciliation by project">
               <option value="all">All projects</option>
               {visibleProjects.map(project => <option key={project.id} value={project.id}>{project.project_name}</option>)}
             </select>
@@ -389,9 +431,9 @@ export default function FuelReconciliationPage({ onNavigate }) {
               <p className="text-sm font-semibold text-slate-100">Reconciliation evidence</p>
               <p className="text-[10px] text-slate-500">{filteredRows.length} of {report.rows.length} machine-days · {displayDate(startDate)} to {displayDate(endDate)}</p>
             </div>
-            {metric !== 'all' && (
-              <button onClick={() => setMetric('all')} className="rounded-lg border border-primary-500/30 bg-primary-500/10 px-3 py-1.5 text-xs text-primary-300">
-                Showing: {METRIC_LABELS[metric]} · Clear
+            {hasFilters && (
+              <button onClick={clearFilters} className="rounded-lg border border-primary-500/30 bg-primary-500/10 px-3 py-1.5 text-xs text-primary-300">
+                {metric !== 'all' ? `Showing: ${METRIC_LABELS[metric]} · ` : ''}Clear all filters
               </button>
             )}
           </div>

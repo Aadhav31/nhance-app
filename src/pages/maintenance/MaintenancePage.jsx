@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { format } from 'date-fns'
 import toast from 'react-hot-toast'
@@ -454,7 +454,7 @@ function RecordDetailModal({ record, companyId, onClose, onEdit }) {
 }
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
-export default function MaintenancePage({ initialTab = 'workshop', initialPmState = 'all', initialWorkshopStatus = 'active' }) {
+export default function MaintenancePage({ onNavigate, initialTab = 'workshop', initialPmState = 'all', initialWorkshopStatus = 'active' }) {
   const { companyId, session, role } = useAuth()
   const qc = useQueryClient()
   const canManage = ['supervisor', 'manager', 'admin', 'superadmin'].includes(role)
@@ -466,6 +466,15 @@ export default function MaintenancePage({ initialTab = 'workshop', initialPmStat
   const [statusFilter, setStatusFilter] = useState('all')
   const [typeFilter,   setTypeFilter]   = useState('all')
   const [search, setSearch] = useState('')
+
+  useEffect(() => {
+    setSection(['workshop', 'planner', 'records'].includes(initialTab) ? initialTab : 'workshop')
+  }, [initialTab])
+
+  const selectSection = next => {
+    setSection(next)
+    onNavigate?.('maintenance', { tab: next }, { replace: true })
+  }
 
   const { data: records = [], isLoading } = useQuery({
     queryKey: ['maintenance_records', companyId, statusFilter, typeFilter],
@@ -541,18 +550,18 @@ export default function MaintenancePage({ initialTab = 'workshop', initialPmStat
       </div>
 
       <div className="flex shrink-0 gap-1 border-b border-dark-700 bg-dark-900 px-4 pt-2">
-        <button type="button" onClick={() => setSection('workshop')} className={`flex items-center gap-1.5 border-b-2 px-3 py-2 text-xs ${section === 'workshop' ? 'border-primary-500 text-primary-400' : 'border-transparent text-slate-500'}`}><Hammer className="h-3.5 w-3.5" />Workshop Board</button>
-        <button type="button" onClick={() => setSection('planner')} className={`flex items-center gap-1.5 border-b-2 px-3 py-2 text-xs ${section === 'planner' ? 'border-primary-500 text-primary-400' : 'border-transparent text-slate-500'}`}><ClipboardList className="h-3.5 w-3.5" />PM Planner</button>
-        <button type="button" onClick={() => setSection('records')} className={`flex items-center gap-1.5 border-b-2 px-3 py-2 text-xs ${section === 'records' ? 'border-primary-500 text-primary-400' : 'border-transparent text-slate-500'}`}><History className="h-3.5 w-3.5" />Service History</button>
+        <button type="button" onClick={() => selectSection('workshop')} aria-pressed={section === 'workshop'} className={`flex items-center gap-1.5 border-b-2 px-3 py-2 text-xs ${section === 'workshop' ? 'border-primary-500 text-primary-400' : 'border-transparent text-slate-500'}`}><Hammer className="h-3.5 w-3.5" />Workshop Board</button>
+        <button type="button" onClick={() => selectSection('planner')} aria-pressed={section === 'planner'} className={`flex items-center gap-1.5 border-b-2 px-3 py-2 text-xs ${section === 'planner' ? 'border-primary-500 text-primary-400' : 'border-transparent text-slate-500'}`}><ClipboardList className="h-3.5 w-3.5" />PM Planner</button>
+        <button type="button" onClick={() => selectSection('records')} aria-pressed={section === 'records'} className={`flex items-center gap-1.5 border-b-2 px-3 py-2 text-xs ${section === 'records' ? 'border-primary-500 text-primary-400' : 'border-transparent text-slate-500'}`}><History className="h-3.5 w-3.5" />Service History</button>
       </div>
 
       {section === 'workshop' ? (
         <div className="flex-1 overflow-y-auto p-4 md:p-5">
-          <WorkshopBoardTab companyId={companyId} role={role} initialStatus={initialWorkshopStatus} />
+          <WorkshopBoardTab companyId={companyId} role={role} initialStatus={initialWorkshopStatus} onFilterChange={filter => onNavigate?.('maintenance', { tab: 'workshop', workshopStatus: filter }, { replace: true })} />
         </div>
       ) : section === 'planner' ? (
         <div className="flex-1 overflow-y-auto p-4 md:p-5">
-          <PreventiveMaintenanceTab companyId={companyId} role={role} initialState={initialPmState} />
+          <PreventiveMaintenanceTab companyId={companyId} role={role} initialState={initialPmState} onFilterChange={state => onNavigate?.('maintenance', { tab: 'planner', pmState: state }, { replace: true })} />
         </div>
       ) : <>
 

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   AlertTriangle, BarChart3, CalendarDays, CheckCircle2,
@@ -148,13 +148,42 @@ export default function OperationsIntelligenceTab({ companyId, initialMetric = '
   const [search, setSearch] = useState('')
   const { data, isLoading, isError, error } = useOperationsIntelligence(companyId, startDate, endDate)
 
+  useEffect(() => {
+    setMetric(METRICS[initialMetric] ? initialMetric : 'all')
+  }, [initialMetric])
+
+  useEffect(() => {
+    if (initialFrom) setStartDate(initialFrom)
+    if (initialTo) setEndDate(initialTo)
+  }, [initialFrom, initialTo])
+
+  useEffect(() => {
+    setProjectId(initialProjectId || 'all')
+  }, [initialProjectId])
+
   const rows = useMemo(() => data ? buildOperationsIntelligence({ ...data, startDate, endDate, today: currentDate }) : [], [data, startDate, endDate, currentDate])
   const scopedRows = useMemo(() => filterOperationsRows(rows, { projectId, search }), [rows, projectId, search])
   const visibleRows = useMemo(() => filterOperationsRows(scopedRows, { metric }), [scopedRows, metric])
   const summary = useMemo(() => summariseOperationsRows(scopedRows), [scopedRows])
 
-  const setPreset = days => { setStartDate(addDays(currentDate, -(days - 1))); setEndDate(currentDate) }
-  const selectMetric = value => setMetric(current => current === value ? 'all' : value)
+  const persistFilters = next => onNavigate?.('operations', {
+    tab: 'intelligence',
+    metric: next.metric ?? metric,
+    from: next.from ?? startDate,
+    to: next.to ?? endDate,
+    projectId: next.projectId ?? projectId,
+  }, { replace: true })
+  const changeStartDate = value => { setStartDate(value); persistFilters({ from: value }) }
+  const changeEndDate = value => { setEndDate(value); persistFilters({ to: value }) }
+  const changeProject = value => { setProjectId(value); persistFilters({ projectId: value }) }
+  const setPreset = days => {
+    const from = addDays(currentDate, -(days - 1))
+    setStartDate(from)
+    setEndDate(currentDate)
+    persistFilters({ from, to: currentDate })
+  }
+  const changeMetric = value => { setMetric(value); persistFilters({ metric: value }) }
+  const selectMetric = value => changeMetric(metric === value ? 'all' : value)
 
   return (
     <div className="h-full overflow-y-auto px-4 pb-6 pt-3 space-y-4">
@@ -165,12 +194,12 @@ export default function OperationsIntelligenceTab({ companyId, initialMetric = '
 
       <section className="card p-3.5 space-y-3">
         <div className="flex flex-wrap items-end gap-2">
-          <label className="text-[10px] text-slate-500">From<input type="date" value={startDate} max={endDate} onChange={event => setStartDate(event.target.value)} className="block mt-1 bg-dark-700 border border-dark-600 rounded-lg px-2.5 py-2 text-xs text-slate-200" /></label>
-          <label className="text-[10px] text-slate-500">To<input type="date" value={endDate} min={startDate} max={currentDate} onChange={event => setEndDate(event.target.value)} className="block mt-1 bg-dark-700 border border-dark-600 rounded-lg px-2.5 py-2 text-xs text-slate-200" /></label>
+          <label className="text-[10px] text-slate-500">From<input type="date" value={startDate} max={endDate} onChange={event => changeStartDate(event.target.value)} className="block mt-1 bg-dark-700 border border-dark-600 rounded-lg px-2.5 py-2 text-xs text-slate-200" /></label>
+          <label className="text-[10px] text-slate-500">To<input type="date" value={endDate} min={startDate} max={currentDate} onChange={event => changeEndDate(event.target.value)} className="block mt-1 bg-dark-700 border border-dark-600 rounded-lg px-2.5 py-2 text-xs text-slate-200" /></label>
           <div className="flex gap-1.5">
             {[7, 14, 30].map(days => <button key={days} onClick={() => setPreset(days)} className="px-2.5 py-2 rounded-lg border border-dark-600 text-xs text-slate-400 hover:text-primary-400 hover:border-primary-600">{days}d</button>)}
           </div>
-          <label className="text-[10px] text-slate-500 min-w-[180px] flex-1">Project / site<select value={projectId} onChange={event => setProjectId(event.target.value)} className="block mt-1 w-full bg-dark-700 border border-dark-600 rounded-lg px-2.5 py-2 text-xs text-slate-200"><option value="all">All projects</option>{data?.projects.map(project => <option key={project.id} value={project.id}>{project.project_name}{project.site_name ? ` · ${project.site_name}` : ''}</option>)}</select></label>
+          <label className="text-[10px] text-slate-500 min-w-[180px] flex-1">Project / site<select value={projectId} onChange={event => changeProject(event.target.value)} className="block mt-1 w-full bg-dark-700 border border-dark-600 rounded-lg px-2.5 py-2 text-xs text-slate-200"><option value="all">All projects</option>{data?.projects.map(project => <option key={project.id} value={project.id}>{project.project_name}{project.site_name ? ` · ${project.site_name}` : ''}</option>)}</select></label>
           <label className="relative min-w-[190px] flex-1"><Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-2.5" /><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Machine, number or site…" className="w-full bg-dark-700 border border-dark-600 rounded-lg pl-8 pr-3 py-2 text-xs text-slate-200 placeholder-slate-600" /></label>
         </div>
       </section>
@@ -200,7 +229,7 @@ export default function OperationsIntelligenceTab({ companyId, initialMetric = '
           <section>
             <div className="flex items-center justify-between gap-3 mb-2.5">
               <div><p className="text-sm font-semibold text-slate-200">{METRICS[metric].label}</p><p className="text-xs text-slate-500">{visibleRows.length} machine{visibleRows.length === 1 ? '' : 's'} match this exact drill-down</p></div>
-              {metric !== 'all' && <button onClick={() => setMetric('all')} className="flex items-center gap-1 text-xs text-primary-400 hover:text-primary-300"><RotateCcw className="w-3 h-3" /> Clear metric</button>}
+              {metric !== 'all' && <button onClick={() => changeMetric('all')} className="flex items-center gap-1 text-xs text-primary-400 hover:text-primary-300"><RotateCcw className="w-3 h-3" /> Clear metric</button>}
             </div>
             {visibleRows.length === 0 ? (
               <div className="card py-14 px-4 text-center"><CheckCircle2 className="w-9 h-9 text-emerald-500/50 mx-auto" /><p className="text-sm font-semibold text-slate-300 mt-3">No machines match {METRICS[metric].label.toLowerCase()}</p><p className="text-xs text-slate-500 mt-1">Change the date or project filter, or clear this metric.</p></div>
