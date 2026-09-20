@@ -4,21 +4,18 @@ import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { DisplayModeProvider } from './contexts/DisplayModeContext'
 import { ThemeProvider } from './contexts/ThemeContext'
 import LoadingScreen from './components/shared/LoadingScreen'
+import PageErrorBoundary from './components/shared/PageErrorBoundary'
 import StickyNotes from './components/shared/StickyNotes'
 import LoginPage from './pages/auth/LoginPage'
 import ResetPasswordPage from './pages/auth/ResetPasswordPage'
 import Sidebar from './components/layout/Sidebar'
 import RightBar from './components/layout/RightBar'
 import TopBar from './components/layout/TopBar'
-import { MODULES, ROLES } from './lib/constants'
+import { MODULES } from './lib/constants'
+import { canAccessPage, getAccessibleMobilePages } from './lib/navigation'
 import OperatorPortal from './pages/operator/OperatorPortal'
 import { useRealtimeSync } from './hooks/useRealtimeSync'
-import {
-  LayoutDashboard, Receipt, ClipboardList, BarChart3,
-  Users, Wallet, Package, X, Truck, Wrench, FolderOpen,
-  Settings, ShoppingCart, TrendingUp, CalendarDays, Building2, Activity,
-  MessageSquare, Fuel,
-} from 'lucide-react'
+import * as Icons from 'lucide-react'
 
 // Lazy-load all pages for performance
 const DashboardPage      = lazy(() => import('./pages/dashboard/DashboardPage'))
@@ -190,6 +187,27 @@ function ModuleNotActive({ page }) {
   )
 }
 
+function AccessDenied({ onNavigate }) {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-4 px-8 text-center">
+      <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-500/10">
+        <Icons.ShieldAlert className="h-7 w-7 text-amber-400" />
+      </div>
+      <div>
+        <p className="text-base font-bold text-slate-200">Access restricted</p>
+        <p className="mt-1 text-sm text-slate-500">This section is not available for your role or enabled modules.</p>
+      </div>
+      <button
+        type="button"
+        onClick={() => onNavigate('dashboard')}
+        className="rounded-xl bg-primary-600 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-500"
+      >
+        Return to dashboard
+      </button>
+    </div>
+  )
+}
+
 function ComingSoon({ page }) {
   return (
     <div className="flex flex-col items-center justify-center h-full gap-4 px-8 text-center">
@@ -204,65 +222,33 @@ function ComingSoon({ page }) {
 
 // ── Role-specific mobile bottom nav items ─────────────────────────────────────
 const MOBILE_QUICK = {
-  supervisor: [
-    { key: 'dashboard',    Icon: LayoutDashboard, label: 'Home'       },
-    { key: 'fieldexpense', Icon: Receipt,         label: 'Expenses'   },
-    { key: 'operations',   Icon: ClipboardList,   label: 'Operations' },
-    { key: 'inventory',    Icon: Package,         label: 'Inventory'  },
-  ],
-  manager: [
-    { key: 'dashboard',    Icon: LayoutDashboard, label: 'Home'       },
-    { key: 'fieldexpense', Icon: Receipt,         label: 'Expenses'   },
-    { key: 'operations',   Icon: ClipboardList,   label: 'Operations' },
-    { key: 'reports',      Icon: BarChart3,       label: 'Reports'    },
-  ],
-  accounts: [
-    { key: 'dashboard',    Icon: LayoutDashboard, label: 'Home'       },
-    { key: 'fieldexpense', Icon: Receipt,         label: 'Expenses'   },
-    { key: 'accounts',     Icon: Wallet,          label: 'Accounts'   },
-    { key: 'reports',      Icon: BarChart3,       label: 'Reports'    },
-  ],
-  admin: [
-    { key: 'dashboard',    Icon: LayoutDashboard, label: 'Home'       },
-    { key: 'fieldexpense', Icon: Receipt,         label: 'Expenses'   },
-    { key: 'operations',   Icon: ClipboardList,   label: 'Operations' },
-    { key: 'reports',      Icon: BarChart3,       label: 'Reports'    },
-  ],
+  supervisor: ['dashboard', 'fieldexpense', 'operations', 'inventory'],
+  manager: ['dashboard', 'fieldexpense', 'operations', 'reports'],
+  accounts: ['dashboard', 'fieldexpense', 'accounts', 'reports'],
+  admin: ['dashboard', 'fieldexpense', 'operations', 'reports'],
 }
 
-// All pages for the "More" drawer
-const ALL_PAGES = [
-  { key: 'dashboard',    Icon: LayoutDashboard, label: 'Dashboard'            },
-  { key: 'control_tower',Icon: Activity,        label: 'P&M Control Tower'    },
-  { key: 'fieldexpense', Icon: Receipt,         label: 'Field Expenses'       },
-  { key: 'operations',   Icon: ClipboardList,   label: 'Daily Operations'     },
-  { key: 'fleet',        Icon: Truck,           label: 'Equipment & Fleet'    },
-  { key: 'fuel_reconciliation', Icon: Fuel,     label: 'Fuel Reconciliation'  },
-  { key: 'deployment_planner', Icon: CalendarDays, label: 'Deployment Planner' },
-  { key: 'maintenance',  Icon: Wrench,          label: 'Maintenance'          },
-  { key: 'inventory',    Icon: Package,         label: 'Inventory'            },
-  { key: 'projects',     Icon: FolderOpen,      label: 'Projects'             },
-  { key: 'accounts',     Icon: Wallet,          label: 'Accounts'             },
-  { key: 'expenses',     Icon: Wallet,          label: 'Expenses'             },
-  { key: 'planner',      Icon: CalendarDays,    label: 'Expense Planner'      },
-  { key: 'sales',        Icon: TrendingUp,      label: 'Sales'                },
-  { key: 'purchase',     Icon: ShoppingCart,    label: 'Purchase'             },
-  { key: 'reports',      Icon: BarChart3,       label: 'Reports'              },
-  { key: 'profitability',Icon: TrendingUp,      label: 'Profitability'        },
-  { key: 'financials',   Icon: BarChart3,       label: 'Financial Statements' },
-  { key: 'hr',           Icon: Users,           label: 'Employee Management'  },
-  { key: 'settings',     Icon: Settings,        label: 'Settings'             },
-  { key: 'company',      Icon: Building2,       label: 'Company Profile'      },
-]
-
 // ── Mobile bottom nav + "More" drawer ────────────────────────────────────────
-function MobileNav({ role, activePage, onNavigate }) {
-  const [moreOpen, setMoreOpen] = useState(false)
-  const quickItems = MOBILE_QUICK[role] || MOBILE_QUICK.manager
+function MobileNav({ role, industryType, hasModule, activePage, onNavigate, moreOpen, onMoreOpenChange }) {
+  const allPages = getAccessibleMobilePages(industryType, role, hasModule)
+  const pageByKey = new Map(allPages.map(item => [item.key, item]))
+  const quickItems = (MOBILE_QUICK[role] || MOBILE_QUICK.manager)
+    .map(key => pageByKey.get(key))
+    .filter(Boolean)
+  const moreIsActive = moreOpen || (!quickItems.some(item => item.key === activePage) && allPages.some(item => item.key === activePage))
+
+  useEffect(() => {
+    if (!moreOpen) return undefined
+    const closeOnEscape = event => {
+      if (event.key === 'Escape') onMoreOpenChange(false)
+    }
+    document.addEventListener('keydown', closeOnEscape)
+    return () => document.removeEventListener('keydown', closeOnEscape)
+  }, [moreOpen, onMoreOpenChange])
 
   const go = (key) => {
     onNavigate(key)
-    setMoreOpen(false)
+    onMoreOpenChange(false)
   }
 
   return (
@@ -270,24 +256,30 @@ function MobileNav({ role, activePage, onNavigate }) {
       {/* Bottom nav bar — visible only on mobile (hidden on lg+) */}
       <div className="lg:hidden shrink-0 fixed bottom-0 left-0 right-0 z-40 bg-dark-800/95 backdrop-blur-md border-t border-dark-700 safe-area-bottom">
         <div className="flex">
-          {quickItems.map(({ key, Icon, label }) => {
+          {quickItems.map(({ key, icon, label }) => {
             const active = activePage === key
+            const Icon = Icons[icon] || Icons.Circle
             return (
               <button
+                type="button"
                 key={key}
                 onClick={() => go(key)}
+                aria-current={active ? 'page' : undefined}
                 className={`flex-1 flex flex-col items-center py-2.5 gap-0.5 transition-colors ${active ? 'text-primary-400' : 'text-slate-500'}`}
               >
                 <Icon className="w-5 h-5" />
-                <span className="text-[10px] font-medium leading-none">{label}</span>
+                <span className="text-[10px] font-medium leading-none">{key === 'dashboard' ? 'Home' : label}</span>
                 {active && <div className="w-1 h-1 rounded-full bg-primary-400 mt-0.5" />}
               </button>
             )
           })}
           {/* More button */}
           <button
-            onClick={() => setMoreOpen(true)}
-            className={`flex-1 flex flex-col items-center py-2.5 gap-0.5 transition-colors ${moreOpen ? 'text-primary-400' : 'text-slate-500'}`}
+            type="button"
+            onClick={() => onMoreOpenChange(true)}
+            aria-haspopup="dialog"
+            aria-expanded={moreOpen}
+            className={`flex-1 flex flex-col items-center py-2.5 gap-0.5 transition-colors ${moreIsActive ? 'text-primary-400' : 'text-slate-500'}`}
           >
             <div className="w-5 h-5 flex flex-col justify-center items-center gap-[3px]">
               <span className="w-4 h-0.5 bg-current rounded-full" />
@@ -301,25 +293,28 @@ function MobileNav({ role, activePage, onNavigate }) {
 
       {/* "More" slide-up drawer */}
       {moreOpen && (
-        <div className="lg:hidden fixed inset-0 z-50 flex flex-col justify-end">
+        <div className="lg:hidden fixed inset-0 z-50 flex flex-col justify-end" role="dialog" aria-modal="true" aria-labelledby="mobile-navigation-title">
           {/* Backdrop */}
-          <div className="absolute inset-0 bg-black/60" onClick={() => setMoreOpen(false)} />
+          <button type="button" aria-label="Close navigation" className="absolute inset-0 bg-black/60" onClick={() => onMoreOpenChange(false)} />
 
           {/* Drawer */}
           <div className="relative bg-dark-800 border-t border-dark-700 rounded-t-2xl max-h-[75vh] overflow-y-auto safe-area-bottom">
             <div className="flex items-center justify-between px-5 py-4 border-b border-dark-700 sticky top-0 bg-dark-800">
-              <p className="text-sm font-bold text-slate-100">All Sections</p>
-              <button onClick={() => setMoreOpen(false)} className="text-slate-400 hover:text-slate-100">
-                <X className="w-5 h-5" />
+              <p id="mobile-navigation-title" className="text-sm font-bold text-slate-100">All Sections</p>
+              <button type="button" onClick={() => onMoreOpenChange(false)} aria-label="Close navigation" className="text-slate-400 hover:text-slate-100">
+                <Icons.X className="w-5 h-5" />
               </button>
             </div>
             <div className="grid grid-cols-3 gap-2 p-4">
-              {ALL_PAGES.map(({ key, Icon, label }) => {
+              {allPages.map(({ key, icon, label }) => {
                 const active = activePage === key
+                const Icon = Icons[icon] || Icons.Circle
                 return (
                   <button
+                    type="button"
                     key={key}
                     onClick={() => go(key)}
+                    aria-current={active ? 'page' : undefined}
                     className={`flex flex-col items-center gap-2 py-4 rounded-xl border transition-all ${
                       active
                         ? 'bg-primary-600/20 border-primary-500 text-primary-300'
@@ -341,10 +336,11 @@ function MobileNav({ role, activePage, onNavigate }) {
 
 // ── App Shell ─────────────────────────────────────────────────────────────────
 function AppShell() {
-  const { loading, session, role, hasModule, isSuperAdmin } = useAuth()
+  const { loading, session, role, hasModule, isSuperAdmin, industryType } = useAuth()
   const [navigation,       setNavigation]       = useState(readNavigationFromUrl)
   const [notesOpen,        setNotesOpen]        = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [mobileMenuOpen,   setMobileMenuOpen]   = useState(false)
   const isOnline = useOnlineStatus()
   const { page: activePage, extra: navExtra } = navigation
 
@@ -366,6 +362,7 @@ function AppShell() {
   const handleNavigate = (page, extra = {}) => {
     setNavigation({ page, extra })
     writeNavigationToUrl(page, extra)
+    setMobileMenuOpen(false)
   }
 
   const defaultPage = isSuperAdmin() ? 'superadmin' : 'dashboard'
@@ -381,6 +378,9 @@ function AppShell() {
     }
 
     const page = effectivePage
+    if (!canAccessPage(page, { role, hasModule, isSuperAdmin: isSuperAdmin() })) {
+      return <AccessDenied onNavigate={handleNavigate} />
+    }
     const wrap = (Component, module, props = {}) => {
       if (module && !hasModule(module)) {
         if (!isOnline) return <OfflineScreen />
@@ -598,7 +598,7 @@ function AppShell() {
 
         {/* Main area */}
         <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
-          <TopBar activePage={effectivePage} onMenuToggle={() => setSidebarCollapsed(p => !p)} onNavigate={handleNavigate} />
+          <TopBar activePage={effectivePage} onMenuToggle={() => setMobileMenuOpen(true)} onNavigate={handleNavigate} />
           {/* Offline banner — shown mid-session when connection drops */}
           {!isOnline && (
             <div className="shrink-0 flex items-center justify-center gap-2 bg-amber-500/20 border-b border-amber-600/40 text-amber-300 text-xs font-semibold py-2 px-4">
@@ -607,7 +607,9 @@ function AppShell() {
           )}
           {/* pb-16 on mobile to avoid content hiding behind bottom nav */}
           <main className="flex-1 overflow-y-auto bg-dark-900 lg:pb-0 pb-16 relative overflow-hidden">
-            {renderPage()}
+            <PageErrorBoundary key={effectivePage}>
+              {renderPage()}
+            </PageErrorBoundary>
           </main>
         </div>
 
@@ -615,8 +617,12 @@ function AppShell() {
         {!isSuperAdmin() && (
           <MobileNav
             role={role}
+            industryType={industryType}
+            hasModule={hasModule}
             activePage={effectivePage}
             onNavigate={handleNavigate}
+            moreOpen={mobileMenuOpen}
+            onMoreOpenChange={setMobileMenuOpen}
           />
         )}
 
