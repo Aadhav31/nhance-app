@@ -115,6 +115,24 @@ function readNavigationFromUrl() {
     extra.boqId = params.get('raBoq') || 'all'
     extra.raId = params.get('raBill') || null
   }
+  if (page === 'sales') extra.tab = params.get('salesTab') || 'clients'
+  if (page === 'purchase') {
+    extra.tab = params.get('purchaseTab') || 'vendors'
+    extra.createForTxnId = params.get('purchaseStockTxn') || null
+  }
+  if (page === 'accounts') extra.tab = params.get('accountsTab') || 'dashboard'
+  if (page === 'expenses') {
+    extra.type = params.get('expenseType') || 'all'
+    extra.from = params.get('expenseFrom') || ''
+    extra.to = params.get('expenseTo') || ''
+    extra.mode = params.get('expenseMode') || ''
+  }
+  if (page === 'financials') {
+    extra.tab = params.get('financeTab') || 'pl'
+    extra.period = Number(params.get('financePeriod') || 0)
+    extra.from = params.get('financeFrom') || ''
+    extra.to = params.get('financeTo') || ''
+  }
   if (page === 'operations') {
     extra.tab = params.get('opsTab') || 'today'
     extra.metric = params.get('opsMetric') || 'all'
@@ -138,7 +156,7 @@ function readNavigationFromUrl() {
 
 function writeNavigationToUrl(page, extra, { replace = false } = {}) {
   const url = new URL(window.location.href)
-  const navigationKeys = ['page', 'equipment', 'equipmentName', 'fleetFilter', 'fleetValue', 'fleetLabel', 'fleetIds', 'plannerStatus', 'project', 'projectStatus', 'hireStatus', 'boqStatus', 'boq', 'raMetric', 'raStatus', 'raBoq', 'raBill', 'opsTab', 'opsMetric', 'opsFrom', 'opsTo', 'opsProject', 'maintTab', 'pmState', 'workshopStatus', 'fuelRange', 'fuelMetric', 'fuelEquipment', 'fuelProject', 'profitDimension', 'profitMetric']
+  const navigationKeys = ['page', 'equipment', 'equipmentName', 'fleetFilter', 'fleetValue', 'fleetLabel', 'fleetIds', 'plannerStatus', 'project', 'projectStatus', 'hireStatus', 'boqStatus', 'boq', 'raMetric', 'raStatus', 'raBoq', 'raBill', 'salesTab', 'purchaseTab', 'purchaseStockTxn', 'accountsTab', 'expenseType', 'expenseFrom', 'expenseTo', 'expenseMode', 'financeTab', 'financePeriod', 'financeFrom', 'financeTo', 'opsTab', 'opsMetric', 'opsFrom', 'opsTo', 'opsProject', 'maintTab', 'pmState', 'workshopStatus', 'fuelRange', 'fuelMetric', 'fuelEquipment', 'fuelProject', 'profitDimension', 'profitMetric']
   navigationKeys.forEach(key => url.searchParams.delete(key))
 
   if (page !== 'dashboard') url.searchParams.set('page', page)
@@ -164,6 +182,24 @@ function writeNavigationToUrl(page, extra, { replace = false } = {}) {
     if (extra.status && extra.status !== 'all') url.searchParams.set('raStatus', extra.status)
     if (extra.boqId && extra.boqId !== 'all') url.searchParams.set('raBoq', extra.boqId)
     if (extra.raId) url.searchParams.set('raBill', extra.raId)
+  }
+  if (page === 'sales' && extra.tab && extra.tab !== 'clients') url.searchParams.set('salesTab', extra.tab)
+  if (page === 'purchase') {
+    if (extra.tab && extra.tab !== 'vendors') url.searchParams.set('purchaseTab', extra.tab)
+    if (extra.createForTxnId) url.searchParams.set('purchaseStockTxn', extra.createForTxnId)
+  }
+  if (page === 'accounts' && extra.tab && extra.tab !== 'dashboard') url.searchParams.set('accountsTab', extra.tab)
+  if (page === 'expenses') {
+    if (extra.type && extra.type !== 'all') url.searchParams.set('expenseType', extra.type)
+    if (extra.from) url.searchParams.set('expenseFrom', extra.from)
+    if (extra.to) url.searchParams.set('expenseTo', extra.to)
+    if (extra.mode) url.searchParams.set('expenseMode', extra.mode)
+  }
+  if (page === 'financials') {
+    if (extra.tab && extra.tab !== 'pl') url.searchParams.set('financeTab', extra.tab)
+    if (Number(extra.period) > 0) url.searchParams.set('financePeriod', String(extra.period))
+    if (extra.from) url.searchParams.set('financeFrom', extra.from)
+    if (extra.to) url.searchParams.set('financeTo', extra.to)
   }
   if (page === 'operations') {
     if (extra.tab && extra.tab !== 'today') url.searchParams.set('opsTab', extra.tab)
@@ -507,7 +543,7 @@ function AppShell() {
         if (hasModule && !hasModule(MODULES.ACCOUNTS)) return isOnline ? <ModuleNotActive page="accounts" /> : <OfflineScreen />
         return (
           <Suspense fallback={<LoadingScreen message="Loading accounts…" />}>
-            <AccountsPage onNavigate={handleNavigate} />
+            <AccountsPage onNavigate={handleNavigate} initialTab={navExtra.tab} />
           </Suspense>
         )
       case 'planner':      return wrap(ExpensePlannerPage, MODULES.ACCOUNTS)
@@ -516,14 +552,14 @@ function AppShell() {
         if (hasModule && !hasModule(MODULES.SALES)) return isOnline ? <ModuleNotActive page="sales" /> : <OfflineScreen />
         return (
           <Suspense fallback={<LoadingScreen message="Loading sales…" />}>
-            <SalesPage onNavigate={handleNavigate} />
+            <SalesPage onNavigate={handleNavigate} initialTab={navExtra.tab} />
           </Suspense>
         )
       case 'purchase':
         if (hasModule && !hasModule(MODULES.PURCHASE)) return isOnline ? <ModuleNotActive page="purchase" /> : <OfflineScreen />
         return (
           <Suspense fallback={<LoadingScreen message="Loading purchase…" />}>
-            <PurchasePage initialTab={navExtra.tab} initialStockTxnId={navExtra.createForTxnId} />
+            <PurchasePage onNavigate={handleNavigate} initialTab={navExtra.tab} initialStockTxnId={navExtra.createForTxnId} />
           </Suspense>
         )
       case 'reports':      return wrap(ReportsPage,        MODULES.REPORTS)
@@ -537,11 +573,11 @@ function AppShell() {
             />
           </Suspense>
         ) : <ModuleNotActive page="Profitability" />
-      case 'financials':   return wrap(FinancialsPage,     MODULES.ACCOUNTS)
+      case 'financials':   return wrap(FinancialsPage,     MODULES.ACCOUNTS, { onNavigate: handleNavigate, initialTab: navExtra.tab, initialPeriod: navExtra.period, initialFrom: navExtra.from, initialTo: navExtra.to })
       case 'expenses':
         return hasModule(MODULES.ACCOUNTS) ? (
           <Suspense fallback={<LoadingScreen message="Loading expenses…" />}>
-            <ExpensesPage onNavigate={handleNavigate} />
+            <ExpensesPage onNavigate={handleNavigate} initialType={navExtra.type} initialFrom={navExtra.from} initialTo={navExtra.to} initialMode={navExtra.mode} />
           </Suspense>
         ) : <ModuleNotActive page="expenses" />
       case 'hr':

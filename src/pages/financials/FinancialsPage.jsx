@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
@@ -6,6 +6,7 @@ import {
   TrendingUp, TrendingDown, FileText, Download,
   ChevronDown, ChevronRight, BarChart3, Scale,
   ArrowDownCircle, ArrowUpCircle, RefreshCw, Calendar,
+  AlertTriangle,
 } from 'lucide-react'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -97,16 +98,43 @@ const PERIODS = [
   { label: `FY ${CUR_FY - 1}–${String(CUR_FY).slice(2)}`,  ...fyRange(CUR_FY - 1) },
   { label: 'Custom', from: '', to: '' },
 ]
+const FINANCIAL_TABS = [
+  { key: 'pl', label: 'P&L Statement', icon: TrendingUp },
+  { key: 'bs', label: 'Balance Sheet', icon: Scale },
+  { key: 'cf', label: 'Cash Flow', icon: ArrowDownCircle },
+  { key: 'tb', label: 'Trial Balance', icon: BarChart3 },
+]
+const FINANCIAL_TAB_IDS = new Set(FINANCIAL_TABS.map(item => item.key))
 
 // ── Component ─────────────────────────────────────────────────────────────────
-export default function FinancialsPage() {
+export default function FinancialsPage({
+  onNavigate, initialTab = 'pl', initialPeriod = 0, initialFrom = '', initialTo = '',
+}) {
   const { companyId, company } = useAuth()
 
-  const [periodIdx, setPeriodIdx] = useState(0)
-  const [customFrom, setCustomFrom] = useState('')
-  const [customTo,   setCustomTo]   = useState('')
-  const [tab, setTab] = useState('pl')
+  const [periodIdx, setPeriodIdx] = useState(() => Number.isInteger(initialPeriod) && initialPeriod >= 0 && initialPeriod < PERIODS.length ? initialPeriod : 0)
+  const [customFrom, setCustomFrom] = useState(initialFrom || '')
+  const [customTo,   setCustomTo]   = useState(initialTo || '')
+  const [tab, setTab] = useState(() => FINANCIAL_TAB_IDS.has(initialTab) ? initialTab : 'pl')
   const [expanded, setExpanded] = useState({})
+
+  useEffect(() => {
+    setPeriodIdx(Number.isInteger(initialPeriod) && initialPeriod >= 0 && initialPeriod < PERIODS.length ? initialPeriod : 0)
+    setCustomFrom(initialFrom || '')
+    setCustomTo(initialTo || '')
+    setTab(FINANCIAL_TAB_IDS.has(initialTab) ? initialTab : 'pl')
+  }, [initialFrom, initialPeriod, initialTab, initialTo])
+
+  const persistView = next => onNavigate?.('financials', {
+    tab: next.tab ?? tab,
+    period: next.period ?? periodIdx,
+    from: next.from ?? customFrom,
+    to: next.to ?? customTo,
+  }, { replace: true })
+  const selectPeriod = value => { setPeriodIdx(value); persistView({ period: value }) }
+  const selectTab = value => { setTab(value); persistView({ tab: value }) }
+  const selectCustomFrom = value => { setCustomFrom(value); persistView({ from: value }) }
+  const selectCustomTo = value => { setCustomTo(value); persistView({ to: value }) }
 
   const period = useMemo(() => {
     if (periodIdx === PERIODS.length - 1) return { from: customFrom, to: customTo }
@@ -117,15 +145,16 @@ export default function FinancialsPage() {
 
   // ── Queries ─────────────────────────────────────────────────────────────────
   // Period transactions
-  const { data: txnRaw = [], isLoading: txnLoad } = useQuery({
+  const { data: txnRaw = [], isLoading: txnLoad, isError: txnError, error: txnErrorDetail, refetch: refetchTxn } = useQuery({
     queryKey: ['fin_txns', companyId, period.from, period.to],
     queryFn: async () => {
       if (!period.from || !period.to) return []
-      const { data } = await supabase.from('account_transactions')
+      const { data, error } = await supabase.from('account_transactions')
         .select('id,txn_date,type,description,amount,reference_type,reference_id,expense_category,equipment_id,payment_mode')
         .eq('company_id', companyId)
         .gte('txn_date', period.from).lte('txn_date', period.to)
         .order('txn_date', { ascending: true })
+      if (error) throw error
       return data || []
     },
     enabled: !!companyId && !!period.from && !!period.to,
@@ -133,12 +162,13 @@ export default function FinancialsPage() {
   })
 
   // Enrich expense transactions with expense_category from expenses table
-  const { data: expCatMap = {} } = useQuery({
+  const { data: expCatMap = {}, isLoading: expCatLoad, isError: expCatError, error: expCatErrorDetail, refetch: refetchExpCats } = useQuery({
     queryKey: ['fin_exp_cats', companyId, period.from, period.to],
     queryFn: async () => {
       const ids = txnRaw.filter(t => t.reference_type === 'expense' && t.reference_id).map(t => t.reference_id)
       if (!ids.length) return {}
-      const { data } = await supabase.from('expenses').select('id,expense_category').in('id', ids)
+      const { data, error } = await supabase.from('expenses').select('id,expense_category').in('id', ids)
+      if (error) throw error
       return Object.fromEntries((data || []).map(e => [e.id, e.expense_category]))
     },
     enabled: txnRaw.length > 0,
@@ -146,39 +176,42 @@ export default function FinancialsPage() {
   })
 
   // All-time outstanding AR
-  const { data: arInvoices = [] } = useQuery({
+  const { data: arInvoices = [], isLoading: arLoad, isError: arError, error: arErrorDetail, refetch: refetchAr } = useQuery({
     queryKey: ['fin_ar', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('client_invoices')
+      const { data, error } = await supabase.from('client_invoices')
         .select('id,total_amount,paid_amount,balance_due,status,client_name,invoice_number')
         .eq('company_id', companyId)
         .not('status', 'in', '("paid","cancelled")')
         .gt('balance_due', 0)
+      if (error) throw error
       return data || []
     },
     enabled: !!companyId, staleTime: 60_000,
   })
 
   // All-time outstanding AP
-  const { data: apBills = [] } = useQuery({
+  const { data: apBills = [], isLoading: apLoad, isError: apError, error: apErrorDetail, refetch: refetchAp } = useQuery({
     queryKey: ['fin_ap', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('bills')
+      const { data, error } = await supabase.from('bills')
         .select('id,total_amount,paid_amount,balance_due,status,vendor_name,bill_number')
         .eq('company_id', companyId)
         .not('status', 'in', '("paid","cancelled")')
         .gt('balance_due', 0)
+      if (error) throw error
       return data || []
     },
     enabled: !!companyId, staleTime: 60_000,
   })
 
   // All-time cumulative net (for cash/bank estimate)
-  const { data: allTimeTxns = [] } = useQuery({
+  const { data: allTimeTxns = [], isLoading: allTimeLoad, isError: allTimeError, error: allTimeErrorDetail, refetch: refetchAllTime } = useQuery({
     queryKey: ['fin_alltime', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('account_transactions')
+      const { data, error } = await supabase.from('account_transactions')
         .select('type,amount').eq('company_id', companyId)
+      if (error) throw error
       return data || []
     },
     enabled: !!companyId, staleTime: 120_000,
@@ -260,7 +293,10 @@ export default function FinancialsPage() {
     })).sort((a, b) => a.cat.localeCompare(b.cat))
   }, [txns])
 
-  const isLoading = txnLoad
+  const isLoading = txnLoad || expCatLoad || arLoad || apLoad || allTimeLoad
+  const isError = txnError || expCatError || arError || apError || allTimeError
+  const queryError = txnErrorDetail || expCatErrorDetail || arErrorDetail || apErrorDetail || allTimeErrorDetail
+  const retryAll = () => { refetchTxn(); refetchExpCats(); refetchAr(); refetchAp(); refetchAllTime() }
 
   // ── Toggle section expand ──────────────────────────────────────────────────
   const toggle = (k) => setExpanded(p => ({ ...p, [k]: !p[k] }))
@@ -413,13 +449,6 @@ export default function FinancialsPage() {
     return rows
   }
 
-  const TABS = [
-    { key: 'pl', label: 'P&L Statement',  icon: TrendingUp },
-    { key: 'bs', label: 'Balance Sheet',  icon: Scale },
-    { key: 'cf', label: 'Cash Flow',      icon: ArrowDownCircle },
-    { key: 'tb', label: 'Trial Balance',  icon: BarChart3 },
-  ]
-
   return (
     <div className="min-h-full bg-dark-900 text-slate-100 px-4 py-6 max-w-5xl mx-auto">
       {/* Header */}
@@ -448,7 +477,7 @@ export default function FinancialsPage() {
         </div>
         <div className="flex flex-wrap gap-1.5">
           {PERIODS.map((p, i) => (
-            <button key={i} onClick={() => setPeriodIdx(i)}
+            <button key={i} onClick={() => selectPeriod(i)} aria-pressed={periodIdx === i}
               className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
                 periodIdx === i
                   ? 'bg-primary-600 text-white shadow'
@@ -460,12 +489,12 @@ export default function FinancialsPage() {
           <div className="flex gap-3 mt-3">
             <div className="flex-1">
               <label className="text-[10px] text-slate-500 block mb-1">From</label>
-              <input type="date" value={customFrom} onChange={e => setCustomFrom(e.target.value)}
+              <input type="date" value={customFrom} onChange={e => selectCustomFrom(e.target.value)}
                 className="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-primary-500" />
             </div>
             <div className="flex-1">
               <label className="text-[10px] text-slate-500 block mb-1">To</label>
-              <input type="date" value={customTo} onChange={e => setCustomTo(e.target.value)}
+              <input type="date" value={customTo} onChange={e => selectCustomTo(e.target.value)}
                 className="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-1.5 text-sm text-slate-200 focus:outline-none focus:border-primary-500" />
             </div>
           </div>
@@ -474,8 +503,8 @@ export default function FinancialsPage() {
 
       {/* Tabs */}
       <div className="flex gap-1 mb-5 bg-dark-800 border border-dark-700 rounded-xl p-1">
-        {TABS.map(t => (
-          <button key={t.key} onClick={() => setTab(t.key)}
+        {FINANCIAL_TABS.map(t => (
+          <button key={t.key} onClick={() => selectTab(t.key)} aria-pressed={tab === t.key}
             className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-xs font-semibold transition-all ${
               tab === t.key ? 'bg-primary-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
             }`}>
@@ -487,6 +516,12 @@ export default function FinancialsPage() {
       {isLoading ? (
         <div className="flex items-center justify-center py-20 text-slate-500">
           <RefreshCw className="w-5 h-5 animate-spin mr-2" /> Loading…
+        </div>
+      ) : isError ? (
+        <div className="flex flex-col items-center justify-center py-20 gap-3 text-center">
+          <AlertTriangle className="w-10 h-10 text-red-400" />
+          <div><p className="text-sm font-medium text-red-300">Financial statements could not be loaded</p><p className="mt-1 text-xs text-slate-500">{queryError?.message || 'Please retry the financial data sources.'}</p></div>
+          <button type="button" onClick={retryAll} className="flex items-center gap-2 rounded-lg border border-dark-600 bg-dark-700 px-3 py-2 text-sm text-slate-200 hover:bg-dark-600"><RefreshCw className="w-4 h-4" />Retry</button>
         </div>
       ) : (
         <>

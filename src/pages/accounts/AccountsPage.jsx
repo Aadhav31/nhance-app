@@ -4577,11 +4577,21 @@ const TABS = [
   { key: 'fixed',     label: 'Fixed',     icon: '📌' },
   { key: 'ledger',    label: 'Ledger',    icon: '📒' },
 ]
+const ACCOUNT_TAB_IDS = new Set(TABS.map(tab => tab.key))
 
-export default function AccountsPage({ onNavigate }) {
+export default function AccountsPage({ onNavigate, initialTab = 'dashboard' }) {
   const { companyId, session } = useAuth()
-  const [activeTab, setActiveTab] = useState('dashboard')
+  const [activeTab, setActiveTab] = useState(() => ACCOUNT_TAB_IDS.has(initialTab) ? initialTab : 'dashboard')
   const [alertDismissed, setAlertDismissed] = useState(false)
+
+  useEffect(() => {
+    setActiveTab(ACCOUNT_TAB_IDS.has(initialTab) ? initialTab : 'dashboard')
+  }, [initialTab])
+
+  const selectTab = tab => {
+    setActiveTab(tab)
+    onNavigate?.('accounts', { tab }, { replace: true })
+  }
 
   // Equipment list — shared across tabs (expense tagging)
   const { data: equipmentList = [] } = useQuery({
@@ -4630,7 +4640,7 @@ export default function AccountsPage({ onNavigate }) {
         {/* Tabs */}
         <div className="flex gap-1 bg-dark-800 rounded-xl p-1 border border-dark-700">
           {TABS.map(t => (
-            <button key={t.key} onClick={() => setActiveTab(t.key)}
+            <button key={t.key} onClick={() => selectTab(t.key)} aria-pressed={activeTab === t.key}
               className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${activeTab === t.key ? 'bg-primary-600 text-white shadow-lg shadow-primary-600/20' : 'text-slate-400 hover:text-slate-200 hover:bg-dark-700'}`}>
               <span>{t.icon}</span>
               <span className="hidden sm:inline">{t.label}</span>
@@ -4654,7 +4664,7 @@ export default function AccountsPage({ onNavigate }) {
                 Due within 3 days: {soonAlerts.map(a => a.fixed_expenses?.name).join(', ')}
               </p>
             )}
-            <button onClick={() => setActiveTab('fixed')} className="text-[11px] text-primary-400 hover:text-primary-300 underline mt-0.5">
+            <button onClick={() => selectTab('fixed')} className="text-[11px] text-primary-400 hover:text-primary-300 underline mt-0.5">
               Review in Fixed Expenses →
             </button>
           </div>
@@ -4666,7 +4676,7 @@ export default function AccountsPage({ onNavigate }) {
 
       {/* Tab content */}
       <div className="flex-1 flex flex-col overflow-hidden min-h-0">
-        {activeTab === 'dashboard' && <DashboardTab companyId={companyId} onNavigate={setActiveTab} onNavigatePage={onNavigate} />}
+        {activeTab === 'dashboard' && <DashboardTab companyId={companyId} onNavigate={selectTab} onNavigatePage={onNavigate} />}
         {activeTab === 'invoices'  && <InvoicesTab  companyId={companyId} session={session} />}
         {activeTab === 'expenses'  && <ExpensesTab  companyId={companyId} session={session} equipmentList={equipmentList} onNavigate={onNavigate} />}
         {activeTab === 'fixed'     && <FixedExpensesTab companyId={companyId} />}
