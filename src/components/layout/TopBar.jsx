@@ -16,7 +16,7 @@ const PAGE_TITLES = {
   fuel_reconciliation: { title: 'Fuel Reconciliation', subtitle: 'Diesel variance, efficiency & cost exposure' },
   profitability: { title: 'Profitability', subtitle: 'Project and equipment margins with source evidence' },
   operations:  { title: 'Daily Operations',         subtitle: 'Shifts, fuel & incidents' },
-  maintenance: { title: 'Maintenance',              subtitle: 'Preventive & breakdown tracking' },
+  maintenance: { title: 'Equipment Health',         subtitle: 'Preventive care, repairs & workshop visibility' },
   inventory:   { title: 'Inventory',                subtitle: 'Spare parts & consumables' },
   fieldexpense:{ title: 'Field Expenses',           subtitle: 'Site spending, evidence & approvals' },
   clients:     { title: 'Clients',                  subtitle: 'Client profiles & history' },

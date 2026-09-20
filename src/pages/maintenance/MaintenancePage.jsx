@@ -539,7 +539,7 @@ export default function MaintenancePage({ onNavigate, initialTab = 'workshop', i
       {/* Header */}
       <div className="flex items-center gap-3 px-5 py-3 border-b border-dark-700 flex-shrink-0">
         <Wrench className="w-5 h-5 text-primary-400" />
-        <div><h1 className="text-base font-bold text-slate-100">Maintenance &amp; Workshop</h1><p className="text-[10px] text-slate-500">Job execution, automated service planning and repair history</p></div>
+        <div><h1 className="text-base font-bold text-slate-100">Equipment Health</h1><p className="text-[10px] text-slate-500">Preventive care, workshop execution and complete repair history</p></div>
         <div className="flex-1" />
         {canManage && section === 'records' && (
           <button onClick={() => setShowCreate(true)}
