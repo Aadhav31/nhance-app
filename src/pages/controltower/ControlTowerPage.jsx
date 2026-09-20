@@ -34,7 +34,7 @@ function useControlTower(companyId) {
           .select('id,name,equipment_number,category,status,current_meter_reading,current_project_id')
           .eq('company_id', companyId),
         supabase.from('pm_schedules')
-          .select('id,equipment_id,equipment_name,schedule_name,next_due_meter,next_due_date,is_active')
+          .select('id,equipment_id,equipment_name,schedule_name,next_due_meter,next_due_date,alert_before_hours,is_active')
           .eq('company_id', companyId).eq('is_active', true),
         supabase.from('job_cards')
           .select('id,jc_number,equipment_id,equipment_name,jc_type,status,complaint,opened_date,downtime_hours')
@@ -116,7 +116,7 @@ export default function ControlTowerPage({ onNavigate }) {
     const pmDue = data.pmSchedules.filter(item => {
       const meter = Number(equipmentById[item.equipment_id]?.current_meter_reading || 0)
       return (item.next_due_date && item.next_due_date <= dateAfter(14)) ||
-        (item.next_due_meter != null && Number(item.next_due_meter) - meter <= 50)
+        (item.next_due_meter != null && Number(item.next_due_meter) - meter <= Number(item.alert_before_hours ?? 50))
     })
     const hours = data.operations.reduce((sum, item) => sum + Number(item.running_hours || 0), 0)
     const fuel = data.operations.reduce((sum, item) => sum + Number(item.fuel_consumed || 0), 0)
@@ -163,7 +163,7 @@ export default function ControlTowerPage({ onNavigate }) {
           </div>
           <div className="space-y-2">
             <AttentionRow icon={ShieldAlert} tone="bg-red-500/10 text-red-400" title={`${data.jobCards.length} open job cards`} detail={data.jobCards[0]?.complaint || 'No unresolved repair complaints'} action="View filtered" onClick={() => onNavigate('fleet', { fleetFilter: { kind: 'equipment_ids', ids: [...new Set(data.jobCards.map(item => item.equipment_id).filter(Boolean))], label: 'Open job cards' } })} />
-            <AttentionRow icon={CalendarClock} tone="bg-amber-500/10 text-amber-400" title={`${insight.pmDue.length} PM services approaching`} detail="Due within 14 days or 50 operating hours" action="View filtered" onClick={() => onNavigate('fleet', { fleetFilter: { kind: 'equipment_ids', ids: [...new Set(insight.pmDue.map(item => item.equipment_id).filter(Boolean))], label: 'PM due' } })} />
+            <AttentionRow icon={CalendarClock} tone="bg-amber-500/10 text-amber-400" title={`${insight.pmDue.length} PM services approaching`} detail="Due within 14 days or the configured operating-hour alert" action="Open PM planner" onClick={() => onNavigate('maintenance', { tab: 'planner', pmState: 'action_due' })} />
             <AttentionRow icon={CircleOff} tone="bg-blue-500/10 text-blue-400" title={`${insight.missingLogAssets.length} deployed assets with missing daily logs`} detail="Open the exact machine and site drill-down" action="View filtered" onClick={() => onNavigate('operations', { tab: 'intelligence', metric: 'missing_logs' })} />
             <AttentionRow icon={ShieldAlert} tone="bg-purple-500/10 text-purple-400" title={`${data.documents.length} documents expiring`} detail="Insurance, permit, fitness or compliance due in 30 days" action="View filtered" onClick={() => onNavigate('fleet', { fleetFilter: { kind: 'equipment_ids', ids: [...new Set(data.documents.map(item => item.equipment_id).filter(Boolean))], label: 'Expiring documents' } })} />
           </div>

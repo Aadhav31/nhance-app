@@ -103,13 +103,17 @@ function readNavigationFromUrl() {
     extra.projectId = params.get('opsProject') || 'all'
     if (params.get('equipmentName')) extra.equipmentName = params.get('equipmentName')
   }
+  if (page === 'maintenance') {
+    extra.tab = params.get('maintTab') || 'planner'
+    extra.pmState = params.get('pmState') || 'all'
+  }
 
   return { page, extra }
 }
 
 function writeNavigationToUrl(page, extra) {
   const url = new URL(window.location.href)
-  const navigationKeys = ['page', 'equipment', 'equipmentName', 'fleetFilter', 'fleetValue', 'fleetLabel', 'fleetIds', 'plannerStatus', 'project', 'opsTab', 'opsMetric', 'opsFrom', 'opsTo', 'opsProject']
+  const navigationKeys = ['page', 'equipment', 'equipmentName', 'fleetFilter', 'fleetValue', 'fleetLabel', 'fleetIds', 'plannerStatus', 'project', 'opsTab', 'opsMetric', 'opsFrom', 'opsTo', 'opsProject', 'maintTab', 'pmState']
   navigationKeys.forEach(key => url.searchParams.delete(key))
 
   if (page !== 'dashboard') url.searchParams.set('page', page)
@@ -123,6 +127,10 @@ function writeNavigationToUrl(page, extra) {
     if (extra.to) url.searchParams.set('opsTo', extra.to)
     if (extra.projectId && extra.projectId !== 'all') url.searchParams.set('opsProject', extra.projectId)
     if (extra.equipmentName) url.searchParams.set('equipmentName', extra.equipmentName)
+  }
+  if (page === 'maintenance') {
+    if (extra.tab && extra.tab !== 'planner') url.searchParams.set('maintTab', extra.tab)
+    if (extra.pmState && extra.pmState !== 'all') url.searchParams.set('pmState', extra.pmState)
   }
 
   const filter = extra.fleetFilter
@@ -411,7 +419,7 @@ function AppShell() {
             />
           </Suspense>
         ) : <ModuleNotActive page={page} />
-      case 'maintenance':  return wrap(MaintenancePage,    MODULES.MAINTENANCE)
+      case 'maintenance':  return wrap(MaintenancePage, MODULES.MAINTENANCE, { initialTab: navExtra.tab, initialPmState: navExtra.pmState })
       case 'inventory':
         if (hasModule && !hasModule(MODULES.INVENTORY)) return isOnline ? <ModuleNotActive page="inventory" /> : <OfflineScreen />
         return (
