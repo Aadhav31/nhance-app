@@ -6,7 +6,7 @@ import {
 } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
-import { equipmentPlanningState, localDateKey } from '../../lib/deploymentPlanner'
+import { addDateDays, equipmentPlanningState, localDateKey } from '../../lib/deploymentPlanner'
 import { buildOperationsIntelligence } from '../../lib/operationsIntelligence'
 
 const STATUS = {
@@ -17,11 +17,7 @@ const STATUS = {
 }
 
 const today = localDateKey
-const dateAfter = (days) => {
-  const value = new Date()
-  value.setDate(value.getDate() + days)
-  return value.toISOString().slice(0, 10)
-}
+const dateAfter = days => addDateDays(today(), days)
 
 function useControlTower(companyId) {
   return useQuery({
@@ -128,6 +124,7 @@ export default function ControlTowerPage({ onNavigate }) {
 
   const counts = data.equipment.reduce((acc, item) => ({ ...acc, [item.status]: (acc[item.status] || 0) + 1 }), {})
   const available = data.equipment.filter(item => item.status !== 'disposed' && equipmentPlanningState(item, data.deployments, data.plans, today(), today()).status === 'available').length
+  const sevenDayDrilldown = { from: dateAfter(-6), to: today() }
 
   return (
     <div className="p-4 md:p-6 space-y-6 max-w-7xl mx-auto">
@@ -164,7 +161,7 @@ export default function ControlTowerPage({ onNavigate }) {
           <div className="space-y-2">
             <AttentionRow icon={ShieldAlert} tone="bg-red-500/10 text-red-400" title={`${data.jobCards.length} open job cards`} detail={data.jobCards[0]?.complaint || 'No unresolved repair complaints'} action="Open workshop" onClick={() => onNavigate('maintenance', { tab: 'workshop', workshopStatus: 'active' })} />
             <AttentionRow icon={CalendarClock} tone="bg-amber-500/10 text-amber-400" title={`${insight.pmDue.length} PM services approaching`} detail="Due within 14 days or the configured operating-hour alert" action="Open PM planner" onClick={() => onNavigate('maintenance', { tab: 'planner', pmState: 'action_due' })} />
-            <AttentionRow icon={CircleOff} tone="bg-blue-500/10 text-blue-400" title={`${insight.missingLogAssets.length} deployed assets with missing daily logs`} detail="Open the exact machine and site drill-down" action="View filtered" onClick={() => onNavigate('operations', { tab: 'intelligence', metric: 'missing_logs' })} />
+            <AttentionRow icon={CircleOff} tone="bg-blue-500/10 text-blue-400" title={`${insight.missingLogAssets.length} deployed assets with missing daily logs`} detail="Open the exact machine and site drill-down" action="View filtered" onClick={() => onNavigate('operations', { tab: 'intelligence', metric: 'missing_logs', ...sevenDayDrilldown })} />
             <AttentionRow icon={ShieldAlert} tone="bg-purple-500/10 text-purple-400" title={`${data.documents.length} documents expiring`} detail="Insurance, permit, fitness or compliance due in 30 days" action="View filtered" onClick={() => onNavigate('fleet', { fleetFilter: { kind: 'equipment_ids', ids: [...new Set(data.documents.map(item => item.equipment_id).filter(Boolean))], label: 'Expiring documents' } })} />
           </div>
         </section>
@@ -173,8 +170,8 @@ export default function ControlTowerPage({ onNavigate }) {
           <h2 className="text-sm font-bold text-slate-100">Seven-day performance</h2>
           <p className="text-xs text-slate-500 mt-0.5 mb-4">Based on daily operations entries</p>
           <div className="grid grid-cols-2 gap-3">
-            <button onClick={() => onNavigate('operations', { tab: 'intelligence', metric: 'hours' })} className="rounded-xl bg-dark-700/60 border border-dark-700 hover:border-primary-500/50 p-4 text-left"><Gauge className="w-5 h-5 text-primary-400" /><p className="text-2xl font-bold text-slate-100 mt-3">{insight.hours.toFixed(1)}</p><p className="text-xs text-slate-500">Operating hours · view machines</p></button>
-            <button onClick={() => onNavigate('operations', { tab: 'intelligence', metric: 'fuel' })} className="rounded-xl bg-dark-700/60 border border-dark-700 hover:border-primary-500/50 p-4 text-left"><Fuel className="w-5 h-5 text-amber-400" /><p className="text-2xl font-bold text-slate-100 mt-3">{insight.fuel.toFixed(0)} L</p><p className="text-xs text-slate-500">Fuel consumed · view machines</p></button>
+            <button onClick={() => onNavigate('operations', { tab: 'intelligence', metric: 'hours', ...sevenDayDrilldown })} className="rounded-xl bg-dark-700/60 border border-dark-700 hover:border-primary-500/50 p-4 text-left"><Gauge className="w-5 h-5 text-primary-400" /><p className="text-2xl font-bold text-slate-100 mt-3">{insight.hours.toFixed(1)}</p><p className="text-xs text-slate-500">Operating hours · view machines</p></button>
+            <button onClick={() => onNavigate('operations', { tab: 'intelligence', metric: 'fuel', ...sevenDayDrilldown })} className="rounded-xl bg-dark-700/60 border border-dark-700 hover:border-primary-500/50 p-4 text-left"><Fuel className="w-5 h-5 text-amber-400" /><p className="text-2xl font-bold text-slate-100 mt-3">{insight.fuel.toFixed(0)} L</p><p className="text-xs text-slate-500">Fuel consumed · view machines</p></button>
           </div>
           <div className="grid sm:grid-cols-2 gap-2 mt-3">
             <button onClick={() => onNavigate('operations', { tab: 'site_logs' })} className="btn-primary w-full justify-center text-sm">Record today&apos;s logs</button>

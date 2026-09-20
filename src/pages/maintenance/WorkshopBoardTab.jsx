@@ -420,7 +420,7 @@ function JobDetailPanel({ job, companyId, data, role, onClose, onChanged }) {
   )
 }
 
-export default function WorkshopBoardTab({ companyId, role, initialStatus = 'active' }) {
+export default function WorkshopBoardTab({ companyId, role, initialStatus = 'active', onFilterChange }) {
   const qc = useQueryClient()
   const [filter, setFilter] = useState(initialStatus || 'active')
   const [search, setSearch] = useState('')
@@ -429,6 +429,15 @@ export default function WorkshopBoardTab({ companyId, role, initialStatus = 'act
   const [createPrefill, setCreatePrefill] = useState(null)
   const [selectedId, setSelectedId] = useState(null)
   const canManage = ['supervisor', 'manager', 'admin', 'superadmin'].includes(role)
+
+  useEffect(() => {
+    setFilter(initialStatus || 'active')
+  }, [initialStatus])
+
+  const selectFilter = value => {
+    setFilter(value)
+    onFilterChange?.(value)
+  }
 
   const query = useQuery({
     queryKey: ['workshop-board', companyId],
@@ -498,15 +507,15 @@ export default function WorkshopBoardTab({ companyId, role, initialStatus = 'act
       <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-base font-bold text-slate-100">Workshop execution board</h2><p className="mt-1 text-xs text-slate-500">Complaint → diagnosis → parts → repair → testing → release</p></div>{canManage ? <button type="button" onClick={() => startCreate(null)} className="btn-primary"><Plus className="h-4 w-4" />New job card</button> : null}</div>
 
       <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-9">
-        <MetricTile active={filter === 'active'} icon={Wrench} label="All Active" value={metrics.active} tone="text-primary-400" onClick={() => setFilter('active')} />
-        <MetricTile active={filter === 'open'} icon={ClipboardCheck} label="Open" value={metrics.open} tone="text-slate-300" onClick={() => setFilter('open')} />
-        <MetricTile active={filter === 'assigned'} icon={UserRoundCheck} label="Assigned" value={metrics.assigned} tone="text-cyan-400" onClick={() => setFilter('assigned')} />
-        <MetricTile active={filter === 'awaiting_parts'} icon={Boxes} label="Parts" value={metrics.awaiting_parts} tone="text-amber-400" onClick={() => setFilter('awaiting_parts')} />
-        <MetricTile active={filter === 'in_progress'} icon={PlayCircle} label="In Progress" value={metrics.in_progress} tone="text-blue-400" onClick={() => setFilter('in_progress')} />
-        <MetricTile active={filter === 'testing'} icon={TestTube2} label="Testing" value={metrics.testing} tone="text-purple-400" onClick={() => setFilter('testing')} />
-        <MetricTile active={filter === 'pending_approval'} icon={ShieldCheck} label="Approval" value={metrics.pending_approval} tone="text-orange-400" onClick={() => setFilter('pending_approval')} />
-        <MetricTile active={filter === 'overdue'} icon={AlertTriangle} label="Overdue" value={metrics.overdue} tone="text-red-400" onClick={() => setFilter('overdue')} />
-        <MetricTile active={filter === 'closed'} icon={CheckCircle2} label="Closed" value={metrics.closed} tone="text-emerald-400" onClick={() => setFilter('closed')} />
+        <MetricTile active={filter === 'active'} icon={Wrench} label="All Active" value={metrics.active} tone="text-primary-400" onClick={() => selectFilter('active')} />
+        <MetricTile active={filter === 'open'} icon={ClipboardCheck} label="Open" value={metrics.open} tone="text-slate-300" onClick={() => selectFilter('open')} />
+        <MetricTile active={filter === 'assigned'} icon={UserRoundCheck} label="Assigned" value={metrics.assigned} tone="text-cyan-400" onClick={() => selectFilter('assigned')} />
+        <MetricTile active={filter === 'awaiting_parts'} icon={Boxes} label="Parts" value={metrics.awaiting_parts} tone="text-amber-400" onClick={() => selectFilter('awaiting_parts')} />
+        <MetricTile active={filter === 'in_progress'} icon={PlayCircle} label="In Progress" value={metrics.in_progress} tone="text-blue-400" onClick={() => selectFilter('in_progress')} />
+        <MetricTile active={filter === 'testing'} icon={TestTube2} label="Testing" value={metrics.testing} tone="text-purple-400" onClick={() => selectFilter('testing')} />
+        <MetricTile active={filter === 'pending_approval'} icon={ShieldCheck} label="Approval" value={metrics.pending_approval} tone="text-orange-400" onClick={() => selectFilter('pending_approval')} />
+        <MetricTile active={filter === 'overdue'} icon={AlertTriangle} label="Overdue" value={metrics.overdue} tone="text-red-400" onClick={() => selectFilter('overdue')} />
+        <MetricTile active={filter === 'closed'} icon={CheckCircle2} label="Closed" value={metrics.closed} tone="text-emerald-400" onClick={() => selectFilter('closed')} />
       </div>
 
       <div className="grid gap-3 sm:grid-cols-3"><div className="rounded-xl border border-dark-700 bg-dark-800 p-3"><p className="text-[11px] text-slate-500">Active cost exposure</p><p className="mt-1 text-lg font-bold text-emerald-400">{money(metrics.activeCost)}</p></div><div className="rounded-xl border border-dark-700 bg-dark-800 p-3"><p className="text-[11px] text-slate-500">Recorded active downtime</p><p className="mt-1 text-lg font-bold text-orange-400">{metrics.activeDowntime.toFixed(1)} hrs</p></div><div className="rounded-xl border border-dark-700 bg-dark-800 p-3"><p className="text-[11px] text-slate-500">MTTR from closed jobs</p><p className="mt-1 text-lg font-bold text-primary-400">{metrics.mttr.toFixed(1)} hrs</p></div></div>
@@ -515,7 +524,7 @@ export default function WorkshopBoardTab({ companyId, role, initialStatus = 'act
 
       <div className="flex flex-wrap items-center gap-2 rounded-xl border border-dark-700 bg-dark-800 p-3"><div className="relative min-w-[220px] flex-1"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" /><input value={search} onChange={event => setSearch(event.target.value)} className={`${fieldClass} pl-9`} placeholder="Search job, machine, complaint, technician…" /></div><select value={typeFilter} onChange={event => setTypeFilter(event.target.value)} className="rounded-xl border border-dark-600 bg-dark-700 px-3 py-2 text-sm text-slate-200 outline-none"><option value="all">All job types</option>{Object.entries(TYPE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></div>
 
-      <div className="flex items-center justify-between"><div><p className="text-sm font-bold text-slate-200">{filterLabel}</p><p className="text-xs text-slate-500">{rows.length} matching job card{rows.length === 1 ? '' : 's'} — tile filter applied exactly</p></div>{filter !== 'active' ? <button type="button" onClick={() => setFilter('active')} className="text-xs text-primary-400 hover:text-primary-300">Clear filter</button> : null}</div>
+      <div className="flex items-center justify-between"><div><p className="text-sm font-bold text-slate-200">{filterLabel}</p><p className="text-xs text-slate-500">{rows.length} matching job card{rows.length === 1 ? '' : 's'} — tile filter applied exactly</p></div>{filter !== 'active' ? <button type="button" onClick={() => selectFilter('active')} className="text-xs text-primary-400 hover:text-primary-300">Clear filter</button> : null}</div>
 
       {rows.length === 0 ? <div className="rounded-2xl border border-dark-700 bg-dark-800 py-16 text-center"><Wrench className="mx-auto h-10 w-10 text-slate-700" /><p className="mt-3 text-sm font-semibold text-slate-400">No job cards match {filterLabel.toLowerCase()}</p><p className="mt-1 text-xs text-slate-600">Choose another workflow tile or create a new job card.</p></div> : <div className="grid gap-3 xl:grid-cols-2">{rows.map(job => {
         const stage = workshopStage(job)
