@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react'
+import { useState, useMemo, useCallback, useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
@@ -8,7 +8,7 @@ import {
   Plus, X, Search, ChevronDown, ChevronRight, Trash2, Pencil,
   FileText, FolderOpen, Loader2, IndianRupee, ArrowLeft, Check,
   ClipboardList, Building2, CalendarDays, Hash, AlertTriangle,
-  TrendingUp, BarChart3, Receipt,
+  TrendingUp, BarChart3, Receipt, RefreshCw,
 } from 'lucide-react'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -69,10 +69,9 @@ function Field({ label, children, hint }) {
 }
 
 // ── BOQ List ──────────────────────────────────────────────────────────────────
-function BOQList({ companyId, session, onSelect }) {
+function BOQList({ companyId, session, onSelect, statusFilter, onStatusChange, initialBoqId }) {
   const qc = useQueryClient()
   const [search, setSearch] = useState('')
-  const [statusFilter, setStatusFilter] = useState('all')
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving] = useState(false)
   const blank = () => ({
@@ -85,11 +84,12 @@ function BOQList({ companyId, session, onSelect }) {
   const [form, setForm] = useState(blank())
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
 
-  const { data: boqs = [], isLoading } = useQuery({
+  const { data: boqs = [], isLoading, isError, error, refetch } = useQuery({
     queryKey: ['boq_documents', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('boq_documents').select('*')
+      const { data, error } = await supabase.from('boq_documents').select('*')
         .eq('company_id', companyId).order('created_at', { ascending: false })
+      if (error) throw error
       return data || []
     },
     enabled: !!companyId,
@@ -97,7 +97,8 @@ function BOQList({ companyId, session, onSelect }) {
   const { data: clients = [] } = useQuery({
     queryKey: ['clients_simple', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('clients').select('id, display_name, business_name').eq('company_id', companyId).order('display_name')
+      const { data, error } = await supabase.from('clients').select('id, display_name, business_name').eq('company_id', companyId).order('display_name')
+      if (error) throw error
       return data || []
     },
     enabled: !!companyId,
@@ -105,7 +106,8 @@ function BOQList({ companyId, session, onSelect }) {
   const { data: projects = [] } = useQuery({
     queryKey: ['projects_simple', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('projects').select('id, name').eq('company_id', companyId).order('name')
+      const { data, error } = await supabase.from('projects').select('id, project_name, project_code').eq('company_id', companyId).order('project_name')
+      if (error) throw error
       return data || []
     },
     enabled: !!companyId,
@@ -118,6 +120,12 @@ function BOQList({ companyId, session, onSelect }) {
       (!q || b.title.toLowerCase().includes(q) || (b.contract_number || '').toLowerCase().includes(q) || (b.client_name || '').toLowerCase().includes(q))
     )
   }, [boqs, search, statusFilter])
+
+  useEffect(() => {
+    if (!initialBoqId || boqs.length === 0) return
+    const match = boqs.find(boq => boq.id === initialBoqId)
+    if (match) onSelect(match, { fromUrl: true })
+  }, [boqs, initialBoqId, onSelect])
 
   const handleCreate = async () => {
     if (!form.title.trim()) { toast.error('Title required'); return }
@@ -136,7 +144,7 @@ function BOQList({ companyId, session, onSelect }) {
         client_id: form.client_id || null,
         client_name: client ? (client.display_name || client.business_name) : null,
         project_id: form.project_id || null,
-        project_name: project?.name || null,
+        project_name: project?.project_name || null,
         contract_type: form.contract_type,
         valid_from: form.valid_from || null,
         valid_to: form.valid_to || null,
@@ -174,7 +182,8 @@ function BOQList({ companyId, session, onSelect }) {
             placeholder="Search by title, contract no., client…" value={search} onChange={e => setSearch(e.target.value)} />
         </div>
         <select className="text-xs bg-dark-700 border border-dark-600 rounded-lg px-2 py-1.5 text-slate-300"
-          value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+          aria-label="Filter BOQs by status"
+          value={statusFilter} onChange={e => onStatusChange(e.target.value)}>
           <option value="all">All Status</option>
           {Object.entries(STATUS_CFG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
         </select>
@@ -187,8 +196,20 @@ function BOQList({ companyId, session, onSelect }) {
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 pb-4 pt-3 space-y-2">
+        {!isLoading && !isError && (statusFilter !== 'all' || search.trim()) && (
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-primary-500/20 bg-primary-500/5 px-3 py-2">
+            <p className="text-xs text-slate-400">{filtered.length} BOQ{filtered.length === 1 ? '' : 's'} match the active filters</p>
+            <button type="button" onClick={() => { setSearch(''); onStatusChange('all') }} className="text-xs text-primary-400 hover:text-primary-300">Clear filters</button>
+          </div>
+        )}
         {isLoading ? (
           <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-primary-400" /></div>
+        ) : isError ? (
+          <div className="flex flex-col items-center py-16 gap-3 text-center">
+            <AlertTriangle className="w-10 h-10 text-red-400" />
+            <div><p className="text-sm font-medium text-red-300">BOQs could not be loaded</p><p className="mt-1 text-xs text-slate-500">{error?.message || 'Please retry the contract register.'}</p></div>
+            <button type="button" onClick={() => refetch()} className="btn-secondary text-sm"><RefreshCw className="w-4 h-4" />Retry</button>
+          </div>
         ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center py-16 gap-3 text-slate-500">
             <ClipboardList className="w-12 h-12 text-slate-700" />
@@ -270,7 +291,7 @@ function BOQList({ companyId, session, onSelect }) {
                 <Field label="Project">
                   <select className={inp()} value={form.project_id} onChange={e => setF('project_id', e.target.value)}>
                     <option value="">-- None --</option>
-                    {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    {projects.map(p => <option key={p.id} value={p.id}>{p.project_name}{p.project_code ? ` · ${p.project_code}` : ''}</option>)}
                   </select>
                 </Field>
               </div>
@@ -1111,9 +1132,33 @@ function BOQDetail({ boq: initialBoq, companyId, session, onBack }) {
 }
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
-export default function BOQPage() {
+export default function BOQPage({ onNavigate, initialBoqId = null, initialStatus = 'all' }) {
   const { companyId, session } = useAuth()
   const [selectedBoq, setSelectedBoq] = useState(null)
+  const [statusFilter, setStatusFilter] = useState(() => initialStatus in STATUS_CFG ? initialStatus : 'all')
+
+  useEffect(() => {
+    setStatusFilter(initialStatus in STATUS_CFG ? initialStatus : 'all')
+  }, [initialStatus])
+
+  useEffect(() => {
+    if (!initialBoqId) setSelectedBoq(null)
+  }, [initialBoqId])
+
+  const handleSelect = useCallback((boq, { fromUrl = false } = {}) => {
+    setSelectedBoq(boq)
+    if (!fromUrl) onNavigate?.('boq', { boqId: boq.id, status: statusFilter })
+  }, [onNavigate, statusFilter])
+
+  const handleStatusChange = useCallback((status) => {
+    setStatusFilter(status)
+    onNavigate?.('boq', { status }, { replace: true })
+  }, [onNavigate])
+
+  const handleBack = () => {
+    setSelectedBoq(null)
+    onNavigate?.('boq', { status: statusFilter }, { replace: true })
+  }
 
   return (
     <div className="flex flex-col h-full">
@@ -1130,8 +1175,9 @@ export default function BOQPage() {
       </div>
       <div className="flex-1 overflow-hidden">
         {selectedBoq
-          ? <BOQDetail boq={selectedBoq} companyId={companyId} session={session} onBack={() => setSelectedBoq(null)} />
-          : <BOQList   companyId={companyId} session={session} onSelect={setSelectedBoq} />
+          ? <BOQDetail boq={selectedBoq} companyId={companyId} session={session} onBack={handleBack} />
+          : <BOQList companyId={companyId} session={session} onSelect={handleSelect}
+              statusFilter={statusFilter} onStatusChange={handleStatusChange} initialBoqId={initialBoqId} />
         }
       </div>
     </div>
