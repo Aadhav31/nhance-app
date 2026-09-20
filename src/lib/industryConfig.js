@@ -9,7 +9,7 @@
  *   - New industries (crusher, readymix, automobile) → custom nav defined here.
  */
 
-import { MODULES, ROLES } from './constants'
+import { MODULES, ROLES } from './constants.js'
 
 // ── Industry display labels ───────────────────────────────────────────────────
 export const INDUSTRY_LABELS = {

@@ -1,27 +1,14 @@
 import { useState, useEffect } from 'react'
 import * as Icons from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
-import { NAV_ITEMS } from '../../lib/constants'
-import { getIndustryNav } from '../../lib/industryConfig'
+import { getAccessibleNavigation } from '../../lib/navigation'
 import { cn, initials } from '../../lib/utils'
 import { ChevronLeft, ChevronDown, LogOut, User } from 'lucide-react'
-
-// Items that live in the RightBar — exclude from left nav
-const RIGHT_BAR_KEYS = new Set(['settings', 'audit_log', 'approval_center', 'company', 'chat'])
 
 export default function Sidebar({ activePage, onNavigate, collapsed, onToggle }) {
   const { userProfile, company, role, hasModule, signOut, industryType } = useAuth()
 
-  const sourceNav = getIndustryNav(industryType) ?? NAV_ITEMS
-
-  const filteredNav = sourceNav.map(section => ({
-    ...section,
-    items: section.items.filter(item =>
-      !RIGHT_BAR_KEYS.has(item.key) &&
-      hasModule(item.module) &&
-      item.roles.includes(role)
-    ),
-  })).filter(section => section.items.length > 0)
+  const filteredNav = getAccessibleNavigation(industryType, role, hasModule)
 
   const activeSection = filteredNav.find(s => s.items.some(i => i.key === activePage))?.section
 
@@ -66,7 +53,10 @@ export default function Sidebar({ activePage, onNavigate, collapsed, onToggle })
           </div>
         )}
         <button
+          type="button"
           onClick={onToggle}
+          aria-label={collapsed ? 'Expand navigation' : 'Collapse navigation'}
+          aria-expanded={!collapsed}
           className="w-7 h-7 flex items-center justify-center rounded-md text-slate-400 hover:text-slate-100 hover:bg-dark-700 transition-all flex-shrink-0"
         >
           <ChevronLeft className={cn('w-4 h-4 transition-transform', collapsed && 'rotate-180')} />
@@ -85,7 +75,9 @@ export default function Sidebar({ activePage, onNavigate, collapsed, onToggle })
               {/* Section header — clickable toggle (expanded only) */}
               {!collapsed ? (
                 <button
+                  type="button"
                   onClick={() => toggleSection(section.section)}
+                  aria-expanded={isOpen}
                   className={cn(
                     'w-full flex items-center justify-between px-3 py-2 rounded-lg mb-0.5 transition-all duration-150 group',
                     hasActive && !isOpen
@@ -119,8 +111,10 @@ export default function Sidebar({ activePage, onNavigate, collapsed, onToggle })
                   const isActive = activePage === item.key
                   return (
                     <button
+                      type="button"
                       key={item.key}
                       onClick={() => onNavigate(item.key)}
+                      aria-current={isActive ? 'page' : undefined}
                       title={collapsed ? item.label : undefined}
                       style={!isActive ? { color: 'rgb(var(--t2))' } : undefined}
                       className={cn(

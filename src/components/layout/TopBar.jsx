@@ -18,11 +18,18 @@ const PAGE_TITLES = {
   operations:  { title: 'Daily Operations',         subtitle: 'Shifts, fuel & incidents' },
   maintenance: { title: 'Maintenance',              subtitle: 'Preventive & breakdown tracking' },
   inventory:   { title: 'Inventory',                subtitle: 'Spare parts & consumables' },
+  fieldexpense:{ title: 'Field Expenses',           subtitle: 'Site spending, evidence & approvals' },
   clients:     { title: 'Clients',                  subtitle: 'Client profiles & history' },
   projects:    { title: 'Projects',                 subtitle: 'Active & completed projects' },
   accounts:    { title: 'Accounts',                 subtitle: 'Invoices, expenses & payments' },
+  expenses:    { title: 'Expenses',                 subtitle: 'Company costs, allocations & evidence' },
+  planner:     { title: 'Expense Planner',          subtitle: 'Planned spending and due commitments' },
+  sales:       { title: 'Sales & Invoicing',        subtitle: 'Quotes, orders, invoices & receipts' },
+  purchase:    { title: 'Purchase',                 subtitle: 'Requests, orders, bills & payments' },
   reports:     { title: 'Reports',                  subtitle: 'Analytics & insights' },
+  financials:  { title: 'Financial Statements',     subtitle: 'Performance, position & cash movement' },
   hr:          { title: 'HR & Payroll',             subtitle: 'Operators, attendance & salary' },
+  letters:     { title: 'Letters',                  subtitle: 'Company letters and document records' },
   settings:    { title: 'Settings',                 subtitle: 'Company configuration' },
   profile:     { title: 'My Profile',               subtitle: 'Personal details & preferences' },
   superadmin:      { title: 'Nhance Admin',             subtitle: 'Platform management' },
@@ -32,6 +39,10 @@ const PAGE_TITLES = {
   chat:            { title: 'Team Chat',               subtitle: 'Channels, direct messages & calls' },
   ra_billing:      { title: 'RA Billing',              subtitle: 'Running account bills & payments' },
   hire_contracts:  { title: 'Hire Contracts',          subtitle: 'Equipment hire agreements' },
+  usage_billing:   { title: 'Usage Billing',           subtitle: 'Billable usage and rental charges' },
+  production:      { title: 'Production Tracker',      subtitle: 'Daily plant output and performance' },
+  crusher_sales:   { title: 'Crusher Sales',           subtitle: 'Dispatch, invoicing and collections' },
+  company:         { title: 'Company Profile',         subtitle: 'Business identity and registrations' },
   boq:             { title: 'BOQ',                     subtitle: 'Bill of Quantities' },
 }
 
@@ -71,7 +82,7 @@ export default function TopBar({ activePage, onMenuToggle, onNavigate }) {
   return (
     <header className="h-16 bg-dark-800 border-b border-dark-600 flex items-center px-6 gap-4 flex-shrink-0">
       {/* Mobile menu toggle */}
-      <button onClick={onMenuToggle} className="lg:hidden btn-ghost p-2">
+      <button type="button" onClick={onMenuToggle} aria-label="Open navigation" className="lg:hidden btn-ghost p-2">
         <Menu className="w-5 h-5" />
       </button>
 
@@ -89,8 +100,10 @@ export default function TopBar({ activePage, onMenuToggle, onNavigate }) {
         {session && (
           <div className="flex items-center bg-dark-700 border border-dark-600 rounded-lg p-0.5">
             <button
+              type="button"
               onClick={() => setMode('basic')}
               title="Basic mode — essential fields only"
+              aria-pressed={mode === 'basic'}
               className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
                 mode === 'basic'
                   ? 'bg-primary-600 text-white shadow-sm'
@@ -101,8 +114,10 @@ export default function TopBar({ activePage, onMenuToggle, onNavigate }) {
               Basic
             </button>
             <button
+              type="button"
               onClick={() => setMode('advanced')}
               title="Advanced mode — all fields"
+              aria-pressed={mode === 'advanced'}
               className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
                 mode === 'advanced'
                   ? 'bg-primary-600 text-white shadow-sm'
@@ -117,8 +132,10 @@ export default function TopBar({ activePage, onMenuToggle, onNavigate }) {
 
         {/* Light / Dark mode toggle */}
         <button
+          type="button"
           onClick={toggle}
           title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
           className="w-9 h-9 flex items-center justify-center rounded-lg hover:bg-dark-700 transition-all"
           style={{ color: 'rgb(var(--t2))' }}
         >
@@ -126,19 +143,23 @@ export default function TopBar({ activePage, onMenuToggle, onNavigate }) {
         </button>
 
         {/* Notifications / Approval Centre */}
-        <button
-          onClick={() => onNavigate?.('approval_center')}
-          title={pendingCount > 0 ? `${pendingCount} pending approval${pendingCount > 1 ? 's' : ''}` : 'Approval Centre'}
-          className="relative w-9 h-9 flex items-center justify-center rounded-lg hover:bg-dark-700 transition-all"
-          style={{ color: 'rgb(var(--t2))' }}
-        >
-          <Bell className="w-4 h-4" />
-          {pendingCount > 0 && (
-            <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] flex items-center justify-center px-1 rounded-full bg-red-500 text-[10px] font-bold text-white leading-none">
-              {pendingCount > 99 ? '99+' : pendingCount}
-            </span>
-          )}
-        </button>
+        {visibleRoles.length > 0 && (
+          <button
+            type="button"
+            onClick={() => onNavigate?.('approval_center')}
+            title={pendingCount > 0 ? `${pendingCount} pending approval${pendingCount > 1 ? 's' : ''}` : 'Approval Centre'}
+            aria-label={pendingCount > 0 ? `${pendingCount} pending approval${pendingCount > 1 ? 's' : ''}` : 'Approval Centre'}
+            className="relative w-9 h-9 flex items-center justify-center rounded-lg hover:bg-dark-700 transition-all"
+            style={{ color: 'rgb(var(--t2))' }}
+          >
+            <Bell className="w-4 h-4" />
+            {pendingCount > 0 && (
+              <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] flex items-center justify-center px-1 rounded-full bg-red-500 text-[10px] font-bold text-white leading-none">
+                {pendingCount > 99 ? '99+' : pendingCount}
+              </span>
+            )}
+          </button>
+        )}
 
         {/* Company badge */}
         {company && (

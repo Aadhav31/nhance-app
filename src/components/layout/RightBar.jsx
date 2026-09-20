@@ -8,7 +8,7 @@
  * Approval Centre shows a badge when there are pending requests.
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   MessageSquare, StickyNote, CheckCircle2,
   Shield, Settings, Building2,
@@ -120,6 +120,15 @@ export default function RightBar({
   onToggleNotes,
 }) {
   const { role, hasModule, companyId } = useAuth()
+  const visibleApprovalRoles = useMemo(() => (
+    role === ROLES.ADMIN
+      ? [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN]
+      : role === ROLES.MANAGER
+        ? [ROLES.MANAGER]
+        : role === ROLES.ACCOUNTS
+          ? [ROLES.ACCOUNTS]
+          : []
+  ), [role])
 
   // ── Pending approval count for badge ───────────────────────────────────────
   const [pendingCount, setPendingCount] = useState(0)
@@ -127,7 +136,7 @@ export default function RightBar({
   useEffect(() => {
     if (!companyId) return
     // Only fetch if user role can see approvals
-    if (![ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN].includes(role)) return
+    if (visibleApprovalRoles.length === 0) return
 
     const fetchPending = async () => {
       try {
@@ -136,6 +145,7 @@ export default function RightBar({
           .select('id', { count: 'exact', head: true })
           .eq('company_id', companyId)
           .eq('status', 'pending')
+          .in('required_role', visibleApprovalRoles)
         setPendingCount(count || 0)
       } catch {}
     }
@@ -143,7 +153,7 @@ export default function RightBar({
     fetchPending()
     const interval = setInterval(fetchPending, 60_000)
     return () => clearInterval(interval)
-  }, [companyId, role])
+  }, [companyId, visibleApprovalRoles])
 
   // Filter items by role + module
   const visibleTop    = ITEMS_TOP.filter(i => i.roles.includes(role) && hasModule(i.module))
