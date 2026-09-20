@@ -4,11 +4,12 @@ import { format } from 'date-fns'
 import toast from 'react-hot-toast'
 import {
   Wrench, Plus, X, ChevronRight, Loader2,
-  Calendar, CheckCircle, Circle, AlertCircle, Search, ClipboardList, History,
+  Calendar, CheckCircle, Circle, AlertCircle, Search, ClipboardList, History, Hammer,
 } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import PreventiveMaintenanceTab from './PreventiveMaintenanceTab'
+import WorkshopBoardTab from './WorkshopBoardTab'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 const today = () => new Date().toISOString().split('T')[0]
@@ -453,12 +454,12 @@ function RecordDetailModal({ record, companyId, onClose, onEdit }) {
 }
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
-export default function MaintenancePage({ initialTab = 'planner', initialPmState = 'all' }) {
+export default function MaintenancePage({ initialTab = 'workshop', initialPmState = 'all', initialWorkshopStatus = 'active' }) {
   const { companyId, session, role } = useAuth()
   const qc = useQueryClient()
   const canManage = ['supervisor', 'manager', 'admin', 'superadmin'].includes(role)
 
-  const [section, setSection] = useState(initialTab === 'records' ? 'records' : 'planner')
+  const [section, setSection] = useState(['workshop', 'planner', 'records'].includes(initialTab) ? initialTab : 'workshop')
   const [showCreate, setShowCreate] = useState(false)
   const [selected,   setSelected]   = useState(null)
   const [editTarget, setEditTarget] = useState(null)
@@ -529,7 +530,7 @@ export default function MaintenancePage({ initialTab = 'planner', initialPmState
       {/* Header */}
       <div className="flex items-center gap-3 px-5 py-3 border-b border-dark-700 flex-shrink-0">
         <Wrench className="w-5 h-5 text-primary-400" />
-        <div><h1 className="text-base font-bold text-slate-100">Maintenance &amp; PM</h1><p className="text-[10px] text-slate-500">Automated service planning and repair history</p></div>
+        <div><h1 className="text-base font-bold text-slate-100">Maintenance &amp; Workshop</h1><p className="text-[10px] text-slate-500">Job execution, automated service planning and repair history</p></div>
         <div className="flex-1" />
         {canManage && section === 'records' && (
           <button onClick={() => setShowCreate(true)}
@@ -540,11 +541,16 @@ export default function MaintenancePage({ initialTab = 'planner', initialPmState
       </div>
 
       <div className="flex shrink-0 gap-1 border-b border-dark-700 bg-dark-900 px-4 pt-2">
+        <button type="button" onClick={() => setSection('workshop')} className={`flex items-center gap-1.5 border-b-2 px-3 py-2 text-xs ${section === 'workshop' ? 'border-primary-500 text-primary-400' : 'border-transparent text-slate-500'}`}><Hammer className="h-3.5 w-3.5" />Workshop Board</button>
         <button type="button" onClick={() => setSection('planner')} className={`flex items-center gap-1.5 border-b-2 px-3 py-2 text-xs ${section === 'planner' ? 'border-primary-500 text-primary-400' : 'border-transparent text-slate-500'}`}><ClipboardList className="h-3.5 w-3.5" />PM Planner</button>
         <button type="button" onClick={() => setSection('records')} className={`flex items-center gap-1.5 border-b-2 px-3 py-2 text-xs ${section === 'records' ? 'border-primary-500 text-primary-400' : 'border-transparent text-slate-500'}`}><History className="h-3.5 w-3.5" />Service History</button>
       </div>
 
-      {section === 'planner' ? (
+      {section === 'workshop' ? (
+        <div className="flex-1 overflow-y-auto p-4 md:p-5">
+          <WorkshopBoardTab companyId={companyId} role={role} initialStatus={initialWorkshopStatus} />
+        </div>
+      ) : section === 'planner' ? (
         <div className="flex-1 overflow-y-auto p-4 md:p-5">
           <PreventiveMaintenanceTab companyId={companyId} role={role} initialState={initialPmState} />
         </div>

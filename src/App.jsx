@@ -105,8 +105,9 @@ function readNavigationFromUrl() {
     if (params.get('equipmentName')) extra.equipmentName = params.get('equipmentName')
   }
   if (page === 'maintenance') {
-    extra.tab = params.get('maintTab') || 'planner'
+    extra.tab = params.get('maintTab') || 'workshop'
     extra.pmState = params.get('pmState') || 'all'
+    extra.workshopStatus = params.get('workshopStatus') || 'active'
   }
 
   return { page, extra }
@@ -114,7 +115,7 @@ function readNavigationFromUrl() {
 
 function writeNavigationToUrl(page, extra) {
   const url = new URL(window.location.href)
-  const navigationKeys = ['page', 'equipment', 'equipmentName', 'fleetFilter', 'fleetValue', 'fleetLabel', 'fleetIds', 'plannerStatus', 'project', 'opsTab', 'opsMetric', 'opsFrom', 'opsTo', 'opsProject', 'maintTab', 'pmState']
+  const navigationKeys = ['page', 'equipment', 'equipmentName', 'fleetFilter', 'fleetValue', 'fleetLabel', 'fleetIds', 'plannerStatus', 'project', 'opsTab', 'opsMetric', 'opsFrom', 'opsTo', 'opsProject', 'maintTab', 'pmState', 'workshopStatus']
   navigationKeys.forEach(key => url.searchParams.delete(key))
 
   if (page !== 'dashboard') url.searchParams.set('page', page)
@@ -130,8 +131,9 @@ function writeNavigationToUrl(page, extra) {
     if (extra.equipmentName) url.searchParams.set('equipmentName', extra.equipmentName)
   }
   if (page === 'maintenance') {
-    if (extra.tab && extra.tab !== 'planner') url.searchParams.set('maintTab', extra.tab)
+    if (extra.tab && extra.tab !== 'workshop') url.searchParams.set('maintTab', extra.tab)
     if (extra.pmState && extra.pmState !== 'all') url.searchParams.set('pmState', extra.pmState)
+    if (extra.workshopStatus && extra.workshopStatus !== 'active') url.searchParams.set('workshopStatus', extra.workshopStatus)
   }
 
   const filter = extra.fleetFilter
@@ -427,7 +429,7 @@ function AppShell() {
             />
           </Suspense>
         ) : <ModuleNotActive page={page} />
-      case 'maintenance':  return wrap(MaintenancePage, MODULES.MAINTENANCE, { initialTab: navExtra.tab, initialPmState: navExtra.pmState })
+      case 'maintenance':  return wrap(MaintenancePage, MODULES.MAINTENANCE, { initialTab: navExtra.tab, initialPmState: navExtra.pmState, initialWorkshopStatus: navExtra.workshopStatus })
       case 'inventory':
         if (hasModule && !hasModule(MODULES.INVENTORY)) return isOnline ? <ModuleNotActive page="inventory" /> : <OfflineScreen />
         return (
