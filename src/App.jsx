@@ -100,7 +100,21 @@ function readNavigationFromUrl() {
     extra.equipmentId = params.get('fuelEquipment') || 'all'
     extra.projectId = params.get('fuelProject') || 'all'
   }
-  if (page === 'projects' && params.get('project')) extra.projectId = params.get('project')
+  if (page === 'projects') {
+    if (params.get('project')) extra.projectId = params.get('project')
+    extra.status = params.get('projectStatus') || 'all'
+  }
+  if (page === 'hire_contracts') extra.status = params.get('hireStatus') || 'all'
+  if (page === 'boq') {
+    extra.status = params.get('boqStatus') || 'all'
+    extra.boqId = params.get('boq') || null
+  }
+  if (page === 'ra_billing') {
+    extra.metric = params.get('raMetric') || 'all'
+    extra.status = params.get('raStatus') || 'all'
+    extra.boqId = params.get('raBoq') || 'all'
+    extra.raId = params.get('raBill') || null
+  }
   if (page === 'operations') {
     extra.tab = params.get('opsTab') || 'today'
     extra.metric = params.get('opsMetric') || 'all'
@@ -124,7 +138,7 @@ function readNavigationFromUrl() {
 
 function writeNavigationToUrl(page, extra, { replace = false } = {}) {
   const url = new URL(window.location.href)
-  const navigationKeys = ['page', 'equipment', 'equipmentName', 'fleetFilter', 'fleetValue', 'fleetLabel', 'fleetIds', 'plannerStatus', 'project', 'opsTab', 'opsMetric', 'opsFrom', 'opsTo', 'opsProject', 'maintTab', 'pmState', 'workshopStatus', 'fuelRange', 'fuelMetric', 'fuelEquipment', 'fuelProject', 'profitDimension', 'profitMetric']
+  const navigationKeys = ['page', 'equipment', 'equipmentName', 'fleetFilter', 'fleetValue', 'fleetLabel', 'fleetIds', 'plannerStatus', 'project', 'projectStatus', 'hireStatus', 'boqStatus', 'boq', 'raMetric', 'raStatus', 'raBoq', 'raBill', 'opsTab', 'opsMetric', 'opsFrom', 'opsTo', 'opsProject', 'maintTab', 'pmState', 'workshopStatus', 'fuelRange', 'fuelMetric', 'fuelEquipment', 'fuelProject', 'profitDimension', 'profitMetric']
   navigationKeys.forEach(key => url.searchParams.delete(key))
 
   if (page !== 'dashboard') url.searchParams.set('page', page)
@@ -136,7 +150,21 @@ function writeNavigationToUrl(page, extra, { replace = false } = {}) {
     if (extra.equipmentId && extra.equipmentId !== 'all') url.searchParams.set('fuelEquipment', extra.equipmentId)
     if (extra.projectId && extra.projectId !== 'all') url.searchParams.set('fuelProject', extra.projectId)
   }
-  if (page === 'projects' && extra.projectId) url.searchParams.set('project', extra.projectId)
+  if (page === 'projects') {
+    if (extra.projectId) url.searchParams.set('project', extra.projectId)
+    if (extra.status && extra.status !== 'all') url.searchParams.set('projectStatus', extra.status)
+  }
+  if (page === 'hire_contracts' && extra.status && extra.status !== 'all') url.searchParams.set('hireStatus', extra.status)
+  if (page === 'boq') {
+    if (extra.status && extra.status !== 'all') url.searchParams.set('boqStatus', extra.status)
+    if (extra.boqId) url.searchParams.set('boq', extra.boqId)
+  }
+  if (page === 'ra_billing') {
+    if (extra.metric && extra.metric !== 'all') url.searchParams.set('raMetric', extra.metric)
+    if (extra.status && extra.status !== 'all') url.searchParams.set('raStatus', extra.status)
+    if (extra.boqId && extra.boqId !== 'all') url.searchParams.set('raBoq', extra.boqId)
+    if (extra.raId) url.searchParams.set('raBill', extra.raId)
+  }
   if (page === 'operations') {
     if (extra.tab && extra.tab !== 'today') url.searchParams.set('opsTab', extra.tab)
     if (extra.metric && extra.metric !== 'all') url.searchParams.set('opsMetric', extra.metric)
@@ -467,12 +495,12 @@ function AppShell() {
           </Suspense>
         )
       case 'clients':      return wrap(ClientsPage,        MODULES.CLIENTS_PROJECTS)
-      case 'projects':     return wrap(ProjectsPage,       MODULES.CLIENTS_PROJECTS, { initialProjectId: navExtra.projectId })
-      case 'boq':          return wrap(BOQPage,            MODULES.CLIENTS_PROJECTS)
+      case 'projects':     return wrap(ProjectsPage,       MODULES.CLIENTS_PROJECTS, { onNavigate: handleNavigate, initialProjectId: navExtra.projectId, initialStatus: navExtra.status })
+      case 'boq':          return wrap(BOQPage,            MODULES.CLIENTS_PROJECTS, { onNavigate: handleNavigate, initialBoqId: navExtra.boqId, initialStatus: navExtra.status })
       case 'ra_billing':
         return hasModule(MODULES.CLIENTS_PROJECTS) ? (
           <Suspense fallback={<LoadingScreen message="Loading RA Billing…" />}>
-            <RABillingPage />
+            <RABillingPage onNavigate={handleNavigate} initialMetric={navExtra.metric} initialStatus={navExtra.status} initialBoqId={navExtra.boqId} initialRaId={navExtra.raId} />
           </Suspense>
         ) : <ModuleNotActive page="ra_billing" />
       case 'accounts':
@@ -548,7 +576,7 @@ function AppShell() {
       case 'hire_contracts':
         return (
           <Suspense fallback={<LoadingScreen message="Loading hire contracts…" />}>
-            <HireContractsPage />
+            <HireContractsPage onNavigate={handleNavigate} initialStatus={navExtra.status} />
           </Suspense>
         )
       case 'active_deployments':

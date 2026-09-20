@@ -3011,20 +3011,20 @@ function ProjectCard({ project, docTotals, onClick }) {
 
 // ── Main Page ──────────────────────────────────────────────────────────────────
 
-export default function ProjectsPage({ initialProjectId = null }) {
+export default function ProjectsPage({ onNavigate, initialProjectId = null, initialStatus = 'all' }) {
   const { userProfile, role } = useAuth()
   const qc = useQueryClient()
   const isAdmin = ['admin','superadmin','manager'].includes(role)
   const companyId = userProfile?.company_id
 
   const [search, setSearch]     = useState('')
-  const [statusFilter, setStatus] = useState('all')
+  const [statusFilter, setStatus] = useState(() => initialStatus === 'all' || STATUS_CONFIG[initialStatus] ? initialStatus : 'all')
   const [showAdd, setShowAdd]   = useState(false)
   const [editing, setEditing]   = useState(null)
   const [viewing, setViewing]   = useState(null)
   const openedProjectId = useRef(null)
 
-  const { data: projects = [], isLoading } = useQuery({
+  const { data: projects = [], isLoading, isError, error, refetch } = useQuery({
     queryKey: ['projects', companyId],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -3040,10 +3040,36 @@ export default function ProjectsPage({ initialProjectId = null }) {
   })
 
   useEffect(() => {
-    if (!initialProjectId || openedProjectId.current === initialProjectId) return
+    if (!initialProjectId) {
+      setViewing(null)
+      openedProjectId.current = null
+      return
+    }
+    if (openedProjectId.current === initialProjectId) return
     const project = projects.find(item => item.id === initialProjectId)
     if (project) { setViewing(project); openedProjectId.current = initialProjectId }
   }, [initialProjectId, projects])
+
+  useEffect(() => {
+    setStatus(initialStatus === 'all' || STATUS_CONFIG[initialStatus] ? initialStatus : 'all')
+  }, [initialStatus])
+
+  const selectStatus = status => {
+    setStatus(status)
+    onNavigate?.('projects', { status }, { replace: true })
+  }
+
+  const openProject = project => {
+    setViewing(project)
+    openedProjectId.current = project.id
+    onNavigate?.('projects', { projectId: project.id, status: statusFilter })
+  }
+
+  const closeProject = () => {
+    setViewing(null)
+    openedProjectId.current = null
+    onNavigate?.('projects', { status: statusFilter }, { replace: true })
+  }
 
   const { data: clients = [] } = useQuery({
     queryKey: ['clients_dropdown', companyId],
@@ -3163,7 +3189,7 @@ export default function ProjectsPage({ initialProjectId = null }) {
         </div>
         <div className="flex gap-2 overflow-x-auto pb-1">
           {[['all','All'], ...Object.entries(STATUS_CONFIG).map(([k,v])=>[k,v.label])].map(([k,label]) => (
-            <button key={k} onClick={() => setStatus(k)}
+            <button key={k} onClick={() => selectStatus(k)} aria-pressed={statusFilter === k}
               className={`px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap transition-colors ${
                 statusFilter===k ? 'bg-primary-600 text-white' : 'bg-dark-700 text-slate-400 hover:text-slate-200'
               }`}>
@@ -3177,6 +3203,12 @@ export default function ProjectsPage({ initialProjectId = null }) {
       <div className="flex-1 overflow-y-auto p-6">
         {isLoading ? (
           <div className="flex items-center justify-center h-40 text-slate-500 text-sm">Loading…</div>
+        ) : isError ? (
+          <div className="flex h-60 flex-col items-center justify-center gap-3 text-center">
+            <AlertTriangle className="h-10 w-10 text-red-400" />
+            <div><p className="font-medium text-red-300">Projects could not be loaded</p><p className="mt-1 text-sm text-slate-500">{error?.message || 'Please retry the project register.'}</p></div>
+            <button type="button" onClick={() => refetch()} className="btn-secondary text-sm"><RefreshCw className="h-4 w-4" />Retry</button>
+          </div>
         ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-60 text-center">
             <FolderOpen className="w-10 h-10 text-slate-600 mb-3"/>
@@ -3189,7 +3221,7 @@ export default function ProjectsPage({ initialProjectId = null }) {
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filtered.map(p => <ProjectCard key={p.id} project={p} docTotals={docTotalsByProject[p.id]} onClick={() => setViewing(p)}/>)}
+            {filtered.map(p => <ProjectCard key={p.id} project={p} docTotals={docTotalsByProject[p.id]} onClick={() => openProject(p)}/>)}
           </div>
         )}
       </div>
@@ -3215,7 +3247,7 @@ export default function ProjectsPage({ initialProjectId = null }) {
           project={viewing}
           companyId={companyId}
           docTotals={docTotalsByProject[viewing?.id]}
-          onClose={() => setViewing(null)}
+          onClose={closeProject}
           onEdit={() => { setEditing(viewing); setViewing(null) }}
           onDelete={isAdmin ? () => handleDelete(viewing) : undefined}
         />
