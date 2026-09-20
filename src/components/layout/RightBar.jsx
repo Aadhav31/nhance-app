@@ -80,8 +80,12 @@ function RightBtn({ item, isActive, isOn, badge, onClick }) {
   const { Icon, label, color } = item
   return (
     <button
+      type="button"
       onClick={onClick}
       title={label}
+      aria-label={label}
+      aria-current={isActive ? 'page' : undefined}
+      aria-pressed={item.type === 'toggle' ? isOn : undefined}
       className={cn(
         'relative w-full flex flex-col items-center gap-1 py-3 transition-all duration-150 group',
         isActive || isOn
@@ -170,7 +174,7 @@ export default function RightBar({
   }
 
   return (
-    <aside className="hidden lg:flex flex-col bg-dark-800 border-l border-dark-700 flex-shrink-0 w-12">
+    <aside className="nhance-rightbar hidden lg:flex flex-col bg-dark-800 border-l border-dark-700 flex-shrink-0 w-12">
 
       {/* Top group: Chat, Notes */}
       <div className="border-b border-dark-700">

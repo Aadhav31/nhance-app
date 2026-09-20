@@ -7,10 +7,23 @@ import { ChevronLeft, ChevronDown, LogOut, User } from 'lucide-react'
 
 export default function Sidebar({ activePage, onNavigate, collapsed, onToggle }) {
   const { userProfile, company, role, hasModule, signOut, industryType } = useAuth()
+  const [navQuery, setNavQuery] = useState('')
 
-  const filteredNav = getAccessibleNavigation(industryType, role, hasModule)
+  const accessibleNav = getAccessibleNavigation(industryType, role, hasModule)
+  const normalizedQuery = navQuery.trim().toLowerCase()
+  const filteredNav = normalizedQuery
+    ? accessibleNav
+        .map(section => ({
+          ...section,
+          items: section.items.filter(item => (
+            item.label.toLowerCase().includes(normalizedQuery) ||
+            section.section.toLowerCase().includes(normalizedQuery)
+          )),
+        }))
+        .filter(section => section.items.length > 0)
+    : accessibleNav
 
-  const activeSection = filteredNav.find(s => s.items.some(i => i.key === activePage))?.section
+  const activeSection = accessibleNav.find(s => s.items.some(i => i.key === activePage))?.section
 
   const [openSections, setOpenSections] = useState(() => {
     const init = {}
@@ -31,7 +44,7 @@ export default function Sidebar({ activePage, onNavigate, collapsed, onToggle })
   return (
     <aside
       className={cn(
-        'hidden lg:flex flex-col bg-dark-800 border-r border-dark-700 transition-all duration-300 flex-shrink-0',
+        'nhance-sidebar hidden lg:flex flex-col bg-dark-800 border-r border-dark-700 transition-all duration-300 flex-shrink-0',
         collapsed ? 'w-16' : 'w-60'
       )}
     >
@@ -41,15 +54,20 @@ export default function Sidebar({ activePage, onNavigate, collapsed, onToggle })
         collapsed ? 'justify-center' : 'justify-between'
       )}>
         {!collapsed && (
-          <div>
-            <div className="text-lg font-black tracking-tight bg-gradient-to-r from-primary-600 to-primary-400 bg-clip-text text-transparent">
-              NHANCE
+          <div className="flex min-w-0 items-center gap-2.5">
+            <div className="brand-mark flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary-500 to-primary-800 text-sm font-black text-white shadow-lg shadow-primary-900/20">
+              N
             </div>
-            {company && (
-              <div className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider leading-tight truncate max-w-[140px]">
-                {company.name}
+            <div className="min-w-0">
+              <div className="brand-word text-lg font-black tracking-[0.08em]">
+                NHANCE
               </div>
-            )}
+              {company && (
+                <div className="max-w-[128px] truncate text-[9px] font-semibold uppercase tracking-[0.14em] text-slate-500 leading-tight">
+                  {company.name}
+                </div>
+              )}
+            </div>
           </div>
         )}
         <button
@@ -63,10 +81,26 @@ export default function Sidebar({ activePage, onNavigate, collapsed, onToggle })
         </button>
       </div>
 
+      {!collapsed && (
+        <div className="px-3 pt-3">
+          <label className="relative block">
+            <span className="sr-only">Find a page</span>
+            <Icons.Search aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+            <input
+              type="search"
+              value={navQuery}
+              onChange={event => setNavQuery(event.target.value)}
+              placeholder="Find a page…"
+              className="h-10 w-full rounded-xl border border-dark-600 bg-dark-700/60 pl-9 pr-3 text-xs text-slate-200 placeholder:text-slate-500 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/25"
+            />
+          </label>
+        </div>
+      )}
+
       {/* ── Navigation ───────────────────────────────────────────────────── */}
       <nav className="flex-1 overflow-y-auto py-3 px-2">
         {filteredNav.map((section) => {
-          const isOpen    = !!openSections[section.section]
+          const isOpen    = normalizedQuery ? true : !!openSections[section.section]
           const hasActive = section.items.some(i => i.key === activePage)
 
           return (
@@ -118,9 +152,9 @@ export default function Sidebar({ activePage, onNavigate, collapsed, onToggle })
                       title={collapsed ? item.label : undefined}
                       style={!isActive ? { color: 'rgb(var(--t2))' } : undefined}
                       className={cn(
-                        'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg mb-0.5 transition-all duration-150 text-sm font-medium',
+                        'w-full min-h-11 flex items-center gap-3 px-3 py-2.5 rounded-xl mb-0.5 transition-all duration-150 text-sm font-medium',
                         isActive
-                          ? 'bg-primary-600 text-white shadow-lg shadow-primary-600/20'
+                          ? 'nhance-nav-active bg-primary-600 text-white shadow-lg shadow-primary-900/20'
                           : 'hover:bg-dark-700 hover:text-slate-100',
                         collapsed ? 'justify-center' : 'pl-5'
                       )}
@@ -135,6 +169,14 @@ export default function Sidebar({ activePage, onNavigate, collapsed, onToggle })
             </div>
           )
         })}
+        {filteredNav.length === 0 && !collapsed && (
+          <div className="mx-2 rounded-xl border border-dashed border-dark-600 px-3 py-6 text-center">
+            <p className="text-xs font-semibold text-slate-400">No matching page</p>
+            <button type="button" onClick={() => setNavQuery('')} className="mt-2 text-xs font-semibold text-primary-400 hover:text-primary-300">
+              Clear search
+            </button>
+          </div>
+        )}
       </nav>
 
       {/* ── User footer ─────────────────────────────────────────────────── */}
