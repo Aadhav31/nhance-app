@@ -133,6 +133,13 @@ function readNavigationFromUrl() {
     extra.from = params.get('financeFrom') || ''
     extra.to = params.get('financeTo') || ''
   }
+  if (page === 'hr') extra.tab = params.get('hrTab') || 'employees'
+  if (page === 'reimbursements') extra.status = params.get('reimbursementStatus') || 'pending'
+  if (page === 'reports') {
+    extra.reportId = params.get('reportId') || 'equip_utilization'
+    extra.from = params.get('reportFrom') || ''
+    extra.to = params.get('reportTo') || ''
+  }
   if (page === 'operations') {
     extra.tab = params.get('opsTab') || 'today'
     extra.metric = params.get('opsMetric') || 'all'
@@ -156,7 +163,7 @@ function readNavigationFromUrl() {
 
 function writeNavigationToUrl(page, extra, { replace = false } = {}) {
   const url = new URL(window.location.href)
-  const navigationKeys = ['page', 'equipment', 'equipmentName', 'fleetFilter', 'fleetValue', 'fleetLabel', 'fleetIds', 'plannerStatus', 'project', 'projectStatus', 'hireStatus', 'boqStatus', 'boq', 'raMetric', 'raStatus', 'raBoq', 'raBill', 'salesTab', 'purchaseTab', 'purchaseStockTxn', 'accountsTab', 'expenseType', 'expenseFrom', 'expenseTo', 'expenseMode', 'financeTab', 'financePeriod', 'financeFrom', 'financeTo', 'opsTab', 'opsMetric', 'opsFrom', 'opsTo', 'opsProject', 'maintTab', 'pmState', 'workshopStatus', 'fuelRange', 'fuelMetric', 'fuelEquipment', 'fuelProject', 'profitDimension', 'profitMetric']
+  const navigationKeys = ['page', 'equipment', 'equipmentName', 'fleetFilter', 'fleetValue', 'fleetLabel', 'fleetIds', 'plannerStatus', 'project', 'projectStatus', 'hireStatus', 'boqStatus', 'boq', 'raMetric', 'raStatus', 'raBoq', 'raBill', 'salesTab', 'purchaseTab', 'purchaseStockTxn', 'accountsTab', 'expenseType', 'expenseFrom', 'expenseTo', 'expenseMode', 'financeTab', 'financePeriod', 'financeFrom', 'financeTo', 'hrTab', 'reimbursementStatus', 'reportId', 'reportFrom', 'reportTo', 'opsTab', 'opsMetric', 'opsFrom', 'opsTo', 'opsProject', 'maintTab', 'pmState', 'workshopStatus', 'fuelRange', 'fuelMetric', 'fuelEquipment', 'fuelProject', 'profitDimension', 'profitMetric']
   navigationKeys.forEach(key => url.searchParams.delete(key))
 
   if (page !== 'dashboard') url.searchParams.set('page', page)
@@ -200,6 +207,13 @@ function writeNavigationToUrl(page, extra, { replace = false } = {}) {
     if (Number(extra.period) > 0) url.searchParams.set('financePeriod', String(extra.period))
     if (extra.from) url.searchParams.set('financeFrom', extra.from)
     if (extra.to) url.searchParams.set('financeTo', extra.to)
+  }
+  if (page === 'hr' && extra.tab && extra.tab !== 'employees') url.searchParams.set('hrTab', extra.tab)
+  if (page === 'reimbursements' && extra.status && extra.status !== 'pending') url.searchParams.set('reimbursementStatus', extra.status)
+  if (page === 'reports') {
+    if (extra.reportId && extra.reportId !== 'equip_utilization') url.searchParams.set('reportId', extra.reportId)
+    if (extra.from) url.searchParams.set('reportFrom', extra.from)
+    if (extra.to) url.searchParams.set('reportTo', extra.to)
   }
   if (page === 'operations') {
     if (extra.tab && extra.tab !== 'today') url.searchParams.set('opsTab', extra.tab)
@@ -562,7 +576,7 @@ function AppShell() {
             <PurchasePage onNavigate={handleNavigate} initialTab={navExtra.tab} initialStockTxnId={navExtra.createForTxnId} />
           </Suspense>
         )
-      case 'reports':      return wrap(ReportsPage,        MODULES.REPORTS)
+      case 'reports':      return wrap(ReportsPage,        MODULES.REPORTS, { onNavigate: handleNavigate, initialReport: navExtra.reportId, initialFrom: navExtra.from, initialTo: navExtra.to })
       case 'profitability':
         return hasModule(MODULES.REPORTS) ? (
           <Suspense fallback={<LoadingScreen message="Loading profitability…" />}>
@@ -584,7 +598,7 @@ function AppShell() {
         if (!hasModule(MODULES.HR_PAYROLL)) return isOnline ? <ModuleNotActive page="hr" /> : <OfflineScreen />
         return (
           <Suspense fallback={<LoadingScreen message="Loading HR…" />}>
-            <HRPage onNavigate={handleNavigate} />
+            <HRPage onNavigate={handleNavigate} initialTab={navExtra.tab} />
           </Suspense>
         )
       case 'letters':      return wrap(LettersPage,         MODULES.CORE)
@@ -642,7 +656,7 @@ function AppShell() {
       case 'reimbursements':
         return (
           <Suspense fallback={<LoadingScreen message="Loading Reimbursements…" />}>
-            <ReimbursementPage />
+            <ReimbursementPage onNavigate={handleNavigate} initialStatus={navExtra.status} />
           </Suspense>
         )
       case 'approval_center':
