@@ -661,6 +661,7 @@ function InvoicesTab({ companyId, session }) {
   }
 
   const openEdit = async (inv) => {
+    if (inv.billing_snapshot) return toast.error('Void this usage invoice and regenerate from Usage Billing to preserve its reviewed evidence')
     const { data: ld, error } = await supabase.from('invoice_line_items').select('*').eq('invoice_id', inv.id).order('sort_order')
     if (error) return toast.error(error.message || 'Could not load invoice items')
     setEditingDoc({ ...inv, _lines: ld || [] })
@@ -964,6 +965,7 @@ function InvoicesTab({ companyId, session }) {
                     {inv.invoice_type === 'proforma' && <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-900/30 text-violet-400 border border-violet-800/40">Proforma</span>}
                     {inv.invoice_type === 'non_tax' && <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-700 text-slate-300">Non-Tax</span>}
                     {inv.converted_from_id && <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-900/20 text-violet-300">From Proforma</span>}
+                    {inv.billing_snapshot && <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary-500/15 text-primary-300 border border-primary-500/30">Reviewed usage</span>}
                   </div>
                   <p className="font-semibold text-slate-100 text-sm mt-0.5 truncate">{inv.client_name}</p>
                   {inv.project_name && <p className="text-xs text-slate-500">{inv.project_name}</p>}
@@ -981,7 +983,7 @@ function InvoicesTab({ companyId, session }) {
                   {inv.invoice_type !== 'proforma' && inv.status === 'sent' && <button onClick={() => updateStatus(inv.id, 'paid')} className="text-xs px-2 py-1 rounded-lg border border-emerald-700/40 text-emerald-400 hover:bg-emerald-900/20"><CheckCircle className="w-3 h-3 inline mr-1" />Mark Paid</button>}
                   {inv.invoice_type !== 'proforma' && inv.status === 'overdue' && <button onClick={() => updateStatus(inv.id, 'paid')} className="text-xs px-2 py-1 rounded-lg border border-emerald-700/40 text-emerald-400 hover:bg-emerald-900/20"><CheckCircle className="w-3 h-3 inline mr-1" />Mark Paid</button>}
                   {inv.invoice_type === 'proforma' && !['converted', 'cancelled'].includes(inv.status) && <button onClick={() => convertProforma(inv)} className="text-xs px-2 py-1 rounded-lg border border-violet-700/40 text-violet-400 hover:bg-violet-900/20">Convert to Tax Invoice</button>}
-                  {!['paid','cancelled'].includes(inv.status) && <button onClick={() => openEdit(inv)} className="p-1.5 rounded-lg text-slate-500 hover:text-blue-400 hover:bg-blue-900/20" title="Edit"><Edit2 className="w-3.5 h-3.5" /></button>}
+                  {!['paid','cancelled'].includes(inv.status) && !inv.billing_snapshot && <button onClick={() => openEdit(inv)} className="p-1.5 rounded-lg text-slate-500 hover:text-blue-400 hover:bg-blue-900/20" title="Edit"><Edit2 className="w-3.5 h-3.5" /></button>}
                   {!['paid','cancelled'].includes(inv.status) && <button onClick={() => voidInvoice(inv)} className="p-1.5 rounded-lg text-slate-500 hover:text-yellow-400 hover:bg-yellow-900/20" title="Void"><Ban className="w-3.5 h-3.5" /></button>}
                   {inv.status !== 'paid' && <button onClick={() => deleteInvoice(inv)} className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-900/20" title="Delete"><Trash2 className="w-3.5 h-3.5" /></button>}
                   <button onClick={() => voidQR(inv)} className="p-1.5 rounded-lg text-slate-500 hover:text-amber-400 hover:bg-amber-900/20" title="Void QR Code"><ShieldOff className="w-3.5 h-3.5" /></button>
@@ -1061,6 +1063,22 @@ function InvoicesTab({ companyId, session }) {
                       ))}
                     </div>
                   )}
+
+                  {viewingInv.billing_snapshot && <div className="bg-dark-800 border border-primary-500/20 rounded-xl p-4 space-y-3 text-xs">
+                    <p className="font-bold uppercase tracking-wider text-primary-300">Usage billing review</p>
+                    <p className="text-slate-300">{viewingInv.billing_snapshot.contract_number || 'Deployment rate'} · {fmtDate(viewingInv.work_done_from)} to {fmtDate(viewingInv.work_done_to)}</p>
+                    <div className="grid grid-cols-3 gap-2">
+                      <p className="text-slate-400">Working <strong className="block text-slate-100">{viewingInv.billing_snapshot.workingDays} days</strong></p>
+                      <p className="text-slate-400">Hours <strong className="block text-slate-100">{viewingInv.billing_snapshot.hours}</strong></p>
+                      <p className="text-slate-400">Log entries <strong className="block text-slate-100">{viewingInv.billing_snapshot.operations?.length || 0}</strong></p>
+                    </div>
+                    {viewingInv.billing_snapshot.exceptions?.length > 0 && <div className="text-amber-300">Reviewed exceptions: {viewingInv.billing_snapshot.exceptions.join(' · ')}</div>}
+                    <details className="text-slate-400"><summary className="cursor-pointer text-primary-300">Daily evidence and calculations</summary>
+                      <div className="mt-2 space-y-1 max-h-40 overflow-y-auto">{viewingInv.billing_snapshot.operations?.map((op, i) =>
+                        <p key={op.id || i}>{op.date} · {op.status} · {op.hours} h · {op.workflow} · {op.logsheet ? 'logsheet attached' : 'no logsheet'}</p>)}</div>
+                    </details>
+                    <p className="text-slate-500">To change a reviewed amount, void the draft and regenerate it from Usage Billing.</p>
+                  </div>}
 
                   {/* Line items */}
                   {viewingLines.length > 0 && (
@@ -1159,7 +1177,7 @@ function InvoicesTab({ companyId, session }) {
               {viewingInv.status === 'draft' && <button onClick={async () => { if (await updateStatus(viewingInv.id, 'sent')) setViewingInv(p => ({...p, status:'sent'})) }} className="flex-1 btn-ghost text-xs border-blue-700/40 text-blue-400"><Send className="w-3.5 h-3.5" /> Mark Sent</button>}
               {viewingInv.invoice_type !== 'proforma' && ['sent','overdue'].includes(viewingInv.status) && <button onClick={async () => { if (await updateStatus(viewingInv.id, 'paid')) setViewingInv(p => ({...p, status:'paid'})) }} className="flex-1 btn-ghost text-xs border-emerald-700/40 text-emerald-400"><CheckCircle className="w-3.5 h-3.5" /> Mark Paid</button>}
               {viewingInv.invoice_type === 'proforma' && !['converted', 'cancelled'].includes(viewingInv.status) && <button onClick={() => convertProforma(viewingInv)} className="flex-1 btn-ghost text-xs text-violet-400">Convert to Tax Invoice</button>}
-              {!['paid','cancelled'].includes(viewingInv.status) && <button onClick={() => { closeView(); openEdit(viewingInv) }} className="flex-1 btn-ghost text-xs"><Edit2 className="w-3.5 h-3.5" /> Edit</button>}
+              {!['paid','cancelled'].includes(viewingInv.status) && !viewingInv.billing_snapshot && <button onClick={() => { closeView(); openEdit(viewingInv) }} className="flex-1 btn-ghost text-xs"><Edit2 className="w-3.5 h-3.5" /> Edit</button>}
               <button onClick={() => setPreviewVisible(true)} disabled={viewLoading} className="flex-1 btn-ghost text-xs text-primary-400"><FileText className="w-3.5 h-3.5" /> Preview Invoice</button>
               <button onClick={() => dlPDF(viewingInv)} className="flex-1 btn-ghost text-xs text-emerald-400"><FileDown className="w-3.5 h-3.5" /> PDF</button>
               <button onClick={() => dlXLSX(viewingInv)} className="flex-1 btn-ghost text-xs text-teal-400"><Sheet className="w-3.5 h-3.5" /> Excel</button>

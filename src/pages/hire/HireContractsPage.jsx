@@ -83,6 +83,10 @@ function ContractForm({ initial = {}, onSave, onClose, equipment, clients }) {
     security_deposit:      initial.security_deposit != null ? String(initial.security_deposit) : '0',
     gst_applicable:        initial.gst_applicable !== false,
     gst_rate:              initial.gst_rate != null ? String(initial.gst_rate) : '18',
+    exclude_sundays:       initial.billing_rules?.exclude_sundays === true,
+    bill_idle_days:        initial.billing_rules?.bill_idle_days === true,
+    deduct_breakdown_days: initial.billing_rules?.deduct_breakdown_days === true,
+    working_days_per_month: String(initial.billing_rules?.working_days_per_month || 26),
     terms_conditions:      initial.terms_conditions || '',
     notes:                 initial.notes || '',
   })
@@ -132,7 +136,13 @@ function ContractForm({ initial = {}, onSave, onClose, equipment, clients }) {
         demobilization_charge: parseFloat(f.demobilization_charge) || 0,
         security_deposit:      parseFloat(f.security_deposit) || 0,
         gst_applicable:        f.gst_applicable,
-        gst_rate:              parseFloat(f.gst_rate) || 18,
+        gst_rate:              Number.isFinite(parseFloat(f.gst_rate)) ? parseFloat(f.gst_rate) : 18,
+        billing_rules: {
+          exclude_sundays: f.exclude_sundays,
+          bill_idle_days: f.bill_idle_days,
+          deduct_breakdown_days: f.deduct_breakdown_days,
+          working_days_per_month: Math.max(1, Math.min(31, Number(f.working_days_per_month) || 26)),
+        },
         terms_conditions:      f.terms_conditions || null,
         notes:                 f.notes || null,
         created_by:            session?.user?.id,
@@ -260,6 +270,24 @@ function ContractForm({ initial = {}, onSave, onClose, equipment, clients }) {
             </div>
           </div>
         )}
+        <div className="rounded-lg border border-dark-600 p-3 space-y-2">
+          <p className="text-xs font-semibold text-slate-300">Agreed billing rules</p>
+          {[
+            ['exclude_sundays', 'Exclude Sunday logs from billing'],
+            ['bill_idle_days', 'Charge for idle days under this contract'],
+            ['deduct_breakdown_days', 'Deduct breakdown days from monthly hire'],
+          ].map(([key, title]) => (
+            <label key={key} className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+              <input type="checkbox" checked={f[key]} onChange={e => set(key, e.target.checked)} className="accent-primary-500" />{title}
+            </label>
+          ))}
+          {f.billing_basis === 'monthly' && <label className="block text-xs text-slate-400">
+            Days used to value a breakdown deduction
+            <input type="number" min="1" max="31" className={inp('mt-1')} value={f.working_days_per_month}
+              onChange={e => set('working_days_per_month', e.target.value)} />
+          </label>}
+          <p className="text-[11px] text-slate-500">These rules are applied to future billing reviews. Check the written terms before saving.</p>
+        </div>
         <div className="grid grid-cols-3 gap-3">
           <div>
             <label className={labelCls}>Mobilization (₹)</label>
