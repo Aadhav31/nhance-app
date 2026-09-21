@@ -6,6 +6,7 @@ import { ThemeProvider } from './contexts/ThemeContext'
 import LoadingScreen from './components/shared/LoadingScreen'
 import PageErrorBoundary from './components/shared/PageErrorBoundary'
 import StickyNotes from './components/shared/StickyNotes'
+import NhanceAssistant from './components/assistant/NhanceAssistant'
 import LoginPage from './pages/auth/LoginPage'
 import ResetPasswordPage from './pages/auth/ResetPasswordPage'
 import Sidebar from './components/layout/Sidebar'
@@ -118,7 +119,14 @@ function readNavigationFromUrl() {
     extra.boqId = params.get('raBoq') || 'all'
     extra.raId = params.get('raBill') || null
   }
-  if (page === 'sales') extra.tab = params.get('salesTab') || 'clients'
+  if (page === 'sales') {
+    extra.tab = params.get('salesTab') || 'clients'
+    extra.invoiceId = params.get('invoice') || null
+  }
+  if (page === 'usage_billing') {
+    extra.deploymentId = params.get('billingDeployment') || null
+    extra.month = params.get('billingMonth') || null
+  }
   if (page === 'purchase') {
     extra.tab = params.get('purchaseTab') || 'vendors'
     extra.createForTxnId = params.get('purchaseStockTxn') || null
@@ -166,7 +174,7 @@ function readNavigationFromUrl() {
 
 function writeNavigationToUrl(page, extra, { replace = false } = {}) {
   const url = new URL(window.location.href)
-  const navigationKeys = ['page', 'equipment', 'equipmentName', 'fleetFilter', 'fleetValue', 'fleetLabel', 'fleetIds', 'plannerStatus', 'plannerView', 'project', 'projectStatus', 'hireStatus', 'boqStatus', 'boq', 'raMetric', 'raStatus', 'raBoq', 'raBill', 'salesTab', 'purchaseTab', 'purchaseStockTxn', 'accountsTab', 'expenseType', 'expenseFrom', 'expenseTo', 'expenseMode', 'financeTab', 'financePeriod', 'financeFrom', 'financeTo', 'hrTab', 'reimbursementStatus', 'reportId', 'reportFrom', 'reportTo', 'opsTab', 'opsMetric', 'opsFrom', 'opsTo', 'opsProject', 'maintTab', 'pmState', 'workshopStatus', 'fuelRange', 'fuelMetric', 'fuelEquipment', 'fuelProject', 'profitDimension', 'profitMetric']
+  const navigationKeys = ['page', 'equipment', 'equipmentName', 'fleetFilter', 'fleetValue', 'fleetLabel', 'fleetIds', 'plannerStatus', 'plannerView', 'project', 'projectStatus', 'hireStatus', 'boqStatus', 'boq', 'raMetric', 'raStatus', 'raBoq', 'raBill', 'salesTab', 'invoice', 'billingDeployment', 'billingMonth', 'purchaseTab', 'purchaseStockTxn', 'accountsTab', 'expenseType', 'expenseFrom', 'expenseTo', 'expenseMode', 'financeTab', 'financePeriod', 'financeFrom', 'financeTo', 'hrTab', 'reimbursementStatus', 'reportId', 'reportFrom', 'reportTo', 'opsTab', 'opsMetric', 'opsFrom', 'opsTo', 'opsProject', 'maintTab', 'pmState', 'workshopStatus', 'fuelRange', 'fuelMetric', 'fuelEquipment', 'fuelProject', 'profitDimension', 'profitMetric']
   navigationKeys.forEach(key => url.searchParams.delete(key))
 
   if (page !== 'dashboard') url.searchParams.set('page', page)
@@ -197,6 +205,11 @@ function writeNavigationToUrl(page, extra, { replace = false } = {}) {
     if (extra.raId) url.searchParams.set('raBill', extra.raId)
   }
   if (page === 'sales' && extra.tab && extra.tab !== 'clients') url.searchParams.set('salesTab', extra.tab)
+  if (page === 'sales' && extra.invoiceId) url.searchParams.set('invoice', extra.invoiceId)
+  if (page === 'usage_billing') {
+    if (extra.deploymentId) url.searchParams.set('billingDeployment', extra.deploymentId)
+    if (extra.month) url.searchParams.set('billingMonth', extra.month)
+  }
   if (page === 'purchase') {
     if (extra.tab && extra.tab !== 'vendors') url.searchParams.set('purchaseTab', extra.tab)
     if (extra.createForTxnId) url.searchParams.set('purchaseStockTxn', extra.createForTxnId)
@@ -496,6 +509,7 @@ function AppShell() {
   const { loading, session, role, hasModule, isSuperAdmin, industryType } = useAuth()
   const [navigation,       setNavigation]       = useState(readNavigationFromUrl)
   const [notesOpen,        setNotesOpen]        = useState(false)
+  const [assistantOpen,    setAssistantOpen]    = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [mobileMenuOpen,   setMobileMenuOpen]   = useState(false)
   const isOnline = useOnlineStatus()
@@ -632,7 +646,7 @@ function AppShell() {
         if (hasModule && !hasModule(MODULES.SALES)) return isOnline ? <ModuleNotActive page="sales" /> : <OfflineScreen />
         return (
           <Suspense fallback={<LoadingScreen message="Loading sales…" />}>
-            <SalesPage onNavigate={handleNavigate} initialTab={navExtra.tab} />
+            <SalesPage onNavigate={handleNavigate} initialTab={navExtra.tab} initialInvoiceId={navExtra.invoiceId} />
           </Suspense>
         )
       case 'purchase':
@@ -716,7 +730,7 @@ function AppShell() {
       case 'usage_billing':
         return (
           <Suspense fallback={<LoadingScreen message="Loading billing…" />}>
-            <UsageBillingPage onNavigate={handleNavigate} />
+            <UsageBillingPage onNavigate={handleNavigate} initialDeploymentId={navExtra.deploymentId} initialMonth={navExtra.month} />
           </Suspense>
         )
       case 'reimbursements':
@@ -803,6 +817,8 @@ function AppShell() {
             onNavigate={handleNavigate}
             notesOpen={notesOpen}
             onToggleNotes={() => setNotesOpen(p => !p)}
+            assistantOpen={assistantOpen}
+            onToggleAssistant={() => setAssistantOpen(p => !p)}
           />
         )}
 
@@ -812,6 +828,9 @@ function AppShell() {
             open={notesOpen}
             onToggle={() => setNotesOpen(p => !p)}
           />
+        )}
+        {!isSuperAdmin() && hasModule(MODULES.CORE) && (
+          <NhanceAssistant open={assistantOpen} onOpen={() => setAssistantOpen(true)} onClose={() => setAssistantOpen(false)} page={effectivePage} onNavigate={handleNavigate} />
         )}
       </div>
     </DisplayModeProvider>

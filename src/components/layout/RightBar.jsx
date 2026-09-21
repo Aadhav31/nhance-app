@@ -7,7 +7,7 @@
  */
 
 import {
-  MessageSquare, StickyNote,
+  MessageSquare, StickyNote, Sparkles,
   Shield, Settings, Building2,
 } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
@@ -16,6 +16,11 @@ import { MODULES, ROLES } from '../../lib/constants'
 
 // ── Right-bar item definitions ────────────────────────────────────────────────
 const ITEMS_TOP = [
+  {
+    key: 'assistant', Icon: Sparkles, label: 'Ask Nhance',
+    roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN],
+    module: MODULES.CORE, type: 'toggle',
+  },
   {
     key:    'chat',
     Icon:   MessageSquare,
@@ -109,6 +114,8 @@ export default function RightBar({
   onNavigate,
   notesOpen,
   onToggleNotes,
+  assistantOpen,
+  onToggleAssistant,
 }) {
   const { role, hasModule } = useAuth()
 
@@ -121,6 +128,8 @@ export default function RightBar({
   const handleClick = (item) => {
     if (item.type === 'toggle' && item.key === 'notes') {
       onToggleNotes?.()
+    } else if (item.type === 'toggle' && item.key === 'assistant') {
+      onToggleAssistant?.()
     } else {
       onNavigate(item.key)
     }
@@ -139,7 +148,7 @@ export default function RightBar({
             key={item.key}
             item={item}
             isActive={activePage === item.key}
-            isOn={item.key === 'notes' && notesOpen}
+            isOn={(item.key === 'notes' && notesOpen) || (item.key === 'assistant' && assistantOpen)}
             badge={0}
             onClick={() => handleClick(item)}
           />

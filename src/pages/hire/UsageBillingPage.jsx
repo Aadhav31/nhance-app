@@ -108,12 +108,12 @@ function SuccessBanner({ invoice, onDismiss, onNavigate }) {
 }
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
-export default function UsageBillingPage({ onNavigate }) {
+export default function UsageBillingPage({ onNavigate, initialDeploymentId, initialMonth }) {
   const { companyId } = useAuth()
   const qc = useQueryClient()
 
   const [selectedDep,    setSelectedDep]    = useState(null)
-  const [billingMonth,   setBillingMonth]   = useState(format(new Date(), 'yyyy-MM'))
+  const [billingMonth,   setBillingMonth]   = useState(/^\d{4}-(0[1-9]|1[0-2])$/.test(initialMonth || '') ? initialMonth : format(new Date(), 'yyyy-MM'))
   const [gstRate,        setGstRate]        = useState(18)
   const [generating,     setGenerating]     = useState(false)
   const [lastInvoice,    setLastInvoice]    = useState(null)
@@ -142,6 +142,10 @@ export default function UsageBillingPage({ onNavigate }) {
     },
     enabled: !!companyId,
   })
+
+  useEffect(() => {
+    if (initialDeploymentId && deployments.length) setSelectedDep(deployments.find(dep => dep.id === initialDeploymentId) || null)
+  }, [initialDeploymentId, deployments])
 
   // ── Selected deployment's project + client ────────────────────────────────
   const { data: selProject } = useProjectDetail(selectedDep?.project_id)
