@@ -573,7 +573,7 @@ function MultiSelectFilter({ label, options, selected, onToggle, valueKey, label
   )
 }
 
-function InvoicesTab({ companyId, session }) {
+function InvoicesTab({ companyId, session, initialInvoiceId }) {
   const qc = useQueryClient()
   const { company, userProfile } = useAuth()
   const [showCreate, setShowCreate] = useState(false)
@@ -651,6 +651,18 @@ function InvoicesTab({ companyId, session }) {
     },
     enabled: !!companyId,
   })
+
+  const openedInitialInvoice = useRef(null)
+  useEffect(() => {
+    if (!initialInvoiceId || openedInitialInvoice.current === initialInvoiceId || !companyId) return
+    openedInitialInvoice.current = initialInvoiceId
+    const matching = invoices.find(i => i.id === initialInvoiceId)
+    const load = async () => {
+      const invoice = matching || (await supabase.from('client_invoices').select('*').eq('company_id', companyId).eq('id', initialInvoiceId).maybeSingle()).data
+      if (invoice) { setSearch(invoice.invoice_number); openView(invoice) }
+    }
+    load()
+  }, [initialInvoiceId, companyId, invoices]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const updateStatus = async (id, status) => {
     const { error } = await supabase.from('client_invoices').update({ status }).eq('company_id', companyId).eq('id', id)
@@ -2241,7 +2253,7 @@ const normalizeSalesTab = (value, industryType) => {
   return value
 }
 
-export default function SalesPage({ onNavigate, initialTab = 'clients' }) {
+export default function SalesPage({ onNavigate, initialTab = 'clients', initialInvoiceId = null }) {
   const { companyId, session, industryType } = useAuth()
   const [activeTab, setActiveTab] = useState(() => normalizeSalesTab(initialTab, industryType))
 
@@ -2297,7 +2309,7 @@ export default function SalesPage({ onNavigate, initialTab = 'clients' }) {
       {/* Tab content */}
       <div className="flex-1 overflow-hidden">
         {activeTab === 'clients'  && <ClientsPage embedded />}
-        {activeTab === 'invoices' && <InvoicesTab companyId={companyId} session={session} />}
+        {activeTab === 'invoices' && <InvoicesTab companyId={companyId} session={session} initialInvoiceId={initialInvoiceId} />}
         {activeTab === 'quotes'   && <QuotesTab   companyId={companyId} session={session} />}
         {activeTab === 'orders'   && <SalesOrdersTab companyId={companyId} session={session} />}
         {activeTab === 'challans' && <DeliveryChallansTab companyId={companyId} session={session} />}
