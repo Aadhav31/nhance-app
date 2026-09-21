@@ -3162,7 +3162,7 @@ function FuelTab({ companyId, initialEquipmentId, initialEquipmentName }) {
 }
 
 // ── Incidents Tab ─────────────────────────────────────────────────────────────
-function IncidentsTab({ companyId }) {
+function IncidentsTab({ companyId, equipmentId = null, equipmentName = '', onClearEquipment }) {
   const { role, session } = useAuth()
   const isAdmin = ['admin', 'superadmin'].includes(role)
   const qc = useQueryClient()
@@ -3181,11 +3181,13 @@ function IncidentsTab({ companyId }) {
   }
 
   const { data: incidents = [], isLoading } = useQuery({
-    queryKey: ['all_incidents', companyId],
+    queryKey: ['all_incidents', companyId, equipmentId],
     queryFn: async () => {
-      const { data, error } = await supabase.from('shift_incidents')
+      let query = supabase.from('shift_incidents')
         .select('*, equipment(name, category)').eq('company_id', companyId)
         .order('created_at', { ascending: false }).limit(100)
+      if (equipmentId) query = query.eq('equipment_id', equipmentId)
+      const { data, error } = await query
       if (error) throw error
       return data || []
     },
@@ -3207,10 +3209,16 @@ function IncidentsTab({ companyId }) {
     <div className="flex flex-col h-full">
       <div className="px-4 py-2 shrink-0 flex items-center gap-3">
         <span className="text-xs text-slate-400">{openCount} open · {incidents.length - openCount} resolved</span>
+        {equipmentId && (
+          <span className="rounded-full border border-primary-500/25 bg-primary-500/10 px-2.5 py-1 text-xs font-semibold text-primary-300">
+            {equipmentName || 'Selected machine'}
+          </span>
+        )}
         <button onClick={() => setShowResolved(v => !v)}
           className="ml-auto text-xs text-primary-400 hover:text-primary-300">
           {showResolved ? 'Hide resolved' : 'Show resolved'}
         </button>
+        {equipmentId && <button type="button" onClick={onClearEquipment} className="text-xs text-slate-400 hover:text-slate-200">Show all</button>}
       </div>
       <div className="flex-1 overflow-y-auto px-4 pb-4">
         {isLoading ? (
@@ -3321,7 +3329,7 @@ export default function OperationsPage({ onNavigate, initialTab, initialMetric, 
         />}
         {activeTab === 'shifts'    && <ShiftsTab    companyId={companyId} />}
         {activeTab === 'fuel'      && <FuelTab      companyId={companyId} initialEquipmentId={filterEquipmentId} initialEquipmentName={filterEquipmentName} />}
-        {activeTab === 'incidents' && <IncidentsTab companyId={companyId} />}
+        {activeTab === 'incidents' && <IncidentsTab companyId={companyId} equipmentId={filterEquipmentId} equipmentName={filterEquipmentName} onClearEquipment={() => onNavigate?.('operations', { tab: 'incidents' }, { replace: true })} />}
       </div>
     </div>
   )

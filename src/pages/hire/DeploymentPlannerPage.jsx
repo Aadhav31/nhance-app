@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { format, parseISO } from 'date-fns'
-import { CalendarDays, ChevronLeft, ChevronRight, LayoutGrid, List, Plus, Search, Truck, AlertTriangle, ExternalLink } from 'lucide-react'
+import { Activity, CalendarDays, ChevronLeft, ChevronRight, LayoutGrid, List, Plus, Search, Truck, AlertTriangle, ExternalLink } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import Modal from '../../components/shared/Modal'
 import { addDateDays, agreedRateAmount, bookingConflicts, equipmentPlanningState, localDateKey, plannerDayState } from '../../lib/deploymentPlanner'
+import ActiveDeploymentsPage from './ActiveDeploymentsPage'
+import AvailabilityPage from './AvailabilityPage'
 
 const EMPTY_DATA = { equipment: [], projects: [], deployments: [], plans: [] }
 const INPUT = 'w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500'
@@ -205,7 +207,7 @@ export function PlannerBoard({ rows, deployments, projects, from, to, onSelect }
   })}</tr>)}</tbody></table></div>
 }
 
-export default function DeploymentPlannerPage({ onNavigate, initialStatus = 'all' }) {
+export default function DeploymentPlannerPage({ onNavigate, initialStatus = 'all', initialView = 'plan', initialEquipmentId = null }) {
   const { companyId, role } = useAuth()
   const canManage = ['admin', 'manager'].includes(role)
   const [from, setFrom] = useState(localDateKey)
@@ -216,9 +218,13 @@ export default function DeploymentPlannerPage({ onNavigate, initialStatus = 'all
   const [category, setCategory] = useState('all')
   const [view, setView] = useState('timeline')
   const [dialog, setDialog] = useState(null)
+  const [workspaceView, setWorkspaceView] = useState(['plan', 'active', 'availability'].includes(initialView) ? initialView : 'plan')
   useEffect(() => {
     setStatus(initialStatus === 'all' || STATES[initialStatus] ? initialStatus : 'all')
   }, [initialStatus])
+  useEffect(() => {
+    setWorkspaceView(['plan', 'active', 'availability'].includes(initialView) ? initialView : 'plan')
+  }, [initialView])
   const validDates = Boolean(from && to && to >= from && to <= addDateDays(from, 30))
   const query = useQuery({
     queryKey: ['deployment-planner', companyId, from, to], enabled: Boolean(companyId && validDates),
@@ -237,6 +243,7 @@ export default function DeploymentPlannerPage({ onNavigate, initialStatus = 'all
   const rows = useMemo(() => data.equipment.map(item => equipmentPlanningState(item, data.deployments, data.plans, from, to)), [data, from, to])
   const matchesStatus = (row, value) => value === 'all' || (value === 'planned' ? row.bookings.length > 0 : value === 'return_due' ? row.returnDue : value === 'deployed' ? ['deployed', 'return_due'].includes(row.status) : row.status === value)
   const filtered = rows.filter(row => matchesStatus(row, status) &&
+    (!initialEquipmentId || row.equipment.id === initialEquipmentId) &&
     (category === 'all' || row.equipment.category === category) &&
     (projectId === 'all' || row.current?.project_id === projectId || row.bookings.some(item => item.project_id === projectId)) &&
     (!search.trim() || `${row.equipment.name} ${row.equipment.equipment_number || ''} ${row.equipment.category || ''} ${row.equipment.current_site_name || ''}`.toLowerCase().includes(search.trim().toLowerCase())))
@@ -244,7 +251,7 @@ export default function DeploymentPlannerPage({ onNavigate, initialStatus = 'all
   const moveRange = days => { if (!validDates) return; setFrom(current => addDateDays(current, days)); setTo(current => addDateDays(current, days)) }
   const selectStatus = value => {
     setStatus(value)
-    onNavigate?.('deployment_planner', { plannerStatus: value }, { replace: true })
+    onNavigate?.('deployment_planner', { plannerStatus: value, plannerView: workspaceView, equipmentId: initialEquipmentId }, { replace: true })
   }
   const toggleStatus = value => selectStatus(status === value ? 'all' : value)
   const clearFilters = () => {
@@ -254,8 +261,32 @@ export default function DeploymentPlannerPage({ onNavigate, initialStatus = 'all
     setSearch('')
   }
 
+  const selectWorkspace = next => {
+    setWorkspaceView(next)
+    onNavigate?.('deployment_planner', { plannerStatus: status, plannerView: next, equipmentId: initialEquipmentId }, { replace: true })
+  }
+
+  const workspaceTabs = (
+    <div className="flex shrink-0 gap-1 border-b border-dark-700 bg-dark-900 px-4 pt-2">
+      {[
+        { id: 'plan', label: 'Plan & move', icon: CalendarDays },
+        { id: 'active', label: 'Active deployments', icon: Activity },
+        { id: 'availability', label: 'Daily availability', icon: LayoutGrid },
+      ].map(item => (
+        <button key={item.id} type="button" onClick={() => selectWorkspace(item.id)} aria-pressed={workspaceView === item.id} className={`flex items-center gap-1.5 border-b-2 px-3 py-2.5 text-xs font-semibold transition-colors ${workspaceView === item.id ? 'border-primary-500 text-primary-400' : 'border-transparent text-slate-500 hover:text-slate-300'}`}>
+          <item.icon className="h-3.5 w-3.5" aria-hidden="true" />{item.label}
+        </button>
+      ))}
+    </div>
+  )
+
+  if (workspaceView === 'active') return <div className="flex h-full flex-col overflow-hidden bg-dark-900">{workspaceTabs}<div className="flex-1 overflow-y-auto"><ActiveDeploymentsPage embedded /></div></div>
+  if (workspaceView === 'availability') return <div className="flex h-full flex-col overflow-hidden bg-dark-900">{workspaceTabs}<div className="flex-1 overflow-hidden"><AvailabilityPage embedded /></div></div>
+
   return <div className="p-4 md:p-6 space-y-5 max-w-[1600px] mx-auto">
-    <div className="flex flex-wrap gap-3 justify-between items-start"><div><h1 className="text-xl font-bold text-slate-100">Deployment Planner</h1><p className="text-sm text-slate-400 mt-1">Reserve machines, plan site movements, and track returns.</p></div><div className="flex flex-wrap gap-2"><button type="button" className="btn-ghost text-sm" onClick={() => onNavigate('availability')}>Daily availability</button><button type="button" className="btn-ghost text-sm" onClick={() => onNavigate('active_deployments')}>Active deployments</button>{canManage && <button type="button" className="btn-primary text-sm" disabled={!query.data || query.isError} onClick={() => setDialog({ type: 'plan' })}><Plus className="w-4 h-4" />Plan deployment</button>}</div></div>
+    {workspaceTabs}
+    <div className="flex flex-wrap gap-3 justify-between items-start"><div><h1 className="text-xl font-bold text-slate-100">Deployment Planner</h1><p className="text-sm text-slate-400 mt-1">Reserve machines, plan site movements, and track returns.</p></div><div className="flex flex-wrap gap-2">{canManage && <button type="button" className="btn-primary text-sm" disabled={!query.data || query.isError} onClick={() => setDialog({ type: 'plan' })}><Plus className="w-4 h-4" />Plan deployment</button>}</div></div>
+    {initialEquipmentId && <div className="flex items-center justify-between gap-3 rounded-xl border border-primary-500/25 bg-primary-500/10 px-4 py-2.5"><p className="text-xs font-semibold text-primary-300">Showing the selected machine</p><button type="button" onClick={() => onNavigate?.('deployment_planner', { plannerStatus: status, plannerView: 'plan' }, { replace: true })} className="text-xs font-semibold text-primary-400 hover:text-primary-300">Show all equipment</button></div>}
     <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">{Object.entries(STATES).map(([key, state]) => <button type="button" key={key} onClick={() => toggleStatus(key)} aria-pressed={status === key} className={`card text-left p-3 ${status === key ? 'ring-1 ring-primary-500' : ''}`}><p className="text-sm text-slate-400">{state.label}</p><p className={`text-2xl font-bold mt-1 ${state.color}`}>{query.isLoading ? '—' : rows.filter(row => matchesStatus(row, key)).length}</p><p className="text-xs text-slate-500 mt-1">{key === 'return_due' ? 'Next 7 days / overdue' : 'Within selected dates'}</p></button>)}</div>
     <section className="card p-4 space-y-3">
       <div className="flex flex-wrap gap-3 items-end"><div className="flex gap-2 items-center"><button type="button" aria-label="Previous 14 days" className="btn-ghost p-2" onClick={() => moveRange(-14)}><ChevronLeft className="w-4 h-4" /></button><CalendarDays className="w-4 h-4 text-primary-400" /><button type="button" className="btn-ghost text-sm" onClick={() => { setFrom(localDateKey()); setTo(addDateDays(localDateKey(), 13)) }}>Today</button><button type="button" aria-label="Next 14 days" className="btn-ghost p-2" onClick={() => moveRange(14)}><ChevronRight className="w-4 h-4" /></button></div><Field label="From"><input type="date" className={INPUT} value={from} onChange={event => { setFrom(event.target.value); if (event.target.value) setTo(addDateDays(event.target.value, 13)) }} /></Field><Field label="To"><input type="date" min={from} max={from ? addDateDays(from, 30) : undefined} className={INPUT} value={to} onChange={event => setTo(event.target.value)} /></Field><div className="flex-1" /><div className="flex gap-1"><button type="button" aria-label="Timeline view" aria-pressed={view === 'timeline'} className={view === 'timeline' ? 'btn-primary p-2' : 'btn-ghost p-2'} onClick={() => setView('timeline')}><LayoutGrid className="w-4 h-4" /></button><button type="button" aria-label="List view" aria-pressed={view === 'list'} className={view === 'list' ? 'btn-primary p-2' : 'btn-ghost p-2'} onClick={() => setView('list')}><List className="w-4 h-4" /></button></div></div>

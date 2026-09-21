@@ -625,10 +625,10 @@ export default function ExpensesPage({
 
   const CREATE_OPTIONS = [
     { label: '+ Field Expense',      nav: 'fieldexpense' },
-    { label: '+ Purchase Expense',   nav: 'purchase' },
-    { label: '+ Salary / Payroll',   nav: 'hr' },
-    { label: '+ Overhead / Manual',  nav: 'accounts' },
-    { label: '+ Fixed Expense',      nav: 'accounts' },
+    { label: '+ Purchase Expense',   nav: 'purchase', extra: { tab: 'payments' } },
+    { label: '+ Salary / Payroll',   nav: 'hr', extra: { tab: 'payroll' } },
+    { label: '+ Overhead / Manual',  nav: 'accounts', extra: { tab: 'expenses' } },
+    { label: '+ Fixed Expense',      nav: 'accounts', extra: { tab: 'fixed' } },
   ]
 
   return (
@@ -643,7 +643,7 @@ export default function ExpensesPage({
             </div>
             <div>
               <h1 className="text-xl font-bold text-slate-100">Expenses</h1>
-              <p className="text-xs text-slate-500">All categories unified — field, purchase, payroll, overhead, bill payments, fixed</p>
+              <p className="text-xs text-slate-500">Read-only register across field, purchase, payroll, overhead, bill payments and fixed costs</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -656,7 +656,7 @@ export default function ExpensesPage({
               </button>
               <div className="absolute right-0 top-full mt-1 w-52 bg-dark-800 border border-dark-700 rounded-xl shadow-2xl z-30 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all">
                 {CREATE_OPTIONS.map(o => (
-                  <button key={o.label} onClick={() => onNavigate?.(o.nav)}
+                  <button key={o.label} onClick={() => onNavigate?.(o.nav, o.extra || {})}
                     className="w-full text-left px-4 py-2.5 text-sm text-slate-300 hover:bg-dark-700 hover:text-slate-100 first:rounded-t-xl last:rounded-b-xl transition-colors">
                     {o.label}
                   </button>
@@ -795,21 +795,11 @@ export default function ExpensesPage({
                     {/* amount */}
                     <p className="text-base font-black text-red-400 shrink-0">{fmtINR(e.amount)}</p>
 
-                    {/* actions */}
-                    <div className="flex items-center gap-1 shrink-0" onClick={ev => ev.stopPropagation()}>
-                      {e.canEdit && (
-                        <button onClick={() => setEditing(e)}
-                          className="p-1.5 rounded-lg text-slate-500 hover:text-blue-400 hover:bg-blue-900/20 transition-colors">
-                          <Pencil className="w-3.5 h-3.5" />
-                        </button>
-                      )}
-                      {e.canDelete && (
-                        <button onClick={() => deleteEntry(e)}
-                          className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-900/20 transition-colors">
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      )}
-                    </div>
+                    {(e.canEdit || e.canDelete) && (
+                      <span className="hidden shrink-0 rounded-lg border border-dark-600 bg-dark-700 px-2 py-1 text-[10px] font-medium text-slate-500 md:inline">
+                        Manage at source
+                      </span>
+                    )}
                   </div>
 
                   {/* ── expanded detail ── */}
@@ -822,7 +812,7 @@ export default function ExpensesPage({
       </div>
 
       {/* ── edit modals ── */}
-      {editing?.editModal === 'field' && (
+      {false && editing?.editModal === 'field' && (
         <EditFieldModal
           entry={editing}
           onClose={() => setEditing(null)}
@@ -832,7 +822,7 @@ export default function ExpensesPage({
           }}
         />
       )}
-      {editing?.editModal === 'expense' && (
+      {false && editing?.editModal === 'expense' && (
         <EditExpenseModal
           entry={editing}
           onClose={() => setEditing(null)}

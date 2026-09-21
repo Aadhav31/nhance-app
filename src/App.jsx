@@ -92,7 +92,10 @@ function readNavigationFromUrl() {
       }
     }
   }
-  if (page === 'deployment_planner') extra.plannerStatus = params.get('plannerStatus') || 'all'
+  if (page === 'deployment_planner') {
+    extra.plannerStatus = params.get('plannerStatus') || 'all'
+    extra.plannerView = params.get('plannerView') || 'plan'
+  }
   if (page === 'fuel_reconciliation') {
     const rangeDays = Number(params.get('fuelRange'))
     extra.rangeDays = [30, 90, 180, 365].includes(rangeDays) ? rangeDays : 90
@@ -163,12 +166,15 @@ function readNavigationFromUrl() {
 
 function writeNavigationToUrl(page, extra, { replace = false } = {}) {
   const url = new URL(window.location.href)
-  const navigationKeys = ['page', 'equipment', 'equipmentName', 'fleetFilter', 'fleetValue', 'fleetLabel', 'fleetIds', 'plannerStatus', 'project', 'projectStatus', 'hireStatus', 'boqStatus', 'boq', 'raMetric', 'raStatus', 'raBoq', 'raBill', 'salesTab', 'purchaseTab', 'purchaseStockTxn', 'accountsTab', 'expenseType', 'expenseFrom', 'expenseTo', 'expenseMode', 'financeTab', 'financePeriod', 'financeFrom', 'financeTo', 'hrTab', 'reimbursementStatus', 'reportId', 'reportFrom', 'reportTo', 'opsTab', 'opsMetric', 'opsFrom', 'opsTo', 'opsProject', 'maintTab', 'pmState', 'workshopStatus', 'fuelRange', 'fuelMetric', 'fuelEquipment', 'fuelProject', 'profitDimension', 'profitMetric']
+  const navigationKeys = ['page', 'equipment', 'equipmentName', 'fleetFilter', 'fleetValue', 'fleetLabel', 'fleetIds', 'plannerStatus', 'plannerView', 'project', 'projectStatus', 'hireStatus', 'boqStatus', 'boq', 'raMetric', 'raStatus', 'raBoq', 'raBill', 'salesTab', 'purchaseTab', 'purchaseStockTxn', 'accountsTab', 'expenseType', 'expenseFrom', 'expenseTo', 'expenseMode', 'financeTab', 'financePeriod', 'financeFrom', 'financeTo', 'hrTab', 'reimbursementStatus', 'reportId', 'reportFrom', 'reportTo', 'opsTab', 'opsMetric', 'opsFrom', 'opsTo', 'opsProject', 'maintTab', 'pmState', 'workshopStatus', 'fuelRange', 'fuelMetric', 'fuelEquipment', 'fuelProject', 'profitDimension', 'profitMetric']
   navigationKeys.forEach(key => url.searchParams.delete(key))
 
   if (page !== 'dashboard') url.searchParams.set('page', page)
-  if (extra.equipmentId && ['fleet', 'operations'].includes(page)) url.searchParams.set('equipment', extra.equipmentId)
-  if (page === 'deployment_planner' && extra.plannerStatus && extra.plannerStatus !== 'all') url.searchParams.set('plannerStatus', extra.plannerStatus)
+  if (extra.equipmentId && ['fleet', 'operations', 'maintenance', 'deployment_planner'].includes(page)) url.searchParams.set('equipment', extra.equipmentId)
+  if (page === 'deployment_planner') {
+    if (extra.plannerStatus && extra.plannerStatus !== 'all') url.searchParams.set('plannerStatus', extra.plannerStatus)
+    if (extra.plannerView && extra.plannerView !== 'plan') url.searchParams.set('plannerView', extra.plannerView)
+  }
   if (page === 'fuel_reconciliation') {
     if (extra.rangeDays && Number(extra.rangeDays) !== 90) url.searchParams.set('fuelRange', String(extra.rangeDays))
     if (extra.metric && extra.metric !== 'all') url.searchParams.set('fuelMetric', extra.metric)
@@ -596,7 +602,7 @@ function AppShell() {
             />
           </Suspense>
         ) : <ModuleNotActive page={page} />
-      case 'maintenance':  return wrap(MaintenancePage, MODULES.MAINTENANCE, { onNavigate: handleNavigate, initialTab: navExtra.tab, initialPmState: navExtra.pmState, initialWorkshopStatus: navExtra.workshopStatus })
+      case 'maintenance':  return wrap(MaintenancePage, MODULES.MAINTENANCE, { onNavigate: handleNavigate, initialTab: navExtra.tab, initialPmState: navExtra.pmState, initialWorkshopStatus: navExtra.workshopStatus, initialEquipmentId: navExtra.equipmentId })
       case 'inventory':
         if (hasModule && !hasModule(MODULES.INVENTORY)) return isOnline ? <ModuleNotActive page="inventory" /> : <OfflineScreen />
         return (
@@ -662,7 +668,7 @@ function AppShell() {
           </Suspense>
         )
       case 'letters':      return wrap(LettersPage,         MODULES.CORE)
-      case 'settings':     return wrap(SettingsPage,       MODULES.CORE)
+      case 'settings':     return wrap(SettingsPage,       MODULES.CORE, { onNavigate: handleNavigate })
       case 'profile':      return wrap(ProfilePage,        MODULES.CORE)
       // ── Industry-specific pages ────────────────────────────────────────────
       case 'production':
@@ -692,19 +698,19 @@ function AppShell() {
       case 'active_deployments':
         return (
           <Suspense fallback={<LoadingScreen message="Loading deployments…" />}>
-            <ActiveDeploymentsPage />
+            <DeploymentPlannerPage onNavigate={handleNavigate} initialView="active" />
           </Suspense>
         )
       case 'availability':
         return (
           <Suspense fallback={<LoadingScreen message="Loading availability…" />}>
-            <AvailabilityPage />
+            <DeploymentPlannerPage onNavigate={handleNavigate} initialView="availability" />
           </Suspense>
         )
       case 'deployment_planner':
         return hasModule(MODULES.FLEET) ? (
           <Suspense fallback={<LoadingScreen message="Loading Deployment Planner…" />}>
-            <DeploymentPlannerPage onNavigate={handleNavigate} initialStatus={navExtra.plannerStatus || 'all'} />
+            <DeploymentPlannerPage onNavigate={handleNavigate} initialStatus={navExtra.plannerStatus || 'all'} initialView={navExtra.plannerView || 'plan'} initialEquipmentId={navExtra.equipmentId || null} />
           </Suspense>
         ) : <ModuleNotActive page="Deployment Planner" />
       case 'usage_billing':

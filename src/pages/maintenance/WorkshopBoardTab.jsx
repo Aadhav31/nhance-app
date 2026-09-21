@@ -420,7 +420,7 @@ function JobDetailPanel({ job, companyId, data, role, onClose, onChanged }) {
   )
 }
 
-export default function WorkshopBoardTab({ companyId, role, initialStatus = 'active', onFilterChange }) {
+export default function WorkshopBoardTab({ companyId, role, equipmentId = null, initialStatus = 'active', onFilterChange }) {
   const qc = useQueryClient()
   const [filter, setFilter] = useState(initialStatus || 'active')
   const [search, setSearch] = useState('')
@@ -464,13 +464,14 @@ export default function WorkshopBoardTab({ companyId, role, initialStatus = 'act
   })
 
   const data = query.data || { jobs: [], alerts: [], equipment: [], projects: [], staff: [], items: [], stores: [], stocks: [] }
-  const metrics = useMemo(() => buildWorkshopMetrics(data.jobs), [data.jobs])
-  const linkedAlerts = useMemo(() => new Set(data.jobs.map(job => job.breakdown_alert_id).filter(Boolean)), [data.jobs])
-  const unconvertedAlerts = data.alerts.filter(alert => !linkedAlerts.has(alert.id))
-  const selectedJob = data.jobs.find(job => job.id === selectedId) || null
+  const scopedJobs = useMemo(() => equipmentId ? data.jobs.filter(job => job.equipment_id === equipmentId) : data.jobs, [data.jobs, equipmentId])
+  const metrics = useMemo(() => buildWorkshopMetrics(scopedJobs), [scopedJobs])
+  const linkedAlerts = useMemo(() => new Set(scopedJobs.map(job => job.breakdown_alert_id).filter(Boolean)), [scopedJobs])
+  const unconvertedAlerts = data.alerts.filter(alert => (!equipmentId || alert.equipment_id === equipmentId) && !linkedAlerts.has(alert.id))
+  const selectedJob = scopedJobs.find(job => job.id === selectedId) || null
 
   const rows = useMemo(() => {
-    const stageRows = filterWorkshopJobs(data.jobs, filter)
+    const stageRows = filterWorkshopJobs(scopedJobs, filter)
     const needle = search.trim().toLowerCase()
     return stageRows.filter(job => {
       if (typeFilter !== 'all' && job.jc_type !== typeFilter) return false
@@ -478,7 +479,7 @@ export default function WorkshopBoardTab({ companyId, role, initialStatus = 'act
       return [job.jc_number, job.equipment_name, job.equipment?.equipment_number, job.complaint, job.technician_name, job.project?.project_name]
         .some(value => String(value || '').toLowerCase().includes(needle))
     }).sort((a, b) => Number(isWorkshopOverdue(b)) - Number(isWorkshopOverdue(a)) || String(b.updated_at).localeCompare(String(a.updated_at)))
-  }, [data.jobs, filter, search, typeFilter])
+  }, [scopedJobs, filter, search, typeFilter])
 
   const refresh = async () => {
     await qc.invalidateQueries({ queryKey: ['workshop-board', companyId] })

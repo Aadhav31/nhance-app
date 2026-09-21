@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo } from 'react'
 import { downloadTransferCertificate } from '../../lib/transferCertificatePDF'
 import { VendorPicker } from '../../components/shared/EntityPicker'
 import PagePanel from '../../components/shared/PagePanel'
+import CanonicalWorkspaceNotice from '../../components/shared/CanonicalWorkspaceNotice'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
@@ -3008,9 +3009,9 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
                   className="w-full flex items-center gap-2.5 py-2.5 px-3 rounded-xl bg-dark-800 border border-dark-600 hover:border-yellow-500 text-slate-200 text-xs font-medium transition-colors">
                   <Fuel className="w-4 h-4 text-yellow-400 shrink-0" /> Log Fuel
                 </button>
-                <button onClick={() => setModal('incident')}
+                <button onClick={() => onNavigate?.('operations', { tab: 'today', equipmentId: equipment.id, equipmentName: equipment.name })}
                   className="w-full flex items-center gap-2.5 py-2.5 px-3 rounded-xl bg-dark-800 border border-dark-600 hover:border-orange-500 text-slate-200 text-xs font-medium transition-colors">
-                  <AlertTriangle className="w-4 h-4 text-orange-400 shrink-0" /> Report Incident
+                  <AlertTriangle className="w-4 h-4 text-orange-400 shrink-0" /> Open Incident Reporting
                 </button>
               </div>
 
@@ -3496,8 +3497,15 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
               )
             })()}
 
-            {/* ── Deploy / Transfer form (admin only) ── */}
-            {isAdmin && (
+            <CanonicalWorkspaceNotice
+              title="Deployment Planner manages every site movement"
+              description="Review this machine's current assignment here. Plan, mobilise, transfer or record its return from the Deployment Planner so availability and billing stay aligned."
+              actionLabel="Open Deployment Planner"
+              onAction={() => onNavigate?.('deployment_planner', { equipmentId: equipment.id })}
+            />
+
+            {/* Legacy deployment form retained temporarily for data compatibility, but no longer exposed. */}
+            {false && isAdmin && (
               <div className={`rounded-xl border overflow-hidden ${equipment.current_project_id ? 'border-amber-700/40 bg-amber-500/5' : 'border-dark-600 bg-dark-800/40'}`}>
                 <div className="px-4 py-2.5 border-b border-dark-700/60 flex items-center gap-2">
                   <ArrowLeftRight className="w-3.5 h-3.5 text-amber-400" />
@@ -3612,6 +3620,16 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
         {detailTab === 'maintenance' && (
           <div className="space-y-3 pt-1">
 
+            <CanonicalWorkspaceNotice
+              title="Equipment Health manages service work"
+              description="This Equipment 360 view is now a read-only health summary. Create and progress job cards, PM schedules and service records in Equipment Health."
+              actionLabel="Open Equipment Health"
+              onAction={() => onNavigate?.('maintenance', {
+                tab: maintSubTab === 'pm_schedules' ? 'planner' : maintSubTab === 'history' ? 'records' : 'workshop',
+                equipmentId: equipment.id,
+              })}
+            />
+
             {/* Sub-tab bar */}
             <div className="flex gap-0 border-b border-dark-600">
               {[
@@ -3657,7 +3675,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
                       </button>
                     ))}
                   </div>
-                  {isAdmin && (
+                  {false && isAdmin && (
                     <button onClick={() => setJcModal({})}
                       className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-600 hover:bg-primary-700 text-white text-xs font-medium rounded-lg transition-colors">
                       <Plus className="w-3.5 h-3.5" /> New Job Card
@@ -3702,7 +3720,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
                                 </div>
                                 <div className="flex items-center gap-2 shrink-0">
                                   <span className="text-[10px] text-slate-500">{format(new Date(jc.opened_date), 'dd MMM yyyy')}</span>
-                                  {isAdmin && (
+                                  {false && isAdmin && (
                                     <button onClick={() => setJcModal(jc)} className="text-slate-500 hover:text-primary-400 transition-colors">
                                       <Edit2 className="w-3.5 h-3.5" />
                                     </button>
@@ -3741,7 +3759,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
                   )
                 })()}
 
-                {jcModal !== null && (
+                {false && jcModal !== null && (
                   <JobCardModal
                     equipment={equipment}
                     companyId={companyId}
@@ -3757,7 +3775,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
             {maintSubTab === 'pm_schedules' && (
               <div className="space-y-3 pt-1">
                 <div className="flex justify-end">
-                  {isAdmin && (
+                  {false && isAdmin && (
                     <button onClick={() => setPmModal({})}
                       className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-600 hover:bg-primary-700 text-white text-xs font-medium rounded-lg transition-colors">
                       <Plus className="w-3.5 h-3.5" /> Add PM Schedule
@@ -3791,7 +3809,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
                             <div className="flex items-center gap-2">
                               {overdue  && <span className="text-[10px] bg-red-500/20 text-red-400 px-2 py-0.5 rounded-full font-medium">Overdue {Math.abs(remaining).toFixed(0)}hrs</span>}
                               {nearDue  && <span className="text-[10px] bg-orange-500/20 text-orange-400 px-2 py-0.5 rounded-full font-medium">Due in {remaining.toFixed(0)}hrs</span>}
-                              {isAdmin && (
+                              {false && isAdmin && (
                                 <button onClick={() => setPmModal(pm)} className="text-slate-500 hover:text-primary-400 transition-colors">
                                   <Edit2 className="w-3.5 h-3.5" />
                                 </button>
@@ -3831,7 +3849,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
                                 ))}
                               </div>
                             )}
-                            {isAdmin && (overdue || nearDue) && (
+                            {false && isAdmin && (overdue || nearDue) && (
                               <button
                                 onClick={() => { setMaintSubTab('job_cards'); setJcModal({ jc_type: 'pm_service', pm_schedule_id: pm.id }) }}
                                 className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-600/80 hover:bg-primary-600 text-white text-[11px] font-medium rounded-lg transition-colors"
@@ -3846,7 +3864,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
                   </div>
                 )}
 
-                {pmModal !== null && (
+                {false && pmModal !== null && (
                   <PMScheduleModal
                     equipment={equipment}
                     companyId={companyId}
@@ -4417,7 +4435,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
           onSaved={refreshEquipment} />
       )}
       {modal === 'fuel'     && <FuelModal     equipment={equipment} companyId={companyId} onClose={() => setModal(null)} />}
-      {modal === 'incident' && <IncidentModal equipment={equipment} companyId={companyId} onClose={() => setModal(null)} />}
+      {false && modal === 'incident' && <IncidentModal equipment={equipment} companyId={companyId} onClose={() => setModal(null)} />}
       {showTCModal && tcPending && (
         <TCCaptureModal
           fromProject={tcPending.fromProject}
@@ -7918,7 +7936,9 @@ export default function FleetPage({ onNavigate, unloggedIds = null, initialEquip
         {tabs.map(t => {
           const Icon = t.icon
           return (
-            <button key={t.id} onClick={() => setActiveTab(t.id)}
+            <button key={t.id} onClick={() => t.id === 'incidents'
+              ? onNavigate?.('operations', { tab: 'incidents' })
+              : setActiveTab(t.id)}
               className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium border-b-2 transition-colors
                 ${activeTab === t.id ? 'border-primary-500 text-primary-400' : 'border-transparent text-slate-500 hover:text-slate-300'}`}>
               <Icon className="w-3.5 h-3.5" />{t.label}
@@ -7929,7 +7949,7 @@ export default function FleetPage({ onNavigate, unloggedIds = null, initialEquip
       <div className="flex-1 overflow-hidden">
         {activeTab === 'fleet'     && <FleetTab     companyId={companyId} showAdd={showAdd} setShowAdd={setShowAdd} onNavigate={onNavigate} unloggedIds={unloggedIds} initialEquipmentId={initialEquipmentId} initialFleetFilter={initialFleetFilter} />}
         {activeTab === 'fuel'      && <FuelTab      companyId={companyId} />}
-        {activeTab === 'incidents' && <IncidentsTab companyId={companyId} />}
+        {false && activeTab === 'incidents' && <IncidentsTab companyId={companyId} />}
         {activeTab === 'history'   && <HistoryTab   companyId={companyId} />}
         {activeTab === 'ledger'    && <LedgerTab    companyId={companyId} />}
         {activeTab === 'hired_in'  && <HiredInTab   companyId={companyId} />}

@@ -1,20 +1,16 @@
 /**
  * RightBar — slim 48px vertical icon strip on the right edge.
  *
- * Contains: Chat, Notes, Approval Centre, Audit Log, Settings, Company Profile
+ * Contains: Chat, Notes, Audit Log, Settings, Company Profile
  * These are "system/utility" actions — always accessible, not module content.
- *
- * Items are filtered by role + module access (same rules as Sidebar).
- * Approval Centre shows a badge when there are pending requests.
+ * Approval Centre has one canonical desktop entry in the TopBar.
  */
 
-import { useEffect, useMemo, useState } from 'react'
 import {
-  MessageSquare, StickyNote, CheckCircle2,
+  MessageSquare, StickyNote,
   Shield, Settings, Building2,
 } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
-import { supabase } from '../../lib/supabase'
 import { cn } from '../../lib/utils'
 import { MODULES, ROLES } from '../../lib/constants'
 
@@ -40,15 +36,6 @@ const ITEMS_TOP = [
 ]
 
 const ITEMS_BOTTOM = [
-  {
-    key:    'approval_center',
-    Icon:   CheckCircle2,
-    label:  'Approval Centre',
-    roles:  [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN],
-    module: MODULES.CORE,
-    type:   'navigate',
-    badge:  true,   // shows pending count badge
-  },
   {
     key:    'audit_log',
     Icon:   Shield,
@@ -123,41 +110,7 @@ export default function RightBar({
   notesOpen,
   onToggleNotes,
 }) {
-  const { role, hasModule, companyId } = useAuth()
-  const visibleApprovalRoles = useMemo(() => (
-    role === ROLES.ADMIN
-      ? [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN]
-      : role === ROLES.MANAGER
-        ? [ROLES.MANAGER]
-        : role === ROLES.ACCOUNTS
-          ? [ROLES.ACCOUNTS]
-          : []
-  ), [role])
-
-  // ── Pending approval count for badge ───────────────────────────────────────
-  const [pendingCount, setPendingCount] = useState(0)
-
-  useEffect(() => {
-    if (!companyId) return
-    // Only fetch if user role can see approvals
-    if (visibleApprovalRoles.length === 0) return
-
-    const fetchPending = async () => {
-      try {
-        const { count } = await supabase
-          .from('approval_requests')
-          .select('id', { count: 'exact', head: true })
-          .eq('company_id', companyId)
-          .eq('status', 'pending')
-          .in('required_role', visibleApprovalRoles)
-        setPendingCount(count || 0)
-      } catch {}
-    }
-
-    fetchPending()
-    const interval = setInterval(fetchPending, 60_000)
-    return () => clearInterval(interval)
-  }, [companyId, visibleApprovalRoles])
+  const { role, hasModule } = useAuth()
 
   // Filter items by role + module
   const visibleTop    = ITEMS_TOP.filter(i => i.roles.includes(role) && hasModule(i.module))
@@ -187,7 +140,7 @@ export default function RightBar({
             item={item}
             isActive={activePage === item.key}
             isOn={item.key === 'notes' && notesOpen}
-            badge={item.badge ? pendingCount : 0}
+            badge={0}
             onClick={() => handleClick(item)}
           />
         ))}
@@ -196,7 +149,7 @@ export default function RightBar({
       {/* Spacer */}
       <div className="flex-1" />
 
-      {/* Bottom group: Approvals, Audit, Settings, Company */}
+      {/* Bottom group: Audit, Settings, Company */}
       {visibleBottom.length > 0 && (
         <div className="border-t border-dark-700 py-1">
           {visibleBottom.map(item => (
@@ -205,7 +158,7 @@ export default function RightBar({
               item={item}
               isActive={activePage === item.key}
               isOn={false}
-              badge={item.badge ? pendingCount : 0}
+              badge={0}
               onClick={() => handleClick(item)}
             />
           ))}
