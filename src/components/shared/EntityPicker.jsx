@@ -50,7 +50,7 @@ export function ClientPicker({ companyId, value, onChange, onSelect, placeholder
     queryFn: async () => {
       const { data } = await supabase
         .from('clients')
-        .select('id, display_name, business_name, gstin, registered_address, city, state, pincode')
+        .select('id, display_name, business_name, gstin, registered_address, city, state, pincode, payment_terms')
         .eq('company_id', companyId)
         .order('business_name')
       return data || []
@@ -73,7 +73,7 @@ export function ClientPicker({ companyId, value, onChange, onSelect, placeholder
     const name = c.display_name || c.business_name || ''
     const addrParts = [c.registered_address, c.city, c.state, c.pincode].filter(Boolean)
     onChange(name)
-    onSelect?.({ name, gstin: c.gstin || '', address: addrParts.join(', '), state: c.state || '' })
+    onSelect?.({ name, gstin: c.gstin || '', address: addrParts.join(', '), state: c.state || '', payment_terms: c.payment_terms || '' })
     setOpen(false)
   }
 

@@ -57,7 +57,7 @@ function buildDocXLSX(opts, filename) {
     rows.push([
       i+1,
       l.description || '—',
-      l.hsn_sac || '—',
+      l.sac_hsn_code || l.hsn_sac || '—',
       Number(l.quantity || 0),
       l.unit || '',
       Number(l.rate || 0),
@@ -113,7 +113,7 @@ function buildDocXLSX(opts, filename) {
 export function downloadInvoiceXLSX(invoice, lineItems, company) {
   buildDocXLSX({
     company,
-    docTitle: invoice.is_tax_invoice !== false ? 'TAX INVOICE' : 'INVOICE',
+    docTitle: invoice.invoice_type === 'proforma' ? 'PROFORMA INVOICE' : invoice.invoice_type === 'non_tax' || invoice.is_tax_invoice === false ? 'INVOICE' : 'TAX INVOICE',
     docNumber: invoice.invoice_number,
     docDate: invoice.invoice_date,
     terms: invoice.terms || 'Due on Receipt',
@@ -123,6 +123,14 @@ export function downloadInvoiceXLSX(invoice, lineItems, company) {
     partyAddress: invoice.client_address,
     partyGstin: invoice.client_gstin,
     lineItems,
+    extraMeta: [
+      ['Project', invoice.project_name],
+      ['Work Order', invoice.work_order_number],
+      ['Work Order Date', invoice.work_order_date ? fmtDate(invoice.work_order_date) : ''],
+      ['Work Done', [invoice.work_done_from && fmtDate(invoice.work_done_from), invoice.work_done_to && fmtDate(invoice.work_done_to)].filter(Boolean).join(' to ')],
+      ['Nature of Supply', invoice.nature_of_supply],
+      ['Place of Supply', [invoice.place_of_supply, invoice.place_of_supply_address].filter(Boolean).join(', ')],
+    ].filter(([, value]) => value),
     subtotal: invoice.subtotal || 0,
     discountAmount: invoice.discount_amount || 0,
     taxableAmount: invoice.taxable_amount,

@@ -5,6 +5,8 @@ import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import { lookupHsnSac } from '../../utils/hsnSacLookup'
 import { nextDocNumber } from '../../utils/docNumbers'
+import { generateInvoicePDF } from '../../lib/invoicePDF'
+import InvoicePreviewModal from '../../components/invoices/InvoicePreviewModal'
 import { UOM_LIST } from '../../utils/units'
 import {
   Plus, X, Loader2, FileText, TrendingUp, Truck, RefreshCcw,
@@ -18,7 +20,7 @@ import toast from 'react-hot-toast'
 import { format } from 'date-fns'
 import ClientsPage from '../clients/ClientsPage'
 import {
-  downloadInvoicePDF, downloadQuotePDF, downloadSOPDF,
+  downloadQuotePDF, downloadSOPDF,
   downloadDCPDF, downloadCNPDF, downloadPaymentReceivedPDF,
 } from '../../lib/docPDF'
 import { createVerification, voidVerification } from '../../lib/docVerify'
@@ -32,6 +34,7 @@ import {
 const todayStr = () => new Date().toISOString().split('T')[0]
 const inp = (x = '') => `w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500 ${x}`
 const fmtINR = (n) => `₹${Number(n || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
+const fmtInvoiceLine = (n) => Number(n || 0).toLocaleString('en-IN', { maximumFractionDigits: 3 })
 const fmtDate = (d) => d ? format(new Date(d), 'dd MMM yyyy') : '—'
 
 const STATUS_COLORS = {
@@ -81,11 +84,11 @@ const blankLine = () => ({ _id: Math.random().toString(36).slice(2), description
 
 const LINE_UNITS = UOM_LIST
 
-function LineItemsEditor({ lines, setLines, onGstRate, isTax }) {
+function LineItemsEditor({ lines, setLines, onGstRate, isTax, invoiceDetails = false, equipmentOptions = [] }) {
   const update = (id, key, val) => setLines(p => p.map(l => {
     if (l._id !== id) return l
     const u = { ...l, [key]: val }
-    if (key === 'quantity' || key === 'rate') u.amount = (parseFloat(u.quantity) || 0) * (parseFloat(u.rate) || 0)
+    if (key === 'quantity' || key === 'rate') u.amount = Math.round((parseFloat(u.quantity) || 0) * (parseFloat(u.rate) || 0) * 1000) / 1000
     if (key === 'hsn_sac') {
       const found = lookupHsnSac(val)
       u._gst_rate = found ? found.gst : null
@@ -137,7 +140,7 @@ function LineItemsEditor({ lines, setLines, onGstRate, isTax }) {
                       update(l._id, 'description', e.target.value)
                     }}
                   />
-                  {isTax && (
+                  {isTax && !invoiceDetails && (
                     <div className="mt-0.5">
                       {!showInput ? (
                         <button type="button" onClick={() => toggleHsn(l._id)}
@@ -171,7 +174,7 @@ function LineItemsEditor({ lines, setLines, onGstRate, isTax }) {
                   )}
                 </div>
                 <div className="w-16 shrink-0">
-                  <input className={`${inp('text-xs text-center px-2')}`} type="number" value={l.quantity} onChange={e => update(l._id, 'quantity', e.target.value)} min="0" step="0.01" />
+                  <input className={`${inp('text-xs text-center px-2')}`} type="number" value={l.quantity} onChange={e => update(l._id, 'quantity', e.target.value)} min="0" step={invoiceDetails ? '0.001' : '0.01'} />
                 </div>
                 <div className="w-20 shrink-0">
                   <select className={`${inp('text-xs px-2')}`} value={l.unit} onChange={e => update(l._id, 'unit', e.target.value)}>
@@ -179,14 +182,24 @@ function LineItemsEditor({ lines, setLines, onGstRate, isTax }) {
                   </select>
                 </div>
                 <div className="w-24 shrink-0">
-                  <input className={`${inp('text-xs text-right px-2')}`} type="number" value={l.rate} onChange={e => update(l._id, 'rate', e.target.value)} placeholder="0.00" step="0.01" />
+                  <input className={`${inp('text-xs text-right px-2')}`} type="number" value={l.rate} onChange={e => update(l._id, 'rate', e.target.value)} placeholder="0.00" step={invoiceDetails ? '0.001' : '0.01'} />
                 </div>
                 <div className="w-20 shrink-0 text-right">
-                  <span className="text-xs font-semibold text-slate-200">{fmtINR(l.amount)}</span>
+                  <span className="text-xs font-semibold text-slate-200">{invoiceDetails ? `₹${fmtInvoiceLine(l.amount)}` : fmtINR(l.amount)}</span>
                 </div>
                 <button type="button" onClick={() => setLines(p => p.length > 1 ? p.filter(x => x._id !== l._id) : p)}
                   className="shrink-0 text-slate-600 hover:text-red-400 pt-1.5"><X className="w-3.5 h-3.5" /></button>
               </div>
+              {invoiceDetails && (
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-2">
+                  <input className={inp('text-xs')} value={l.item_code || ''} onChange={e => update(l._id, 'item_code', e.target.value)} placeholder="Item code (optional)" aria-label="Item code" />
+                  <input className={inp('text-xs')} value={l.hsn_sac || ''} onChange={e => update(l._id, 'hsn_sac', e.target.value)} placeholder="SAC / HSN code" aria-label="SAC or HSN code" />
+                  <select className={inp('text-xs')} value={l.equipment_id || ''} onChange={e => update(l._id, 'equipment_id', e.target.value)} aria-label="Line equipment">
+                    <option value="">No linked equipment</option>
+                    {equipmentOptions.map(eq => <option key={eq.id} value={eq.id}>{eq.equipment_number ? `${eq.equipment_number} · ` : ''}{eq.name}</option>)}
+                  </select>
+                </div>
+              )}
             </div>
           )
         })}
@@ -216,8 +229,7 @@ function TaxTypeToggle({ isTax, onToggle, label = 'Invoice' }) {
   )
 }
 
-function TaxSection({ form, setF, subtotal }) {
-  const isTax    = form.is_tax_invoice !== false
+function TaxSection({ form, setF, subtotal, isTax = form.is_tax_invoice !== false }) {
   const discount = parseFloat(form.discount_amount) || 0
   const taxable  = subtotal - discount
   const cgst_amt = (isTax && !form.use_igst) ? taxable * (parseFloat(form.cgst_rate) || 0) / 100 : 0
@@ -273,36 +285,92 @@ function TaxSection({ form, setF, subtotal }) {
 function CreateInvoiceModal({ companyId, session, onClose, onSaved, initialDoc = null }) {
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState(() => initialDoc ? {
+    invoice_type: initialDoc.invoice_type || (initialDoc.is_tax_invoice === false ? 'non_tax' : 'tax_invoice'),
     client_name: initialDoc.client_name || '',
     client_address: initialDoc.client_address || '',
     client_gstin: initialDoc.client_gstin || '',
     project_name: initialDoc.project_name || '',
     invoice_date: initialDoc.invoice_date || todayStr(),
     due_date: initialDoc.due_date || '',
+    work_order_number: initialDoc.work_order_number || '',
+    work_order_date: initialDoc.work_order_date || '',
+    work_done_from: initialDoc.work_done_from || '',
+    work_done_to: initialDoc.work_done_to || '',
+    nature_of_supply: initialDoc.nature_of_supply || '',
+    place_of_supply: initialDoc.place_of_supply || '',
+    place_of_supply_address: initialDoc.place_of_supply_address || '',
+    project_id: initialDoc.project_id || '',
+    inv_equipment_id: initialDoc.inv_equipment_id || '',
     cgst_rate: initialDoc.cgst_rate ?? 9,
     sgst_rate: initialDoc.sgst_rate ?? 9,
     igst_rate: initialDoc.igst_rate ?? 18,
-    use_igst: (initialDoc.igst_rate || 0) > 0,
+    use_igst: (initialDoc.igst_rate || 0) > 0 && !(initialDoc.cgst_rate > 0),
     discount_amount: initialDoc.discount_amount || 0,
     notes: initialDoc.notes || '',
     terms: initialDoc.terms || 'Payment due within 30 days.',
-    is_tax_invoice: initialDoc.is_tax_invoice !== false,
   } : {
+    invoice_type: 'tax_invoice',
     client_name: '', client_address: '', client_gstin: '', project_name: '',
     invoice_date: todayStr(), due_date: '', cgst_rate: 9, sgst_rate: 9, igst_rate: 18,
     use_igst: false, discount_amount: 0, notes: '', terms: 'Payment due within 30 days.',
-    is_tax_invoice: true,
+    work_order_number: '', work_order_date: '', work_done_from: '', work_done_to: '',
+    nature_of_supply: '', place_of_supply: '', place_of_supply_address: '',
+    project_id: '', inv_equipment_id: '',
   })
   const [lines, setLines] = useState(() => initialDoc?._lines?.length ? initialDoc._lines.map(l => ({
     _id: Math.random().toString(36).slice(2), description: l.description || '',
-    hsn_sac: l.hsn_sac || '', quantity: l.quantity || 1, unit: l.unit || 'hrs',
+    hsn_sac: l.sac_hsn_code || l.hsn_sac || '', item_code: l.item_code || '',
+    equipment_id: l.equipment_id || '', quantity: l.quantity ?? 1, unit: l.unit || 'hrs',
     rate: String(l.rate || ''), amount: l.amount || 0,
     _gst_rate: null, _gst_desc: null, _hsn_open: false,
   })) : [blankLine()])
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
+  const selectClient = c => setForm(p => {
+    const days = Number.parseInt(c.payment_terms?.replace(/\D/g, '') || '', 10)
+    const date = p.invoice_date ? new Date(`${p.invoice_date}T12:00:00`) : null
+    if (date && Number.isFinite(days) && days > 0) date.setDate(date.getDate() + days)
+    return {
+      ...p, client_name: c.name, client_gstin: c.gstin || '',
+      client_address: c.address || '', place_of_supply: c.state || p.place_of_supply,
+      place_of_supply_address: c.address || p.place_of_supply_address,
+      due_date: date && Number.isFinite(days) && days > 0 && !p.due_date
+        ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}` : p.due_date,
+    }
+  })
+  const { data: equipmentOptions = [] } = useQuery({
+    queryKey: ['equip_list_invoice', companyId],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('equipment').select('id, name, equipment_number')
+        .eq('company_id', companyId).order('name')
+      if (error) throw error
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+  const { data: projectOptions = [] } = useQuery({
+    queryKey: ['projects_invoice_picker', companyId],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('projects').select('id, project_code, project_name')
+        .eq('company_id', companyId).order('project_name')
+      if (error) throw error
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+  const { data: hireContracts = [] } = useQuery({
+    queryKey: ['hire_contracts_wo', companyId, form.project_id],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('hire_contracts')
+        .select('id, contract_number, equipment_name').eq('company_id', companyId)
+        .eq('project_id', form.project_id).order('contract_number')
+      if (error) throw error
+      return data || []
+    },
+    enabled: !!companyId && !!form.project_id,
+  })
   const subtotal = useMemo(() => lines.reduce((s, l) => s + (l.amount || 0), 0), [lines])
   const taxable  = subtotal - (parseFloat(form.discount_amount) || 0)
-  const isTax    = form.is_tax_invoice !== false
+  const isTax    = form.invoice_type !== 'non_tax'
   const cgst_amt = (isTax && !form.use_igst) ? taxable * (parseFloat(form.cgst_rate) || 0) / 100 : 0
   const sgst_amt = (isTax && !form.use_igst) ? taxable * (parseFloat(form.sgst_rate) || 0) / 100 : 0
   const igst_amt = (isTax && form.use_igst)  ? taxable * (parseFloat(form.igst_rate) || 0) / 100 : 0
@@ -310,55 +378,73 @@ function CreateInvoiceModal({ companyId, session, onClose, onSaved, initialDoc =
 
   const save = async (status) => {
     if (!form.client_name.trim()) return toast.error('Client name required')
-    if (isTax && !form.client_gstin.trim()) return toast.error('Client GSTIN is required for Tax Invoice')
+    if (isTax && form.invoice_type !== 'proforma' && !form.client_gstin.trim()) return toast.error('Client GSTIN is required for Tax Invoice')
     if (lines.every(l => !l.description.trim())) return toast.error('Add at least one line item')
+    if ((parseFloat(form.discount_amount) || 0) > subtotal) return toast.error('Discount cannot exceed subtotal')
     setSaving(true)
     try {
+      const invoiceType = form.invoice_type
+      const gstRate = isTax ? form.use_igst ? Number(form.igst_rate) : Number(form.cgst_rate) + Number(form.sgst_rate) : 0
       const lineItems = lines.filter(l => l.description.trim()).map((l, i) => ({
-        description: l.description.trim(), hsn_sac: l.hsn_sac?.trim() || null,
-        quantity: parseFloat(l.quantity) || 1, unit: l.unit,
-        rate: parseFloat(l.rate) || 0, amount: l.amount, sort_order: i,
+        description: l.description.trim(), item_code: l.item_code?.trim() || null,
+        sac_hsn_code: l.hsn_sac?.trim() || null, gst_rate: gstRate,
+        equipment_id: l.equipment_id || null,
+        quantity: Number(l.quantity) || 1, unit: l.unit,
+        rate: Number(l.rate) || 0, amount: Number(l.amount) || 0, sort_order: i,
       }))
+      const invoiceFields = {
+        invoice_date: form.invoice_date, due_date: form.due_date || null,
+        client_name: form.client_name.trim(), client_address: form.client_address.trim() || null,
+        client_gstin: form.client_gstin.trim() || null, project_name: form.project_name.trim() || null,
+        work_order_number: form.work_order_number.trim() || null,
+        work_order_date: form.work_order_date || null,
+        work_done_from: form.work_done_from || null, work_done_to: form.work_done_to || null,
+        nature_of_supply: form.nature_of_supply.trim() || null,
+        place_of_supply: form.place_of_supply.trim() || null,
+        place_of_supply_address: form.place_of_supply_address.trim() || null,
+        subtotal, discount_amount: Number(form.discount_amount) || 0, taxable_amount: taxable,
+        cgst_rate: isTax && !form.use_igst ? Number(form.cgst_rate) || 0 : 0,
+        sgst_rate: isTax && !form.use_igst ? Number(form.sgst_rate) || 0 : 0,
+        igst_rate: isTax && form.use_igst ? Number(form.igst_rate) || 0 : 0,
+        cgst_amount: cgst_amt, sgst_amount: sgst_amt, igst_amount: igst_amt,
+        total_amount: total, notes: form.notes.trim() || null, terms: form.terms.trim() || null,
+        invoice_type: invoiceType,
+      }
       if (initialDoc) {
         // ── UPDATE ──
         const { error } = await supabase.from('client_invoices').update({
-          invoice_date: form.invoice_date, due_date: form.due_date || null,
-          client_name: form.client_name.trim(), client_address: form.client_address.trim() || null,
-          client_gstin: form.client_gstin.trim() || null, project_name: form.project_name.trim() || null,
-          subtotal, discount_amount: parseFloat(form.discount_amount) || 0, taxable_amount: taxable,
-          cgst_rate: form.use_igst ? 0 : parseFloat(form.cgst_rate),
-          sgst_rate: form.use_igst ? 0 : parseFloat(form.sgst_rate),
-          igst_rate: form.use_igst ? parseFloat(form.igst_rate) : 0,
-          cgst_amount: cgst_amt, sgst_amount: sgst_amt, igst_amount: igst_amt,
-          total_amount: total, balance_due: Math.max(0, total - (Number(initialDoc.paid_amount) || 0)),
-          notes: form.notes.trim() || null, terms: form.terms.trim() || null,
-        }).eq('id', initialDoc.id)
+          ...invoiceFields, project_id: form.project_id || null,
+          inv_equipment_id: form.inv_equipment_id || null,
+          balance_due: Math.max(0, total - (Number(initialDoc.paid_amount) || 0)),
+        }).eq('company_id', companyId).eq('id', initialDoc.id)
         if (error) throw error
-        await supabase.from('invoice_line_items').delete().eq('invoice_id', initialDoc.id)
-        const updItems = lineItems.map(l => ({ ...l, invoice_id: initialDoc.id }))
+        const { error: deleteError } = await supabase.from('invoice_line_items').delete().eq('invoice_id', initialDoc.id)
+        if (deleteError) throw deleteError
+        const updItems = lineItems.map(l => ({ ...l, company_id: companyId, invoice_id: initialDoc.id }))
         if (updItems.length > 0) { const { error: le } = await supabase.from('invoice_line_items').insert(updItems); if (le) throw le }
         toast.success(`Invoice ${initialDoc.invoice_number} updated`)
         onSaved(); return
       }
       // ── CREATE ──
       const id = crypto.randomUUID()
-      const invNum = await nextDocNumber(companyId, 'invoice').catch(() => `INV-${Date.now()}`)
-      const { error } = await supabase.from('client_invoices').insert({
-        id, company_id: companyId, invoice_number: invNum,
-        invoice_date: form.invoice_date, due_date: form.due_date || null,
-        client_name: form.client_name.trim(), client_address: form.client_address.trim() || null,
-        client_gstin: form.client_gstin.trim() || null, project_name: form.project_name.trim() || null,
-        subtotal, discount_amount: parseFloat(form.discount_amount) || 0, taxable_amount: taxable,
-        cgst_rate: form.use_igst ? 0 : parseFloat(form.cgst_rate), sgst_rate: form.use_igst ? 0 : parseFloat(form.sgst_rate),
-        igst_rate: form.use_igst ? parseFloat(form.igst_rate) : 0,
-        cgst_amount: cgst_amt, sgst_amount: sgst_amt, igst_amount: igst_amt,
-        total_amount: total, paid_amount: 0, balance_due: total, status,
-        notes: form.notes.trim() || null, terms: form.terms.trim() || null, created_by: session.user.id,
+      const invNum = await nextDocNumber(companyId, invoiceType === 'proforma' ? 'proforma' : 'invoice')
+      const { error } = await supabase.rpc('create_invoice_with_items', {
+        p_invoice: {
+          ...invoiceFields, id, company_id: companyId, invoice_number: invNum,
+          due_date: form.due_date || '', work_order_date: form.work_order_date || '',
+          work_done_from: form.work_done_from || '', work_done_to: form.work_done_to || '',
+          status, created_by: session.user.id,
+        },
+        p_items: lineItems,
       })
       if (error) throw error
-      const items = lineItems.map(l => ({ ...l, invoice_id: id }))
-      if (items.length > 0) { const { error: le } = await supabase.from('invoice_line_items').insert(items); if (le) throw le }
-      toast.success(`Invoice ${invNum} ${status === 'sent' ? 'created & sent' : 'saved as draft'}`)
+      if (form.project_id || form.inv_equipment_id) {
+        const { error: linkError } = await supabase.from('client_invoices').update({
+          project_id: form.project_id || null, inv_equipment_id: form.inv_equipment_id || null,
+        }).eq('company_id', companyId).eq('id', id)
+        if (linkError) toast.error(`Invoice saved, but project/equipment link failed: ${linkError.message}`)
+      }
+      toast.success(`${invoiceType === 'proforma' ? 'Proforma' : 'Invoice'} ${invNum} ${status === 'sent' ? 'created & sent' : 'saved as draft'}`)
       onSaved()
     } catch (e) { toast.error(e.message || 'Failed to save') } finally { setSaving(false) }
   }
@@ -373,10 +459,19 @@ function CreateInvoiceModal({ companyId, session, onClose, onSaved, initialDoc =
         </button>
       </>}>
       <div className="space-y-5">
+      <SectionHead label="Invoice Format" />
+      <div className="flex gap-2">
+        {[['tax_invoice', 'Tax Invoice'], ['non_tax', 'Invoice (no GST)'], ['proforma', 'Proforma Invoice']].map(([value, label]) => (
+          <button type="button" key={value} disabled={!!initialDoc} onClick={() => setF('invoice_type', value)}
+            className={`flex-1 rounded-lg border px-3 py-2 text-sm font-semibold ${form.invoice_type === value ? 'border-primary-500 bg-primary-600 text-white' : 'border-dark-600 bg-dark-700 text-slate-400'} disabled:opacity-60`}>
+            {label}
+          </button>
+        ))}
+      </div>
       <SectionHead label="Client Details" />
       <div className="grid grid-cols-2 gap-3">
-        <div className="col-span-2"><Field label="Client / Company Name *"><ClientPicker companyId={companyId} value={form.client_name} onChange={n => setF('client_name', n)} onSelect={c => setForm(p => ({ ...p, client_name: c.name, client_gstin: c.gstin || p.client_gstin, client_address: c.address || p.client_address }))} className={inp()} /></Field></div>
-        <TaxTypeToggle isTax={isTax} onToggle={v => setF('is_tax_invoice', v)} label="Invoice" />
+        <div className="col-span-2"><Field label="Client / Company Name *"><ClientPicker companyId={companyId} value={form.client_name} onChange={n => setF('client_name', n)} onSelect={selectClient} className={inp()} /></Field></div>
+        <div className="col-span-2"><Field label="Billing Address"><textarea className={inp()} rows={2} value={form.client_address} onChange={e => setF('client_address', e.target.value)} /></Field></div>
         {isTax && (
           <div className="col-span-2">
             <Field label="Client GSTIN *">
@@ -384,13 +479,37 @@ function CreateInvoiceModal({ companyId, session, onClose, onSaved, initialDoc =
             </Field>
           </div>
         )}
-        <Field label="Project / Work Order"><input className={inp()} value={form.project_name} onChange={e => setF('project_name', e.target.value)} /></Field>
+        <Field label="Project Reference"><input className={inp()} value={form.project_name} onChange={e => setF('project_name', e.target.value)} /></Field>
         <Field label="Invoice Date"><input type="date" className={inp()} value={form.invoice_date} onChange={e => setF('invoice_date', e.target.value)} /></Field>
         <Field label="Due Date"><input type="date" className={inp()} value={form.due_date} onChange={e => setF('due_date', e.target.value)} /></Field>
       </div>
-      <LineItemsEditor lines={lines} setLines={setLines} isTax={isTax}
+      <SectionHead label="Accounting Links" />
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Link to Project"><select className={inp()} value={form.project_id} onChange={e => setForm(p => ({ ...p, project_id: e.target.value, work_order_number: '' }))}>
+          <option value="">No linked project</option>
+          {projectOptions.map(p => <option key={p.id} value={p.id}>{p.project_code} · {p.project_name}</option>)}
+        </select></Field>
+        <Field label="Link to Equipment"><select className={inp()} value={form.inv_equipment_id} onChange={e => setF('inv_equipment_id', e.target.value)}>
+          <option value="">No linked equipment</option>
+          {equipmentOptions.map(eq => <option key={eq.id} value={eq.id}>{eq.equipment_number ? `${eq.equipment_number} · ` : ''}{eq.name}</option>)}
+        </select></Field>
+      </div>
+      <SectionHead label="Work Order & Supply Details" />
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Work Order Number">{hireContracts.length ? <select className={inp()} value={form.work_order_number} onChange={e => setF('work_order_number', e.target.value)}>
+          <option value="">Select work order</option>
+          {hireContracts.map(c => <option key={c.id} value={c.contract_number}>{c.contract_number}{c.equipment_name ? ` · ${c.equipment_name}` : ''}</option>)}
+        </select> : <input className={inp()} value={form.work_order_number} onChange={e => setF('work_order_number', e.target.value)} placeholder="Work order number" />}</Field>
+        <Field label="Work Order Date"><input type="date" className={inp()} value={form.work_order_date} onChange={e => setF('work_order_date', e.target.value)} /></Field>
+        <Field label="Work Done From"><input type="date" className={inp()} value={form.work_done_from} onChange={e => setF('work_done_from', e.target.value)} /></Field>
+        <Field label="Work Done To"><input type="date" className={inp()} value={form.work_done_to} onChange={e => setF('work_done_to', e.target.value)} /></Field>
+        <div className="col-span-2"><Field label="Nature of Supply"><input className={inp()} value={form.nature_of_supply} onChange={e => setF('nature_of_supply', e.target.value)} placeholder="Hiring of equipment with operator" /></Field></div>
+        <Field label="Place of Supply (State)"><input className={inp()} value={form.place_of_supply} onChange={e => setF('place_of_supply', e.target.value)} /></Field>
+        <Field label="Place of Supply Address"><input className={inp()} value={form.place_of_supply_address} onChange={e => setF('place_of_supply_address', e.target.value)} /></Field>
+      </div>
+      <LineItemsEditor lines={lines} setLines={setLines} isTax={isTax} invoiceDetails equipmentOptions={equipmentOptions}
         onGstRate={r => { setF('cgst_rate', r.cgst); setF('sgst_rate', r.sgst); setF('igst_rate', r.igst) }} />
-      <TaxSection form={form} setF={setF} subtotal={subtotal} />
+      <TaxSection form={form} setF={setF} subtotal={subtotal} isTax={isTax} />
       <div className="grid grid-cols-2 gap-3">
         <Field label="Notes"><textarea className={inp()} rows={2} value={form.notes} onChange={e => setF('notes', e.target.value)} /></Field>
         <Field label="Terms & Conditions"><textarea className={inp()} rows={2} value={form.terms} onChange={e => setF('terms', e.target.value)} /></Field>
@@ -485,35 +604,40 @@ function InvoicesTab({ companyId, session }) {
   const [viewingInv, setViewingInv]   = useState(null)
   const [viewingLines, setViewingLines] = useState([])
   const [viewLoading, setViewLoading]  = useState(false)
+  const [previewVisible, setPreviewVisible] = useState(false)
 
   const openView = async (inv) => {
     setViewingInv(inv)
     setViewLoading(true)
     try {
-      const { data: ld } = await supabase.from('invoice_line_items').select('*').eq('invoice_id', inv.id).order('sort_order')
+      const { data: ld, error } = await supabase.from('invoice_line_items').select('*').eq('invoice_id', inv.id).order('sort_order')
+      if (error) throw error
       setViewingLines(ld || [])
-    } catch (_) {}
+    } catch (error) { toast.error(error.message || 'Could not load invoice items'); closeView() }
     setViewLoading(false)
   }
 
-  const closeView = () => { setViewingInv(null); setViewingLines([]) }
+  const closeView = () => { setViewingInv(null); setViewingLines([]); setPreviewVisible(false) }
 
   const dlPDF = async (inv) => {
     try {
-      const { data: ld } = await supabase.from('invoice_line_items').select('*').eq('invoice_id', inv.id).order('sort_order')
-      const verifyUrl = await createVerification(supabase, companyId, { docType: 'invoice', docNumber: inv.invoice_number, docDate: inv.invoice_date, partyName: inv.client_name, amount: inv.total_amount , companyName: company?.name || null, issuedByName: userProfile?.full_name || null })
-      await downloadInvoicePDF(inv, ld || [], company, verifyUrl)
+      const { data: ld, error } = await supabase.from('invoice_line_items').select('*').eq('invoice_id', inv.id).order('sort_order')
+      if (error) throw error
+      const docType = inv.invoice_type === 'proforma' ? 'proforma' : 'invoice'
+      const verifyUrl = await createVerification(supabase, companyId, { docType, docNumber: inv.invoice_number, docDate: inv.invoice_date, partyName: inv.client_name, amount: inv.total_amount, companyName: company?.name || null, issuedByName: userProfile?.full_name || null })
+      await generateInvoicePDF(inv, ld || [], company, verifyUrl)
     } catch(e) { toast.error(e.message) }
   }
   const dlXLSX = async (inv) => {
     try {
-      const { data: ld } = await supabase.from('invoice_line_items').select('*').eq('invoice_id', inv.id).order('sort_order')
+      const { data: ld, error } = await supabase.from('invoice_line_items').select('*').eq('invoice_id', inv.id).order('sort_order')
+      if (error) throw error
       downloadInvoiceXLSX(inv, ld || [], company)
     } catch(e) { toast.error(e.message) }
   }
   const voidQR = async (inv) => {
     if (!window.confirm(`Void QR code for ${inv.invoice_number}?\nAny printed copy will immediately show as invalid on the verification page.`)) return
-    const r = await voidVerification(supabase, companyId, { docType: 'invoice', docNumber: inv.invoice_number })
+    const r = await voidVerification(supabase, companyId, { docType: inv.invoice_type === 'proforma' ? 'proforma' : 'invoice', docNumber: inv.invoice_number })
     if (!r || r.count === 0) toast('No active QR found for this invoice.', { icon: 'ℹ️' })
     else toast.success(`QR voided — ${inv.invoice_number} printed copies now show as invalid`)
   }
@@ -529,13 +653,16 @@ function InvoicesTab({ companyId, session }) {
   })
 
   const updateStatus = async (id, status) => {
-    await supabase.from('client_invoices').update({ status }).eq('id', id)
+    const { error } = await supabase.from('client_invoices').update({ status }).eq('company_id', companyId).eq('id', id)
+    if (error) { toast.error(error.message); return false }
     qc.invalidateQueries(['sales_invoices', companyId])
     toast.success(`Marked as ${status}`)
+    return true
   }
 
   const openEdit = async (inv) => {
-    const { data: ld } = await supabase.from('invoice_line_items').select('*').eq('invoice_id', inv.id).order('sort_order')
+    const { data: ld, error } = await supabase.from('invoice_line_items').select('*').eq('invoice_id', inv.id).order('sort_order')
+    if (error) return toast.error(error.message || 'Could not load invoice items')
     setEditingDoc({ ...inv, _lines: ld || [] })
   }
 
@@ -557,6 +684,55 @@ function InvoicesTab({ companyId, session }) {
     if (error) return toast.error(error.message)
     toast.success(`Invoice ${inv.invoice_number} voided`)
     qc.invalidateQueries(['sales_invoices', companyId])
+  }
+
+  const convertProforma = async (proforma) => {
+    if (invoices.some(inv => inv.converted_from_id === proforma.id)) return toast.error('This proforma has already been converted')
+    if (!window.confirm(`Convert ${proforma.invoice_number} to a Tax Invoice? A new draft invoice will be created with its details.`)) return
+    try {
+      const { data: items, error: itemsError } = await supabase.from('invoice_line_items')
+        .select('*').eq('invoice_id', proforma.id).order('sort_order')
+      if (itemsError) throw itemsError
+      const invoiceNumber = await nextDocNumber(companyId, 'invoice')
+      const id = crypto.randomUUID()
+      const { error } = await supabase.rpc('create_invoice_with_items', {
+        p_invoice: {
+          id, company_id: companyId, invoice_number: invoiceNumber,
+          invoice_date: proforma.invoice_date, due_date: proforma.due_date || '',
+          client_name: proforma.client_name, client_address: proforma.client_address || '',
+          client_gstin: proforma.client_gstin || '', project_name: proforma.project_name || '',
+          work_order_number: proforma.work_order_number || '', work_order_date: proforma.work_order_date || '',
+          work_done_from: proforma.work_done_from || '', work_done_to: proforma.work_done_to || '',
+          nature_of_supply: proforma.nature_of_supply || '', place_of_supply: proforma.place_of_supply || '',
+          place_of_supply_address: proforma.place_of_supply_address || '',
+          subtotal: proforma.subtotal || 0, discount_amount: proforma.discount_amount || 0,
+          taxable_amount: proforma.taxable_amount || 0,
+          cgst_rate: proforma.cgst_rate || 0, sgst_rate: proforma.sgst_rate || 0,
+          igst_rate: proforma.igst_rate || 0,
+          cgst_amount: proforma.cgst_amount || 0, sgst_amount: proforma.sgst_amount || 0,
+          igst_amount: proforma.igst_amount || 0, total_amount: proforma.total_amount || 0,
+          status: 'draft', notes: proforma.notes || '', terms: proforma.terms || '',
+          invoice_type: 'tax_invoice', converted_from_id: proforma.id, created_by: session.user.id,
+        },
+        p_items: (items || []).map((line, index) => ({
+          description: line.description, item_code: line.item_code || '',
+          sac_hsn_code: line.sac_hsn_code || '', gst_rate: line.gst_rate || 0,
+          quantity: line.quantity, unit: line.unit, rate: line.rate,
+          amount: line.amount, sort_order: index, equipment_id: line.equipment_id || '',
+        })),
+      })
+      if (error) throw error
+      const { error: linkError } = await supabase.from('client_invoices').update({
+        project_id: proforma.project_id || null, inv_equipment_id: proforma.inv_equipment_id || null,
+      }).eq('company_id', companyId).eq('id', id)
+      if (linkError) toast.error(`Tax invoice created, but accounting links failed: ${linkError.message}`)
+      const { error: statusError } = await supabase.from('client_invoices')
+        .update({ status: 'converted' }).eq('company_id', companyId).eq('id', proforma.id)
+      if (statusError) toast.error(`Tax invoice created, but proforma status could not update: ${statusError.message}`)
+      toast.success(`Tax Invoice ${invoiceNumber} created as a draft`)
+      closeView()
+      qc.invalidateQueries({ queryKey: ['sales_invoices', companyId] })
+    } catch (error) { toast.error(error.message || 'Could not convert proforma') }
   }
 
   // ── Derived filter options ─────────────────────────────────────────────────
@@ -606,7 +782,7 @@ function InvoicesTab({ companyId, session }) {
 
   const displayed = invoices.filter(i => {
     // Hide proformas that have already been converted to a tax invoice
-    if (i.invoice_type === 'proforma' && convertedProformaIds.has(i.id)) return false
+    if (i.invoice_type === 'proforma' && convertedProformaIds.has(i.id) && filterType !== 'proforma') return false
     if (search) { const q = search.toLowerCase(); if (!i.client_name?.toLowerCase().includes(q) && !i.invoice_number?.toLowerCase().includes(q)) return false }
     if (filterClients.length  > 0 && !filterClients.includes(i.client_name))         return false
     if (filterProjects.length > 0 && !filterProjects.includes(i.project_name))       return false
@@ -735,7 +911,7 @@ function InvoicesTab({ companyId, session }) {
                   <div>
                     <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5 block">Invoice Type</label>
                     <div className="flex gap-1.5">
-                      {[['all','All'],['tax_invoice','Tax Invoice'],['proforma','Proforma']].map(([v,l]) => (
+                      {[['all','All'],['tax_invoice','Tax Invoice'],['proforma','Proforma'],['non_tax','Non-Tax']].map(([v,l]) => (
                         <button key={v} onClick={() => setFilterType(v)}
                           className={`flex-1 text-xs py-1.5 rounded-lg border text-center transition-colors ${filterType === v ? 'bg-primary-600 border-primary-500 text-white' : 'border-dark-600 text-slate-400 hover:border-slate-500'}`}>
                           {l}
@@ -786,6 +962,8 @@ function InvoicesTab({ companyId, session }) {
                     <p className="text-xs font-mono text-primary-500">{inv.invoice_number}</p>
                     <StatusBadge status={inv.status} />
                     {inv.invoice_type === 'proforma' && <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-900/30 text-violet-400 border border-violet-800/40">Proforma</span>}
+                    {inv.invoice_type === 'non_tax' && <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-700 text-slate-300">Non-Tax</span>}
+                    {inv.converted_from_id && <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-900/20 text-violet-300">From Proforma</span>}
                   </div>
                   <p className="font-semibold text-slate-100 text-sm mt-0.5 truncate">{inv.client_name}</p>
                   {inv.project_name && <p className="text-xs text-slate-500">{inv.project_name}</p>}
@@ -800,8 +978,9 @@ function InvoicesTab({ companyId, session }) {
                 <p className="text-xs text-slate-500">{fmtDate(inv.invoice_date)}{inv.due_date ? ` · Due ${fmtDate(inv.due_date)}` : ''}</p>
                 <div className="flex gap-1 items-center" onClick={e => e.stopPropagation()}>
                   {inv.status === 'draft' && <button onClick={() => updateStatus(inv.id, 'sent')} className="text-xs px-2 py-1 rounded-lg border border-blue-700/40 text-blue-400 hover:bg-blue-900/20"><Send className="w-3 h-3 inline mr-1" />Mark Sent</button>}
-                  {inv.status === 'sent' && <button onClick={() => updateStatus(inv.id, 'paid')} className="text-xs px-2 py-1 rounded-lg border border-emerald-700/40 text-emerald-400 hover:bg-emerald-900/20"><CheckCircle className="w-3 h-3 inline mr-1" />Mark Paid</button>}
-                  {inv.status === 'overdue' && <button onClick={() => updateStatus(inv.id, 'paid')} className="text-xs px-2 py-1 rounded-lg border border-emerald-700/40 text-emerald-400 hover:bg-emerald-900/20"><CheckCircle className="w-3 h-3 inline mr-1" />Mark Paid</button>}
+                  {inv.invoice_type !== 'proforma' && inv.status === 'sent' && <button onClick={() => updateStatus(inv.id, 'paid')} className="text-xs px-2 py-1 rounded-lg border border-emerald-700/40 text-emerald-400 hover:bg-emerald-900/20"><CheckCircle className="w-3 h-3 inline mr-1" />Mark Paid</button>}
+                  {inv.invoice_type !== 'proforma' && inv.status === 'overdue' && <button onClick={() => updateStatus(inv.id, 'paid')} className="text-xs px-2 py-1 rounded-lg border border-emerald-700/40 text-emerald-400 hover:bg-emerald-900/20"><CheckCircle className="w-3 h-3 inline mr-1" />Mark Paid</button>}
+                  {inv.invoice_type === 'proforma' && !['converted', 'cancelled'].includes(inv.status) && <button onClick={() => convertProforma(inv)} className="text-xs px-2 py-1 rounded-lg border border-violet-700/40 text-violet-400 hover:bg-violet-900/20">Convert to Tax Invoice</button>}
                   {!['paid','cancelled'].includes(inv.status) && <button onClick={() => openEdit(inv)} className="p-1.5 rounded-lg text-slate-500 hover:text-blue-400 hover:bg-blue-900/20" title="Edit"><Edit2 className="w-3.5 h-3.5" /></button>}
                   {!['paid','cancelled'].includes(inv.status) && <button onClick={() => voidInvoice(inv)} className="p-1.5 rounded-lg text-slate-500 hover:text-yellow-400 hover:bg-yellow-900/20" title="Void"><Ban className="w-3.5 h-3.5" /></button>}
                   {inv.status !== 'paid' && <button onClick={() => deleteInvoice(inv)} className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-900/20" title="Delete"><Trash2 className="w-3.5 h-3.5" /></button>}
@@ -830,6 +1009,7 @@ function InvoicesTab({ companyId, session }) {
                   <span className="text-xs font-mono text-primary-400">{viewingInv.invoice_number}</span>
                   <StatusBadge status={viewingInv.status} />
                   {viewingInv.invoice_type === 'proforma' && <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-900/30 text-violet-400 border border-violet-800/40">Proforma</span>}
+                  {viewingInv.invoice_type === 'non_tax' && <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-700 text-slate-300">Non-Tax</span>}
                 </div>
                 <p className="text-base font-bold text-slate-100 mt-1">{viewingInv.client_name}</p>
                 {viewingInv.client_address && <p className="text-xs text-slate-500 mt-0.5">{viewingInv.client_address}</p>}
@@ -867,6 +1047,21 @@ function InvoicesTab({ companyId, session }) {
                     )}
                   </div>
 
+                  {(viewingInv.work_order_number || viewingInv.work_order_date || viewingInv.work_done_from || viewingInv.work_done_to || viewingInv.nature_of_supply || viewingInv.place_of_supply || viewingInv.place_of_supply_address) && (
+                    <div className="bg-dark-800 rounded-xl p-4 space-y-2 text-xs">
+                      <p className="font-bold uppercase tracking-wider text-slate-500">Work Order & Supply</p>
+                      {[
+                        ['Work Order', viewingInv.work_order_number],
+                        ['Order Date', viewingInv.work_order_date && fmtDate(viewingInv.work_order_date)],
+                        ['Work Period', [viewingInv.work_done_from && fmtDate(viewingInv.work_done_from), viewingInv.work_done_to && fmtDate(viewingInv.work_done_to)].filter(Boolean).join(' to ')],
+                        ['Nature of Supply', viewingInv.nature_of_supply],
+                        ['Place of Supply', [viewingInv.place_of_supply, viewingInv.place_of_supply_address].filter(Boolean).join(', ')],
+                      ].filter(([, value]) => value).map(([label, value]) => (
+                        <div key={label} className="flex justify-between gap-4"><span className="text-slate-500 shrink-0">{label}</span><span className="text-slate-200 text-right">{value}</span></div>
+                      ))}
+                    </div>
+                  )}
+
                   {/* Line items */}
                   {viewingLines.length > 0 && (
                     <div>
@@ -886,11 +1081,12 @@ function InvoicesTab({ companyId, session }) {
                               <tr key={i} className="bg-dark-900">
                                 <td className="px-3 py-2 text-slate-200">
                                   {l.description}
-                                  {l.hsn_sac && <span className="ml-1 text-slate-600 text-[10px]">HSN {l.hsn_sac}</span>}
+                                  {l.item_code && <span className="block text-slate-500 text-[10px]">Item {l.item_code}</span>}
+                                  {(l.sac_hsn_code || l.hsn_sac) && <span className="ml-1 text-slate-600 text-[10px]">SAC/HSN {l.sac_hsn_code || l.hsn_sac}</span>}
                                 </td>
-                                <td className="px-3 py-2 text-right text-slate-400">{l.quantity} {l.unit}</td>
-                                <td className="px-3 py-2 text-right text-slate-400">{fmtINR(l.rate)}</td>
-                                <td className="px-3 py-2 text-right text-slate-100 font-medium">{fmtINR(l.amount)}</td>
+                                <td className="px-3 py-2 text-right text-slate-400">{fmtInvoiceLine(l.quantity)} {l.unit}</td>
+                                <td className="px-3 py-2 text-right text-slate-400">₹{fmtInvoiceLine(l.rate)}</td>
+                                <td className="px-3 py-2 text-right text-slate-100 font-medium">₹{fmtInvoiceLine(l.amount)}</td>
                               </tr>
                             ))}
                           </tbody>
@@ -903,7 +1099,7 @@ function InvoicesTab({ companyId, session }) {
                   <div className="bg-dark-800 rounded-xl p-4 space-y-2">
                     {viewingInv.discount_amount > 0 && (
                       <div className="flex justify-between text-xs">
-                        <span className="text-slate-500">Subtotal</span><span className="text-slate-300">{fmtINR(viewingInv.subtotal_amount || viewingInv.total_amount)}</span>
+                        <span className="text-slate-500">Subtotal</span><span className="text-slate-300">{fmtINR(viewingInv.subtotal)}</span>
                       </div>
                     )}
                     {viewingInv.discount_amount > 0 && (
@@ -960,15 +1156,18 @@ function InvoicesTab({ companyId, session }) {
 
             {/* Footer actions */}
             <div className="px-5 py-3 border-t border-dark-800 shrink-0 flex gap-2 flex-wrap" onClick={e => e.stopPropagation()}>
-              {viewingInv.status === 'draft'   && <button onClick={() => { updateStatus(viewingInv.id, 'sent');   setViewingInv(p => ({...p, status:'sent'})) }} className="flex-1 btn-ghost text-xs border-blue-700/40 text-blue-400"><Send className="w-3.5 h-3.5" /> Mark Sent</button>}
-              {['sent','overdue'].includes(viewingInv.status) && <button onClick={() => { updateStatus(viewingInv.id, 'paid'); setViewingInv(p => ({...p, status:'paid'})) }} className="flex-1 btn-ghost text-xs border-emerald-700/40 text-emerald-400"><CheckCircle className="w-3.5 h-3.5" /> Mark Paid</button>}
+              {viewingInv.status === 'draft' && <button onClick={async () => { if (await updateStatus(viewingInv.id, 'sent')) setViewingInv(p => ({...p, status:'sent'})) }} className="flex-1 btn-ghost text-xs border-blue-700/40 text-blue-400"><Send className="w-3.5 h-3.5" /> Mark Sent</button>}
+              {viewingInv.invoice_type !== 'proforma' && ['sent','overdue'].includes(viewingInv.status) && <button onClick={async () => { if (await updateStatus(viewingInv.id, 'paid')) setViewingInv(p => ({...p, status:'paid'})) }} className="flex-1 btn-ghost text-xs border-emerald-700/40 text-emerald-400"><CheckCircle className="w-3.5 h-3.5" /> Mark Paid</button>}
+              {viewingInv.invoice_type === 'proforma' && !['converted', 'cancelled'].includes(viewingInv.status) && <button onClick={() => convertProforma(viewingInv)} className="flex-1 btn-ghost text-xs text-violet-400">Convert to Tax Invoice</button>}
               {!['paid','cancelled'].includes(viewingInv.status) && <button onClick={() => { closeView(); openEdit(viewingInv) }} className="flex-1 btn-ghost text-xs"><Edit2 className="w-3.5 h-3.5" /> Edit</button>}
+              <button onClick={() => setPreviewVisible(true)} disabled={viewLoading} className="flex-1 btn-ghost text-xs text-primary-400"><FileText className="w-3.5 h-3.5" /> Preview Invoice</button>
               <button onClick={() => dlPDF(viewingInv)} className="flex-1 btn-ghost text-xs text-emerald-400"><FileDown className="w-3.5 h-3.5" /> PDF</button>
               <button onClick={() => dlXLSX(viewingInv)} className="flex-1 btn-ghost text-xs text-teal-400"><Sheet className="w-3.5 h-3.5" /> Excel</button>
             </div>
           </div>
         </div>
       )}
+      {viewingInv && previewVisible && <InvoicePreviewModal inv={viewingInv} lineItems={viewingLines} company={company} onClose={() => setPreviewVisible(false)} onDownload={() => dlPDF(viewingInv)} />}
     </div>
   )
 }

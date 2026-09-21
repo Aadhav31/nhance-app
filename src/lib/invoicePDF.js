@@ -62,7 +62,7 @@ function buildQRPayload(invoice, company, verifyUrl) {
   if (verifyUrl) return verifyUrl
   return [
     'NHANCE DOCUMENT',
-    `Type: ${invoice.invoice_type === 'proforma' ? 'Proforma Invoice' : 'Tax Invoice'}`,
+    `Type: ${invoice.invoice_type === 'proforma' ? 'Proforma Invoice' : invoice.invoice_type === 'non_tax' ? 'Invoice' : 'Tax Invoice'}`,
     `No: ${invoice.invoice_number || ''}`,
     `Date: ${invoice.invoice_date || ''}`,
     `From: ${company?.name || ''} GSTIN:${company?.gstin || ''}`,
@@ -217,7 +217,7 @@ export async function generateInvoicePDF(invoice, lineItems, company, verifyUrl 
   vln(doc, L + irnW, titleY, titleH)               // vertical divider
 
   // Title — "Proforma Invoice" or "Tax Invoice"
-  const docTitle = invoice.invoice_type === 'proforma' ? 'Proforma Invoice' : 'Tax Invoice'
+  const docTitle = invoice.invoice_type === 'proforma' ? 'Proforma Invoice' : invoice.invoice_type === 'non_tax' ? 'Invoice' : 'Tax Invoice'
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(14)
   doc.text(docTitle, L + W / 2, titleY + 7, { align: 'center' })
