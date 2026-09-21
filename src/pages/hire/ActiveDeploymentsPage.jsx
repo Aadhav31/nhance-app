@@ -438,7 +438,7 @@ function EquipCard({ dep, onClick }) {
 }
 
 // ── Main page ─────────────────────────────────────────────────────────────────
-export default function ActiveDeploymentsPage() {
+export default function ActiveDeploymentsPage({ embedded = false }) {
   const { companyId } = useAuth()
   const [search, setSearch]     = useState('')
   const [selected, setSelected] = useState(null)
@@ -522,11 +522,11 @@ export default function ActiveDeploymentsPage() {
   )
 
   return (
-    <div className="p-4 md:p-6 max-w-5xl mx-auto">
-      <div className="mb-6">
+    <div className={embedded ? 'p-4 md:p-5' : 'p-4 md:p-6 max-w-5xl mx-auto'}>
+      {!embedded && <div className="mb-6">
         <h1 className="text-xl font-bold text-slate-100">Active Deployments</h1>
         <p className="text-sm text-slate-400 mt-0.5">Equipment currently deployed on site</p>
-      </div>
+      </div>}
 
       {all.length > 0 && (
         <div className="grid grid-cols-3 gap-3 mb-5">
@@ -571,7 +571,7 @@ export default function ActiveDeploymentsPage() {
           <Truck className="w-12 h-12 text-slate-600 mb-3" />
           <p className="text-slate-400 font-medium">No active deployments found</p>
           <p className="text-slate-500 text-sm mt-1">
-            Open a machine in Equipment & Machines and use the Deploy button to assign it to a project.
+            Plan and mobilise a machine from the Plan &amp; move tab.
           </p>
         </div>
       ) : (

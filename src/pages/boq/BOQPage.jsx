@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import { nextDocNumber } from '../../utils/docNumbers'
+import CanonicalWorkspaceNotice from '../../components/shared/CanonicalWorkspaceNotice'
 import toast from 'react-hot-toast'
 import {
   Plus, X, Search, ChevronDown, ChevronRight, Trash2, Pencil,
@@ -651,7 +652,7 @@ function AbstractTab({ boq, allItems, sections, raBills }) {
 }
 
 // ── RA Bills Tab ──────────────────────────────────────────────────────────────
-function RABillsTab({ boq, raBills, allItems, companyId, session, onRefresh }) {
+function RABillsTab({ boq, raBills, allItems, companyId, session, onRefresh, onOpenRABilling }) {
   const qc = useQueryClient()
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -758,11 +759,16 @@ function RABillsTab({ boq, raBills, allItems, companyId, session, onRefresh }) {
 
   return (
     <div className="space-y-3 p-4">
-      <div className="flex justify-between items-center">
-        <p className="text-sm font-bold text-slate-300">Running Account Bills ({raBills.length})</p>
-        <button onClick={openCreate} className="flex items-center gap-1.5 text-xs font-bold px-3 py-2 bg-primary-600 hover:bg-primary-500 text-white rounded-lg">
-          <Plus className="w-3.5 h-3.5" /> Raise RA Bill
-        </button>
+      <CanonicalWorkspaceNotice
+        title="RA Billing manages the complete billing lifecycle"
+        description="BOQ keeps the contract quantities and progress summary. Create, certify, approve and record payment for RA bills in the dedicated RA Billing workspace."
+        actionLabel="Open RA Billing"
+        onAction={() => onOpenRABilling?.()}
+      />
+
+      <div className="flex justify-between items-center pt-1">
+        <p className="text-sm font-bold text-slate-300">RA bill summary ({raBills.length})</p>
+        <p className="text-xs text-slate-500">Read-only in BOQ</p>
       </div>
 
       {raBills.length === 0 ? (
@@ -804,16 +810,16 @@ function RABillsTab({ boq, raBills, allItems, companyId, session, onRefresh }) {
             )}
 
             <div className="flex gap-2 mt-3 flex-wrap">
-              {ra.status === 'draft'     && <button onClick={() => updateRAStatus(ra.id, 'submitted')} className="text-xs px-2.5 py-1 rounded-lg bg-amber-500/15 text-amber-400 hover:bg-amber-500/25 border border-amber-700/40">Submit to Client</button>}
-              {ra.status === 'submitted' && <button onClick={() => updateRAStatus(ra.id, 'approved')}  className="text-xs px-2.5 py-1 rounded-lg bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 border border-emerald-700/40">Mark Approved</button>}
-              {ra.status === 'approved'  && <button onClick={() => updateRAStatus(ra.id, 'paid')}      className="text-xs px-2.5 py-1 rounded-lg bg-blue-500/15 text-blue-400 hover:bg-blue-500/25 border border-blue-700/40">Mark Paid</button>}
+              <button type="button" onClick={() => onOpenRABilling?.(ra.id)} className="text-xs px-2.5 py-1 rounded-lg bg-primary-500/10 text-primary-400 hover:bg-primary-500/20 border border-primary-700/40">
+                Open bill in RA Billing
+              </button>
             </div>
           </div>
         )
       })}
 
       {/* Raise RA Bill Modal */}
-      {showCreate && (
+      {false && showCreate && (
         <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setShowCreate(false)}>
           <div className="bg-dark-900 border border-dark-700 rounded-2xl w-full max-w-3xl max-h-[92vh] flex flex-col shadow-2xl" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between px-5 py-4 border-b border-dark-700 shrink-0">
@@ -948,7 +954,7 @@ function RABillsTab({ boq, raBills, allItems, companyId, session, onRefresh }) {
 }
 
 // ── BOQ Detail ────────────────────────────────────────────────────────────────
-function BOQDetail({ boq: initialBoq, companyId, session, onBack }) {
+function BOQDetail({ boq: initialBoq, companyId, session, onBack, onNavigate }) {
   const qc = useQueryClient()
   const [activeTab, setActiveTab] = useState('items')
   const [boq, setBoq] = useState(initialBoq)
@@ -1121,7 +1127,15 @@ function BOQDetail({ boq: initialBoq, companyId, session, onBack }) {
           </div>
         )}
         {activeTab === 'ra' && (
-          <RABillsTab boq={boq} raBills={raBills} allItems={allItems} companyId={companyId} session={session} onRefresh={() => { refetchRA(); refreshBoq() }} />
+          <RABillsTab
+            boq={boq}
+            raBills={raBills}
+            allItems={allItems}
+            companyId={companyId}
+            session={session}
+            onRefresh={() => { refetchRA(); refreshBoq() }}
+            onOpenRABilling={raId => onNavigate?.('ra_billing', { boqId: boq.id, raId })}
+          />
         )}
         {activeTab === 'abstract' && (
           <AbstractTab boq={boq} allItems={allItems} sections={sections} raBills={raBills} />
@@ -1175,7 +1189,7 @@ export default function BOQPage({ onNavigate, initialBoqId = null, initialStatus
       </div>
       <div className="flex-1 overflow-hidden">
         {selectedBoq
-          ? <BOQDetail boq={selectedBoq} companyId={companyId} session={session} onBack={handleBack} />
+          ? <BOQDetail boq={selectedBoq} companyId={companyId} session={session} onBack={handleBack} onNavigate={onNavigate} />
           : <BOQList companyId={companyId} session={session} onSelect={handleSelect}
               statusFilter={statusFilter} onStatusChange={handleStatusChange} initialBoqId={initialBoqId} />
         }

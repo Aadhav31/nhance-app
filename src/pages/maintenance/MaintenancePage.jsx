@@ -454,7 +454,7 @@ function RecordDetailModal({ record, companyId, onClose, onEdit }) {
 }
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
-export default function MaintenancePage({ onNavigate, initialTab = 'workshop', initialPmState = 'all', initialWorkshopStatus = 'active' }) {
+export default function MaintenancePage({ onNavigate, initialTab = 'workshop', initialPmState = 'all', initialWorkshopStatus = 'active', initialEquipmentId = null }) {
   const { companyId, session, role } = useAuth()
   const qc = useQueryClient()
   const canManage = ['supervisor', 'manager', 'admin', 'superadmin'].includes(role)
@@ -473,11 +473,11 @@ export default function MaintenancePage({ onNavigate, initialTab = 'workshop', i
 
   const selectSection = next => {
     setSection(next)
-    onNavigate?.('maintenance', { tab: next }, { replace: true })
+    onNavigate?.('maintenance', { tab: next, equipmentId: initialEquipmentId }, { replace: true })
   }
 
   const { data: records = [], isLoading } = useQuery({
-    queryKey: ['maintenance_records', companyId, statusFilter, typeFilter],
+    queryKey: ['maintenance_records', companyId, statusFilter, typeFilter, initialEquipmentId],
     queryFn: async () => {
       let q = supabase.from('maintenance_records')
         .select('*, equipment(id, name, equipment_number, category, meter_type, current_meter_reading)')
@@ -488,6 +488,7 @@ export default function MaintenancePage({ onNavigate, initialTab = 'workshop', i
 
       if (statusFilter !== 'all') q = q.eq('status', statusFilter)
       if (typeFilter   !== 'all') q = q.eq('maintenance_type', typeFilter)
+      if (initialEquipmentId) q = q.eq('equipment_id', initialEquipmentId)
 
       const { data, error } = await q
       if (error) throw error
@@ -555,13 +556,22 @@ export default function MaintenancePage({ onNavigate, initialTab = 'workshop', i
         <button type="button" onClick={() => selectSection('records')} aria-pressed={section === 'records'} className={`flex items-center gap-1.5 border-b-2 px-3 py-2 text-xs ${section === 'records' ? 'border-primary-500 text-primary-400' : 'border-transparent text-slate-500'}`}><History className="h-3.5 w-3.5" />Service History</button>
       </div>
 
+      {initialEquipmentId && (
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-primary-500/20 bg-primary-500/10 px-5 py-2">
+          <p className="text-xs font-semibold text-primary-300">Showing health records for the selected machine</p>
+          <button type="button" onClick={() => onNavigate?.('maintenance', { tab: section }, { replace: true })} className="text-xs font-semibold text-primary-400 hover:text-primary-300">
+            Show all equipment
+          </button>
+        </div>
+      )}
+
       {section === 'workshop' ? (
         <div className="flex-1 overflow-y-auto p-4 md:p-5">
-          <WorkshopBoardTab companyId={companyId} role={role} initialStatus={initialWorkshopStatus} onFilterChange={filter => onNavigate?.('maintenance', { tab: 'workshop', workshopStatus: filter }, { replace: true })} />
+          <WorkshopBoardTab companyId={companyId} role={role} equipmentId={initialEquipmentId} initialStatus={initialWorkshopStatus} onFilterChange={filter => onNavigate?.('maintenance', { tab: 'workshop', workshopStatus: filter, equipmentId: initialEquipmentId }, { replace: true })} />
         </div>
       ) : section === 'planner' ? (
         <div className="flex-1 overflow-y-auto p-4 md:p-5">
-          <PreventiveMaintenanceTab companyId={companyId} role={role} initialState={initialPmState} onFilterChange={state => onNavigate?.('maintenance', { tab: 'planner', pmState: state }, { replace: true })} />
+          <PreventiveMaintenanceTab companyId={companyId} role={role} equipmentId={initialEquipmentId} initialState={initialPmState} onFilterChange={state => onNavigate?.('maintenance', { tab: 'planner', pmState: state, equipmentId: initialEquipmentId }, { replace: true })} />
         </div>
       ) : <>
 

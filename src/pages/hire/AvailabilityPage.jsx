@@ -30,7 +30,7 @@ const CELL_BG = {
 // ── Day-of-week abbreviations ─────────────────────────────────────────────────
 const DOW = ['Su','Mo','Tu','We','Th','Fr','Sa']
 
-export default function AvailabilityPage() {
+export default function AvailabilityPage({ embedded = false }) {
   const { companyId } = useAuth()
   const [currentMonth, setCurrentMonth] = useState(startOfMonth(new Date()))
   const [tooltip, setTooltip] = useState(null)   // { equipName, day, status }
@@ -154,10 +154,11 @@ export default function AvailabilityPage() {
       {/* ── Header ── */}
       <div className="px-4 pt-4 pb-3 shrink-0 border-b border-dark-700">
         <div className="flex items-center justify-between gap-3">
-          <div>
+          {!embedded && <div>
             <h1 className="text-lg font-bold text-slate-100">Equipment Availability</h1>
             <p className="text-xs text-slate-400 mt-0.5">Monthly swimlane — colour per daily status</p>
-          </div>
+          </div>}
+          {embedded && <p className="text-sm font-semibold text-slate-200">Monthly equipment availability</p>}
           {/* Month nav */}
           <div className="flex items-center gap-1.5">
             <button onClick={() => setCurrentMonth(m => subMonths(m, 1))}

@@ -149,7 +149,7 @@ function CompleteModal({ row, onClose, onCompleted }) {
   )
 }
 
-export default function PreventiveMaintenanceTab({ companyId, role, initialState = 'all', onFilterChange }) {
+export default function PreventiveMaintenanceTab({ companyId, role, equipmentId = null, initialState = 'all', onFilterChange }) {
   const qc = useQueryClient()
   const canManage = ['supervisor', 'manager', 'admin', 'superadmin'].includes(role)
   const [stateFilter, setStateFilter] = useState(initialState || 'all')
@@ -187,7 +187,9 @@ export default function PreventiveMaintenanceTab({ companyId, role, initialState
     },
   })
 
-  const schedules = data?.schedules || []
+  const schedules = equipmentId
+    ? (data?.schedules || []).filter(schedule => schedule.equipment_id === equipmentId)
+    : (data?.schedules || [])
   const summary = useMemo(() => summarizePmSchedules(schedules), [schedules])
   const filtered = useMemo(() => filterPmSchedules(schedules, stateFilter, search), [schedules, stateFilter, search])
 

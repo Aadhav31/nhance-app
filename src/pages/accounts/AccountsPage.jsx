@@ -8,6 +8,7 @@ import { generateInvoicePDF } from '../../lib/invoicePDF'
 import { downloadVoucherPDF, makeVoucherNumber } from '../../lib/voucherPDF'
 import { createVerification, voidVerification } from '../../lib/docVerify'
 import PagePanel from '../../components/shared/PagePanel'
+import CanonicalWorkspaceNotice from '../../components/shared/CanonicalWorkspaceNotice'
 import {
   Receipt, Plus, X, Loader2, Trash2, Pencil, Eye,
   TrendingUp, TrendingDown, Clock, Search, Banknote,
@@ -4572,12 +4573,32 @@ function FixedExpensesTab({ companyId }) {
 
 const TABS = [
   { key: 'dashboard', label: 'Dashboard', icon: '📊' },
-  { key: 'invoices',  label: 'Invoices',  icon: '📄' },
-  { key: 'expenses',  label: 'Expenses',  icon: '💸' },
+  { key: 'invoices',  label: 'Invoices',   icon: '📄' },
+  { key: 'expenses',  label: 'Overheads',  icon: '💸' },
   { key: 'fixed',     label: 'Fixed',     icon: '📌' },
   { key: 'ledger',    label: 'Ledger',    icon: '📒' },
 ]
 const ACCOUNT_TAB_IDS = new Set(TABS.map(tab => tab.key))
+
+function InvoiceWorkspaceBridge({ onNavigate }) {
+  return (
+    <div className="flex-1 overflow-y-auto p-4 md:p-6">
+      <CanonicalWorkspaceNotice
+        title="Sales is the home for invoices"
+        description="Create, edit, send and download invoices from Sales. Accounts remains focused on cash position, overheads, recurring commitments and the general ledger."
+        actionLabel="Open Sales Invoices"
+        onAction={() => onNavigate?.('sales', { tab: 'invoices' })}
+      >
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm text-slate-400">Need to record a receipt against an invoice?</p>
+          <button type="button" onClick={() => onNavigate?.('sales', { tab: 'payments' })} className="btn-ghost text-sm">
+            Open Payments Received
+          </button>
+        </div>
+      </CanonicalWorkspaceNotice>
+    </div>
+  )
+}
 
 export default function AccountsPage({ onNavigate, initialTab = 'dashboard' }) {
   const { companyId, session } = useAuth()
@@ -4677,7 +4698,7 @@ export default function AccountsPage({ onNavigate, initialTab = 'dashboard' }) {
       {/* Tab content */}
       <div className="flex-1 flex flex-col overflow-hidden min-h-0">
         {activeTab === 'dashboard' && <DashboardTab companyId={companyId} onNavigate={selectTab} onNavigatePage={onNavigate} />}
-        {activeTab === 'invoices'  && <InvoicesTab  companyId={companyId} session={session} />}
+        {activeTab === 'invoices'  && <InvoiceWorkspaceBridge onNavigate={onNavigate} />}
         {activeTab === 'expenses'  && <ExpensesTab  companyId={companyId} session={session} equipmentList={equipmentList} onNavigate={onNavigate} />}
         {activeTab === 'fixed'     && <FixedExpensesTab companyId={companyId} />}
         {activeTab === 'ledger'    && <LedgerTab    companyId={companyId} />}
