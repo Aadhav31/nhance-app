@@ -1,9 +1,10 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import { nextDocNumber } from '../../utils/docNumbers'
-import { format, getDaysInMonth, startOfMonth, endOfMonth } from 'date-fns'
+import { format } from 'date-fns'
+import { calculateUsageBill } from '../../lib/usageBilling'
 import {
   Truck, IndianRupee, FileText, CheckCircle, ChevronRight,
   Loader2, Building2, CalendarDays, Receipt, X,
@@ -35,7 +36,7 @@ function useClientDetail(clientId) {
     queryFn: async () => {
       if (!clientId) return null
       const { data } = await supabase.from('clients')
-        .select('id, display_name, business_name')
+        .select('id, display_name, business_name, address, billing_address, state, billing_state, gstin')
         .eq('id', clientId).single()
       return data
     },
@@ -90,7 +91,7 @@ function DepCard({ dep, selected, onClick }) {
 }
 
 // ── Invoice Success Banner ────────────────────────────────────────────────────
-function SuccessBanner({ invoice, onDismiss }) {
+function SuccessBanner({ invoice, onDismiss, onNavigate }) {
   return (
     <div className="bg-emerald-900/30 border border-emerald-700/40 rounded-xl p-4 flex items-start gap-3">
       <CheckCircle className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
@@ -99,7 +100,7 @@ function SuccessBanner({ invoice, onDismiss }) {
         <p className="text-xs text-slate-400 mt-0.5">
           Draft invoice saved · Total {fmtMoney(invoice.total_amount)} · Period {fmtDate(invoice.period_from)} – {fmtDate(invoice.period_to)}
         </p>
-        <p className="text-xs text-slate-500 mt-1">Open <strong>Sales &amp; Invoicing</strong> to review, edit, and send it to the client.</p>
+        <button onClick={() => onNavigate?.('sales', { tab: 'invoices' })} className="text-xs text-primary-300 hover:underline mt-2">Open in Sales → Invoices</button>
       </div>
       <button onClick={onDismiss} className="text-slate-500 hover:text-slate-300 shrink-0"><X className="w-4 h-4" /></button>
     </div>
@@ -107,8 +108,8 @@ function SuccessBanner({ invoice, onDismiss }) {
 }
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
-export default function UsageBillingPage() {
-  const { companyId, userProfile } = useAuth()
+export default function UsageBillingPage({ onNavigate }) {
+  const { companyId } = useAuth()
   const qc = useQueryClient()
 
   const [selectedDep,    setSelectedDep]    = useState(null)
@@ -116,6 +117,10 @@ export default function UsageBillingPage() {
   const [gstRate,        setGstRate]        = useState(18)
   const [generating,     setGenerating]     = useState(false)
   const [lastInvoice,    setLastInvoice]    = useState(null)
+  const [contractId, setContractId] = useState('')
+  const [reviewed, setReviewed] = useState(false)
+  const [adjustment, setAdjustment] = useState({ description: '', amount: '' })
+  const [taxMode, setTaxMode] = useState('intra')
 
   // ── Active deployments ───────────────────────────────────────────────────────
   const { data: deployments = [], isLoading: depsLoading } = useQuery({
@@ -124,7 +129,7 @@ export default function UsageBillingPage() {
       const { data } = await supabase
         .from('equipment_deployments')
         .select(`
-          id, deployed_date, billing_basis,
+          id, deployed_date, withdrawn_date, work_order_ref, billing_basis, working_days_per_month, max_hours_per_day,
           rate_per_hour, rate_per_day, rate_per_month,
           max_hours_per_day, ot_percentage,
           equipment_id, project_id, client_id,
@@ -152,106 +157,119 @@ export default function UsageBillingPage() {
   }, [billingMonth])
 
   // ── Daily operations for selected equipment + month ──────────────────────────
-  const { data: ops = [], isLoading: opsLoading } = useQuery({
-    queryKey: ['ops_billing', selectedDep?.equipment_id, billingMonth],
+  const { data: contracts = [], isLoading: contractsLoading } = useQuery({
+    queryKey: ['usage_contracts', companyId, selectedDep?.equipment_id, effectiveClientId, selectedDep?.project_id, billingMonth],
     queryFn: async () => {
-      const { data } = await supabase.from('daily_operations')
-        .select('id, ops_date, shift_type, status, running_hours, kilometer_run, fuel_consumed, operator_name, activity')
+      const { data, error } = await supabase.from('hire_contracts')
+        .select('id, contract_number, status, equipment_id, client_id, project_id, start_date, end_date, billing_basis, rate, minimum_hours_per_day, overtime_rate, gst_applicable, gst_rate, terms_conditions, billing_rules')
+        .eq('company_id', companyId).eq('equipment_id', selectedDep.equipment_id)
+        .eq('client_id', effectiveClientId).lte('start_date', periodEnd)
+        .in('status', ['active', 'completed']).order('start_date', { ascending: false })
+      if (error) throw error
+      return (data || []).filter(c => (!c.project_id || c.project_id === selectedDep.project_id) && (!c.end_date || c.end_date >= periodStart))
+    },
+    enabled: !!companyId && !!selectedDep && !!effectiveClientId && !!periodStart,
+  })
+  const selectedContract = contracts.find(c => c.id === contractId) || null
+
+  const { data: previousInvoice, isLoading: invoiceLoading, error: invoiceError } = useQuery({
+    queryKey: ['usage_invoice', companyId, selectedDep?.id, periodStart, periodEnd],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('client_invoices')
+        .select('id, invoice_number, status').eq('company_id', companyId)
+        .eq('billing_deployment_id', selectedDep.id)
+        .eq('billing_period_from', periodStart).eq('billing_period_to', periodEnd)
+        .neq('status', 'cancelled').maybeSingle()
+      if (error) throw error
+      return data
+    },
+    enabled: !!companyId && !!selectedDep && !!periodStart,
+  })
+
+  useEffect(() => { setContractId(''); setReviewed(false); setAdjustment({ description: '', amount: '' }) }, [selectedDep?.id, billingMonth])
+  const { data: ops = [], isLoading: opsLoading, error: opsError } = useQuery({
+    queryKey: ['ops_billing', companyId, selectedDep?.equipment_id, billingMonth],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('daily_operations')
+        .select('id, ops_date, shift_type, status, running_hours, kilometer_run, fuel_consumed, operator_name, activity, workflow_status, logsheet_photo_url, hire_contract_id, project_id, idle_reason')
         .eq('company_id', companyId)
         .eq('equipment_id', selectedDep.equipment_id)
         .gte('ops_date', periodStart)
         .lte('ops_date', periodEnd)
         .order('ops_date')
+      if (error) throw error
       return data || []
     },
     enabled: !!selectedDep && !!billingMonth,
   })
 
   // ── Billing calculations ─────────────────────────────────────────────────────
-  const totalHours  = useMemo(() => ops.reduce((s, o) => s + (Number(o.running_hours) || 0), 0), [ops])
-  const workingDays = useMemo(() => new Set(ops.filter(o => o.status === 'working').map(o => o.ops_date)).size, [ops])
-  const totalFuel   = useMemo(() => ops.reduce((s, o) => s + (Number(o.fuel_consumed) || 0), 0), [ops])
-
-  const subtotal = useMemo(() => {
-    if (!selectedDep) return 0
-    const { billing_basis, rate_per_hour, rate_per_day, rate_per_month } = selectedDep
-    if (billing_basis === 'hourly'  && rate_per_hour)  return totalHours * Number(rate_per_hour)
-    if (billing_basis === 'daily'   && rate_per_day)   return workingDays * Number(rate_per_day)
-    if (billing_basis === 'monthly' && rate_per_month) return Number(rate_per_month)
-    return 0
-  }, [selectedDep, totalHours, workingDays])
-
-  const taxAmount = useMemo(() => subtotal * (gstRate / 100), [subtotal, gstRate])
-  const total     = useMemo(() => subtotal + taxAmount, [subtotal, taxAmount])
-
-  const billingBasisLabel = () => {
-    if (!selectedDep) return ''
-    const { billing_basis, rate_per_hour, rate_per_day, rate_per_month } = selectedDep
-    if (billing_basis === 'hourly')  return `${totalHours.toFixed(1)} hrs × ₹${Number(rate_per_hour).toLocaleString('en-IN')}/hr`
-    if (billing_basis === 'daily')   return `${workingDays} working days × ₹${Number(rate_per_day).toLocaleString('en-IN')}/day`
-    if (billing_basis === 'monthly') return `Monthly flat — ₹${Number(rate_per_month).toLocaleString('en-IN')}`
-    return ''
-  }
+  const bill = useMemo(() => selectedDep && periodStart && periodEnd
+    ? calculateUsageBill({ deployment: selectedDep, contract: selectedContract, operations: ops, periodFrom: periodStart, periodTo: periodEnd, adjustment })
+    : null, [selectedDep, selectedContract, ops, periodStart, periodEnd, adjustment])
+  const totalHours = bill?.hours || 0
+  const workingDays = bill?.workingDays || 0
+  const totalFuel = bill?.fuel || 0
+  const subtotal = bill?.subtotal || 0
+  const taxRate = selectedContract ? (selectedContract.gst_applicable ? Number(selectedContract.gst_rate) : 0) : gstRate
+  const taxAmount = Math.round(subtotal * taxRate) / 100
+  const total = Math.round((subtotal + taxAmount) * 100) / 100
 
   // ── Generate invoice ─────────────────────────────────────────────────────────
   const handleGenerate = async () => {
     if (!selectedDep) return
     if (!effectiveClientId) { toast.error('No client linked to this deployment — set client in Equipment & Machines first'); return }
-    if (subtotal === 0)     { toast.error('Billable amount is zero — check rate card and daily operations log'); return }
+    if (subtotal <= 0 || !reviewed || previousInvoice || opsError || invoiceError || opsLoading || contractsLoading || invoiceLoading) return
+    if (contracts.length > 0 && !selectedContract) return toast.error('Select the applicable hire contract')
+    if (taxRate && !selClient?.gstin) return toast.error('Add the client GSTIN before creating a taxable invoice')
+    if (adjustment.amount && !adjustment.description.trim()) return toast.error('Explain the manual adjustment')
 
     setGenerating(true)
     try {
       // 1. Invoice number
-      const invoiceNumber = await nextDocNumber(companyId, 'hire_invoice')
+      const invoiceNumber = await nextDocNumber(companyId, 'invoice')
 
       // 2. Build description
       const eq    = selectedDep.equipment
       const month = format(new Date(periodStart), 'MMMM yyyy')
       const desc  = `Equipment Hire — ${eq?.name}${eq?.equipment_number ? ` (${eq.equipment_number})` : ''} — ${month}`
 
-      // 3. Insert invoice
-      const { data: inv, error: invErr } = await supabase.from('invoices').insert({
-        company_id:     companyId,
-        invoice_number: invoiceNumber,
-        client_id:      effectiveClientId,
-        project_id:     selectedDep.project_id || null,
-        invoice_date:   format(new Date(), 'yyyy-MM-dd'),
-        period_from:    periodStart,
-        period_to:      periodEnd,
-        subtotal:       Math.round(subtotal * 100) / 100,
-        tax_rate:       gstRate,
-        tax_amount:     Math.round(taxAmount * 100) / 100,
-        total_amount:   Math.round(total * 100) / 100,
-        paid_amount:    0,
-        due_date:       format(new Date(new Date().setDate(new Date().getDate() + 30)), 'yyyy-MM-dd'),
-        status:         'draft',
-        notes:          `Auto-generated from daily operations log\n${billingBasisLabel()}${totalFuel > 0 ? `\nFuel consumed: ${totalFuel.toFixed(0)} L` : ''}`,
-        created_by:     userProfile?.id || null,
-      }).select().single()
-      if (invErr) throw invErr
-
-      // 4. Insert summary line item
-      const { error: liErr } = await supabase.from('invoice_line_items').insert({
-        company_id:  companyId,
-        invoice_id:  inv.id,
-        equipment_id: selectedDep.equipment_id,
-        description: desc,
-        quantity:    selectedDep.billing_basis === 'hourly' ? totalHours
-                   : selectedDep.billing_basis === 'daily'  ? workingDays
-                   : 1,
-        unit:        selectedDep.billing_basis === 'hourly'  ? 'hours'
-                   : selectedDep.billing_basis === 'daily'   ? 'days'
-                   : 'month',
-        rate:        selectedDep.billing_basis === 'hourly'  ? Number(selectedDep.rate_per_hour)
-                   : selectedDep.billing_basis === 'daily'   ? Number(selectedDep.rate_per_day)
-                   : Number(selectedDep.rate_per_month),
-        amount:      Math.round(subtotal * 100) / 100,
-        sort_order:  1,
+      const id = crypto.randomUUID()
+      const invoice = {
+        id, company_id: companyId, invoice_number: invoiceNumber,
+        invoice_date: format(new Date(), 'yyyy-MM-dd'),
+        due_date: format(new Date(Date.now() + 30 * 86400000), 'yyyy-MM-dd'),
+        client_name: selClient.business_name || selClient.display_name,
+        client_address: selClient.billing_address || selClient.address || '',
+        client_gstin: selClient.gstin || '',
+        project_id: selectedDep.project_id || '', inv_equipment_id: selectedDep.equipment_id,
+        project_name: selProject?.project_name || '',
+        work_order_number: selectedDep.work_order_ref || '',
+        work_done_from: bill.from, work_done_to: bill.to,
+        nature_of_supply: desc, place_of_supply: selClient.billing_state || selClient.state || '',
+        subtotal, taxable_amount: subtotal, total_amount: total,
+        cgst_rate: taxMode === 'intra' ? taxRate / 2 : 0,
+        sgst_rate: taxMode === 'intra' ? taxRate / 2 : 0,
+        igst_rate: taxMode === 'inter' ? taxRate : 0,
+        cgst_amount: taxMode === 'intra' ? Math.round(taxAmount * 50) / 100 : 0,
+        sgst_amount: taxMode === 'intra' ? taxAmount - Math.round(taxAmount * 50) / 100 : 0,
+        igst_amount: taxMode === 'inter' ? taxAmount : 0,
+        status: 'draft', invoice_type: taxRate ? 'tax_invoice' : 'non_tax',
+        notes: `Usage billing review · ${selectedContract?.contract_number || 'deployment rate'} · ${bill.from} to ${bill.to}`,
+        terms: selectedContract?.terms_conditions || '',
+      }
+      const { error } = await supabase.rpc('create_usage_invoice_with_items', {
+        p_invoice: invoice,
+        p_items: bill.lines.map((line, index) => ({ ...line, description: `${desc} — ${line.description}`, equipment_id: selectedDep.equipment_id, gst_rate: taxRate, sort_order: index })),
+        p_billing: { deployment_id: selectedDep.id, contract_id: selectedContract?.id || '', period_from: periodStart, period_to: periodEnd,
+          snapshot: { version: 1, reviewed_at: new Date().toISOString(), contract_number: selectedContract?.contract_number || null,
+            ...bill, exceptions_acknowledged: reviewed, adjustment: adjustment.description ? adjustment : null, tax_mode: taxMode, tax_rate: taxRate } },
       })
-      if (liErr) throw liErr
+      if (error) throw error
 
-      setLastInvoice(inv)
-      qc.invalidateQueries(['invoices', companyId])
+      setLastInvoice({ ...invoice, period_from: bill.from, period_to: bill.to })
+      qc.invalidateQueries({ queryKey: ['sales_invoices', companyId] })
+      qc.invalidateQueries({ queryKey: ['usage_invoice', companyId, selectedDep.id] })
       toast.success(`Invoice ${invoiceNumber} created`)
     } catch (err) {
       toast.error(err.message || 'Failed to generate invoice')
@@ -268,11 +286,11 @@ export default function UsageBillingPage() {
       {/* Header */}
       <div>
         <h1 className="text-xl font-bold text-slate-100">Usage Billing</h1>
-        <p className="text-sm text-slate-400 mt-0.5">Pull hours from daily operations and generate a hire invoice</p>
+        <p className="text-sm text-slate-400 mt-0.5">Review contract terms and daily logs before creating a draft in Sales</p>
       </div>
 
       {/* Success banner */}
-      {lastInvoice && <SuccessBanner invoice={lastInvoice} onDismiss={() => setLastInvoice(null)} />}
+      {lastInvoice && <SuccessBanner invoice={lastInvoice} onDismiss={() => setLastInvoice(null)} onNavigate={onNavigate} />}
 
       {/* Step 1 — Select deployment + month */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -293,7 +311,7 @@ export default function UsageBillingPage() {
               {deployments.map(dep => (
                 <DepCard key={dep.id} dep={dep}
                   selected={selectedDep?.id === dep.id}
-                  onClick={() => { setSelectedDep(dep); setLastInvoice(null) }} />
+                  onClick={() => { setSelectedDep(dep); setLastInvoice(null); setReviewed(false) }} />
               ))}
             </div>
           )}
@@ -303,13 +321,13 @@ export default function UsageBillingPage() {
         <div className="space-y-3">
           <div>
             <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">2 — Billing Month</p>
-            <input type="month" value={billingMonth} onChange={e => setBillingMonth(e.target.value)}
+            <input type="month" value={billingMonth} onChange={e => { setBillingMonth(e.target.value); setReviewed(false) }}
               className="w-full bg-dark-800 border border-dark-700 rounded-xl px-4 py-3 text-sm text-slate-100 focus:outline-none focus:border-primary-500" />
           </div>
 
           <div>
             <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-2">GST Rate (%)</label>
-            <select value={gstRate} onChange={e => setGstRate(Number(e.target.value))}
+            <select value={selectedContract ? (selectedContract.gst_applicable ? selectedContract.gst_rate : 0) : gstRate} disabled={!!selectedContract} onChange={e => { setGstRate(Number(e.target.value)); setReviewed(false) }}
               className="w-full bg-dark-800 border border-dark-700 rounded-xl px-4 py-3 text-sm text-slate-100 focus:outline-none focus:border-primary-500">
               <option value={0}>0% — Exempt</option>
               <option value={5}>5%</option>
@@ -317,7 +335,23 @@ export default function UsageBillingPage() {
               <option value={18}>18% (standard)</option>
               <option value={28}>28%</option>
             </select>
+            {selectedContract && <p className="mt-1 text-[11px] text-slate-500">GST follows selected contract.</p>}
+            <label className="text-xs text-slate-400 block mt-3 mb-1">Tax treatment</label>
+            <select value={taxMode} onChange={e => { setTaxMode(e.target.value); setReviewed(false) }} className="w-full bg-dark-800 border border-dark-700 rounded-xl px-3 py-2 text-xs text-slate-200">
+              <option value="intra">Within state · CGST + SGST</option><option value="inter">Across states · IGST</option>
+            </select>
           </div>
+
+          {selectedDep && <div className="bg-dark-800 border border-dark-700 rounded-xl p-3">
+            <label className="text-xs font-semibold text-slate-300 block mb-2">Hire contract</label>
+            <select value={contractId} disabled={contractsLoading} onChange={e => { setContractId(e.target.value); setReviewed(false) }}
+              className="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-xs text-slate-100">
+              <option value="">{contracts.length ? 'Select applicable contract' : 'No matching active contract · use deployment rate'}</option>
+              {contracts.map(c => <option key={c.id} value={c.id}>{c.contract_number} · {c.billing_basis} · {fmtMoney(c.rate)}</option>)}
+            </select>
+            {selectedContract && <p className="text-[11px] text-slate-400 mt-2">Rules: {selectedContract.billing_rules?.exclude_sundays ? 'Sundays excluded · ' : ''}{selectedContract.billing_rules?.bill_idle_days ? 'Idle billed · ' : ''}{selectedContract.billing_rules?.deduct_breakdown_days ? 'Breakdowns deducted' : 'No breakdown deduction'}</p>}
+            {contracts.length > 0 && !selectedContract && <p className="text-[11px] text-amber-400 mt-2">Choose the contract before generating the invoice.</p>}
+          </div>}
 
           {/* Selected deployment info */}
           {selectedDep && (
@@ -360,7 +394,7 @@ export default function UsageBillingPage() {
             ))}
           </div>
 
-          {opsLoading ? (
+          {opsError ? <div className="rounded-xl border border-red-700/40 p-4 text-xs text-red-300">Daily logs could not be loaded: {opsError.message}</div> : opsLoading ? (
             <div className="space-y-1.5">{[1,2,3].map(i => <div key={i} className="h-9 bg-dark-800 rounded animate-pulse" />)}</div>
           ) : ops.length === 0 ? (
             <div className="bg-dark-800 border border-dark-700 rounded-xl p-6 text-center">
@@ -387,6 +421,7 @@ export default function UsageBillingPage() {
                       {op.operator_name && <p className="text-xs text-slate-300 truncate">{op.operator_name}</p>}
                       {op.activity && <p className="text-[10px] text-slate-500 truncate">{op.activity}</p>}
                       {!op.operator_name && !op.activity && <p className="text-xs text-slate-600 capitalize">{op.status}</p>}
+                      <p className="text-[10px] text-slate-500">{op.status} · {op.workflow_status || 'unreviewed'} · {op.logsheet_photo_url ? 'logsheet attached' : 'no logsheet'}</p>
                     </div>
                   </div>
                 ))}
@@ -404,7 +439,7 @@ export default function UsageBillingPage() {
       )}
 
       {/* Step 3 — Billing summary + generate */}
-      {selectedDep && subtotal > 0 && (
+      {selectedDep && bill && (
         <div>
           <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">4 — Invoice Preview</p>
           <div className="bg-dark-800 border border-dark-700 rounded-xl p-4 space-y-2.5">
@@ -435,13 +470,13 @@ export default function UsageBillingPage() {
             )}
 
             <div className="border-t border-dark-600 pt-2.5 space-y-1.5">
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-400">{billingBasisLabel()}</span>
-                <span className="text-slate-100 font-medium">{fmtMoney(subtotal)}</span>
-              </div>
-              {gstRate > 0 && (
+              {bill.lines.map((line, index) => <div key={index} className="flex items-start justify-between gap-4 text-xs">
+                <span className="text-slate-400">{line.description} · {line.quantity} {line.unit} × {fmtMoney(line.rate)}</span>
+                <span className="text-slate-100 font-medium whitespace-nowrap">{fmtMoney(line.amount)}</span>
+              </div>)}
+              {taxRate > 0 && (
                 <div className="flex items-center justify-between text-xs">
-                  <span className="text-slate-400">GST ({gstRate}%)</span>
+                  <span className="text-slate-400">GST ({taxRate}% · {taxMode === 'intra' ? 'CGST + SGST' : 'IGST'})</span>
                   <span className="text-slate-300">{fmtMoney(taxAmount)}</span>
                 </div>
               )}
@@ -451,9 +486,32 @@ export default function UsageBillingPage() {
               </div>
             </div>
 
+            <div className="border-t border-dark-600 pt-3 space-y-2">
+              <p className="text-xs font-semibold text-slate-300">Reviewed addition or deduction</p>
+              <div className="flex gap-2">
+                <input value={adjustment.description} onChange={e => { setAdjustment(a => ({ ...a, description: e.target.value })); setReviewed(false) }}
+                  placeholder="Reason, e.g. agreed attachment hire" aria-label="Adjustment reason" className="flex-1 min-w-0 bg-dark-700 rounded-lg border border-dark-600 px-3 py-2 text-xs text-slate-100" />
+                <input type="number" step="0.01" value={adjustment.amount} onChange={e => { setAdjustment(a => ({ ...a, amount: e.target.value })); setReviewed(false) }}
+                  placeholder="₹ amount" aria-label="Adjustment amount; negative for deduction" className="w-28 bg-dark-700 rounded-lg border border-dark-600 px-3 py-2 text-xs text-slate-100" />
+              </div>
+              <p className="text-[11px] text-slate-500">Enter a negative amount for a deduction; explain every adjustment.</p>
+            </div>
+
+            {bill.exceptions.length > 0 && <div className="rounded-lg bg-amber-500/10 border border-amber-500/20 p-3 text-xs text-amber-200">
+              <p className="font-semibold mb-1">Check before issuing</p>
+              <ul className="list-disc pl-4 space-y-1">{bill.exceptions.map((issue, index) => <li key={index}>{issue}</li>)}</ul>
+            </div>}
+            {previousInvoice && <p className="text-xs text-amber-300">Already billed as {previousInvoice.invoice_number} ({previousInvoice.status}). Void that invoice before creating a replacement.</p>}
+            {invoiceError && <p className="text-xs text-red-300">Could not check prior invoices: {invoiceError.message}</p>}
+            {taxRate > 0 && selClient && !selClient.gstin && <p className="text-xs text-amber-300">The client needs a GSTIN in Clients before a taxable draft can be created.</p>}
+            <label className="flex items-start gap-2 text-xs text-slate-300 cursor-pointer">
+              <input type="checkbox" checked={reviewed} onChange={e => setReviewed(e.target.checked)} className="mt-0.5 accent-primary-500" />
+              I checked the contract, log status, missing evidence, deductions, and tax treatment for this draft.
+            </label>
+
             <button
               onClick={handleGenerate}
-              disabled={generating || !effectiveClientId}
+              disabled={generating || !effectiveClientId || !selClient || !reviewed || subtotal <= 0 || !!previousInvoice || opsLoading || contractsLoading || invoiceLoading || !!invoiceError || !!opsError || (contracts.length > 0 && !selectedContract) || (!!adjustment.amount && !adjustment.description.trim()) || (taxRate > 0 && !selClient.gstin)}
               className="w-full mt-2 flex items-center justify-center gap-2 py-3 rounded-xl bg-primary-600 hover:bg-primary-500 text-white font-semibold text-sm disabled:opacity-40 transition-colors">
               {generating
                 ? <><Loader2 className="w-4 h-4 animate-spin" />Generating…</>

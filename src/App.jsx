@@ -716,7 +716,7 @@ function AppShell() {
       case 'usage_billing':
         return (
           <Suspense fallback={<LoadingScreen message="Loading billing…" />}>
-            <UsageBillingPage />
+            <UsageBillingPage onNavigate={handleNavigate} />
           </Suspense>
         )
       case 'reimbursements':
