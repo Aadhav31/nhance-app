@@ -11,10 +11,11 @@
  *  - Receipt photo viewer
  */
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
+import { filterReimbursements } from '../../lib/hrFilters'
 import { format, startOfMonth, endOfMonth } from 'date-fns'
 import toast from 'react-hot-toast'
 import {
@@ -369,19 +370,30 @@ function ExpenseRow({ r, onAction, onReceipt }) {
 }
 
 // ── MAIN PAGE ─────────────────────────────────────────────────────────────────
-export default function ReimbursementPage() {
+const REIMBURSEMENT_STATUSES = new Set(['all', 'pending', 'approved', 'rejected', 'reimbursed'])
+
+export default function ReimbursementPage({ onNavigate, initialStatus = 'pending' }) {
   const { userProfile, companyId } = useAuth()
   const reviewerId   = userProfile?.id
   const reviewerName = userProfile?.full_name || 'Admin'
   const qc = useQueryClient()
 
-  const [statusFilter,   setStatusFilter]   = useState('pending')
+  const [statusFilter,   setStatusFilter]   = useState(() => REIMBURSEMENT_STATUSES.has(initialStatus) ? initialStatus : 'pending')
   const [search,         setSearch]         = useState('')
   const [activeRecord,   setActiveRecord]   = useState(null)
   const [lightboxUrl,    setLightboxUrl]    = useState(null)
 
   // ── Fetch all reimbursements ─────────────────────────────────────────────
-  const { data: all = [], isLoading, refetch } = useQuery({
+  useEffect(() => {
+    setStatusFilter(REIMBURSEMENT_STATUSES.has(initialStatus) ? initialStatus : 'pending')
+  }, [initialStatus])
+
+  const selectStatus = status => {
+    setStatusFilter(status)
+    onNavigate?.('reimbursements', { status }, { replace: true })
+  }
+
+  const { data: all = [], isLoading, isError, error, refetch } = useQuery({
     queryKey: ['reimb_all', companyId],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -398,18 +410,7 @@ export default function ReimbursementPage() {
 
   // ── Filters ──────────────────────────────────────────────────────────────
   const filtered = useMemo(() => {
-    let d = all
-    if (statusFilter !== 'all') d = d.filter(r => r.status === statusFilter)
-    if (search.trim()) {
-      const q = search.toLowerCase()
-      d = d.filter(r =>
-        r.employee_name?.toLowerCase().includes(q) ||
-        r.description?.toLowerCase().includes(q) ||
-        r.category?.toLowerCase().includes(q) ||
-        r.flags?.bill_ref?.toLowerCase().includes(q)
-      )
-    }
-    return d
+    return filterReimbursements(all, { status: statusFilter, search })
   }, [all, statusFilter, search])
 
   // ── Summary by status ────────────────────────────────────────────────────
@@ -443,9 +444,9 @@ export default function ReimbursementPage() {
 
           {/* ── Summary cards ─────────────────────────────────────────────── */}
           <div className="grid grid-cols-3 gap-4">
-            <div
-              onClick={() => setStatusFilter('pending')}
-              className="cursor-pointer bg-dark-800 border border-dark-700 rounded-2xl p-4 hover:border-amber-500/40 transition-colors"
+            <button type="button" aria-pressed={statusFilter === 'pending'}
+              onClick={() => selectStatus('pending')}
+              className={`text-left bg-dark-800 border rounded-2xl p-4 hover:border-amber-500/40 transition-colors ${statusFilter === 'pending' ? 'border-amber-500 ring-1 ring-amber-500/20' : 'border-dark-700'}`}
             >
               <div className="flex items-center gap-2 mb-2">
                 <Clock className="w-4 h-4 text-amber-400" />
@@ -453,10 +454,10 @@ export default function ReimbursementPage() {
               </div>
               <p className="text-2xl font-bold text-amber-400">{pending.length}</p>
               <p className="text-xs text-slate-500 mt-0.5">{fmtINR(totalPend)} awaiting review</p>
-            </div>
-            <div
-              onClick={() => setStatusFilter('approved')}
-              className="cursor-pointer bg-dark-800 border border-dark-700 rounded-2xl p-4 hover:border-emerald-500/40 transition-colors"
+            </button>
+            <button type="button" aria-pressed={statusFilter === 'approved'}
+              onClick={() => selectStatus('approved')}
+              className={`text-left bg-dark-800 border rounded-2xl p-4 hover:border-emerald-500/40 transition-colors ${statusFilter === 'approved' ? 'border-emerald-500 ring-1 ring-emerald-500/20' : 'border-dark-700'}`}
             >
               <div className="flex items-center gap-2 mb-2">
                 <CheckCircle2 className="w-4 h-4 text-emerald-400" />
@@ -464,10 +465,10 @@ export default function ReimbursementPage() {
               </div>
               <p className="text-2xl font-bold text-emerald-400">{approved.length}</p>
               <p className="text-xs text-slate-500 mt-0.5">{fmtINR(totalApprv)} to be paid</p>
-            </div>
-            <div
-              onClick={() => setStatusFilter('reimbursed')}
-              className="cursor-pointer bg-dark-800 border border-dark-700 rounded-2xl p-4 hover:border-sky-500/40 transition-colors"
+            </button>
+            <button type="button" aria-pressed={statusFilter === 'reimbursed'}
+              onClick={() => selectStatus('reimbursed')}
+              className={`text-left bg-dark-800 border rounded-2xl p-4 hover:border-sky-500/40 transition-colors ${statusFilter === 'reimbursed' ? 'border-sky-500 ring-1 ring-sky-500/20' : 'border-dark-700'}`}
             >
               <div className="flex items-center gap-2 mb-2">
                 <Banknote className="w-4 h-4 text-sky-400" />
@@ -475,7 +476,7 @@ export default function ReimbursementPage() {
               </div>
               <p className="text-2xl font-bold text-sky-400">{fmtINR(totalPaid)}</p>
               <p className="text-xs text-slate-500 mt-0.5">total paid out</p>
-            </div>
+            </button>
           </div>
 
           {/* ── Filters ──────────────────────────────────────────────────── */}
@@ -491,7 +492,8 @@ export default function ReimbursementPage() {
               ].map(({ v, l }) => (
                 <button
                   key={v}
-                  onClick={() => setStatusFilter(v)}
+                  onClick={() => selectStatus(v)}
+                  aria-pressed={statusFilter === v}
                   className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
                     statusFilter === v
                       ? 'bg-primary-600 border-primary-500 text-white'
@@ -525,6 +527,12 @@ export default function ReimbursementPage() {
           {isLoading ? (
             <div className="flex items-center justify-center py-20">
               <Loader2 className="w-8 h-8 animate-spin text-slate-600" />
+            </div>
+          ) : isError ? (
+            <div className="flex flex-col items-center justify-center py-20 text-center gap-3">
+              <AlertCircle className="w-12 h-12 text-red-400" />
+              <div><p className="text-red-300 font-semibold">Reimbursements could not be loaded</p><p className="mt-1 text-xs text-slate-500">{error?.message || 'Please retry the reimbursement register.'}</p></div>
+              <button type="button" onClick={() => refetch()} className="flex items-center gap-2 px-3 py-2 bg-dark-800 border border-dark-700 rounded-lg text-sm text-slate-300"><RefreshCw className="w-4 h-4" />Retry</button>
             </div>
           ) : filtered.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20 text-center">

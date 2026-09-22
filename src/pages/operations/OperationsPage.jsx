@@ -8,10 +8,12 @@ import {
   Truck, Plus, Fuel, AlertTriangle, X, Loader2, CheckCircle,
   Gauge, User, Mic, MicOff, MapPin, Camera,
   Clock, Activity, PlayCircle, StopCircle, ChevronRight, Lock, Bell,
-  ExternalLink, ZoomIn, Edit2, Trash2, PauseCircle, AlertOctagon,
+  ExternalLink, ZoomIn, Edit2, Trash2, PauseCircle, AlertOctagon, BarChart3, ClipboardCheck,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format } from 'date-fns'
+import OperationsIntelligenceTab from './OperationsIntelligenceTab'
+import SiteDailyLogsTab from './SiteDailyLogsTab'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function today() { return new Date().toISOString().split('T')[0] }
@@ -1238,7 +1240,6 @@ function IncidentModal({ equipment, shift, companyId, onClose }) {
 
 // ── Mark Status Modal (idle / breakdown) — supervisor/manager/admin only ──────
 function MarkStatusModal({ equipment, companyId, statusType, onClose }) {
-  const { userProfile } = useAuth()
   const qc = useQueryClient()
   const isBreakdown = statusType === 'breakdown'
   const inp = 'w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500'
@@ -1258,21 +1259,23 @@ function MarkStatusModal({ equipment, companyId, statusType, onClose }) {
 
   const handleSave = async () => {
     if (isBreakdown && !description.trim()) return toast.error('Describe the breakdown')
+    if (!isBreakdown && !idleReason) return toast.error('Select the idle reason')
     setSaving(true)
     try {
       const today = new Date().toISOString().slice(0, 10)
 
-      // 1. Insert daily_operations record with the new status
-      const { error: opsErr } = await supabase.from('daily_operations').insert({
-        company_id:    companyId,
-        equipment_id:  equipment.id,
-        equipment_name: equipment.name,
-        ops_date:      today,
-        status:        statusType,
-        idle_reason:   !isBreakdown ? (idleReason || null) : null,
-        notes:         description.trim() || null,
-        logged_by:     userProfile?.id   || null,
-        logged_by_name: userProfile?.full_name || null,
+      // 1. Save through the duplicate-safe daily-log workflow.
+      const { error: opsErr } = await supabase.rpc('save_daily_log_batch', {
+        p_entries: [{
+          equipment_id: equipment.id,
+          project_id: equipment.current_project_id || null,
+          ops_date: today,
+          shift_type: 'general',
+          status: statusType,
+          idle_reason: !isBreakdown ? idleReason : null,
+          notes: description.trim() || null,
+        }],
+        p_submit: true,
       })
       if (opsErr) throw opsErr
 
@@ -1376,7 +1379,6 @@ function MarkStatusModal({ equipment, companyId, statusType, onClose }) {
 
 // ── Recover from Breakdown Modal ──────────────────────────────────────────────
 function RecoverModal({ equipment, companyId, onClose }) {
-  const { userProfile } = useAuth()
   const qc = useQueryClient()
   const [notes, setNotes] = useState('')
   const [saving, setSaving] = useState(false)
@@ -1387,27 +1389,32 @@ function RecoverModal({ equipment, companyId, onClose }) {
     try {
       const today = new Date().toISOString().slice(0, 10)
 
-      // 1. Mark equipment as active
-      await supabase.from('equipment').update({ status: 'active' }).eq('id', equipment.id)
+      // 1. Update today's authoritative log before changing the live machine state.
+      const { error: logError } = await supabase.rpc('save_daily_log_batch', {
+        p_entries: [{
+          equipment_id: equipment.id,
+          project_id: equipment.current_project_id || null,
+          ops_date: today,
+          shift_type: 'general',
+          status: 'working',
+          running_hours: 0,
+          notes: notes.trim() ? `Recovered from breakdown: ${notes.trim()}` : 'Recovered from breakdown',
+        }],
+        p_submit: true,
+      })
+      if (logError) throw logError
 
-      // 2. Close any open breakdown incidents for this machine
-      await supabase.from('shift_incidents')
+      // 2. Mark equipment as active.
+      const { error: equipmentError } = await supabase.from('equipment').update({ status: 'active' }).eq('id', equipment.id)
+      if (equipmentError) throw equipmentError
+
+      // 3. Close any open breakdown incidents for this machine.
+      const { error: incidentError } = await supabase.from('shift_incidents')
         .update({ resolved: true, resolved_at: new Date().toISOString() })
         .eq('equipment_id', equipment.id)
         .eq('incident_type', 'breakdown')
         .eq('resolved', false)
-
-      // 3. Log a daily_operations entry for the recovery
-      await supabase.from('daily_operations').insert({
-        company_id:     companyId,
-        equipment_id:   equipment.id,
-        equipment_name: equipment.name,
-        ops_date:       today,
-        status:         'active',
-        notes:          notes.trim() ? `Recovered from breakdown: ${notes.trim()}` : 'Recovered from breakdown',
-        logged_by:      userProfile?.id || null,
-        logged_by_name: userProfile?.full_name || null,
-      })
+      if (incidentError) throw incidentError
 
       toast.success('Equipment marked as operational')
       qc.invalidateQueries({ queryKey: ['today_ops',   companyId] })
@@ -1569,9 +1576,10 @@ function EquipmentOpCard({ equipment, companyId }) {
 }
 
 // ── Today Tab ─────────────────────────────────────────────────────────────────
-function TodayTab({ companyId }) {
+function TodayTab({ companyId, initialEquipmentId, initialEquipmentName }) {
   const [search, setSearch] = useState('')
   const [filterStatus, setFilterStatus] = useState('all')
+  const [focusedEquipmentId, setFocusedEquipmentId] = useState(initialEquipmentId || null)
   const { role, session } = useAuth()
   const isOperator = role === 'operator'
 
@@ -1707,6 +1715,7 @@ function TodayTab({ companyId }) {
   const filtered = equipment.filter(e =>
     // Operators see only their assigned equipment
     (!isOperator || !myEmployee || myEquipmentIds.includes(e.id)) &&
+    (!focusedEquipmentId || e.id === focusedEquipmentId) &&
     (filterStatus === 'all' || e.status === filterStatus) &&
     (!search || e.name.toLowerCase().includes(search.toLowerCase()) ||
       (e.registration_number || '').toLowerCase().includes(search.toLowerCase()) ||
@@ -1789,6 +1798,12 @@ function TodayTab({ companyId }) {
 
       {/* Search */}
       <div className="px-4 pb-2 shrink-0">
+        {focusedEquipmentId && (
+          <div className="flex items-center justify-between gap-2 mb-2 rounded-lg border border-primary-500/30 bg-primary-500/10 px-3 py-2">
+            <p className="text-xs text-primary-300">Focused machine: <span className="font-semibold">{initialEquipmentName || equipment.find(item => item.id === focusedEquipmentId)?.name || 'Selected equipment'}</span></p>
+            <button onClick={() => setFocusedEquipmentId(null)} className="text-xs text-primary-400 hover:text-primary-200">Show all</button>
+          </div>
+        )}
         <input className="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500 placeholder-slate-500"
           placeholder="Search equipment or site…" value={search} onChange={e => setSearch(e.target.value)} />
       </div>
@@ -3147,7 +3162,7 @@ function FuelTab({ companyId, initialEquipmentId, initialEquipmentName }) {
 }
 
 // ── Incidents Tab ─────────────────────────────────────────────────────────────
-function IncidentsTab({ companyId }) {
+function IncidentsTab({ companyId, equipmentId = null, equipmentName = '', onClearEquipment }) {
   const { role, session } = useAuth()
   const isAdmin = ['admin', 'superadmin'].includes(role)
   const qc = useQueryClient()
@@ -3166,11 +3181,13 @@ function IncidentsTab({ companyId }) {
   }
 
   const { data: incidents = [], isLoading } = useQuery({
-    queryKey: ['all_incidents', companyId],
+    queryKey: ['all_incidents', companyId, equipmentId],
     queryFn: async () => {
-      const { data, error } = await supabase.from('shift_incidents')
+      let query = supabase.from('shift_incidents')
         .select('*, equipment(name, category)').eq('company_id', companyId)
         .order('created_at', { ascending: false }).limit(100)
+      if (equipmentId) query = query.eq('equipment_id', equipmentId)
+      const { data, error } = await query
       if (error) throw error
       return data || []
     },
@@ -3192,10 +3209,16 @@ function IncidentsTab({ companyId }) {
     <div className="flex flex-col h-full">
       <div className="px-4 py-2 shrink-0 flex items-center gap-3">
         <span className="text-xs text-slate-400">{openCount} open · {incidents.length - openCount} resolved</span>
+        {equipmentId && (
+          <span className="rounded-full border border-primary-500/25 bg-primary-500/10 px-2.5 py-1 text-xs font-semibold text-primary-300">
+            {equipmentName || 'Selected machine'}
+          </span>
+        )}
         <button onClick={() => setShowResolved(v => !v)}
           className="ml-auto text-xs text-primary-400 hover:text-primary-300">
           {showResolved ? 'Hide resolved' : 'Show resolved'}
         </button>
+        {equipmentId && <button type="button" onClick={onClearEquipment} className="text-xs text-slate-400 hover:text-slate-200">Show all</button>}
       </div>
       <div className="flex-1 overflow-y-auto px-4 pb-4">
         {isLoading ? (
@@ -3248,12 +3271,23 @@ function IncidentsTab({ companyId }) {
 }
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
-export default function OperationsPage({ initialTab, filterEquipmentId, filterEquipmentName }) {
+export default function OperationsPage({ onNavigate, initialTab, initialMetric, initialFrom, initialTo, initialProjectId, filterEquipmentId, filterEquipmentName }) {
   const { companyId } = useAuth()
   const [activeTab, setActiveTab] = useState(initialTab || 'today')
+  const [focusedEquipment, setFocusedEquipment] = useState(filterEquipmentId ? { id: filterEquipmentId, name: filterEquipmentName } : null)
+
+  useEffect(() => {
+    if (initialTab) setActiveTab(initialTab)
+  }, [initialTab])
+
+  useEffect(() => {
+    if (filterEquipmentId) setFocusedEquipment({ id: filterEquipmentId, name: filterEquipmentName })
+  }, [filterEquipmentId, filterEquipmentName])
 
   const tabs = [
     { id: 'today',     label: "Today's Ops", icon: Activity },
+    { id: 'site_logs', label: 'Site Logs', icon: ClipboardCheck },
+    { id: 'intelligence', label: 'Utilization', icon: BarChart3 },
     { id: 'shifts',    label: 'Shifts',      icon: Clock },
     { id: 'fuel',      label: 'Fuel',        icon: Fuel },
     { id: 'incidents', label: 'Incidents',   icon: AlertTriangle },
@@ -3263,13 +3297,13 @@ export default function OperationsPage({ initialTab, filterEquipmentId, filterEq
     <div className="flex flex-col h-full bg-dark-900">
       <div className="px-4 pt-4 pb-2 shrink-0">
         <h1 className="text-lg font-bold text-slate-100">Daily Operations</h1>
-        <p className="text-xs text-slate-400">Shifts · Fuel · Incidents · {format(new Date(), 'dd MMM yyyy')}</p>
+        <p className="text-xs text-slate-400">Site logs · Utilization · Shifts · Fuel · {format(new Date(), 'dd MMM yyyy')}</p>
       </div>
       <div className="flex border-b border-dark-700 shrink-0 px-2 overflow-x-auto">
         {tabs.map(t => {
           const Icon = t.icon
           return (
-            <button key={t.id} onClick={() => setActiveTab(t.id)}
+            <button key={t.id} onClick={() => { setActiveTab(t.id); onNavigate?.('operations', { tab: t.id }) }}
               className={`shrink-0 flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium border-b-2 transition-colors
                 ${activeTab === t.id ? 'border-primary-500 text-primary-400' : 'border-transparent text-slate-500 hover:text-slate-300'}`}>
               <Icon className="w-3.5 h-3.5" />{t.label}
@@ -3278,10 +3312,24 @@ export default function OperationsPage({ initialTab, filterEquipmentId, filterEq
         })}
       </div>
       <div className="flex-1 overflow-hidden">
-        {activeTab === 'today'     && <TodayTab     companyId={companyId} />}
+        {activeTab === 'today'     && <TodayTab companyId={companyId} initialEquipmentId={focusedEquipment?.id} initialEquipmentName={focusedEquipment?.name} />}
+        {activeTab === 'site_logs' && <SiteDailyLogsTab companyId={companyId} initialEquipmentId={focusedEquipment?.id || filterEquipmentId} />}
+        {activeTab === 'intelligence' && <OperationsIntelligenceTab
+          companyId={companyId}
+          initialMetric={initialMetric}
+          initialFrom={initialFrom}
+          initialTo={initialTo}
+          initialProjectId={initialProjectId}
+          onNavigate={onNavigate}
+          onRecord={(equipment) => {
+            setFocusedEquipment({ id: equipment.id, name: equipment.name })
+            setActiveTab('site_logs')
+            onNavigate?.('operations', { tab: 'site_logs', equipmentId: equipment.id, equipmentName: equipment.name })
+          }}
+        />}
         {activeTab === 'shifts'    && <ShiftsTab    companyId={companyId} />}
         {activeTab === 'fuel'      && <FuelTab      companyId={companyId} initialEquipmentId={filterEquipmentId} initialEquipmentName={filterEquipmentName} />}
-        {activeTab === 'incidents' && <IncidentsTab companyId={companyId} />}
+        {activeTab === 'incidents' && <IncidentsTab companyId={companyId} equipmentId={filterEquipmentId} equipmentName={filterEquipmentName} onClearEquipment={() => onNavigate?.('operations', { tab: 'incidents' }, { replace: true })} />}
       </div>
     </div>
   )

@@ -7,6 +7,7 @@ import { useDisplayMode } from '../../contexts/DisplayModeContext'
 import { supabase } from '../../lib/supabase'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
+import CanonicalWorkspaceNotice from '../../components/shared/CanonicalWorkspaceNotice'
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 const ROLES = [
@@ -1028,7 +1029,7 @@ function ShiftOperationsSettings({ company, isAdmin }) {
 }
 
 // ─── Main ────────────────────────────────────────────────────────────────────
-export default function SettingsPage() {
+export default function SettingsPage({ onNavigate }) {
   const { company, companyId, role, isAdmin } = useAuth()
   const adminAccess = isAdmin?.() ?? false
 
@@ -1036,13 +1037,12 @@ export default function SettingsPage() {
     <div className="h-full overflow-y-auto p-6">
       <div className="max-w-3xl mx-auto space-y-6">
 
-        <SectionCard icon={Building2} title="Company Profile">
-          <CompanyProfile company={company} isAdmin={adminAccess} />
-        </SectionCard>
-
-        <SectionCard icon={Users} title="Team Members">
-          <TeamMembers companyId={companyId} isAdmin={adminAccess} />
-        </SectionCard>
+        <CanonicalWorkspaceNotice
+          title="Company Profile owns organisation administration"
+          description="Company identity, GST and registration details, banking information, branding, business units and user access are managed together in Company Profile."
+          actionLabel="Open Company Profile"
+          onAction={() => onNavigate?.('company')}
+        />
 
         <SectionCard icon={Monitor} title="My Display Mode">
           <MyDisplayMode />

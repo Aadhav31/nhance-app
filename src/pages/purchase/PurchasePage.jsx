@@ -3807,9 +3807,20 @@ function ItemCatalogueTab({ companyId, session }) {
 }
 
 // ── MAIN PURCHASE PAGE ────────────────────────────────────────────────────────
-export default function PurchasePage({ initialTab, initialStockTxnId }) {
+const PURCHASE_TAB_IDS = new Set(['vendors', 'expenses', 'bills', 'pos', 'vcredits', 'payments', 'vehicles'])
+
+export default function PurchasePage({ onNavigate, initialTab = 'vendors', initialStockTxnId }) {
   const { companyId, session } = useAuth()
-  const [activeTab, setActiveTab] = useState(initialTab || 'vendors')
+  const [activeTab, setActiveTab] = useState(() => PURCHASE_TAB_IDS.has(initialTab) ? initialTab : 'vendors')
+
+  useEffect(() => {
+    setActiveTab(PURCHASE_TAB_IDS.has(initialTab) ? initialTab : 'vendors')
+  }, [initialTab])
+
+  const selectTab = tab => {
+    setActiveTab(tab)
+    onNavigate?.('purchase', { tab }, { replace: true })
+  }
 
   const tabs = [
     { id: 'vendors',  label: 'Vendors',          icon: Building },
@@ -3837,7 +3848,7 @@ export default function PurchasePage({ initialTab, initialStockTxnId }) {
         {/* Tabs */}
         <div className="flex gap-0 overflow-x-auto">
           {tabs.map(t => (
-            <button key={t.id} onClick={() => setActiveTab(t.id)}
+            <button key={t.id} onClick={() => selectTab(t.id)} aria-pressed={activeTab === t.id}
               className={`flex items-center gap-1.5 px-4 py-2.5 text-xs font-medium border-b-2 whitespace-nowrap transition-colors ${
                 activeTab === t.id ? 'border-orange-500 text-orange-400' : 'border-transparent text-slate-500 hover:text-slate-300'
               }`}>

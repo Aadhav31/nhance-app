@@ -1,7 +1,8 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
+import { filterExpenseEntries } from '../../lib/financeFilters'
 import toast from 'react-hot-toast'
 import * as XLSX from 'xlsx'
 import {
@@ -391,63 +392,93 @@ function ExpandedDetail({ entry, onNavigate }) {
 }
 
 // ── main page ─────────────────────────────────────────────────────────────────
-export default function ExpensesPage({ onNavigate }) {
+export default function ExpensesPage({
+  onNavigate, initialType = 'all', initialFrom = '', initialTo = '', initialMode = '',
+}) {
   const { companyId, session } = useAuth()
   const qc = useQueryClient()
 
-  const [tab,       setTab]       = useState('all')
+  const [tab,       setTab]       = useState(() => initialType === 'all' || TYPE_CFG[initialType] ? initialType : 'all')
   const [search,    setSearch]    = useState('')
-  const [dateFrom,  setFrom]      = useState('')   // no default — salary dates are month-end of prior months
-  const [dateTo,    setTo]        = useState('')
-  const [modeFilter,setMode]      = useState('')
+  const [dateFrom,  setFrom]      = useState(initialFrom || '')   // no default — salary dates are month-end of prior months
+  const [dateTo,    setTo]        = useState(initialTo || '')
+  const [modeFilter,setMode]      = useState(() => MODES.includes(initialMode) ? initialMode : '')
   const [expanded,  setExpanded]  = useState(null)
   const [editing,   setEditing]   = useState(null)
 
   // ── queries ────────────────────────────────────────────────────────────────
   // 1. Field expenses — queried directly from field_expenses table
-  const { data: fieldExpenses = [], isLoading: loadField } = useQuery({
+  useEffect(() => {
+    setTab(initialType === 'all' || TYPE_CFG[initialType] ? initialType : 'all')
+    setFrom(initialFrom || '')
+    setTo(initialTo || '')
+    setMode(MODES.includes(initialMode) ? initialMode : '')
+  }, [initialFrom, initialMode, initialTo, initialType])
+
+  const persistFilters = next => onNavigate?.('expenses', {
+    type: next.type ?? tab,
+    from: next.from ?? dateFrom,
+    to: next.to ?? dateTo,
+    mode: next.mode ?? modeFilter,
+  }, { replace: true })
+  const selectType = value => { setTab(value); persistFilters({ type: value }) }
+  const selectFrom = value => { setFrom(value); persistFilters({ from: value }) }
+  const selectTo = value => { setTo(value); persistFilters({ to: value }) }
+  const selectMode = value => { setMode(value); persistFilters({ mode: value }) }
+  const clearFilters = () => {
+    setTab('all'); setSearch(''); setFrom(''); setTo(''); setMode('')
+    persistFilters({ type: 'all', from: '', to: '', mode: '' })
+  }
+
+  const { data: fieldExpenses = [], isLoading: loadField, isError: fieldError, error: fieldErrorDetail, refetch: refetchField } = useQuery({
     queryKey: ['fe_unified', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('field_expenses')
+      const { data, error } = await supabase.from('field_expenses')
         .select('*')
         .eq('company_id', companyId)
         .order('expense_date', { ascending: false })
         .limit(500)
+      if (error) throw error
       return data || []
     },
     enabled: !!companyId,
   })
 
   // 2. Non-field expenses (purchase / payroll / manual/overhead)
-  const { data: coreExpenses = [], isLoading: loadCore } = useQuery({
+  const { data: coreExpenses = [], isLoading: loadCore, isError: coreError, error: coreErrorDetail, refetch: refetchCore } = useQuery({
     queryKey: ['core_expenses_unified', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('expenses')
+      const { data, error } = await supabase.from('expenses')
         .select('*')
         .eq('company_id', companyId)
         .is('field_expense_id', null)   // exclude synced field_expenses rows (they have this set)
         .order('expense_date', { ascending: false })
         .limit(500)
+      if (error) throw error
       return data || []
     },
     enabled: !!companyId,
   })
 
   // 3. Bill payments
-  const { data: billPayments = [], isLoading: loadPay } = useQuery({
+  const { data: billPayments = [], isLoading: loadPay, isError: payError, error: payErrorDetail, refetch: refetchPay } = useQuery({
     queryKey: ['pay_unified', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('payments_made')
+      const { data, error } = await supabase.from('payments_made')
         .select('*, bills(bill_number, total_amount)')   // bills has no vendor_name column — use payments_made.vendor_name
         .eq('company_id', companyId)
         .order('payment_date', { ascending: false })
         .limit(500)
+      if (error) throw error
       return data || []
     },
     enabled: !!companyId,
   })
 
   const isLoading = loadField || loadCore || loadPay
+  const isError = fieldError || coreError || payError
+  const queryError = fieldErrorDetail || coreErrorDetail || payErrorDetail
+  const retryAll = () => { refetchField(); refetchCore(); refetchPay() }
 
   // ── normalise → unified entries ────────────────────────────────────────────
   const allEntries = useMemo(() => {
@@ -539,33 +570,15 @@ export default function ExpensesPage({ onNavigate }) {
 
   // ── filter ─────────────────────────────────────────────────────────────────
   const filtered = useMemo(() => {
-    return allEntries.filter(e => {
-      if (tab !== 'all' && e.type !== tab) return false
-      if (dateFrom && e.date < dateFrom) return false
-      if (dateTo   && e.date > dateTo)   return false
-      if (modeFilter && e.mode !== modeFilter) return false
-      if (search) {
-        const q = search.toLowerCase()
-        if (![e.title, e.sub1, e.sub2, e.ref].filter(Boolean).join(' ').toLowerCase().includes(q)) return false
-      }
-      return true
-    })
+    return filterExpenseEntries(allEntries, { type: tab, from: dateFrom, to: dateTo, mode: modeFilter, search })
   }, [allEntries, tab, dateFrom, dateTo, modeFilter, search])
 
   // ── totals per type (ignores tab — always shows full picture for date/search/mode) ──
   const totals = useMemo(() => {
     const t = {}
     Object.keys(TYPE_CFG).forEach(k => { t[k] = 0 })
-    allEntries.filter(e => {
-      if (dateFrom && e.date < dateFrom) return false
-      if (dateTo   && e.date > dateTo)   return false
-      if (modeFilter && e.mode !== modeFilter) return false
-      if (search) {
-        const q = search.toLowerCase()
-        if (![e.title, e.sub1, e.sub2, e.ref].filter(Boolean).join(' ').toLowerCase().includes(q)) return false
-      }
-      return true
-    }).forEach(e => { t[e.type] = (t[e.type] || 0) + e.amount })
+    filterExpenseEntries(allEntries, { from: dateFrom, to: dateTo, mode: modeFilter, search })
+      .forEach(e => { t[e.type] = (t[e.type] || 0) + e.amount })
     return t
   }, [allEntries, dateFrom, dateTo, modeFilter, search])
 
@@ -612,10 +625,10 @@ export default function ExpensesPage({ onNavigate }) {
 
   const CREATE_OPTIONS = [
     { label: '+ Field Expense',      nav: 'fieldexpense' },
-    { label: '+ Purchase Expense',   nav: 'purchase' },
-    { label: '+ Salary / Payroll',   nav: 'hr' },
-    { label: '+ Overhead / Manual',  nav: 'accounts' },
-    { label: '+ Fixed Expense',      nav: 'accounts' },
+    { label: '+ Purchase Expense',   nav: 'purchase', extra: { tab: 'payments' } },
+    { label: '+ Salary / Payroll',   nav: 'hr', extra: { tab: 'payroll' } },
+    { label: '+ Overhead / Manual',  nav: 'accounts', extra: { tab: 'expenses' } },
+    { label: '+ Fixed Expense',      nav: 'accounts', extra: { tab: 'fixed' } },
   ]
 
   return (
@@ -630,7 +643,7 @@ export default function ExpensesPage({ onNavigate }) {
             </div>
             <div>
               <h1 className="text-xl font-bold text-slate-100">Expenses</h1>
-              <p className="text-xs text-slate-500">All categories unified — field, purchase, payroll, overhead, bill payments, fixed</p>
+              <p className="text-xs text-slate-500">Read-only register across field, purchase, payroll, overhead, bill payments and fixed costs</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -643,7 +656,7 @@ export default function ExpensesPage({ onNavigate }) {
               </button>
               <div className="absolute right-0 top-full mt-1 w-52 bg-dark-800 border border-dark-700 rounded-xl shadow-2xl z-30 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all">
                 {CREATE_OPTIONS.map(o => (
-                  <button key={o.label} onClick={() => onNavigate?.(o.nav)}
+                  <button key={o.label} onClick={() => onNavigate?.(o.nav, o.extra || {})}
                     className="w-full text-left px-4 py-2.5 text-sm text-slate-300 hover:bg-dark-700 hover:text-slate-100 first:rounded-t-xl last:rounded-b-xl transition-colors">
                     {o.label}
                   </button>
@@ -656,7 +669,7 @@ export default function ExpensesPage({ onNavigate }) {
         {/* ── summary cards ── */}
         <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
           {Object.entries(TYPE_CFG).map(([key, cfg]) => (
-            <button key={key} onClick={() => setTab(tab === key ? 'all' : key)}
+            <button key={key} onClick={() => selectType(tab === key ? 'all' : key)} aria-pressed={tab === key}
               className={`rounded-xl p-3 border text-left transition-all ${
                 tab === key ? cfg.color : 'bg-dark-800/80 border-dark-700 hover:border-dark-600'
               }`}>
@@ -676,18 +689,18 @@ export default function ExpensesPage({ onNavigate }) {
               placeholder="Search name, payee, ref…"
               value={search} onChange={e => setSearch(e.target.value)} />
           </div>
-          <input type="date" value={dateFrom} onChange={e => setFrom(e.target.value)}
+          <input type="date" aria-label="Expense period start" value={dateFrom} onChange={e => selectFrom(e.target.value)}
             className="text-xs px-2 py-2 rounded-lg bg-dark-800 border border-dark-700 text-slate-300 focus:outline-none" />
           <span className="text-slate-600 text-xs self-center">to</span>
-          <input type="date" value={dateTo} onChange={e => setTo(e.target.value)}
+          <input type="date" aria-label="Expense period end" value={dateTo} onChange={e => selectTo(e.target.value)}
             className="text-xs px-2 py-2 rounded-lg bg-dark-800 border border-dark-700 text-slate-300 focus:outline-none" />
-          <select value={modeFilter} onChange={e => setMode(e.target.value)}
+          <select value={modeFilter} onChange={e => selectMode(e.target.value)} aria-label="Expense payment mode"
             className="text-xs px-2 py-2 rounded-lg bg-dark-800 border border-dark-700 text-slate-300 focus:outline-none">
             <option value="">All Modes</option>
             {MODES.map(m => <option key={m} value={m}>{m.toUpperCase()}</option>)}
           </select>
-          {(search || modeFilter) && (
-            <button onClick={() => { setSearch(''); setMode('') }}
+          {(search || modeFilter || dateFrom || dateTo || tab !== 'all') && (
+            <button onClick={clearFilters}
               className="text-xs text-slate-500 hover:text-slate-300 flex items-center gap-1">
               <X className="w-3 h-3" /> Clear
             </button>
@@ -697,7 +710,7 @@ export default function ExpensesPage({ onNavigate }) {
         {/* ── tabs ── */}
         <div className="flex gap-1 overflow-x-auto pb-0.5">
           {TABS.map(t => (
-            <button key={t.key} onClick={() => setTab(t.key)}
+            <button key={t.key} onClick={() => selectType(t.key)} aria-pressed={tab === t.key}
               className={`shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
                 tab === t.key ? 'bg-primary-600 text-white' : 'text-slate-400 hover:text-slate-100 hover:bg-dark-800'
               }`}>
@@ -720,6 +733,12 @@ export default function ExpensesPage({ onNavigate }) {
       <div className="flex-1 overflow-y-auto">
         {isLoading ? (
           <div className="flex justify-center py-20"><Loader2 className="w-6 h-6 animate-spin text-primary-400" /></div>
+        ) : isError ? (
+          <div className="flex flex-col items-center py-20 gap-3 text-center">
+            <AlertCircle className="w-10 h-10 text-red-400" />
+            <div><p className="text-sm font-medium text-red-300">Expenses could not be loaded</p><p className="mt-1 text-xs text-slate-500">{queryError?.message || 'Please retry the unified expense register.'}</p></div>
+            <button type="button" onClick={retryAll} className="btn-secondary text-sm">Retry</button>
+          </div>
         ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center py-20 gap-2 text-slate-600">
             <Receipt className="w-10 h-10" />
@@ -776,21 +795,11 @@ export default function ExpensesPage({ onNavigate }) {
                     {/* amount */}
                     <p className="text-base font-black text-red-400 shrink-0">{fmtINR(e.amount)}</p>
 
-                    {/* actions */}
-                    <div className="flex items-center gap-1 shrink-0" onClick={ev => ev.stopPropagation()}>
-                      {e.canEdit && (
-                        <button onClick={() => setEditing(e)}
-                          className="p-1.5 rounded-lg text-slate-500 hover:text-blue-400 hover:bg-blue-900/20 transition-colors">
-                          <Pencil className="w-3.5 h-3.5" />
-                        </button>
-                      )}
-                      {e.canDelete && (
-                        <button onClick={() => deleteEntry(e)}
-                          className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-900/20 transition-colors">
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      )}
-                    </div>
+                    {(e.canEdit || e.canDelete) && (
+                      <span className="hidden shrink-0 rounded-lg border border-dark-600 bg-dark-700 px-2 py-1 text-[10px] font-medium text-slate-500 md:inline">
+                        Manage at source
+                      </span>
+                    )}
                   </div>
 
                   {/* ── expanded detail ── */}
@@ -803,7 +812,7 @@ export default function ExpensesPage({ onNavigate }) {
       </div>
 
       {/* ── edit modals ── */}
-      {editing?.editModal === 'field' && (
+      {false && editing?.editModal === 'field' && (
         <EditFieldModal
           entry={editing}
           onClose={() => setEditing(null)}
@@ -813,7 +822,7 @@ export default function ExpensesPage({ onNavigate }) {
           }}
         />
       )}
-      {editing?.editModal === 'expense' && (
+      {false && editing?.editModal === 'expense' && (
         <EditExpenseModal
           entry={editing}
           onClose={() => setEditing(null)}

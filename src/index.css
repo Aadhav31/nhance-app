@@ -8,37 +8,59 @@ html, body, #root {
   max-width: 100vw;
 }
 
+/* Consistent keyboard focus across controls, links, and interactive cards. */
+:focus-visible {
+  outline: 2px solid #0ea5e9;
+  outline-offset: 2px;
+}
+
+/* Respect operating-system motion preferences without removing state changes. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
 /* ── Theme variables ──────────────────────────────────────────────────────────
    RGB channel values (no rgb() wrapper) — allows Tailwind opacity modifiers
    e.g.  bg-dark-700/40  →  rgb(var(--s2) / 0.4)
    ─────────────────────────────────────────────────────────────────────────── */
 
 :root {
-  /* Light mode surfaces */
-  --s0: 248 250 252;   /* #f8fafc  slate-50   — page bg          */
-  --s1: 255 255 255;   /* #ffffff  white      — cards / panels   */
-  --s2: 241 245 249;   /* #f1f5f9  slate-100  — inputs           */
-  --s3: 226 232 240;   /* #e2e8f0  slate-200  — borders          */
-  --s4: 203 213 225;   /* #cbd5e1  slate-300  — strong borders   */
+  /* Light mode — warm ivory with restrained burgundy undertones */
+  --s0: 250 247 248;   /* #faf7f8  page background */
+  --s1: 255 252 253;   /* #fffcfd  cards / panels  */
+  --s2: 248 241 243;   /* #f8f1f3  inputs          */
+  --s3: 230 214 218;   /* #e6d6da  borders         */
+  --s4: 207 180 188;   /* #cfb4bc  strong borders  */
 
   /* Light mode readable text (used by component-layer overrides below) */
-  --t1: 15 23 42;      /* #0f172a  slate-900  — primary text     */
-  --t2: 51 65 85;      /* #334155  slate-700  — secondary text   */
-  --t3: 100 116 139;   /* #64748b  slate-500  — muted text       */
+  --t1: 36 24 29;      /* warm near-black — primary text   */
+  --t2: 78 57 64;      /* warm charcoal   — secondary text */
+  --t3: 112 86 95;     /* muted wine-grey — muted text     */
+  --gold: 176 132 65;
+  --shell-shadow: 58 14 29;
 }
 
 [data-theme="dark"] {
-  /* Dark mode surfaces */
-  --s0: 15 23 42;      /* #0f172a  slate-900 */
-  --s1: 30 41 59;      /* #1e293b  slate-800 */
-  --s2: 51 65 85;      /* #334155  slate-700 */
-  --s3: 71 85 105;     /* #475569  slate-600 */
-  --s4: 51 65 85;      /* #334155  slate-700 */
+  /* Dark mode — warm charcoal with deep wine elevation */
+  --s0: 22 15 18;      /* #160f12 */
+  --s1: 31 21 25;      /* #1f1519 */
+  --s2: 45 29 35;      /* #2d1d23 */
+  --s3: 72 43 53;      /* #482b35 */
+  --s4: 99 58 71;      /* #633a47 */
 
   /* Dark mode text — restore original slate-100/200/300 values */
-  --t1: 241 245 249;   /* #f1f5f9  slate-100 */
-  --t2: 203 213 225;   /* #cbd5e1  slate-300 */
-  --t3: 148 163 184;   /* #94a3b8  slate-400 */
+  --t1: 250 247 248;   /* ivory primary text */
+  --t2: 222 207 212;   /* warm secondary text */
+  --t3: 167 144 152;   /* muted rose-grey */
+  --gold: 210 170 101;
+  --shell-shadow: 0 0 0;
 }
 
 /* ── Text-slate override: map every shade through theme variables ─────────────
@@ -127,9 +149,9 @@ html:not([data-theme="dark"]) .text-indigo-300,
 html:not([data-theme="dark"]) .text-indigo-400,
 html:not([data-theme="dark"]) .text-indigo-500  { color: #4338ca; } /* indigo-700 9.1:1 */
 
-/* Primary (custom sea-blue) — 300/400 fail on white; 500+ already pass AA */
+/* Primary burgundy — pale variants need a darker light-mode foreground. */
 html:not([data-theme="dark"]) .text-primary-300,
-html:not([data-theme="dark"]) .text-primary-400 { color: #155A8A; } /* primary-600 */
+html:not([data-theme="dark"]) .text-primary-400 { color: #84213F; } /* primary-700 */
 
 @layer base {
   * { box-sizing: border-box; }
@@ -145,6 +167,11 @@ html:not([data-theme="dark"]) .text-primary-400 { color: #155A8A; } /* primary-6
     overflow: hidden;
   }
 
+  ::selection {
+    background: rgb(167 45 80 / 0.28);
+    color: rgb(var(--t1));
+  }
+
   ::-webkit-scrollbar { width: 6px; height: 6px; }
   ::-webkit-scrollbar-track  { background: rgb(var(--s2)); }
   ::-webkit-scrollbar-thumb  { background: rgb(var(--s3)); border-radius: 9999px; }
@@ -156,6 +183,8 @@ html:not([data-theme="dark"]) .text-primary-400 { color: #155A8A; } /* primary-6
     @apply inline-flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm
            transition-all duration-200 cursor-pointer
            disabled:opacity-50 disabled:cursor-not-allowed;
+    min-height: 2.625rem;
+    justify-content: center;
   }
 
   .btn-primary {
@@ -179,6 +208,7 @@ html:not([data-theme="dark"]) .text-primary-400 { color: #155A8A; } /* primary-6
 
   .card {
     @apply bg-dark-800 border border-dark-700 rounded-xl;
+    box-shadow: 0 10px 30px rgb(var(--shell-shadow) / 0.055);
   }
 
   .input {
@@ -188,6 +218,7 @@ html:not([data-theme="dark"]) .text-primary-400 { color: #155A8A; } /* primary-6
            disabled:opacity-50 disabled:cursor-not-allowed
            transition-all duration-200;
     color: rgb(var(--t1));
+    min-height: 2.75rem;
   }
 
   .label {
@@ -215,7 +246,7 @@ html:not([data-theme="dark"]) .text-primary-400 { color: #155A8A; } /* primary-6
 
   .stat-card { @apply card p-5 flex flex-col gap-2; }
   .page-container { @apply flex flex-col h-full overflow-hidden; }
-  .page-body { @apply flex-1 overflow-y-auto p-6; }
+  .page-body { @apply flex-1 overflow-y-auto p-4 sm:p-6; }
 
   .table-container { @apply w-full overflow-x-auto rounded-xl border border-dark-700; }
   .table { @apply w-full text-sm; }
@@ -224,6 +255,9 @@ html:not([data-theme="dark"]) .text-primary-400 { color: #155A8A; } /* primary-6
     @apply px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider
            bg-dark-800 border-b border-dark-700 whitespace-nowrap;
     color: rgb(var(--t3));
+    position: sticky;
+    top: 0;
+    z-index: 5;
   }
 
   .table td {
@@ -249,6 +283,7 @@ html:not([data-theme="dark"]) .text-primary-400 { color: #155A8A; } /* primary-6
 
   .modal {
     @apply bg-dark-800 border border-dark-700 rounded-2xl shadow-2xl w-full max-h-[90vh] overflow-y-auto;
+    box-shadow: 0 28px 80px rgb(var(--shell-shadow) / 0.3);
   }
 
   .modal-sm  { @apply modal max-w-md; }
@@ -276,6 +311,76 @@ html:not([data-theme="dark"]) .text-primary-400 { color: #155A8A; } /* primary-6
   }
 
   .divider { @apply border-t border-dark-700 my-4; }
+}
+
+/* ── Premium burgundy application shell ─────────────────────────────────── */
+.app-container {
+  background:
+    radial-gradient(circle at 72% -20%, rgb(167 45 80 / 0.12), transparent 34%),
+    rgb(var(--s0));
+}
+
+#main-content {
+  background:
+    radial-gradient(circle at 88% 2%, rgb(167 45 80 / 0.07), transparent 26%),
+    linear-gradient(180deg, rgb(var(--s0)), rgb(var(--s0)));
+}
+
+.nhance-sidebar {
+  background:
+    linear-gradient(180deg, rgb(101 26 51 / 0.12), transparent 28%),
+    rgb(var(--s1));
+  box-shadow: 12px 0 38px rgb(var(--shell-shadow) / 0.08);
+}
+
+[data-theme="dark"] .nhance-sidebar {
+  background:
+    linear-gradient(180deg, rgb(101 26 51 / 0.32), transparent 42%),
+    rgb(var(--s1));
+}
+
+.brand-mark {
+  border: 1px solid rgb(255 255 255 / 0.15);
+  box-shadow: 0 10px 24px rgb(58 14 29 / 0.24);
+}
+
+.brand-word { color: #84213f; }
+[data-theme="dark"] .brand-word { color: #f3a2b8; }
+
+.nhance-nav-active {
+  background: linear-gradient(135deg, #a72d50, #84213f);
+  border: 1px solid rgb(243 162 184 / 0.18);
+  box-shadow: 0 10px 24px rgb(58 14 29 / 0.22);
+}
+
+.nhance-topbar,
+.nhance-panel-header {
+  background:
+    linear-gradient(90deg, rgb(101 26 51 / 0.08), transparent 42%),
+    rgb(var(--s1) / 0.96);
+  box-shadow: 0 8px 28px rgb(var(--shell-shadow) / 0.06);
+  backdrop-filter: blur(14px);
+}
+
+.nhance-rightbar,
+.nhance-mobile-nav,
+.nhance-panel-footer {
+  background-color: rgb(var(--s1) / 0.96);
+  backdrop-filter: blur(14px);
+}
+
+.stat-card,
+.table-container,
+.modal {
+  box-shadow: 0 14px 42px rgb(var(--shell-shadow) / 0.08);
+}
+
+.table tbody tr:hover {
+  background-color: rgb(167 45 80 / 0.055);
+}
+
+[data-theme="dark"] .table tbody tr:hover {
+  background-color: rgb(229 113 145 / 0.07);
 }
 
 /* ── Warning/alert semantic classes — light-mode overrides ONLY ─────────────

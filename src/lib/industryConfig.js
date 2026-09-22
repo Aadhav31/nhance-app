@@ -9,7 +9,7 @@
  *   - New industries (crusher, readymix, automobile) → custom nav defined here.
  */
 
-import { MODULES, ROLES } from './constants'
+import { MODULES, ROLES } from './constants.js'
 
 // ── Industry display labels ───────────────────────────────────────────────────
 export const INDUSTRY_LABELS = {
@@ -83,6 +83,8 @@ export const INDUSTRY_NAV = {
       items: [
         { key: 'dashboard',      label: 'Dashboard',           icon: 'LayoutDashboard', module: MODULES.CORE,
           roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
+        { key: 'control_tower',  label: 'P&M Control Tower',   icon: 'Activity',        module: MODULES.FLEET,
+          roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ADMIN] },
       ],
     },
     {
@@ -90,9 +92,11 @@ export const INDUSTRY_NAV = {
       items: [
         { key: 'fleet',          label: 'Equipment & Machines',icon: 'Truck',           module: MODULES.FLEET,
           roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
-        { key: 'maintenance',    label: 'Maintenance',         icon: 'Wrench',          module: MODULES.MAINTENANCE,
+        { key: 'fuel_reconciliation', label: 'Fuel Reconciliation', icon: 'Fuel',        module: MODULES.FLEET,
+          roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
+        { key: 'maintenance',    label: 'Equipment Health',    icon: 'Wrench',          module: MODULES.MAINTENANCE,
           roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ADMIN] },
-        { key: 'availability',   label: 'Availability',        icon: 'CalendarDays',    module: MODULES.FLEET,
+        { key: 'deployment_planner', label: 'Deployment Planner', icon: 'CalendarDays', module: MODULES.FLEET,
           roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
       ],
     },
@@ -102,8 +106,6 @@ export const INDUSTRY_NAV = {
         { key: 'hire_contracts',     label: 'Hire Contracts',     icon: 'FileSignature',   module: MODULES.CLIENTS_PROJECTS,
           roles: [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
         { key: 'projects',           label: 'Projects',           icon: 'FolderOpen',     module: MODULES.CLIENTS_PROJECTS,
-          roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
-        { key: 'active_deployments', label: 'Active Deployments', icon: 'Activity',       module: MODULES.CLIENTS_PROJECTS,
           roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
         { key: 'usage_billing',      label: 'Usage Billing',      icon: 'ReceiptText',   module: MODULES.CLIENTS_PROJECTS,
           roles: [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
@@ -144,6 +146,8 @@ export const INDUSTRY_NAV = {
     {
       section: 'Insights',
       items: [
+        { key: 'profitability',  label: 'Profitability',        icon: 'BadgeIndianRupee', module: MODULES.REPORTS,
+          roles: [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
         { key: 'reports',        label: 'Reports',             icon: 'BarChart3',       module: MODULES.REPORTS,
           roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
       ],
@@ -197,7 +201,7 @@ export const INDUSTRY_NAV = {
           roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ADMIN] },
         { key: 'fleet',        label: 'Equipment & Machines',icon: 'Truck',           module: MODULES.FLEET,
           roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
-        { key: 'maintenance',  label: 'Maintenance',        icon: 'Wrench',          module: MODULES.MAINTENANCE,
+        { key: 'maintenance',  label: 'Equipment Health',   icon: 'Wrench',          module: MODULES.MAINTENANCE,
           roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ADMIN] },
         { key: 'inventory',    label: 'Inventory',          icon: 'Package',         module: MODULES.INVENTORY,
           roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
@@ -270,7 +274,7 @@ export const INDUSTRY_NAV = {
           roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ADMIN] },
         { key: 'fleet',        label: 'Transit Mixers & Pumps',icon: 'Truck',        module: MODULES.FLEET,
           roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
-        { key: 'maintenance',  label: 'Maintenance',           icon: 'Wrench',       module: MODULES.MAINTENANCE,
+        { key: 'maintenance',  label: 'Equipment Health',      icon: 'Wrench',       module: MODULES.MAINTENANCE,
           roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ADMIN] },
         { key: 'inventory',    label: 'Raw Materials',         icon: 'Package',      module: MODULES.INVENTORY,
           roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },

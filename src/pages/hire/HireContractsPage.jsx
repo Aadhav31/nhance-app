@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
@@ -11,6 +11,7 @@ import {
 } from 'lucide-react'
 import { format, differenceInDays } from 'date-fns'
 import PagePanel from '../../components/shared/PagePanel'
+import { filterHireContracts } from '../../lib/commercialFilters'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const today     = () => new Date().toISOString().split('T')[0]
@@ -82,6 +83,10 @@ function ContractForm({ initial = {}, onSave, onClose, equipment, clients }) {
     security_deposit:      initial.security_deposit != null ? String(initial.security_deposit) : '0',
     gst_applicable:        initial.gst_applicable !== false,
     gst_rate:              initial.gst_rate != null ? String(initial.gst_rate) : '18',
+    exclude_sundays:       initial.billing_rules?.exclude_sundays === true,
+    bill_idle_days:        initial.billing_rules?.bill_idle_days === true,
+    deduct_breakdown_days: initial.billing_rules?.deduct_breakdown_days === true,
+    working_days_per_month: String(initial.billing_rules?.working_days_per_month || 26),
     terms_conditions:      initial.terms_conditions || '',
     notes:                 initial.notes || '',
   })
@@ -131,7 +136,13 @@ function ContractForm({ initial = {}, onSave, onClose, equipment, clients }) {
         demobilization_charge: parseFloat(f.demobilization_charge) || 0,
         security_deposit:      parseFloat(f.security_deposit) || 0,
         gst_applicable:        f.gst_applicable,
-        gst_rate:              parseFloat(f.gst_rate) || 18,
+        gst_rate:              Number.isFinite(parseFloat(f.gst_rate)) ? parseFloat(f.gst_rate) : 18,
+        billing_rules: {
+          exclude_sundays: f.exclude_sundays,
+          bill_idle_days: f.bill_idle_days,
+          deduct_breakdown_days: f.deduct_breakdown_days,
+          working_days_per_month: Math.max(1, Math.min(31, Number(f.working_days_per_month) || 26)),
+        },
         terms_conditions:      f.terms_conditions || null,
         notes:                 f.notes || null,
         created_by:            session?.user?.id,
@@ -259,6 +270,24 @@ function ContractForm({ initial = {}, onSave, onClose, equipment, clients }) {
             </div>
           </div>
         )}
+        <div className="rounded-lg border border-dark-600 p-3 space-y-2">
+          <p className="text-xs font-semibold text-slate-300">Agreed billing rules</p>
+          {[
+            ['exclude_sundays', 'Exclude Sunday logs from billing'],
+            ['bill_idle_days', 'Charge for idle days under this contract'],
+            ['deduct_breakdown_days', 'Deduct breakdown days from monthly hire'],
+          ].map(([key, title]) => (
+            <label key={key} className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+              <input type="checkbox" checked={f[key]} onChange={e => set(key, e.target.checked)} className="accent-primary-500" />{title}
+            </label>
+          ))}
+          {f.billing_basis === 'monthly' && <label className="block text-xs text-slate-400">
+            Days used to value a breakdown deduction
+            <input type="number" min="1" max="31" className={inp('mt-1')} value={f.working_days_per_month}
+              onChange={e => set('working_days_per_month', e.target.value)} />
+          </label>}
+          <p className="text-[11px] text-slate-500">These rules are applied to future billing reviews. Check the written terms before saving.</p>
+        </div>
         <div className="grid grid-cols-3 gap-3">
           <div>
             <label className={labelCls}>Mobilization (₹)</label>
@@ -607,18 +636,19 @@ const STATUS_TABS = [
   { key: 'completed',  label: 'Completed' },
   { key: 'terminated', label: 'Terminated' },
 ]
+const VALID_STATUS_FILTERS = new Set([...STATUS_TABS.map(tab => tab.key), 'ending', 'overdue'])
 
-export default function HireContractsPage() {
+export default function HireContractsPage({ onNavigate, initialStatus = 'all' }) {
   const { companyId } = useAuth()
   const qc = useQueryClient()
-  const [statusTab, setStatusTab]     = useState('all')
+  const [statusTab, setStatusTab]     = useState(() => VALID_STATUS_FILTERS.has(initialStatus) ? initialStatus : 'all')
   const [search,    setSearch]        = useState('')
   const [showForm,  setShowForm]      = useState(false)
   const [editContract, setEditContract] = useState(null)
   const [detail,    setDetail]        = useState(null)
 
   // ── Data ──────────────────────────────────────────────────────────────────
-  const { data: contracts = [], isLoading } = useQuery({
+  const { data: contracts = [], isLoading, isError, error, refetch } = useQuery({
     queryKey: ['hire_contracts', companyId],
     queryFn: async () => {
       const { data, error } = await supabase.from('hire_contracts')
@@ -659,20 +689,16 @@ export default function HireContractsPage() {
   })
 
   // ── Filtered list ─────────────────────────────────────────────────────────
-  const filtered = useMemo(() => {
-    let list = contracts
-    if (statusTab !== 'all') list = list.filter(c => c.status === statusTab)
-    if (search.trim()) {
-      const q = search.toLowerCase()
-      list = list.filter(c =>
-        c.contract_number?.toLowerCase().includes(q) ||
-        c.equipment_name?.toLowerCase().includes(q) ||
-        c.client_name?.toLowerCase().includes(q) ||
-        c.site_location?.toLowerCase().includes(q)
-      )
-    }
-    return list
-  }, [contracts, statusTab, search])
+  const filtered = useMemo(() => filterHireContracts(contracts, { status: statusTab, search, today: today() }), [contracts, statusTab, search])
+
+  useEffect(() => {
+    setStatusTab(VALID_STATUS_FILTERS.has(initialStatus) ? initialStatus : 'all')
+  }, [initialStatus])
+
+  const selectStatus = status => {
+    setStatusTab(status)
+    onNavigate?.('hire_contracts', { status }, { replace: true })
+  }
 
   // ── Stats ─────────────────────────────────────────────────────────────────
   const stats = useMemo(() => ({
@@ -718,10 +744,14 @@ export default function HireContractsPage() {
         {/* Stats row */}
         {contracts.length > 0 && (
           <div className="flex gap-3 mb-4 flex-wrap">
-            <StatChip label="Active" value={stats.active} color="emerald"/>
-            <StatChip label="Draft" value={stats.draft} color="slate"/>
-            {stats.ending > 0 && <StatChip label="Ending soon" value={stats.ending} color="amber"/>}
-            {stats.overdue > 0 && <StatChip label="Overdue" value={stats.overdue} color="red"/>}
+            <StatChip label="Active" value={stats.active} color="emerald" active={statusTab === 'active'} onClick={() => selectStatus('active')}/>
+            <StatChip label="Draft" value={stats.draft} color="slate" active={statusTab === 'draft'} onClick={() => selectStatus('draft')}/>
+            {stats.ending > 0 && (
+              <StatChip label="Ending soon" value={stats.ending} color="amber" active={statusTab === 'ending'} onClick={() => selectStatus('ending')} />
+            )}
+            {stats.overdue > 0 && (
+              <StatChip label="Overdue" value={stats.overdue} color="red" active={statusTab === 'overdue'} onClick={() => selectStatus('overdue')} />
+            )}
           </div>
         )}
 
@@ -742,7 +772,8 @@ export default function HireContractsPage() {
               : contracts.filter(c => c.status === tab.key).length
             return (
               <button key={tab.key}
-                onClick={() => setStatusTab(tab.key)}
+                onClick={() => selectStatus(tab.key)}
+                aria-pressed={statusTab === tab.key}
                 className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
                   statusTab === tab.key
                     ? 'border-primary-500 text-primary-400'
@@ -762,9 +793,21 @@ export default function HireContractsPage() {
 
       {/* Contract list */}
       <div className="flex-1 overflow-y-auto px-6 py-4">
+        {!isLoading && !isError && (statusTab !== 'all' || search.trim()) && (
+          <div className="mb-3 flex items-center justify-between gap-3 rounded-xl border border-primary-500/20 bg-primary-500/5 px-3 py-2">
+            <p className="text-xs text-slate-400">{filtered.length} contract{filtered.length === 1 ? '' : 's'} match the active filters</p>
+            <button type="button" onClick={() => { setSearch(''); selectStatus('all') }} className="text-xs text-primary-400 hover:text-primary-300">Clear filters</button>
+          </div>
+        )}
         {isLoading ? (
           <div className="flex items-center justify-center h-40 text-slate-500 gap-2">
             <Loader2 className="w-5 h-5 animate-spin"/>Loading contracts…
+          </div>
+        ) : isError ? (
+          <div className="flex h-48 flex-col items-center justify-center gap-3 text-center">
+            <AlertTriangle className="h-9 w-9 text-red-400" />
+            <div><p className="font-medium text-red-300">Hire contracts could not be loaded</p><p className="mt-1 text-xs text-slate-500">{error?.message || 'Please retry the contract register.'}</p></div>
+            <button type="button" onClick={() => refetch()} className="btn-secondary text-sm"><RefreshCw className="h-4 w-4" />Retry</button>
           </div>
         ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-48 text-center">
@@ -817,7 +860,7 @@ export default function HireContractsPage() {
   )
 }
 
-function StatChip({ label, value, color }) {
+function StatChip({ label, value, color, active, onClick }) {
   const colors = {
     emerald: 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20',
     slate:   'bg-dark-700 text-slate-300 border-dark-600',
@@ -825,8 +868,8 @@ function StatChip({ label, value, color }) {
     red:     'bg-red-500/10 text-red-300 border-red-500/20',
   }
   return (
-    <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-medium ${colors[color]}`}>
+    <button type="button" onClick={onClick} aria-pressed={active} className={`flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-medium transition-all ${colors[color]} ${active ? 'ring-1 ring-primary-400' : 'hover:border-primary-500/50'}`}>
       <span className="font-bold">{value}</span> {label}
-    </div>
+    </button>
   )
 }

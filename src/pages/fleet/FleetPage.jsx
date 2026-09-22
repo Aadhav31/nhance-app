@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo } from 'react'
 import { downloadTransferCertificate } from '../../lib/transferCertificatePDF'
 import { VendorPicker } from '../../components/shared/EntityPicker'
 import PagePanel from '../../components/shared/PagePanel'
+import CanonicalWorkspaceNotice from '../../components/shared/CanonicalWorkspaceNotice'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
@@ -22,6 +23,7 @@ import {
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format, differenceInDays } from 'date-fns'
+import QRCode from 'qrcode'
 
 // ── Document types ────────────────────────────────────────────────────────────
 const DOC_TYPES = [
@@ -1973,12 +1975,20 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
   const [modal,         setModal]         = useState(null)
   const [showEdit,      setShowEdit]      = useState(false)
   const [equipment,     setEquipment]     = useState(equipmentProp)
-  const [detailTab,     setDetailTab]     = useState('deployment')
+  const [detailTab,     setDetailTab]     = useState('overview')
+  const [passportQr,    setPassportQr]    = useState('')
   const [remarksText,   setRemarksText]   = useState(equipmentProp.notes || '')
   const [savingRemarks, setSavingRemarks] = useState(false)
   const qc   = useQueryClient()
   const { role } = useAuth()
   const isAdmin  = ['admin', 'superadmin', 'manager'].includes(role)
+
+  useEffect(() => {
+    const passportUrl = `${window.location.origin}${window.location.pathname}?equipment=${equipmentProp.id}`
+    QRCode.toDataURL(passportUrl, { width: 220, margin: 1, errorCorrectionLevel: 'M' })
+      .then(setPassportQr)
+      .catch(() => setPassportQr(''))
+  }, [equipmentProp.id])
 
   // Always fetch fresh equipment data on mount — parent snapshot may be stale
   // (e.g. background refetch hadn't completed when user reopened the modal)
@@ -2010,6 +2020,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
   const [deployProjectId,  setDeployProjectId]  = useState(equipmentProp.current_project_id || '')
   const [deploySiteName,   setDeploySiteName]   = useState(equipmentProp.current_site_name  || '')
   const [deployRateItemId, setDeployRateItemId] = useState('')
+  const [deployExpectedReturn, setDeployExpectedReturn] = useState('')
   const [deployFuelByClient, setDeployFuelByClient] = useState(equipmentProp.fuel_by_client || false)
   const [deployFormSynced, setDeployFormSynced] = useState(false)
 
@@ -2390,7 +2401,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
         .order('interval_hours')
       return data || []
     },
-    enabled: detailTab === 'maintenance',
+    enabled: ['overview', 'maintenance', 'operator_log'].includes(detailTab),
   })
 
   const { data: jobCards = [], refetch: refetchJC } = useQuery({
@@ -2402,7 +2413,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
         .order('opened_date', { ascending: false })
       return data || []
     },
-    enabled: detailTab === 'maintenance',
+    enabled: ['overview', 'maintenance', 'operator_log'].includes(detailTab),
   })
 
   const { data: recentFuel = [] } = useQuery({
@@ -2410,6 +2421,28 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
     queryFn: async () => {
       const { data } = await supabase.from('shift_fuel_entries').select('*')
         .eq('equipment_id', equipment.id).order('created_at', { ascending: false }).limit(30)
+      return data || []
+    },
+  })
+
+  const { data: deploymentHistory = [] } = useQuery({
+    queryKey: ['equipment_deployment_history', equipment.id],
+    queryFn: async () => {
+      const { data } = await supabase.from('equipment_deployments')
+        .select('id, deployed_date, withdrawn_date, status, operator_name, hour_meter_at_deployment, tc_from_project, tc_to_project, projects:project_id(project_name)')
+        .eq('equipment_id', equipment.id)
+        .order('deployed_date', { ascending: false })
+        .limit(30)
+      return data || []
+    },
+  })
+
+  // Same queryKey as DocumentsSection so React Query deduplicates the request.
+  const { data: allEquipDocs = [] } = useQuery({
+    queryKey: ['equipment_docs', equipment.id],
+    queryFn: async () => {
+      const { data } = await supabase.from('equipment_documents')
+        .select('*').eq('equipment_id', equipment.id).order('doc_type')
       return data || []
     },
   })
@@ -2494,9 +2527,55 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
       })
     }
 
+    for (const record of maintRecords) {
+      events.push({
+        type: 'maintenance', ts: record.service_date || record.created_at, color: 'purple',
+        label: `🛠️ ${record.maintenance_type || 'Maintenance'} recorded`,
+        sub: record.description || record.work_done || null,
+        meta: Number(record.total_cost || record.cost || 0) > 0
+          ? `₹${Number(record.total_cost || record.cost).toLocaleString('en-IN')}`
+          : null,
+      })
+    }
+
+    for (const card of jobCards) {
+      events.push({
+        type: 'job_card', ts: card.closed_date || card.opened_date || card.created_at, color: card.status === 'closed' ? 'emerald' : 'orange',
+        label: `${card.status === 'closed' ? '✅' : '🔩'} Job Card ${card.status === 'closed' ? 'Closed' : 'Opened'}`,
+        sub: card.complaint || card.description || null,
+        meta: card.job_card_number || null,
+      })
+    }
+
+    for (const deployment of deploymentHistory) {
+      events.push({
+        type: 'deployment', ts: deployment.deployed_date, color: 'cyan',
+        label: '📍 Equipment Deployed',
+        sub: deployment.projects?.project_name || deployment.tc_to_project || null,
+        meta: deployment.operator_name ? `Operator: ${deployment.operator_name}` : null,
+      })
+      if (deployment.withdrawn_date) {
+        events.push({
+          type: 'withdrawal', ts: deployment.withdrawn_date, color: 'slate',
+          label: '↩️ Equipment Withdrawn',
+          sub: deployment.projects?.project_name || deployment.tc_from_project || null,
+          meta: null,
+        })
+      }
+    }
+
+    for (const doc of allEquipDocs) {
+      events.push({
+        type: 'document', ts: doc.created_at || doc.issued_date, color: 'purple',
+        label: `📄 ${doc.doc_name || DOC_TYPES.find(t => t.value === doc.doc_type)?.label || 'Document'} added`,
+        sub: doc.reference_number || null,
+        meta: doc.expiry_date ? `Expires ${format(new Date(doc.expiry_date), 'dd MMM yyyy')}` : null,
+      })
+    }
+
     events.sort((a, b) => new Date(b.ts) - new Date(a.ts))
     return events
-  }, [shiftLog, recentFuel, breakdownLog, incidentLog])
+  }, [shiftLog, recentFuel, breakdownLog, incidentLog, maintRecords, jobCards, deploymentHistory, allEquipDocs])
 
   // ── Utilization calendar queries ──────────────────────────────────────────────
   const _calY  = calMonth.getFullYear()
@@ -2564,16 +2643,25 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
     enabled: detailTab === 'shift_schedule',
   })
 
-  // Insurance doc — same queryKey as DocumentsSection so React Query deduplicates
-  const { data: allEquipDocs = [] } = useQuery({
-    queryKey: ['equipment_docs', equipment.id],
-    queryFn: async () => {
-      const { data } = await supabase.from('equipment_documents')
-        .select('*').eq('equipment_id', equipment.id).order('doc_type')
-      return data || []
-    },
-  })
   const insuranceDoc = allEquipDocs.find(d => d.doc_type === 'insurance')
+  const recentWorkingHours = shiftLog.reduce((sum, shift) => sum + Number(shift.working_hours || 0), 0)
+  const recentFuelLitres = recentFuel.reduce((sum, entry) => sum + Number(entry.quantity_liters || 0), 0)
+  const recentFuelCost = recentFuel.reduce((sum, entry) => sum + Number(entry.total_amount || 0), 0)
+  const actualFuelRate = recentWorkingHours > 0 ? recentFuelLitres / recentWorkingHours : null
+  const expectedFuelRate = Number(equipment.specific_consumption_lph || 0) || null
+  const fuelVariancePct = actualFuelRate !== null && expectedFuelRate
+    ? ((actualFuelRate - expectedFuelRate) / expectedFuelRate) * 100
+    : null
+  const openJobCards = jobCards.filter(card => card.status !== 'closed')
+  const pmDue = pmSchedules.filter(schedule => {
+    if (schedule.next_due_meter == null) return false
+    return Number(schedule.next_due_meter) - Number(equipment.current_meter_reading || 0) <= 50
+  })
+  const expiringDocuments = allEquipDocs.filter(doc => {
+    if (!doc.expiry_date) return false
+    return differenceInDays(new Date(doc.expiry_date), new Date()) <= 30
+  })
+  const passportUrl = `${window.location.origin}${window.location.pathname}?equipment=${equipment.id}`
 
   // Matched rate items (fuzzy match equipment category to item names)
   const matchedRates = rateItems.filter(r => {
@@ -2598,10 +2686,11 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
     if (!deployProjectId) { toast.error('Select a project to deploy'); return }
     setDeploySaving(true)
     try {
-      const { data: existingDep } = await supabase.from('equipment_deployments')
-        .select('id, project_id, projects:project_id(project_name)')
-        .eq('equipment_id', equipment.id).eq('status', 'active').maybeSingle()
-      const fromProjectName = existingDep?.projects?.project_name || null
+      const { data: existingDep, error } = await supabase.from('equipment_deployments')
+        .select('id, project_id')
+        .eq('company_id', companyId).eq('equipment_id', equipment.id).eq('status', 'active').maybeSingle()
+      if (error) throw error
+      const fromProjectName = existingDep ? (projects.find(p => p.id === existingDep.project_id)?.project_name || 'Current project') : null
       const toProjectName   = projects.find(p => p.id === deployProjectId)?.project_name || deployProjectId
 
       if (fromProjectName) {
@@ -2627,45 +2716,23 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
       const toProjectName = projects.find(p => p.id === deployProjectId)?.project_name || deployProjectId
       const today         = new Date().toISOString().slice(0, 10)
 
-      // Update equipment current deployment fields
-      const { error } = await supabase.from('equipment').update({
-        current_client_id:  deployClientId  || null,
-        current_project_id: deployProjectId || null,
-        current_site_name:  deploySiteName  || null,
-        fuel_by_client:     deployFuelByClient,
-      }).eq('id', equipment.id)
-      if (error) throw error
-
-      // Close active deployment — stamp TC snapshot if it was a transfer
-      if (fromDepId) {
-        await supabase.from('equipment_deployments')
-          .update({
-            status:          'withdrawn',
-            withdrawn_date:  today,
-            tc_from_project: fromProjectName,
-            tc_to_project:   toProjectName,
-            tc_generated_at: tcDetails ? new Date().toISOString() : null,
-          })
-          .eq('id', fromDepId)
-      } else {
-        await supabase.from('equipment_deployments')
-          .update({ status: 'withdrawn', withdrawn_date: today })
-          .eq('equipment_id', equipment.id).eq('status', 'active')
-      }
-
-      // Insert new deployment record
+      // The database transaction closes any transfer, checks reservations,
+      // creates the billing snapshot, and changes the equipment site atomically.
       const legacyRate = effectiveRate
         ? (Number(effectiveRate.rate_per_hour) || Number(effectiveRate.rate_per_day) || Number(effectiveRate.rate_per_month) || 0)
         : 0
       const legacyUnit = effectiveRate?.billing_basis === 'hourly' ? 'per_hour'
         : effectiveRate?.billing_basis === 'monthly' ? 'per_month' : 'per_day'
 
-      await supabase.from('equipment_deployments').insert({
+      const deploymentData = {
         company_id:          companyId,
         equipment_id:        equipment.id,
         project_id:          deployProjectId,
         client_id:           deployClientId || null,
         deployed_date:       today,
+        expected_return_date: deployExpectedReturn || null,
+        tc_from_project:     fromProjectName,
+        tc_generated_at:     tcDetails ? new Date().toISOString() : null,
         status:              'active',
         rental_rate:         legacyRate,
         rate_unit:           legacyUnit,
@@ -2687,11 +2754,17 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
         machine_photo_url:    deployMachinePhotoUrl || null,
         hour_meter_photo_url: deployMeterPhotoUrl   || null,
         deployment_location:  deployGpsLoc?.address || deploySiteName || null,
+      }
+      const { error } = await supabase.rpc('planner_deploy_equipment', {
+        p_data: deploymentData, p_from_deployment_id: fromDepId || null,
       })
+      if (error) throw error
 
-      setEquipment(e => ({ ...e, current_client_id: deployClientId, current_project_id: deployProjectId, current_site_name: deploySiteName, fuel_by_client: deployFuelByClient }))
-      qc.invalidateQueries(['equipment', companyId])
-      qc.invalidateQueries(['project_detail', deployProjectId])
+      await refreshEquipment()
+      qc.invalidateQueries({ queryKey: ['equipment', companyId] })
+      qc.invalidateQueries({ queryKey: ['project_detail', deployProjectId] })
+      qc.invalidateQueries({ queryKey: ['deployment-planner', companyId] })
+      qc.invalidateQueries({ queryKey: ['active_eq_deployments', companyId] })
       setShowTCModal(false)
       setTcPending(null)
 
@@ -2774,7 +2847,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
 
   return (
     <>
-      <Modal title={`${equipment.name}${equipment.equipment_number ? ` · ${equipment.equipment_number}` : ''}`} onClose={onClose} wide>
+      <Modal title={`Equipment 360 · ${equipment.name}${equipment.equipment_number ? ` · ${equipment.equipment_number}` : ''}`} onClose={onClose} wide>
 
         {/* ══ TOP: Two-column summary panel ══════════════════════════════════════ */}
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_260px] gap-4">
@@ -2936,9 +3009,9 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
                   className="w-full flex items-center gap-2.5 py-2.5 px-3 rounded-xl bg-dark-800 border border-dark-600 hover:border-yellow-500 text-slate-200 text-xs font-medium transition-colors">
                   <Fuel className="w-4 h-4 text-yellow-400 shrink-0" /> Log Fuel
                 </button>
-                <button onClick={() => setModal('incident')}
+                <button onClick={() => onNavigate?.('operations', { tab: 'today', equipmentId: equipment.id, equipmentName: equipment.name })}
                   className="w-full flex items-center gap-2.5 py-2.5 px-3 rounded-xl bg-dark-800 border border-dark-600 hover:border-orange-500 text-slate-200 text-xs font-medium transition-colors">
-                  <AlertTriangle className="w-4 h-4 text-orange-400 shrink-0" /> Report Incident
+                  <AlertTriangle className="w-4 h-4 text-orange-400 shrink-0" /> Open Incident Reporting
                 </button>
               </div>
 
@@ -3026,12 +3099,14 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
         {/* ══ Tab Bar ═══════════════════════════════════════════════════════════ */}
         <div className="flex border-b border-dark-600 overflow-x-auto -mb-1">
           {[
+            { id: 'overview',       label: 'Overview'       },
+            { id: 'shift_schedule', label: 'Operations'     },
+            { id: 'fuel',           label: 'Fuel'           },
             { id: 'deployment',     label: 'Deployment'     },
             { id: 'maintenance',    label: 'Maintenance'    },
-            { id: 'operator_log',   label: 'Log'            },
-            { id: 'shift_schedule', label: 'Utilization' },
-            { id: 'pl',             label: 'Equipment P&L'  },
-            { id: 'remarks',        label: 'Remarks'        },
+            { id: 'pl',             label: 'Costs'          },
+            { id: 'remarks',        label: 'Documents'      },
+            { id: 'operator_log',   label: 'Timeline'       },
           ].map(t => (
             <button key={t.id} onClick={() => setDetailTab(t.id)}
               className={`shrink-0 px-4 py-2.5 text-xs font-medium border-b-2 transition-colors whitespace-nowrap ${
@@ -3045,6 +3120,174 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
         </div>
 
         {/* ══ Tab Content ═══════════════════════════════════════════════════════ */}
+
+        {/* ── EQUIPMENT 360 OVERVIEW ── */}
+        {detailTab === 'overview' && (
+          <div className="space-y-4 pt-1">
+            <div className="grid grid-cols-1 lg:grid-cols-[1fr_220px] gap-4">
+              <div className="bg-dark-700 rounded-xl border border-dark-600 p-4">
+                <div className="flex items-center justify-between gap-3 mb-4">
+                  <div>
+                    <p className="text-xs font-semibold text-primary-300 uppercase tracking-wider">Digital Asset Passport</p>
+                    <p className="text-[11px] text-slate-500 mt-0.5">One verified profile for operations, service, fuel, deployment and compliance.</p>
+                  </div>
+                  <span className="text-[10px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 rounded-full px-2 py-1">Live record</span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-5 gap-y-3">
+                  {[
+                    ['Asset ID', equipment.equipment_number],
+                    ['Registration', equipment.registration_number],
+                    ['Chassis No.', equipment.chassis_number],
+                    ['Make / Model', [equipment.make, equipment.model].filter(Boolean).join(' ')],
+                    ['Year', equipment.year_of_manufacture],
+                    ['Capacity', equipment.capacity],
+                    ['Category', equipment.category],
+                    ['Fuel', equipment.fuel_type],
+                    ['Ownership', ownerTypeLabel],
+                    ['Owner / Vendor', equipment.owner_name],
+                    ['Current Project', deployedProject?.project_name || equipment.current_site_name],
+                    ['Assigned Operator', assignments[0]?.employee_name],
+                  ].map(([label, value]) => (
+                    <div key={label} className="min-w-0">
+                      <p className="text-[10px] text-slate-500 uppercase tracking-wider">{label}</p>
+                      <p className="text-xs text-slate-200 font-medium mt-0.5 truncate">{value || '—'}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="bg-white rounded-xl p-3 flex flex-col items-center justify-center text-center">
+                {passportQr ? (
+                  <img src={passportQr} alt={`QR code for ${equipment.name}`} className="w-32 h-32" />
+                ) : (
+                  <div className="w-32 h-32 bg-slate-100 rounded-lg animate-pulse" />
+                )}
+                <p className="text-xs font-bold text-slate-900 mt-2">Scan Equipment Passport</p>
+                <p className="text-[10px] text-slate-500 mt-0.5">Sign-in required · tenant protected</p>
+                {passportQr && (
+                  <a href={passportQr} download={`${equipment.equipment_number || equipment.name}-passport-qr.png`}
+                    className="text-[10px] text-blue-600 hover:text-blue-800 mt-2 font-semibold">
+                    Download QR
+                  </a>
+                )}
+              </div>
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Attention</p>
+                <p className="text-[10px] text-slate-600">Current operational risks</p>
+              </div>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+                {[
+                  { label: 'Open job cards', value: openJobCards.length, tone: openJobCards.length ? 'text-red-400' : 'text-emerald-400', tab: 'maintenance' },
+                  { label: 'PM due / near due', value: pmDue.length, tone: pmDue.length ? 'text-amber-400' : 'text-emerald-400', tab: 'maintenance' },
+                  { label: 'Docs expiring', value: expiringDocuments.length, tone: expiringDocuments.length ? 'text-orange-400' : 'text-emerald-400', tab: 'remarks' },
+                  { label: 'Open incidents', value: openIncidents.length, tone: openIncidents.length ? 'text-red-400' : 'text-emerald-400', tab: 'operator_log' },
+                ].map(item => (
+                  <button key={item.label} onClick={() => setDetailTab(item.tab)}
+                    className="bg-dark-700 border border-dark-600 hover:border-primary-600 rounded-xl p-3 text-left transition-colors">
+                    <p className={`text-2xl font-bold ${item.tone}`}>{item.value}</p>
+                    <p className="text-[11px] text-slate-400 mt-1">{item.label}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Last 30 records snapshot</p>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+                <div className="bg-dark-700 rounded-xl p-3">
+                  <p className="text-[10px] text-slate-500">Working Hours</p>
+                  <p className="text-lg font-bold text-primary-300">{recentWorkingHours.toFixed(1)} h</p>
+                </div>
+                <div className="bg-dark-700 rounded-xl p-3">
+                  <p className="text-[10px] text-slate-500">Fuel Issued</p>
+                  <p className="text-lg font-bold text-yellow-400">{recentFuelLitres.toFixed(0)} L</p>
+                </div>
+                <div className="bg-dark-700 rounded-xl p-3">
+                  <p className="text-[10px] text-slate-500">Actual Consumption</p>
+                  <p className="text-lg font-bold text-slate-200">{actualFuelRate !== null ? `${actualFuelRate.toFixed(1)} L/h` : '—'}</p>
+                </div>
+                <div className="bg-dark-700 rounded-xl p-3">
+                  <p className="text-[10px] text-slate-500">Fuel vs Standard</p>
+                  <p className={`text-lg font-bold ${fuelVariancePct === null ? 'text-slate-500' : fuelVariancePct > 10 ? 'text-red-400' : fuelVariancePct > 0 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                    {fuelVariancePct === null ? '—' : `${fuelVariancePct > 0 ? '+' : ''}${fuelVariancePct.toFixed(1)}%`}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <button onClick={() => setDetailTab('shift_schedule')} className="btn-primary text-xs px-3 py-2">Open Operations</button>
+              <button onClick={() => setDetailTab('maintenance')} className="btn-ghost text-xs px-3 py-2">Review Maintenance</button>
+              <button onClick={() => setDetailTab('fuel')} className="btn-ghost text-xs px-3 py-2">Analyse Fuel</button>
+              <button onClick={() => navigator.clipboard?.writeText(passportUrl).then(() => toast.success('Equipment passport link copied'))}
+                className="btn-ghost text-xs px-3 py-2">Copy Passport Link</button>
+            </div>
+          </div>
+        )}
+
+        {/* ── FUEL PERFORMANCE TAB ── */}
+        {detailTab === 'fuel' && (
+          <div className="space-y-4 pt-1">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+              {[
+                ['Lifetime Fuel', `${Number(fuelStats?.totalLitres || 0).toLocaleString('en-IN')} L`, 'text-yellow-400'],
+                ['Lifetime Fuel Cost', `₹${Number(fuelStats?.totalAmount || 0).toLocaleString('en-IN')}`, 'text-primary-300'],
+                ['Actual L/hr', actualFuelRate !== null ? actualFuelRate.toFixed(2) : '—', fuelVariancePct > 10 ? 'text-red-400' : 'text-slate-200'],
+                ['Standard L/hr', expectedFuelRate !== null ? expectedFuelRate.toFixed(2) : 'Not set', 'text-emerald-400'],
+              ].map(([label, value, tone]) => (
+                <div key={label} className="bg-dark-700 rounded-xl border border-dark-600 p-3">
+                  <p className="text-[10px] text-slate-500 uppercase tracking-wider">{label}</p>
+                  <p className={`text-lg font-bold mt-1 ${tone}`}>{value}</p>
+                </div>
+              ))}
+            </div>
+
+            {fuelVariancePct !== null && fuelVariancePct > 10 && (
+              <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-3 flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-xs font-semibold text-red-300">Fuel consumption is {fuelVariancePct.toFixed(1)}% above standard</p>
+                  <p className="text-[11px] text-red-400/80 mt-0.5">Review idle time, operator practice, leakage and engine condition.</p>
+                </div>
+              </div>
+            )}
+
+            <div className="bg-dark-700 rounded-xl border border-dark-600 overflow-hidden">
+              <div className="px-4 py-3 border-b border-dark-600 flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-semibold text-slate-300 uppercase tracking-wider">Recent Fuel Entries</p>
+                  <p className="text-[10px] text-slate-500 mt-0.5">Latest 30 issues for this machine</p>
+                </div>
+                <button onClick={() => setModal('fuel')} className="btn-primary text-xs px-3 py-1.5">Log Fuel</button>
+              </div>
+              {recentFuel.length === 0 ? (
+                <p className="text-xs text-slate-500 text-center py-8">No fuel entries recorded</p>
+              ) : (
+                <div className="divide-y divide-dark-600/70">
+                  {recentFuel.map(entry => (
+                    <div key={entry.id} className="px-4 py-3 grid grid-cols-[1fr_auto] gap-3">
+                      <div className="min-w-0">
+                        <p className="text-xs font-medium text-slate-200">{format(new Date(entry.created_at), 'dd MMM yyyy · HH:mm')}</p>
+                        <p className="text-[10px] text-slate-500 mt-0.5 truncate">{entry.vendor_name || entry.delivered_by_name || entry.fuel_source || 'Fuel entry'}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-sm font-bold text-yellow-400">{Number(entry.quantity_liters || 0).toFixed(1)} L</p>
+                        {Number(entry.total_amount || 0) > 0 && <p className="text-[10px] text-slate-500">₹{Number(entry.total_amount).toLocaleString('en-IN')}</p>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="px-4 py-2.5 bg-dark-800/60 border-t border-dark-600 flex justify-between text-xs">
+                <span className="text-slate-500">Recent total</span>
+                <span className="text-slate-200 font-semibold">{recentFuelLitres.toFixed(1)} L · ₹{recentFuelCost.toLocaleString('en-IN')}</span>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ── DEPLOYMENT TAB ── */}
         {detailTab === 'deployment' && (
@@ -3254,8 +3497,15 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
               )
             })()}
 
-            {/* ── Deploy / Transfer form (admin only) ── */}
-            {isAdmin && (
+            <CanonicalWorkspaceNotice
+              title="Deployment Planner manages every site movement"
+              description="Review this machine's current assignment here. Plan, mobilise, transfer or record its return from the Deployment Planner so availability and billing stay aligned."
+              actionLabel="Open Deployment Planner"
+              onAction={() => onNavigate?.('deployment_planner', { equipmentId: equipment.id })}
+            />
+
+            {/* Legacy deployment form retained temporarily for data compatibility, but no longer exposed. */}
+            {false && isAdmin && (
               <div className={`rounded-xl border overflow-hidden ${equipment.current_project_id ? 'border-amber-700/40 bg-amber-500/5' : 'border-dark-600 bg-dark-800/40'}`}>
                 <div className="px-4 py-2.5 border-b border-dark-700/60 flex items-center gap-2">
                   <ArrowLeftRight className="w-3.5 h-3.5 text-amber-400" />
@@ -3330,6 +3580,13 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
                       </button>
                     </div>
                   </div>
+                  <div>
+                    <label className="block text-xs text-slate-500 mb-1" htmlFor="deploy-expected-return">Expected return date</label>
+                    <input id="deploy-expected-return" type="date" min={new Date().toISOString().slice(0, 10)}
+                      className="w-full bg-dark-700 border border-dark-600 rounded-lg px-2.5 py-2 text-sm text-slate-100"
+                      value={deployExpectedReturn} onChange={e => setDeployExpectedReturn(e.target.value)} />
+                    <p className="text-xs text-slate-500 mt-1">Needed to plan another booking after this deployment.</p>
+                  </div>
                   {/* Fuel by client toggle */}
                   <label className="flex items-center gap-2 cursor-pointer select-none">
                     <input type="checkbox" checked={deployFuelByClient}
@@ -3362,6 +3619,16 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
         {/* ── MAINTENANCE TAB ── */}
         {detailTab === 'maintenance' && (
           <div className="space-y-3 pt-1">
+
+            <CanonicalWorkspaceNotice
+              title="Equipment Health manages service work"
+              description="This Equipment 360 view is now a read-only health summary. Create and progress job cards, PM schedules and service records in Equipment Health."
+              actionLabel="Open Equipment Health"
+              onAction={() => onNavigate?.('maintenance', {
+                tab: maintSubTab === 'pm_schedules' ? 'planner' : maintSubTab === 'history' ? 'records' : 'workshop',
+                equipmentId: equipment.id,
+              })}
+            />
 
             {/* Sub-tab bar */}
             <div className="flex gap-0 border-b border-dark-600">
@@ -3408,7 +3675,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
                       </button>
                     ))}
                   </div>
-                  {isAdmin && (
+                  {false && isAdmin && (
                     <button onClick={() => setJcModal({})}
                       className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-600 hover:bg-primary-700 text-white text-xs font-medium rounded-lg transition-colors">
                       <Plus className="w-3.5 h-3.5" /> New Job Card
@@ -3453,7 +3720,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
                                 </div>
                                 <div className="flex items-center gap-2 shrink-0">
                                   <span className="text-[10px] text-slate-500">{format(new Date(jc.opened_date), 'dd MMM yyyy')}</span>
-                                  {isAdmin && (
+                                  {false && isAdmin && (
                                     <button onClick={() => setJcModal(jc)} className="text-slate-500 hover:text-primary-400 transition-colors">
                                       <Edit2 className="w-3.5 h-3.5" />
                                     </button>
@@ -3492,7 +3759,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
                   )
                 })()}
 
-                {jcModal !== null && (
+                {false && jcModal !== null && (
                   <JobCardModal
                     equipment={equipment}
                     companyId={companyId}
@@ -3508,7 +3775,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
             {maintSubTab === 'pm_schedules' && (
               <div className="space-y-3 pt-1">
                 <div className="flex justify-end">
-                  {isAdmin && (
+                  {false && isAdmin && (
                     <button onClick={() => setPmModal({})}
                       className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-600 hover:bg-primary-700 text-white text-xs font-medium rounded-lg transition-colors">
                       <Plus className="w-3.5 h-3.5" /> Add PM Schedule
@@ -3542,7 +3809,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
                             <div className="flex items-center gap-2">
                               {overdue  && <span className="text-[10px] bg-red-500/20 text-red-400 px-2 py-0.5 rounded-full font-medium">Overdue {Math.abs(remaining).toFixed(0)}hrs</span>}
                               {nearDue  && <span className="text-[10px] bg-orange-500/20 text-orange-400 px-2 py-0.5 rounded-full font-medium">Due in {remaining.toFixed(0)}hrs</span>}
-                              {isAdmin && (
+                              {false && isAdmin && (
                                 <button onClick={() => setPmModal(pm)} className="text-slate-500 hover:text-primary-400 transition-colors">
                                   <Edit2 className="w-3.5 h-3.5" />
                                 </button>
@@ -3582,7 +3849,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
                                 ))}
                               </div>
                             )}
-                            {isAdmin && (overdue || nearDue) && (
+                            {false && isAdmin && (overdue || nearDue) && (
                               <button
                                 onClick={() => { setMaintSubTab('job_cards'); setJcModal({ jc_type: 'pm_service', pm_schedule_id: pm.id }) }}
                                 className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-600/80 hover:bg-primary-600 text-white text-[11px] font-medium rounded-lg transition-colors"
@@ -3597,7 +3864,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
                   </div>
                 )}
 
-                {pmModal !== null && (
+                {false && pmModal !== null && (
                   <PMScheduleModal
                     equipment={equipment}
                     companyId={companyId}
@@ -3783,6 +4050,10 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
                         yellow:  'bg-yellow-400',
                         red:     'bg-red-500',
                         amber:   'bg-amber-400',
+                        orange:  'bg-orange-400',
+                        purple:  'bg-purple-400',
+                        cyan:    'bg-cyan-400',
+                        slate:   'bg-slate-500',
                       }[ev.color] || 'bg-slate-500'
 
                       const labelClass = {
@@ -3791,6 +4062,10 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
                         yellow:  'text-yellow-300',
                         red:     'text-red-300',
                         amber:   'text-amber-300',
+                        orange:  'text-orange-300',
+                        purple:  'text-purple-300',
+                        cyan:    'text-cyan-300',
+                        slate:   'text-slate-300',
                       }[ev.color] || 'text-slate-200'
 
                       return (
@@ -4160,7 +4435,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
           onSaved={refreshEquipment} />
       )}
       {modal === 'fuel'     && <FuelModal     equipment={equipment} companyId={companyId} onClose={() => setModal(null)} />}
-      {modal === 'incident' && <IncidentModal equipment={equipment} companyId={companyId} onClose={() => setModal(null)} />}
+      {false && modal === 'incident' && <IncidentModal equipment={equipment} companyId={companyId} onClose={() => setModal(null)} />}
       {showTCModal && tcPending && (
         <TCCaptureModal
           fromProject={tcPending.fromProject}
@@ -4399,10 +4674,13 @@ function EquipmentCard({ equipment, onClick, todayShiftMap = {}, projectShiftMap
 }
 
 // ── Fleet Tab ─────────────────────────────────────────────────────────────────
-function FleetTab({ companyId, showAdd, setShowAdd, onNavigate, unloggedIds = null }) {
+function FleetTab({ companyId, showAdd, setShowAdd, onNavigate, unloggedIds = null, initialEquipmentId = null, initialFleetFilter = null }) {
   const [selected,        setSelected]        = useState(null)
   const [search,          setSearch]          = useState('')
-  const [filterStatus,    setFilterStatus]    = useState('all')
+  const [filterStatus,    setFilterStatus]    = useState(() => initialFleetFilter?.kind === 'status' ? initialFleetFilter.value : 'all')
+  const [availableOnly,   setAvailableOnly]   = useState(() => initialFleetFilter?.kind === 'available')
+  const [drilldownIds,    setDrilldownIds]    = useState(() => initialFleetFilter?.kind === 'equipment_ids' ? initialFleetFilter.ids : null)
+  const [drilldownLabel,  setDrilldownLabel]  = useState(() => initialFleetFilter?.kind !== 'all' ? (initialFleetFilter?.label || '') : '')
   const [filterOwnership, setFilterOwnership] = useState('all')
   const [viewMode,        setViewMode]        = useState('grid')    // 'grid' | 'site' | 'utilization' | 'cost'
   const [alertDismissed,  setAlertDismissed]  = useState(false)
@@ -4412,6 +4690,7 @@ function FleetTab({ companyId, showAdd, setShowAdd, onNavigate, unloggedIds = nu
   const [costGroupBy,     setCostGroupBy]     = useState('project') // 'project' | 'machine'
   // Shared month state for utilization grid + cost allocation
   const [gridMonth, setGridMonth] = useState(() => { const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), 1) })
+  const deepLinkHandled = useRef(false)
 
   const { data: equipment = [], isLoading } = useQuery({
     queryKey: ['equipment', companyId],
@@ -4422,6 +4701,23 @@ function FleetTab({ companyId, showAdd, setShowAdd, onNavigate, unloggedIds = nu
     },
     refetchInterval: 60_000, // keep breakdown/status badges fresh
   })
+
+  useEffect(() => {
+    if (deepLinkHandled.current || !initialEquipmentId || equipment.length === 0) return
+    const match = equipment.find(item => item.id === initialEquipmentId)
+    if (match) setSelected(match)
+    deepLinkHandled.current = true
+  }, [equipment, initialEquipmentId])
+
+  useEffect(() => {
+    const kind = initialFleetFilter?.kind || 'all'
+    setFilterStatus(kind === 'status' ? initialFleetFilter.value : 'all')
+    setAvailableOnly(kind === 'available')
+    setDrilldownIds(kind === 'equipment_ids' ? (initialFleetFilter.ids || []) : null)
+    setDrilldownLabel(kind === 'all' ? '' : (initialFleetFilter?.label || ''))
+    setSearch('')
+    setFilterOwnership('all')
+  }, [initialFleetFilter?.ids, initialFleetFilter?.kind, initialFleetFilter?.label, initialFleetFilter?.value])
 
   // Also fetch equipment_documents expiry alerts
   const { data: docAlerts = [] } = useQuery({
@@ -4645,13 +4941,16 @@ function FleetTab({ companyId, showAdd, setShowAdd, onNavigate, unloggedIds = nu
   const MONTH_NAMES_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 
   const unloggedSet = unloggedFilter?.length ? new Set(unloggedFilter) : null
+  const drilldownIdSet = useMemo(() => drilldownIds === null ? null : new Set(drilldownIds), [drilldownIds])
 
   const filtered = equipment.filter(e =>
     // If deep-linked from "not logged today" alert, restrict to those machines only
     (!unloggedSet || unloggedSet.has(e.id)) &&
+    (drilldownIdSet === null || drilldownIdSet.has(e.id)) &&
     (!search || e.name.toLowerCase().includes(search.toLowerCase()) ||
       (e.registration_number || '').toLowerCase().includes(search.toLowerCase()) ||
       (e.category || '').toLowerCase().includes(search.toLowerCase())) &&
+    (!availableOnly || (!e.current_project_id && !['breakdown', 'maintenance', 'disposed'].includes(e.status))) &&
     (filterStatus === 'all'    || e.status === filterStatus) &&
     (filterOwnership === 'all' || (e.ownership_type || 'own') === filterOwnership)
   )
@@ -4718,13 +5017,34 @@ function FleetTab({ companyId, showAdd, setShowAdd, onNavigate, unloggedIds = nu
           {Object.entries(counts).map(([status, count]) => {
             const st = STATUS_COLORS[status]
             return (
-              <button key={status} onClick={() => setFilterStatus(filterStatus === status ? 'all' : status)}
+              <button key={status} onClick={() => {
+                setAvailableOnly(false)
+                setDrilldownIds(null)
+                setDrilldownLabel('')
+                setFilterStatus(filterStatus === status ? 'all' : status)
+              }}
                 className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-medium transition-all
                   ${filterStatus === status ? `${st.bg} ${st.text} ${st.border}` : 'border-dark-600 text-slate-500'}`}>
                 {count} {st.label}
               </button>
             )
           })}
+        </div>
+      )}
+
+      {(availableOnly || filterStatus !== 'all' || drilldownIds !== null) && (
+        <div className="mx-4 mb-2 shrink-0 bg-primary-500/10 border border-primary-500/30 rounded-xl px-3 py-2 flex items-center justify-between gap-2">
+          <p className="text-primary-300 text-xs font-semibold">
+            Showing {filtered.length} {drilldownLabel || (availableOnly ? 'Available' : STATUS_COLORS[filterStatus]?.label)} machine{filtered.length !== 1 ? 's' : ''}
+          </p>
+          <button type="button" onClick={() => {
+            setFilterStatus('all')
+            setAvailableOnly(false)
+            setDrilldownIds(null)
+            setDrilldownLabel('')
+          }} className="text-primary-400 hover:text-primary-200 text-xs font-medium shrink-0">
+            Show all ×
+          </button>
         </div>
       )}
 
@@ -7585,7 +7905,7 @@ function LedgerTab({ companyId }) {
 }
 
 // ── Main FleetPage ────────────────────────────────────────────────────────────
-export default function FleetPage({ onNavigate, unloggedIds = null }) {
+export default function FleetPage({ onNavigate, unloggedIds = null, initialEquipmentId = null, initialFleetFilter = null }) {
   const { companyId } = useAuth()
   const [activeTab,  setActiveTab]  = useState('fleet')
   const [showAdd,    setShowAdd]    = useState(false)
@@ -7616,7 +7936,9 @@ export default function FleetPage({ onNavigate, unloggedIds = null }) {
         {tabs.map(t => {
           const Icon = t.icon
           return (
-            <button key={t.id} onClick={() => setActiveTab(t.id)}
+            <button key={t.id} onClick={() => t.id === 'incidents'
+              ? onNavigate?.('operations', { tab: 'incidents' })
+              : setActiveTab(t.id)}
               className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium border-b-2 transition-colors
                 ${activeTab === t.id ? 'border-primary-500 text-primary-400' : 'border-transparent text-slate-500 hover:text-slate-300'}`}>
               <Icon className="w-3.5 h-3.5" />{t.label}
@@ -7625,9 +7947,9 @@ export default function FleetPage({ onNavigate, unloggedIds = null }) {
         })}
       </div>
       <div className="flex-1 overflow-hidden">
-        {activeTab === 'fleet'     && <FleetTab     companyId={companyId} showAdd={showAdd} setShowAdd={setShowAdd} onNavigate={onNavigate} unloggedIds={unloggedIds} />}
+        {activeTab === 'fleet'     && <FleetTab     companyId={companyId} showAdd={showAdd} setShowAdd={setShowAdd} onNavigate={onNavigate} unloggedIds={unloggedIds} initialEquipmentId={initialEquipmentId} initialFleetFilter={initialFleetFilter} />}
         {activeTab === 'fuel'      && <FuelTab      companyId={companyId} />}
-        {activeTab === 'incidents' && <IncidentsTab companyId={companyId} />}
+        {false && activeTab === 'incidents' && <IncidentsTab companyId={companyId} />}
         {activeTab === 'history'   && <HistoryTab   companyId={companyId} />}
         {activeTab === 'ledger'    && <LedgerTab    companyId={companyId} />}
         {activeTab === 'hired_in'  && <HiredInTab   companyId={companyId} />}

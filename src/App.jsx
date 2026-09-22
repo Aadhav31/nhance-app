@@ -1,28 +1,29 @@
-import { useState, lazy, Suspense, useEffect } from 'react'
+import { useState, lazy, Suspense, useEffect, useRef } from 'react'
 import VerifyPage from './pages/verify/VerifyPage'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { DisplayModeProvider } from './contexts/DisplayModeContext'
 import { ThemeProvider } from './contexts/ThemeContext'
 import LoadingScreen from './components/shared/LoadingScreen'
+import PageErrorBoundary from './components/shared/PageErrorBoundary'
 import StickyNotes from './components/shared/StickyNotes'
+import NhanceAssistant from './components/assistant/NhanceAssistant'
 import LoginPage from './pages/auth/LoginPage'
 import ResetPasswordPage from './pages/auth/ResetPasswordPage'
 import Sidebar from './components/layout/Sidebar'
 import RightBar from './components/layout/RightBar'
 import TopBar from './components/layout/TopBar'
-import { MODULES, ROLES } from './lib/constants'
+import { MODULES } from './lib/constants'
+import { canAccessPage, getAccessibleMobilePages } from './lib/navigation'
 import OperatorPortal from './pages/operator/OperatorPortal'
 import { useRealtimeSync } from './hooks/useRealtimeSync'
-import {
-  LayoutDashboard, Receipt, ClipboardList, BarChart3,
-  Users, Wallet, Package, X, Truck, Wrench, FolderOpen,
-  Settings, ShoppingCart, TrendingUp, CalendarDays, Building2,
-  MessageSquare,
-} from 'lucide-react'
+import * as Icons from 'lucide-react'
 
 // Lazy-load all pages for performance
 const DashboardPage      = lazy(() => import('./pages/dashboard/DashboardPage'))
+const ControlTowerPage   = lazy(() => import('./pages/controltower/ControlTowerPage'))
 const FleetPage          = lazy(() => import('./pages/fleet/FleetPage'))
+const FuelReconciliationPage = lazy(() => import('./pages/fuel/FuelReconciliationPage'))
+const ProfitabilityPage   = lazy(() => import('./pages/profitability/ProfitabilityPage'))
 const OperationsPage     = lazy(() => import('./pages/operations/OperationsPage'))
 const MaintenancePage    = lazy(() => import('./pages/maintenance/MaintenancePage'))
 const InventoryPage      = lazy(() => import('./pages/inventory/InventoryPage'))
@@ -47,6 +48,7 @@ const CompanyProfilePage      = lazy(() => import('./pages/company/CompanyProfil
 const HireContractsPage       = lazy(() => import('./pages/hire/HireContractsPage'))
 const ActiveDeploymentsPage   = lazy(() => import('./pages/hire/ActiveDeploymentsPage'))
 const AvailabilityPage        = lazy(() => import('./pages/hire/AvailabilityPage'))
+const DeploymentPlannerPage   = lazy(() => import('./pages/hire/DeploymentPlannerPage'))
 const UsageBillingPage        = lazy(() => import('./pages/hire/UsageBillingPage'))
 const BOQPage                 = lazy(() => import('./pages/boq/BOQPage'))
 const RABillingPage           = lazy(() => import('./pages/ra_billing/RABillingPage'))
@@ -66,6 +68,199 @@ function useOnlineStatus() {
     return () => { window.removeEventListener('online', up); window.removeEventListener('offline', down) }
   }, [])
   return online
+}
+
+// Keep Control Tower drill-downs in the URL so the selected Fleet filter
+// survives refreshes and can be verified/shared directly.
+function readNavigationFromUrl() {
+  const params = new URLSearchParams(window.location.search)
+  const equipmentId = params.get('equipment')
+  const page = params.get('page') || (equipmentId ? 'fleet' : 'dashboard')
+  const extra = equipmentId ? { equipmentId } : {}
+
+  if (page === 'fleet') {
+    const kind = params.get('fleetFilter')
+    const label = params.get('fleetLabel') || ''
+    if (kind === 'status' && params.get('fleetValue')) {
+      extra.fleetFilter = { kind, value: params.get('fleetValue'), label }
+    } else if (kind === 'available' || kind === 'all') {
+      extra.fleetFilter = { kind, label }
+    } else if (kind === 'equipment_ids') {
+      extra.fleetFilter = {
+        kind,
+        ids: (params.get('fleetIds') || '').split(',').filter(Boolean),
+        label,
+      }
+    }
+  }
+  if (page === 'deployment_planner') {
+    extra.plannerStatus = params.get('plannerStatus') || 'all'
+    extra.plannerView = params.get('plannerView') || 'plan'
+  }
+  if (page === 'fuel_reconciliation') {
+    const rangeDays = Number(params.get('fuelRange'))
+    extra.rangeDays = [30, 90, 180, 365].includes(rangeDays) ? rangeDays : 90
+    extra.metric = params.get('fuelMetric') || 'all'
+    extra.equipmentId = params.get('fuelEquipment') || 'all'
+    extra.projectId = params.get('fuelProject') || 'all'
+  }
+  if (page === 'projects') {
+    if (params.get('project')) extra.projectId = params.get('project')
+    extra.status = params.get('projectStatus') || 'all'
+  }
+  if (page === 'hire_contracts') extra.status = params.get('hireStatus') || 'all'
+  if (page === 'boq') {
+    extra.status = params.get('boqStatus') || 'all'
+    extra.boqId = params.get('boq') || null
+  }
+  if (page === 'ra_billing') {
+    extra.metric = params.get('raMetric') || 'all'
+    extra.status = params.get('raStatus') || 'all'
+    extra.boqId = params.get('raBoq') || 'all'
+    extra.raId = params.get('raBill') || null
+  }
+  if (page === 'sales') {
+    extra.tab = params.get('salesTab') || 'clients'
+    extra.invoiceId = params.get('invoice') || null
+  }
+  if (page === 'usage_billing') {
+    extra.deploymentId = params.get('billingDeployment') || null
+    extra.month = params.get('billingMonth') || null
+  }
+  if (page === 'purchase') {
+    extra.tab = params.get('purchaseTab') || 'vendors'
+    extra.createForTxnId = params.get('purchaseStockTxn') || null
+  }
+  if (page === 'accounts') extra.tab = params.get('accountsTab') || 'dashboard'
+  if (page === 'expenses') {
+    extra.type = params.get('expenseType') || 'all'
+    extra.from = params.get('expenseFrom') || ''
+    extra.to = params.get('expenseTo') || ''
+    extra.mode = params.get('expenseMode') || ''
+  }
+  if (page === 'financials') {
+    extra.tab = params.get('financeTab') || 'pl'
+    extra.period = Number(params.get('financePeriod') || 0)
+    extra.from = params.get('financeFrom') || ''
+    extra.to = params.get('financeTo') || ''
+  }
+  if (page === 'hr') extra.tab = params.get('hrTab') || 'employees'
+  if (page === 'reimbursements') extra.status = params.get('reimbursementStatus') || 'pending'
+  if (page === 'reports') {
+    extra.reportId = params.get('reportId') || 'equip_utilization'
+    extra.from = params.get('reportFrom') || ''
+    extra.to = params.get('reportTo') || ''
+  }
+  if (page === 'operations') {
+    extra.tab = params.get('opsTab') || 'today'
+    extra.metric = params.get('opsMetric') || 'all'
+    extra.from = params.get('opsFrom') || null
+    extra.to = params.get('opsTo') || null
+    extra.projectId = params.get('opsProject') || 'all'
+    if (params.get('equipmentName')) extra.equipmentName = params.get('equipmentName')
+  }
+  if (page === 'maintenance') {
+    extra.tab = params.get('maintTab') || 'workshop'
+    extra.pmState = params.get('pmState') || 'all'
+    extra.workshopStatus = params.get('workshopStatus') || 'active'
+  }
+  if (page === 'profitability') {
+    extra.dimension = params.get('profitDimension') || 'project'
+    extra.metric = params.get('profitMetric') || 'all'
+  }
+
+  return { page, extra }
+}
+
+function writeNavigationToUrl(page, extra, { replace = false } = {}) {
+  const url = new URL(window.location.href)
+  const navigationKeys = ['page', 'equipment', 'equipmentName', 'fleetFilter', 'fleetValue', 'fleetLabel', 'fleetIds', 'plannerStatus', 'plannerView', 'project', 'projectStatus', 'hireStatus', 'boqStatus', 'boq', 'raMetric', 'raStatus', 'raBoq', 'raBill', 'salesTab', 'invoice', 'billingDeployment', 'billingMonth', 'purchaseTab', 'purchaseStockTxn', 'accountsTab', 'expenseType', 'expenseFrom', 'expenseTo', 'expenseMode', 'financeTab', 'financePeriod', 'financeFrom', 'financeTo', 'hrTab', 'reimbursementStatus', 'reportId', 'reportFrom', 'reportTo', 'opsTab', 'opsMetric', 'opsFrom', 'opsTo', 'opsProject', 'maintTab', 'pmState', 'workshopStatus', 'fuelRange', 'fuelMetric', 'fuelEquipment', 'fuelProject', 'profitDimension', 'profitMetric']
+  navigationKeys.forEach(key => url.searchParams.delete(key))
+
+  if (page !== 'dashboard') url.searchParams.set('page', page)
+  if (extra.equipmentId && ['fleet', 'operations', 'maintenance', 'deployment_planner'].includes(page)) url.searchParams.set('equipment', extra.equipmentId)
+  if (page === 'deployment_planner') {
+    if (extra.plannerStatus && extra.plannerStatus !== 'all') url.searchParams.set('plannerStatus', extra.plannerStatus)
+    if (extra.plannerView && extra.plannerView !== 'plan') url.searchParams.set('plannerView', extra.plannerView)
+  }
+  if (page === 'fuel_reconciliation') {
+    if (extra.rangeDays && Number(extra.rangeDays) !== 90) url.searchParams.set('fuelRange', String(extra.rangeDays))
+    if (extra.metric && extra.metric !== 'all') url.searchParams.set('fuelMetric', extra.metric)
+    if (extra.equipmentId && extra.equipmentId !== 'all') url.searchParams.set('fuelEquipment', extra.equipmentId)
+    if (extra.projectId && extra.projectId !== 'all') url.searchParams.set('fuelProject', extra.projectId)
+  }
+  if (page === 'projects') {
+    if (extra.projectId) url.searchParams.set('project', extra.projectId)
+    if (extra.status && extra.status !== 'all') url.searchParams.set('projectStatus', extra.status)
+  }
+  if (page === 'hire_contracts' && extra.status && extra.status !== 'all') url.searchParams.set('hireStatus', extra.status)
+  if (page === 'boq') {
+    if (extra.status && extra.status !== 'all') url.searchParams.set('boqStatus', extra.status)
+    if (extra.boqId) url.searchParams.set('boq', extra.boqId)
+  }
+  if (page === 'ra_billing') {
+    if (extra.metric && extra.metric !== 'all') url.searchParams.set('raMetric', extra.metric)
+    if (extra.status && extra.status !== 'all') url.searchParams.set('raStatus', extra.status)
+    if (extra.boqId && extra.boqId !== 'all') url.searchParams.set('raBoq', extra.boqId)
+    if (extra.raId) url.searchParams.set('raBill', extra.raId)
+  }
+  if (page === 'sales' && extra.tab && extra.tab !== 'clients') url.searchParams.set('salesTab', extra.tab)
+  if (page === 'sales' && extra.invoiceId) url.searchParams.set('invoice', extra.invoiceId)
+  if (page === 'usage_billing') {
+    if (extra.deploymentId) url.searchParams.set('billingDeployment', extra.deploymentId)
+    if (extra.month) url.searchParams.set('billingMonth', extra.month)
+  }
+  if (page === 'purchase') {
+    if (extra.tab && extra.tab !== 'vendors') url.searchParams.set('purchaseTab', extra.tab)
+    if (extra.createForTxnId) url.searchParams.set('purchaseStockTxn', extra.createForTxnId)
+  }
+  if (page === 'accounts' && extra.tab && extra.tab !== 'dashboard') url.searchParams.set('accountsTab', extra.tab)
+  if (page === 'expenses') {
+    if (extra.type && extra.type !== 'all') url.searchParams.set('expenseType', extra.type)
+    if (extra.from) url.searchParams.set('expenseFrom', extra.from)
+    if (extra.to) url.searchParams.set('expenseTo', extra.to)
+    if (extra.mode) url.searchParams.set('expenseMode', extra.mode)
+  }
+  if (page === 'financials') {
+    if (extra.tab && extra.tab !== 'pl') url.searchParams.set('financeTab', extra.tab)
+    if (Number(extra.period) > 0) url.searchParams.set('financePeriod', String(extra.period))
+    if (extra.from) url.searchParams.set('financeFrom', extra.from)
+    if (extra.to) url.searchParams.set('financeTo', extra.to)
+  }
+  if (page === 'hr' && extra.tab && extra.tab !== 'employees') url.searchParams.set('hrTab', extra.tab)
+  if (page === 'reimbursements' && extra.status && extra.status !== 'pending') url.searchParams.set('reimbursementStatus', extra.status)
+  if (page === 'reports') {
+    if (extra.reportId && extra.reportId !== 'equip_utilization') url.searchParams.set('reportId', extra.reportId)
+    if (extra.from) url.searchParams.set('reportFrom', extra.from)
+    if (extra.to) url.searchParams.set('reportTo', extra.to)
+  }
+  if (page === 'operations') {
+    if (extra.tab && extra.tab !== 'today') url.searchParams.set('opsTab', extra.tab)
+    if (extra.metric && extra.metric !== 'all') url.searchParams.set('opsMetric', extra.metric)
+    if (extra.from) url.searchParams.set('opsFrom', extra.from)
+    if (extra.to) url.searchParams.set('opsTo', extra.to)
+    if (extra.projectId && extra.projectId !== 'all') url.searchParams.set('opsProject', extra.projectId)
+    if (extra.equipmentName) url.searchParams.set('equipmentName', extra.equipmentName)
+  }
+  if (page === 'maintenance') {
+    if (extra.tab && extra.tab !== 'workshop') url.searchParams.set('maintTab', extra.tab)
+    if (extra.pmState && extra.pmState !== 'all') url.searchParams.set('pmState', extra.pmState)
+    if (extra.workshopStatus && extra.workshopStatus !== 'active') url.searchParams.set('workshopStatus', extra.workshopStatus)
+  }
+  if (page === 'profitability') {
+    if (extra.dimension && extra.dimension !== 'project') url.searchParams.set('profitDimension', extra.dimension)
+    if (extra.metric && extra.metric !== 'all') url.searchParams.set('profitMetric', extra.metric)
+  }
+
+  const filter = extra.fleetFilter
+  if (page === 'fleet' && filter?.kind) {
+    url.searchParams.set('fleetFilter', filter.kind)
+    if (filter.value) url.searchParams.set('fleetValue', filter.value)
+    if (filter.label) url.searchParams.set('fleetLabel', filter.label)
+    if (filter.kind === 'equipment_ids') url.searchParams.set('fleetIds', (filter.ids || []).join(','))
+  }
+
+  window.history[replace ? 'replaceState' : 'pushState'](null, '', url)
 }
 
 // ── Contextual error screens ───────────────────────────────────────────────────
@@ -102,6 +297,27 @@ function ModuleNotActive({ page }) {
   )
 }
 
+function AccessDenied({ onNavigate }) {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-4 px-8 text-center">
+      <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-500/10">
+        <Icons.ShieldAlert className="h-7 w-7 text-amber-400" />
+      </div>
+      <div>
+        <p className="text-base font-bold text-slate-200">Access restricted</p>
+        <p className="mt-1 text-sm text-slate-500">This section is not available for your role or enabled modules.</p>
+      </div>
+      <button
+        type="button"
+        onClick={() => onNavigate('dashboard')}
+        className="rounded-xl bg-primary-600 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-500"
+      >
+        Return to dashboard
+      </button>
+    </div>
+  )
+}
+
 function ComingSoon({ page }) {
   return (
     <div className="flex flex-col items-center justify-center h-full gap-4 px-8 text-center">
@@ -116,86 +332,98 @@ function ComingSoon({ page }) {
 
 // ── Role-specific mobile bottom nav items ─────────────────────────────────────
 const MOBILE_QUICK = {
-  supervisor: [
-    { key: 'dashboard',    Icon: LayoutDashboard, label: 'Home'       },
-    { key: 'fieldexpense', Icon: Receipt,         label: 'Expenses'   },
-    { key: 'operations',   Icon: ClipboardList,   label: 'Operations' },
-    { key: 'inventory',    Icon: Package,         label: 'Inventory'  },
-  ],
-  manager: [
-    { key: 'dashboard',    Icon: LayoutDashboard, label: 'Home'       },
-    { key: 'fieldexpense', Icon: Receipt,         label: 'Expenses'   },
-    { key: 'operations',   Icon: ClipboardList,   label: 'Operations' },
-    { key: 'reports',      Icon: BarChart3,       label: 'Reports'    },
-  ],
-  accounts: [
-    { key: 'dashboard',    Icon: LayoutDashboard, label: 'Home'       },
-    { key: 'fieldexpense', Icon: Receipt,         label: 'Expenses'   },
-    { key: 'accounts',     Icon: Wallet,          label: 'Accounts'   },
-    { key: 'reports',      Icon: BarChart3,       label: 'Reports'    },
-  ],
-  admin: [
-    { key: 'dashboard',    Icon: LayoutDashboard, label: 'Home'       },
-    { key: 'fieldexpense', Icon: Receipt,         label: 'Expenses'   },
-    { key: 'operations',   Icon: ClipboardList,   label: 'Operations' },
-    { key: 'reports',      Icon: BarChart3,       label: 'Reports'    },
-  ],
+  supervisor: ['dashboard', 'fieldexpense', 'operations', 'inventory'],
+  manager: ['dashboard', 'fieldexpense', 'operations', 'reports'],
+  accounts: ['dashboard', 'fieldexpense', 'accounts', 'reports'],
+  admin: ['dashboard', 'fieldexpense', 'operations', 'reports'],
 }
 
-// All pages for the "More" drawer
-const ALL_PAGES = [
-  { key: 'dashboard',    Icon: LayoutDashboard, label: 'Dashboard'            },
-  { key: 'fieldexpense', Icon: Receipt,         label: 'Field Expenses'       },
-  { key: 'operations',   Icon: ClipboardList,   label: 'Daily Operations'     },
-  { key: 'fleet',        Icon: Truck,           label: 'Equipment & Fleet'    },
-  { key: 'maintenance',  Icon: Wrench,          label: 'Maintenance'          },
-  { key: 'inventory',    Icon: Package,         label: 'Inventory'            },
-  { key: 'projects',     Icon: FolderOpen,      label: 'Projects'             },
-  { key: 'accounts',     Icon: Wallet,          label: 'Accounts'             },
-  { key: 'expenses',     Icon: Wallet,          label: 'Expenses'             },
-  { key: 'planner',      Icon: CalendarDays,    label: 'Expense Planner'      },
-  { key: 'sales',        Icon: TrendingUp,      label: 'Sales'                },
-  { key: 'purchase',     Icon: ShoppingCart,    label: 'Purchase'             },
-  { key: 'reports',      Icon: BarChart3,       label: 'Reports'              },
-  { key: 'financials',   Icon: BarChart3,       label: 'Financial Statements' },
-  { key: 'hr',           Icon: Users,           label: 'Employee Management'  },
-  { key: 'settings',     Icon: Settings,        label: 'Settings'             },
-  { key: 'company',      Icon: Building2,       label: 'Company Profile'      },
-]
-
 // ── Mobile bottom nav + "More" drawer ────────────────────────────────────────
-function MobileNav({ role, activePage, onNavigate }) {
-  const [moreOpen, setMoreOpen] = useState(false)
-  const quickItems = MOBILE_QUICK[role] || MOBILE_QUICK.manager
+function MobileNav({ role, industryType, hasModule, activePage, onNavigate, moreOpen, onMoreOpenChange }) {
+  const allPages = getAccessibleMobilePages(industryType, role, hasModule)
+  const [navQuery, setNavQuery] = useState('')
+  const drawerRef = useRef(null)
+  const searchInputRef = useRef(null)
+  const pageByKey = new Map(allPages.map(item => [item.key, item]))
+  const quickItems = (MOBILE_QUICK[role] || MOBILE_QUICK.manager)
+    .map(key => pageByKey.get(key))
+    .filter(Boolean)
+  const moreIsActive = moreOpen || (!quickItems.some(item => item.key === activePage) && allPages.some(item => item.key === activePage))
+  const normalizedQuery = navQuery.trim().toLowerCase()
+  const visiblePages = normalizedQuery
+    ? allPages.filter(item => item.label.toLowerCase().includes(normalizedQuery))
+    : allPages
+
+  useEffect(() => {
+    if (!moreOpen) return undefined
+    const previousFocus = document.activeElement
+    const drawer = drawerRef.current
+    searchInputRef.current?.focus()
+
+    const handleKeyboard = event => {
+      if (event.key === 'Escape') {
+        onMoreOpenChange(false)
+        return
+      }
+      if (event.key !== 'Tab' || !drawer) return
+
+      const controls = [...drawer.querySelectorAll(
+        'button:not([disabled]), input:not([disabled]), a[href], [tabindex="0"]',
+      )].filter(element => element.offsetParent !== null)
+      const first = controls[0]
+      const last = controls[controls.length - 1]
+      if (!first) {
+        event.preventDefault()
+      } else if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+    document.addEventListener('keydown', handleKeyboard)
+    return () => {
+      document.removeEventListener('keydown', handleKeyboard)
+      previousFocus?.focus?.()
+      setNavQuery('')
+    }
+  }, [moreOpen, onMoreOpenChange])
 
   const go = (key) => {
     onNavigate(key)
-    setMoreOpen(false)
+    onMoreOpenChange(false)
   }
 
   return (
     <>
       {/* Bottom nav bar — visible only on mobile (hidden on lg+) */}
-      <div className="lg:hidden shrink-0 fixed bottom-0 left-0 right-0 z-40 bg-dark-800/95 backdrop-blur-md border-t border-dark-700 safe-area-bottom">
+      <div className="nhance-mobile-nav lg:hidden shrink-0 fixed bottom-0 left-0 right-0 z-40 bg-dark-800/95 backdrop-blur-md border-t border-dark-700 safe-area-bottom">
         <div className="flex">
-          {quickItems.map(({ key, Icon, label }) => {
+          {quickItems.map(({ key, icon, label }) => {
             const active = activePage === key
+            const Icon = Icons[icon] || Icons.Circle
             return (
               <button
+                type="button"
                 key={key}
                 onClick={() => go(key)}
-                className={`flex-1 flex flex-col items-center py-2.5 gap-0.5 transition-colors ${active ? 'text-primary-400' : 'text-slate-500'}`}
+                aria-current={active ? 'page' : undefined}
+                className={`min-h-14 flex-1 flex flex-col items-center justify-center py-2 gap-0.5 transition-colors ${active ? 'bg-primary-600/10 text-primary-400' : 'text-slate-500'}`}
               >
                 <Icon className="w-5 h-5" />
-                <span className="text-[10px] font-medium leading-none">{label}</span>
+                <span className="text-[10px] font-medium leading-none">{key === 'dashboard' ? 'Home' : label}</span>
                 {active && <div className="w-1 h-1 rounded-full bg-primary-400 mt-0.5" />}
               </button>
             )
           })}
           {/* More button */}
           <button
-            onClick={() => setMoreOpen(true)}
-            className={`flex-1 flex flex-col items-center py-2.5 gap-0.5 transition-colors ${moreOpen ? 'text-primary-400' : 'text-slate-500'}`}
+            type="button"
+            onClick={() => onMoreOpenChange(true)}
+            aria-haspopup="dialog"
+            aria-expanded={moreOpen}
+            className={`min-h-14 flex-1 flex flex-col items-center justify-center py-2 gap-0.5 transition-colors ${moreIsActive ? 'bg-primary-600/10 text-primary-400' : 'text-slate-500'}`}
           >
             <div className="w-5 h-5 flex flex-col justify-center items-center gap-[3px]">
               <span className="w-4 h-0.5 bg-current rounded-full" />
@@ -209,25 +437,46 @@ function MobileNav({ role, activePage, onNavigate }) {
 
       {/* "More" slide-up drawer */}
       {moreOpen && (
-        <div className="lg:hidden fixed inset-0 z-50 flex flex-col justify-end">
+        <div className="lg:hidden fixed inset-0 z-50 flex flex-col justify-end" role="dialog" aria-modal="true" aria-labelledby="mobile-navigation-title">
           {/* Backdrop */}
-          <div className="absolute inset-0 bg-black/60" onClick={() => setMoreOpen(false)} />
+          <button type="button" aria-label="Close navigation" className="absolute inset-0 bg-black/60" onClick={() => onMoreOpenChange(false)} />
 
           {/* Drawer */}
-          <div className="relative bg-dark-800 border-t border-dark-700 rounded-t-2xl max-h-[75vh] overflow-y-auto safe-area-bottom">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-dark-700 sticky top-0 bg-dark-800">
-              <p className="text-sm font-bold text-slate-100">All Sections</p>
-              <button onClick={() => setMoreOpen(false)} className="text-slate-400 hover:text-slate-100">
-                <X className="w-5 h-5" />
-              </button>
+          <div ref={drawerRef} className="relative bg-dark-800 border-t border-dark-700 rounded-t-2xl max-h-[78vh] overflow-y-auto safe-area-bottom shadow-2xl">
+            <div className="sticky top-0 z-10 border-b border-dark-700 bg-dark-800/95 px-4 pb-3 pt-2 backdrop-blur-md">
+              <div className="mx-auto mb-2 h-1 w-10 rounded-full bg-dark-500" aria-hidden="true" />
+              <div className="flex items-center justify-between px-1 py-2">
+                <div>
+                  <p id="mobile-navigation-title" className="text-sm font-bold text-slate-100">All Sections</p>
+                  <p className="text-[11px] text-slate-500">Choose where you want to work</p>
+                </div>
+                <button type="button" onClick={() => onMoreOpenChange(false)} aria-label="Close navigation" className="flex h-10 w-10 items-center justify-center rounded-xl text-slate-400 hover:bg-dark-700 hover:text-slate-100">
+                  <Icons.X aria-hidden="true" className="w-5 h-5" />
+                </button>
+              </div>
+              <label className="relative block">
+                <span className="sr-only">Find a page</span>
+                <Icons.Search aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+                <input
+                  ref={searchInputRef}
+                  type="search"
+                  value={navQuery}
+                  onChange={event => setNavQuery(event.target.value)}
+                  placeholder="Find a page…"
+                  className="h-11 w-full rounded-xl border border-dark-600 bg-dark-700 pl-9 pr-3 text-sm text-slate-100 placeholder:text-slate-500 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/25"
+                />
+              </label>
             </div>
             <div className="grid grid-cols-3 gap-2 p-4">
-              {ALL_PAGES.map(({ key, Icon, label }) => {
+              {visiblePages.map(({ key, icon, label }) => {
                 const active = activePage === key
+                const Icon = Icons[icon] || Icons.Circle
                 return (
                   <button
+                    type="button"
                     key={key}
                     onClick={() => go(key)}
+                    aria-current={active ? 'page' : undefined}
                     className={`flex flex-col items-center gap-2 py-4 rounded-xl border transition-all ${
                       active
                         ? 'bg-primary-600/20 border-primary-500 text-primary-300'
@@ -239,6 +488,14 @@ function MobileNav({ role, activePage, onNavigate }) {
                   </button>
                 )
               })}
+              {visiblePages.length === 0 && (
+                <div className="col-span-3 rounded-xl border border-dashed border-dark-600 px-4 py-8 text-center">
+                  <p className="text-sm font-semibold text-slate-300">No matching page</p>
+                  <button type="button" onClick={() => setNavQuery('')} className="mt-2 text-xs font-semibold text-primary-400 hover:text-primary-300">
+                    Clear search
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -249,13 +506,20 @@ function MobileNav({ role, activePage, onNavigate }) {
 
 // ── App Shell ─────────────────────────────────────────────────────────────────
 function AppShell() {
-  const { loading, session, role, hasModule, isSuperAdmin } = useAuth()
-
-  const [activePage,       setActivePage]       = useState('dashboard')
-  const [navExtra,         setNavExtra]         = useState({})   // deep-link extras {tab, equipmentId, …}
+  const { loading, session, role, hasModule, isSuperAdmin, industryType } = useAuth()
+  const [navigation,       setNavigation]       = useState(readNavigationFromUrl)
   const [notesOpen,        setNotesOpen]        = useState(false)
+  const [assistantOpen,    setAssistantOpen]    = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [mobileMenuOpen,   setMobileMenuOpen]   = useState(false)
   const isOnline = useOnlineStatus()
+  const { page: activePage, extra: navExtra } = navigation
+
+  useEffect(() => {
+    const syncFromHistory = () => setNavigation(readNavigationFromUrl())
+    window.addEventListener('popstate', syncFromHistory)
+    return () => window.removeEventListener('popstate', syncFromHistory)
+  }, [])
 
   // Live sync — invalidates React Query cache the moment any table row changes
   useRealtimeSync()
@@ -266,7 +530,11 @@ function AppShell() {
   // Operators get their own dedicated mobile portal
   if (role === 'operator') return <OperatorPortal />
 
-  const handleNavigate = (page, extra = {}) => { setActivePage(page); setNavExtra(extra) }
+  const handleNavigate = (page, extra = {}, options = {}) => {
+    setNavigation({ page, extra })
+    writeNavigationToUrl(page, extra, options)
+    setMobileMenuOpen(false)
+  }
 
   const defaultPage = isSuperAdmin() ? 'superadmin' : 'dashboard'
   const effectivePage = activePage === 'dashboard' ? defaultPage : activePage
@@ -281,14 +549,17 @@ function AppShell() {
     }
 
     const page = effectivePage
-    const wrap = (Component, module) => {
+    if (!canAccessPage(page, { role, hasModule, isSuperAdmin: isSuperAdmin() })) {
+      return <AccessDenied onNavigate={handleNavigate} />
+    }
+    const wrap = (Component, module, props = {}) => {
       if (module && !hasModule(module)) {
         if (!isOnline) return <OfflineScreen />
         return <ModuleNotActive page={page} />
       }
       return (
         <Suspense fallback={<LoadingScreen message={`Loading ${page}…`} />}>
-          <Component />
+          <Component {...props} />
         </Suspense>
       )
     }
@@ -301,19 +572,51 @@ function AppShell() {
             <DashboardPage onNavigate={handleNavigate} />
           </Suspense>
         )
+      case 'control_tower':
+        return hasModule(MODULES.FLEET) ? (
+          <Suspense fallback={<LoadingScreen message="Loading P&M Control Tower…" />}>
+            <ControlTowerPage onNavigate={handleNavigate} />
+          </Suspense>
+        ) : <ModuleNotActive page="P&M Control Tower" />
       case 'fleet':
         return hasModule(MODULES.FLEET) ? (
           <Suspense fallback={<LoadingScreen message="Loading fleet…" />}>
-            <FleetPage onNavigate={handleNavigate} unloggedIds={navExtra.filterUnloggedIds || null} />
+            <FleetPage
+              onNavigate={handleNavigate}
+              unloggedIds={navExtra.filterUnloggedIds || null}
+              initialEquipmentId={navExtra.equipmentId || null}
+              initialFleetFilter={navExtra.fleetFilter || null}
+            />
           </Suspense>
         ) : <ModuleNotActive page={page} />
+      case 'fuel_reconciliation':
+        return hasModule(MODULES.FLEET) ? (
+          <Suspense fallback={<LoadingScreen message="Loading fuel reconciliation…" />}>
+            <FuelReconciliationPage
+              onNavigate={handleNavigate}
+              initialRangeDays={navExtra.rangeDays}
+              initialMetric={navExtra.metric}
+              initialEquipmentId={navExtra.equipmentId}
+              initialProjectId={navExtra.projectId}
+            />
+          </Suspense>
+        ) : <ModuleNotActive page="Fuel Reconciliation" />
       case 'operations':
         return hasModule(MODULES.OPERATIONS) ? (
           <Suspense fallback={<LoadingScreen message="Loading operations…" />}>
-            <OperationsPage initialTab={navExtra.tab} filterEquipmentId={navExtra.equipmentId} filterEquipmentName={navExtra.equipmentName} />
+            <OperationsPage
+              onNavigate={handleNavigate}
+              initialTab={navExtra.tab}
+              initialMetric={navExtra.metric}
+              initialFrom={navExtra.from}
+              initialTo={navExtra.to}
+              initialProjectId={navExtra.projectId}
+              filterEquipmentId={navExtra.equipmentId}
+              filterEquipmentName={navExtra.equipmentName}
+            />
           </Suspense>
         ) : <ModuleNotActive page={page} />
-      case 'maintenance':  return wrap(MaintenancePage,    MODULES.MAINTENANCE)
+      case 'maintenance':  return wrap(MaintenancePage, MODULES.MAINTENANCE, { onNavigate: handleNavigate, initialTab: navExtra.tab, initialPmState: navExtra.pmState, initialWorkshopStatus: navExtra.workshopStatus, initialEquipmentId: navExtra.equipmentId })
       case 'inventory':
         if (hasModule && !hasModule(MODULES.INVENTORY)) return isOnline ? <ModuleNotActive page="inventory" /> : <OfflineScreen />
         return (
@@ -322,19 +625,19 @@ function AppShell() {
           </Suspense>
         )
       case 'clients':      return wrap(ClientsPage,        MODULES.CLIENTS_PROJECTS)
-      case 'projects':     return wrap(ProjectsPage,       MODULES.CLIENTS_PROJECTS)
-      case 'boq':          return wrap(BOQPage,            MODULES.CLIENTS_PROJECTS)
+      case 'projects':     return wrap(ProjectsPage,       MODULES.CLIENTS_PROJECTS, { onNavigate: handleNavigate, initialProjectId: navExtra.projectId, initialStatus: navExtra.status })
+      case 'boq':          return wrap(BOQPage,            MODULES.CLIENTS_PROJECTS, { onNavigate: handleNavigate, initialBoqId: navExtra.boqId, initialStatus: navExtra.status })
       case 'ra_billing':
         return hasModule(MODULES.CLIENTS_PROJECTS) ? (
           <Suspense fallback={<LoadingScreen message="Loading RA Billing…" />}>
-            <RABillingPage />
+            <RABillingPage onNavigate={handleNavigate} initialMetric={navExtra.metric} initialStatus={navExtra.status} initialBoqId={navExtra.boqId} initialRaId={navExtra.raId} />
           </Suspense>
         ) : <ModuleNotActive page="ra_billing" />
       case 'accounts':
         if (hasModule && !hasModule(MODULES.ACCOUNTS)) return isOnline ? <ModuleNotActive page="accounts" /> : <OfflineScreen />
         return (
           <Suspense fallback={<LoadingScreen message="Loading accounts…" />}>
-            <AccountsPage onNavigate={handleNavigate} />
+            <AccountsPage onNavigate={handleNavigate} initialTab={navExtra.tab} />
           </Suspense>
         )
       case 'planner':      return wrap(ExpensePlannerPage, MODULES.ACCOUNTS)
@@ -343,33 +646,43 @@ function AppShell() {
         if (hasModule && !hasModule(MODULES.SALES)) return isOnline ? <ModuleNotActive page="sales" /> : <OfflineScreen />
         return (
           <Suspense fallback={<LoadingScreen message="Loading sales…" />}>
-            <SalesPage onNavigate={handleNavigate} />
+            <SalesPage onNavigate={handleNavigate} initialTab={navExtra.tab} initialInvoiceId={navExtra.invoiceId} />
           </Suspense>
         )
       case 'purchase':
         if (hasModule && !hasModule(MODULES.PURCHASE)) return isOnline ? <ModuleNotActive page="purchase" /> : <OfflineScreen />
         return (
           <Suspense fallback={<LoadingScreen message="Loading purchase…" />}>
-            <PurchasePage initialTab={navExtra.tab} initialStockTxnId={navExtra.createForTxnId} />
+            <PurchasePage onNavigate={handleNavigate} initialTab={navExtra.tab} initialStockTxnId={navExtra.createForTxnId} />
           </Suspense>
         )
-      case 'reports':      return wrap(ReportsPage,        MODULES.REPORTS)
-      case 'financials':   return wrap(FinancialsPage,     MODULES.ACCOUNTS)
+      case 'reports':      return wrap(ReportsPage,        MODULES.REPORTS, { onNavigate: handleNavigate, initialReport: navExtra.reportId, initialFrom: navExtra.from, initialTo: navExtra.to })
+      case 'profitability':
+        return hasModule(MODULES.REPORTS) ? (
+          <Suspense fallback={<LoadingScreen message="Loading profitability…" />}>
+            <ProfitabilityPage
+              onNavigate={handleNavigate}
+              initialDimension={navExtra.dimension}
+              initialMetric={navExtra.metric}
+            />
+          </Suspense>
+        ) : <ModuleNotActive page="Profitability" />
+      case 'financials':   return wrap(FinancialsPage,     MODULES.ACCOUNTS, { onNavigate: handleNavigate, initialTab: navExtra.tab, initialPeriod: navExtra.period, initialFrom: navExtra.from, initialTo: navExtra.to })
       case 'expenses':
         return hasModule(MODULES.ACCOUNTS) ? (
           <Suspense fallback={<LoadingScreen message="Loading expenses…" />}>
-            <ExpensesPage onNavigate={handleNavigate} />
+            <ExpensesPage onNavigate={handleNavigate} initialType={navExtra.type} initialFrom={navExtra.from} initialTo={navExtra.to} initialMode={navExtra.mode} />
           </Suspense>
         ) : <ModuleNotActive page="expenses" />
       case 'hr':
         if (!hasModule(MODULES.HR_PAYROLL)) return isOnline ? <ModuleNotActive page="hr" /> : <OfflineScreen />
         return (
           <Suspense fallback={<LoadingScreen message="Loading HR…" />}>
-            <HRPage onNavigate={handleNavigate} />
+            <HRPage onNavigate={handleNavigate} initialTab={navExtra.tab} />
           </Suspense>
         )
       case 'letters':      return wrap(LettersPage,         MODULES.CORE)
-      case 'settings':     return wrap(SettingsPage,       MODULES.CORE)
+      case 'settings':     return wrap(SettingsPage,       MODULES.CORE, { onNavigate: handleNavigate })
       case 'profile':      return wrap(ProfilePage,        MODULES.CORE)
       // ── Industry-specific pages ────────────────────────────────────────────
       case 'production':
@@ -393,31 +706,37 @@ function AppShell() {
       case 'hire_contracts':
         return (
           <Suspense fallback={<LoadingScreen message="Loading hire contracts…" />}>
-            <HireContractsPage />
+            <HireContractsPage onNavigate={handleNavigate} initialStatus={navExtra.status} />
           </Suspense>
         )
       case 'active_deployments':
         return (
           <Suspense fallback={<LoadingScreen message="Loading deployments…" />}>
-            <ActiveDeploymentsPage />
+            <DeploymentPlannerPage onNavigate={handleNavigate} initialView="active" />
           </Suspense>
         )
       case 'availability':
         return (
           <Suspense fallback={<LoadingScreen message="Loading availability…" />}>
-            <AvailabilityPage />
+            <DeploymentPlannerPage onNavigate={handleNavigate} initialView="availability" />
           </Suspense>
         )
+      case 'deployment_planner':
+        return hasModule(MODULES.FLEET) ? (
+          <Suspense fallback={<LoadingScreen message="Loading Deployment Planner…" />}>
+            <DeploymentPlannerPage onNavigate={handleNavigate} initialStatus={navExtra.plannerStatus || 'all'} initialView={navExtra.plannerView || 'plan'} initialEquipmentId={navExtra.equipmentId || null} />
+          </Suspense>
+        ) : <ModuleNotActive page="Deployment Planner" />
       case 'usage_billing':
         return (
           <Suspense fallback={<LoadingScreen message="Loading billing…" />}>
-            <UsageBillingPage />
+            <UsageBillingPage onNavigate={handleNavigate} initialDeploymentId={navExtra.deploymentId} initialMonth={navExtra.month} />
           </Suspense>
         )
       case 'reimbursements':
         return (
           <Suspense fallback={<LoadingScreen message="Loading Reimbursements…" />}>
-            <ReimbursementPage />
+            <ReimbursementPage onNavigate={handleNavigate} initialStatus={navExtra.status} />
           </Suspense>
         )
       case 'approval_center':
@@ -445,6 +764,12 @@ function AppShell() {
 
   return (
     <DisplayModeProvider>
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only fixed left-4 top-4 z-[100] rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white shadow-xl"
+      >
+        Skip to main content
+      </a>
       <div className="app-container flex h-screen overflow-hidden">
         {/* Left sidebar — desktop only */}
         <Sidebar
@@ -456,16 +781,18 @@ function AppShell() {
 
         {/* Main area */}
         <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
-          <TopBar activePage={effectivePage} onMenuToggle={() => setSidebarCollapsed(p => !p)} onNavigate={handleNavigate} />
+          <TopBar activePage={effectivePage} onMenuToggle={() => setMobileMenuOpen(true)} onNavigate={handleNavigate} />
           {/* Offline banner — shown mid-session when connection drops */}
           {!isOnline && (
-            <div className="shrink-0 flex items-center justify-center gap-2 bg-amber-500/20 border-b border-amber-600/40 text-amber-300 text-xs font-semibold py-2 px-4">
+            <div role="status" aria-live="polite" className="shrink-0 flex items-center justify-center gap-2 bg-amber-500/20 border-b border-amber-600/40 text-amber-300 text-xs font-semibold py-2 px-4">
               📡 No internet connection — some features may not work until you reconnect.
             </div>
           )}
           {/* pb-16 on mobile to avoid content hiding behind bottom nav */}
-          <main className="flex-1 overflow-y-auto bg-dark-900 lg:pb-0 pb-16 relative overflow-hidden">
-            {renderPage()}
+          <main id="main-content" tabIndex="-1" className="flex-1 min-w-0 overflow-y-auto bg-dark-900 lg:pb-0 pb-16 relative overflow-hidden">
+            <PageErrorBoundary key={effectivePage}>
+              {renderPage()}
+            </PageErrorBoundary>
           </main>
         </div>
 
@@ -473,8 +800,12 @@ function AppShell() {
         {!isSuperAdmin() && (
           <MobileNav
             role={role}
+            industryType={industryType}
+            hasModule={hasModule}
             activePage={effectivePage}
             onNavigate={handleNavigate}
+            moreOpen={mobileMenuOpen}
+            onMoreOpenChange={setMobileMenuOpen}
           />
         )}
 
@@ -486,6 +817,8 @@ function AppShell() {
             onNavigate={handleNavigate}
             notesOpen={notesOpen}
             onToggleNotes={() => setNotesOpen(p => !p)}
+            assistantOpen={assistantOpen}
+            onToggleAssistant={() => setAssistantOpen(p => !p)}
           />
         )}
 
@@ -495,6 +828,9 @@ function AppShell() {
             open={notesOpen}
             onToggle={() => setNotesOpen(p => !p)}
           />
+        )}
+        {!isSuperAdmin() && hasModule(MODULES.CORE) && (
+          <NhanceAssistant open={assistantOpen} onOpen={() => setAssistantOpen(true)} onClose={() => setAssistantOpen(false)} page={effectivePage} onNavigate={handleNavigate} />
         )}
       </div>
     </DisplayModeProvider>

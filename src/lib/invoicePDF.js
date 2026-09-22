@@ -62,7 +62,7 @@ function buildQRPayload(invoice, company, verifyUrl) {
   if (verifyUrl) return verifyUrl
   return [
     'NHANCE DOCUMENT',
-    `Type: ${invoice.invoice_type === 'proforma' ? 'Proforma Invoice' : 'Tax Invoice'}`,
+    `Type: ${invoice.invoice_type === 'proforma' ? 'Proforma Invoice' : invoice.invoice_type === 'non_tax' ? 'Invoice' : 'Tax Invoice'}`,
     `No: ${invoice.invoice_number || ''}`,
     `Date: ${invoice.invoice_date || ''}`,
     `From: ${company?.name || ''} GSTIN:${company?.gstin || ''}`,
@@ -217,7 +217,7 @@ export async function generateInvoicePDF(invoice, lineItems, company, verifyUrl 
   vln(doc, L + irnW, titleY, titleH)               // vertical divider
 
   // Title — "Proforma Invoice" or "Tax Invoice"
-  const docTitle = invoice.invoice_type === 'proforma' ? 'Proforma Invoice' : 'Tax Invoice'
+  const docTitle = invoice.invoice_type === 'proforma' ? 'Proforma Invoice' : invoice.invoice_type === 'non_tax' ? 'Invoice' : 'Tax Invoice'
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(14)
   doc.text(docTitle, L + W / 2, titleY + 7, { align: 'center' })
@@ -692,6 +692,45 @@ export async function generateInvoicePDF(invoice, lineItems, company, verifyUrl 
   doc.line(sigRX + 5, y + sigH - 8, sigRX + sigRW - 5, y + sigH - 8)
   doc.setFontSize(7)
   doc.text('Authorised Signatory', sigRX + sigRW / 2, y + sigH - 3, { align: 'center' })
+
+  // Usage evidence is an annexure, preserving the established tax invoice layout.
+  const evidence = invoice.billing_snapshot
+  if (evidence?.version === 1) {
+    doc.addPage()
+    doc.setTextColor(0)
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(13)
+    doc.text('Usage billing statement', L, 17)
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8)
+    doc.text(`Invoice ${invoice.invoice_number}  |  Contract ${evidence.contract_number || 'Deployment rate'}`, L, 24)
+    doc.text(`Period ${fmtDate(invoice.work_done_from)} - ${fmtDate(invoice.work_done_to)}  |  ${evidence.basis} @ INR ${fmtINR(evidence.rate)}`, L, 30)
+    doc.text(`Working ${evidence.workingDays} days  |  ${evidence.hours} hrs  |  ${evidence.fuel} L fuel`, L, 36)
+    autoTable(doc, {
+      startY: 42, margin: { left: L, right: L },
+      head: [['Calculation', 'Quantity', 'Rate (INR)', 'Amount (INR)']],
+      body: (evidence.lines || []).map(line => [line.description, `${line.quantity} ${line.unit}`, fmtINR(line.rate), fmtINR(line.amount)]),
+      styles: { fontSize: 8 }, headStyles: { fillColor: [75, 22, 42] },
+    })
+    const rowStart = Math.min(doc.lastAutoTable.finalY + 11, 260)
+    if (rowStart > 235) doc.addPage()
+    const start = rowStart > 235 ? 15 : rowStart
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(9)
+    doc.text('Daily log evidence', L, start)
+    autoTable(doc, {
+      startY: start + 4, margin: { left: L, right: L },
+      head: [['Date', 'Shift', 'Status', 'Hours', 'Fuel L', 'Review', 'Logsheet']],
+      body: (evidence.operations || []).map(op => [fmtDate(op.date), op.shift || '', op.status || '', op.hours, op.fuel, op.workflow || '', op.logsheet ? 'Attached' : 'Missing']),
+      styles: { fontSize: 7 }, headStyles: { fillColor: [75, 22, 42] },
+    })
+    if (evidence.exceptions?.length) {
+      if (doc.lastAutoTable.finalY > 240) doc.addPage()
+      const exY = doc.lastAutoTable.finalY > 240 ? 16 : doc.lastAutoTable.finalY + 9
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(8)
+      doc.text('Reviewed exceptions', L, exY)
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(7)
+      const warnings = doc.splitTextToSize(evidence.exceptions.join('; '), W)
+      doc.text(warnings, L, exY + 5)
+    }
+  }
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   // PAGE FOOTER

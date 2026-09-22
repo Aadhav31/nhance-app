@@ -36,7 +36,7 @@ export const MODULE_LABELS = {
   core:             'Core',
   fleet_management: 'Equipments & Machineries',
   daily_operations: 'Daily Operations',
-  maintenance:      'Maintenance',
+  maintenance:      'Equipment Health',
   inventory:        'Inventory',
   clients_projects: 'Clients & Projects',
   accounts:         'Accounts',
@@ -147,6 +147,8 @@ export const NAV_ITEMS = [
     items: [
       { key: 'dashboard', label: 'Dashboard', icon: 'LayoutDashboard', module: MODULES.CORE,
         roles: [ROLES.OPERATOR, ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
+      { key: 'control_tower', label: 'P&M Control Tower', icon: 'Activity', module: MODULES.FLEET,
+        roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ADMIN] },
     ],
   },
   {
@@ -156,7 +158,11 @@ export const NAV_ITEMS = [
         roles: [ROLES.OPERATOR, ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ADMIN] },
       { key: 'fleet',      label: 'Equipments & Machineries', icon: 'Truck', module: MODULES.FLEET,
         roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
-      { key: 'maintenance',label: 'Maintenance',       icon: 'Wrench',        module: MODULES.MAINTENANCE,
+      { key: 'fuel_reconciliation', label: 'Fuel Reconciliation', icon: 'Fuel', module: MODULES.FLEET,
+        roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
+      { key: 'deployment_planner', label: 'Deployment Planner', icon: 'CalendarDays', module: MODULES.FLEET,
+        roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
+      { key: 'maintenance',label: 'Equipment Health',  icon: 'Wrench',        module: MODULES.MAINTENANCE,
         roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ADMIN] },
       { key: 'inventory',    label: 'Inventory',         icon: 'Package',       module: MODULES.INVENTORY,
         roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
@@ -191,6 +197,8 @@ export const NAV_ITEMS = [
   {
     section: 'Insights',
     items: [
+      { key: 'profitability', label: 'Profitability',          icon: 'BadgeIndianRupee', module: MODULES.REPORTS,
+        roles: [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
       { key: 'reports',    label: 'Reports',               icon: 'BarChart3', module: MODULES.REPORTS,
         roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
       { key: 'financials', label: 'Financial Statements',  icon: 'FileText',  module: MODULES.ACCOUNTS,

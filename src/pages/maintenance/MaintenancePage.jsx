@@ -1,13 +1,15 @@
-import { useState, useMemo } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { format } from 'date-fns'
 import toast from 'react-hot-toast'
 import {
   Wrench, Plus, X, ChevronRight, Loader2,
-  Calendar, CheckCircle, Circle, AlertCircle, Search,
+  Calendar, CheckCircle, Circle, AlertCircle, Search, ClipboardList, History, Hammer,
 } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
+import PreventiveMaintenanceTab from './PreventiveMaintenanceTab'
+import WorkshopBoardTab from './WorkshopBoardTab'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 const today = () => new Date().toISOString().split('T')[0]
@@ -273,8 +275,9 @@ function MaintenanceFormModal({ record, companyId, session, onClose, onSaved }) 
               <select className={inp()} value={form.status} onChange={e => setF('status', e.target.value)}>
                 <option value="open">Open</option>
                 <option value="in_progress">In Progress</option>
-                <option value="completed">Completed</option>
+                <option value="completed" disabled={Boolean(record?.pm_schedule_id)}>Completed</option>
               </select>
+              {record?.pm_schedule_id && <p className="mt-1 text-[10px] text-amber-400">Use “Mark Completed” so the next PM interval advances.</p>}
             </div>
           </div>
 
@@ -316,10 +319,20 @@ function RecordDetailModal({ record, companyId, onClose, onEdit }) {
   const handleMarkComplete = async () => {
     setCompleting(true)
     try {
-      const { error } = await supabase.from('maintenance_records')
-        .update({ status: 'completed', completed_date: today() }).eq('id', record.id)
-      if (error) throw error
-      await supabase.from('equipment').update({ status: 'idle' }).eq('id', record.equipment_id)
+      if (record.pm_schedule_id && record.job_card_id) {
+        const { error } = await supabase.rpc('complete_pm_job', {
+          p_job_card_id: record.job_card_id,
+          p_meter: Number(record.meter_at_service || record.equipment?.current_meter_reading || 0),
+          p_work_done: record.description,
+          p_technician_name: record.technician_name || null,
+        })
+        if (error) throw error
+      } else {
+        const { error } = await supabase.from('maintenance_records')
+          .update({ status: 'completed', completed_date: today() }).eq('id', record.id)
+        if (error) throw error
+        await supabase.from('equipment').update({ status: 'idle' }).eq('id', record.equipment_id)
+      }
       // ── Resolve linked shift_incidents + close open job cards ─────────────
       ;(async () => {
         try {
@@ -331,8 +344,10 @@ function RecordDetailModal({ record, companyId, onClose, onEdit }) {
             .eq('equipment_id', record.equipment_id).eq('jc_type', 'breakdown').eq('status', 'open')
         } catch (_) { /* Non-blocking */ }
       })()
-      toast.success('Marked as completed — equipment set to idle')
+      toast.success(record.pm_schedule_id ? 'PM completed — next service interval scheduled' : 'Marked as completed — equipment set to idle')
       qc.invalidateQueries(['maintenance_records', companyId])
+      qc.invalidateQueries(['pm-planner', companyId])
+      qc.invalidateQueries(['pm-control-tower', companyId])
       onClose()
     } catch (err) {
       toast.error(err.message || 'Failed')
@@ -439,11 +454,12 @@ function RecordDetailModal({ record, companyId, onClose, onEdit }) {
 }
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
-export default function MaintenancePage() {
+export default function MaintenancePage({ onNavigate, initialTab = 'workshop', initialPmState = 'all', initialWorkshopStatus = 'active', initialEquipmentId = null }) {
   const { companyId, session, role } = useAuth()
   const qc = useQueryClient()
-  const isAdmin = ['admin', 'superadmin'].includes(role)
+  const canManage = ['supervisor', 'manager', 'admin', 'superadmin'].includes(role)
 
+  const [section, setSection] = useState(['workshop', 'planner', 'records'].includes(initialTab) ? initialTab : 'workshop')
   const [showCreate, setShowCreate] = useState(false)
   const [selected,   setSelected]   = useState(null)
   const [editTarget, setEditTarget] = useState(null)
@@ -451,11 +467,20 @@ export default function MaintenancePage() {
   const [typeFilter,   setTypeFilter]   = useState('all')
   const [search, setSearch] = useState('')
 
+  useEffect(() => {
+    setSection(['workshop', 'planner', 'records'].includes(initialTab) ? initialTab : 'workshop')
+  }, [initialTab])
+
+  const selectSection = next => {
+    setSection(next)
+    onNavigate?.('maintenance', { tab: next, equipmentId: initialEquipmentId }, { replace: true })
+  }
+
   const { data: records = [], isLoading } = useQuery({
-    queryKey: ['maintenance_records', companyId, statusFilter, typeFilter],
+    queryKey: ['maintenance_records', companyId, statusFilter, typeFilter, initialEquipmentId],
     queryFn: async () => {
       let q = supabase.from('maintenance_records')
-        .select('*, equipment(id, name, equipment_number, category, meter_type)')
+        .select('*, equipment(id, name, equipment_number, category, meter_type, current_meter_reading)')
         .eq('company_id', companyId)
         .order('service_date', { ascending: false })
         .order('created_at', { ascending: false })
@@ -463,6 +488,7 @@ export default function MaintenancePage() {
 
       if (statusFilter !== 'all') q = q.eq('status', statusFilter)
       if (typeFilter   !== 'all') q = q.eq('maintenance_type', typeFilter)
+      if (initialEquipmentId) q = q.eq('equipment_id', initialEquipmentId)
 
       const { data, error } = await q
       if (error) throw error
@@ -481,7 +507,7 @@ export default function MaintenancePage() {
       }
       return rows
     },
-    enabled: !!companyId,
+    enabled: !!companyId && section === 'records',
   })
 
   const filtered = useMemo(() => {
@@ -506,6 +532,7 @@ export default function MaintenancePage() {
     setShowCreate(false)
     setEditTarget(null)
     qc.invalidateQueries(['maintenance_records', companyId])
+    qc.invalidateQueries(['pm-planner', companyId])
   }
 
   return (
@@ -513,15 +540,40 @@ export default function MaintenancePage() {
       {/* Header */}
       <div className="flex items-center gap-3 px-5 py-3 border-b border-dark-700 flex-shrink-0">
         <Wrench className="w-5 h-5 text-primary-400" />
-        <h1 className="text-base font-bold text-slate-100">Maintenance</h1>
+        <div><h1 className="text-base font-bold text-slate-100">Equipment Health</h1><p className="text-[10px] text-slate-500">Preventive care, workshop execution and complete repair history</p></div>
         <div className="flex-1" />
-        {isAdmin && (
+        {canManage && section === 'records' && (
           <button onClick={() => setShowCreate(true)}
             className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-primary-600 hover:bg-primary-500 text-white text-sm font-semibold transition-colors shadow-lg shadow-primary-600/20">
             <Plus className="w-4 h-4" /> New Record
           </button>
         )}
       </div>
+
+      <div className="flex shrink-0 gap-1 border-b border-dark-700 bg-dark-900 px-4 pt-2">
+        <button type="button" onClick={() => selectSection('workshop')} aria-pressed={section === 'workshop'} className={`flex items-center gap-1.5 border-b-2 px-3 py-2 text-xs ${section === 'workshop' ? 'border-primary-500 text-primary-400' : 'border-transparent text-slate-500'}`}><Hammer className="h-3.5 w-3.5" />Workshop Board</button>
+        <button type="button" onClick={() => selectSection('planner')} aria-pressed={section === 'planner'} className={`flex items-center gap-1.5 border-b-2 px-3 py-2 text-xs ${section === 'planner' ? 'border-primary-500 text-primary-400' : 'border-transparent text-slate-500'}`}><ClipboardList className="h-3.5 w-3.5" />PM Planner</button>
+        <button type="button" onClick={() => selectSection('records')} aria-pressed={section === 'records'} className={`flex items-center gap-1.5 border-b-2 px-3 py-2 text-xs ${section === 'records' ? 'border-primary-500 text-primary-400' : 'border-transparent text-slate-500'}`}><History className="h-3.5 w-3.5" />Service History</button>
+      </div>
+
+      {initialEquipmentId && (
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-primary-500/20 bg-primary-500/10 px-5 py-2">
+          <p className="text-xs font-semibold text-primary-300">Showing health records for the selected machine</p>
+          <button type="button" onClick={() => onNavigate?.('maintenance', { tab: section }, { replace: true })} className="text-xs font-semibold text-primary-400 hover:text-primary-300">
+            Show all equipment
+          </button>
+        </div>
+      )}
+
+      {section === 'workshop' ? (
+        <div className="flex-1 overflow-y-auto p-4 md:p-5">
+          <WorkshopBoardTab companyId={companyId} role={role} equipmentId={initialEquipmentId} initialStatus={initialWorkshopStatus} onFilterChange={filter => onNavigate?.('maintenance', { tab: 'workshop', workshopStatus: filter, equipmentId: initialEquipmentId }, { replace: true })} />
+        </div>
+      ) : section === 'planner' ? (
+        <div className="flex-1 overflow-y-auto p-4 md:p-5">
+          <PreventiveMaintenanceTab companyId={companyId} role={role} equipmentId={initialEquipmentId} initialState={initialPmState} onFilterChange={state => onNavigate?.('maintenance', { tab: 'planner', pmState: state, equipmentId: initialEquipmentId }, { replace: true })} />
+        </div>
+      ) : <>
 
       {/* Summary bar */}
       {(openCount > 0 || inProgCount > 0 || totalCost > 0) && (
@@ -578,7 +630,7 @@ export default function MaintenancePage() {
           <div className="flex flex-col items-center justify-center py-20 gap-3">
             <Wrench className="w-12 h-12 text-slate-700" />
             <p className="text-slate-500 text-sm">No maintenance records found</p>
-            {isAdmin && (
+            {canManage && (
               <button onClick={() => setShowCreate(true)}
                 className="text-sm text-primary-400 hover:text-primary-300 flex items-center gap-1">
                 <Plus className="w-4 h-4" /> Create first record
@@ -650,6 +702,7 @@ export default function MaintenancePage() {
           </div>
         )}
       </div>
+      </>}
 
       {/* Modals */}
       {showCreate && (

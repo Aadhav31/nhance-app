@@ -16,6 +16,7 @@ export const DOC_TYPES = {
   payment_made:     { prefix: 'PM',  yearBased: true,  pad: 4 },
   // Sales
   invoice:          { prefix: 'INV', yearBased: true,  pad: 4 },
+  proforma:         { prefix: 'PI',  yearBased: true,  pad: 4 },
   quote:            { prefix: 'QT',  yearBased: true,  pad: 4 },
   sales_order:      { prefix: 'SO',  yearBased: true,  pad: 4 },
   challan:          { prefix: 'DC',  yearBased: true,  pad: 4 },
