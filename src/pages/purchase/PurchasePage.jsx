@@ -2712,7 +2712,7 @@ function PurchaseOrdersTab({ companyId, session }) {
   const { company, userProfile } = useAuth()
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving] = useState(false)
-  const blankForm = () => ({ vendor_id: '', vendor_gstin: '', po_date: todayStr(), expected_delivery: '', delivery_address: '', notes: '', use_igst: false, discount_amount: 0, is_tax_invoice: true })
+  const blankForm = () => ({ vendor_id: '', vendor_gstin: '', po_date: todayStr(), expected_delivery: '', delivery_address: '', place_of_supply: '', notes: '', use_igst: false, discount_amount: 0, is_tax_invoice: true })
   const [form, setForm] = useState(blankForm())
   const [lines, setLines] = useState([blankLine()])
   const [editing, setEditing] = useState(null)
@@ -2728,7 +2728,8 @@ function PurchaseOrdersTab({ companyId, session }) {
     setForm({
       vendor_id: po.vendor_id || '', vendor_gstin: po.vendor_gstin || '',
       po_date: po.po_date || todayStr(), expected_delivery: po.expected_delivery || '',
-      delivery_address: po.delivery_address || '', notes: po.notes || '',
+      delivery_address: po.delivery_address || '', place_of_supply: po.place_of_supply || '',
+      notes: po.notes || '',
       use_igst: (po.igst_amount || 0) > 0, discount_amount: po.discount_amount || 0,
       is_tax_invoice: po.is_tax_invoice !== false,
     })
@@ -2747,7 +2748,16 @@ function PurchaseOrdersTab({ companyId, session }) {
   }
 
   const dlPDFpo = async (po) => {
-    try { const { data: ld } = await supabase.from('po_line_items').select('*').eq('po_id', po.id).order('sort_order'); const verifyUrl = await createVerification(supabase, companyId, { docType: 'po', docNumber: po.po_number, docDate: po.po_date, partyName: po.vendor_name, amount: po.total_amount , companyName: company?.name || null, issuedByName: userProfile?.full_name || null }); await downloadPOPDF(po, ld||[], company, verifyUrl) } catch(e) { toast.error(e.message) }
+    try {
+      const [{ data: ld }, { data: vd }] = await Promise.all([
+        supabase.from('po_line_items').select('*').eq('po_id', po.id).order('sort_order'),
+        po.vendor_id
+          ? supabase.from('vendors').select('address,contact_name,contact_phone,contact_email,gstin').eq('id', po.vendor_id).single()
+          : { data: null },
+      ])
+      const verifyUrl = await createVerification(supabase, companyId, { docType: 'po', docNumber: po.po_number, docDate: po.po_date, partyName: po.vendor_name, amount: po.total_amount, companyName: company?.name || null, issuedByName: userProfile?.full_name || null })
+      await downloadPOPDF(po, ld||[], company, verifyUrl, vd)
+    } catch(e) { toast.error(e.message) }
   }
   const voidQRpo = async (po) => {
     if (!window.confirm(`Void QR code for ${po.po_number}?\nAny printed copy will immediately show as invalid.`)) return
@@ -2818,6 +2828,7 @@ function PurchaseOrdersTab({ companyId, session }) {
           vendor_id: form.vendor_id, vendor_name: vendor?.name || '',
           po_date: form.po_date, expected_delivery: form.expected_delivery || null,
           delivery_address: form.delivery_address || null,
+          place_of_supply: form.place_of_supply || null,
           subtotal, discount_amount: parseFloat(form.discount_amount) || 0, taxable_amount: taxable,
           cgst_rate: 0, sgst_rate: 0, igst_rate: 0,
           cgst_amount: cgst_amt, sgst_amount: sgst_amt, igst_amount: igst_amt,
@@ -2845,6 +2856,7 @@ function PurchaseOrdersTab({ companyId, session }) {
         vendor_id: form.vendor_id, vendor_name: vendor?.name || '',
         po_date: form.po_date, expected_delivery: form.expected_delivery || null,
         delivery_address: form.delivery_address || null,
+        place_of_supply: form.place_of_supply || null,
         subtotal, discount_amount: parseFloat(form.discount_amount) || 0, taxable_amount: taxable,
         cgst_rate: 0, sgst_rate: 0, igst_rate: 0,
         cgst_amount: cgst_amt, sgst_amount: sgst_amt, igst_amount: igst_amt,
@@ -2935,6 +2947,7 @@ function PurchaseOrdersTab({ companyId, session }) {
             <Field label="PO Date"><input type="date" className={inp()} value={form.po_date} onChange={e => setF('po_date', e.target.value)} /></Field>
             <Field label="Expected Delivery"><input type="date" className={inp()} value={form.expected_delivery} onChange={e => setF('expected_delivery', e.target.value)} /></Field>
             <div className="col-span-2"><Field label="Delivery Address"><input className={inp()} value={form.delivery_address} onChange={e => setF('delivery_address', e.target.value)} /></Field></div>
+            <div className="col-span-2"><Field label="Place of Supply"><input className={inp()} value={form.place_of_supply} onChange={e => setF('place_of_supply', e.target.value)} placeholder="e.g. Tamil Nadu (33)" /></Field></div>
           </div>
           <LineItemsEditor lines={lines} setLines={setLines} isTax={isTax} />
           <TaxSummary lines={lines} form={form} setF={setF} />

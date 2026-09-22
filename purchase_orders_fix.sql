@@ -7,6 +7,7 @@
 
 ALTER TABLE purchase_orders
   ADD COLUMN IF NOT EXISTS delivery_address  TEXT,
+  ADD COLUMN IF NOT EXISTS place_of_supply   TEXT,
   ADD COLUMN IF NOT EXISTS discount_amount   NUMERIC(12,2) DEFAULT 0,
   ADD COLUMN IF NOT EXISTS taxable_amount    NUMERIC(12,2) DEFAULT 0,
   ADD COLUMN IF NOT EXISTS cgst_rate         NUMERIC(5,2)  DEFAULT 0,

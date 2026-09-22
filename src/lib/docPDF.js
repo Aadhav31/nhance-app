@@ -107,7 +107,7 @@ function numToWords(amount) {
 function buildDocPDF(opts) {
   const {
     company, docTitle, docNumber, docDate, terms, termsLabel = 'Terms', dueDate, placeOfSupply,
-    partyLabel = 'Bill To', partyName, partyAddress, partyGstin, partyPhone,
+    partyLabel = 'Bill To', partyName, partyAddress, partyGstin, partyPhone, partyContactName, partyEmail,
     lineItems = [], subtotal = 0, discountAmount = 0, taxableAmount,
     cgst_rate, cgst_amount = 0, sgst_rate, sgst_amount = 0,
     igst_rate, igst_amount = 0, total = 0, paidAmount = 0, balanceDue,
@@ -230,7 +230,9 @@ function buildDocPDF(opts) {
   pdf.setFontSize(7.5)
   const partyDetailItems = [
     partyAddress,
+    partyContactName ? `Contact: ${partyContactName}` : null,
     partyPhone ? `Ph: ${partyPhone}` : null,
+    partyEmail ? `Email: ${partyEmail}` : null,
     partyGstin ? `GSTIN: ${partyGstin}` : null,
   ].filter(Boolean)
   let totalDetailH = 0
@@ -628,16 +630,22 @@ export async function downloadBillPDF(bill, lineItems, company, verifyUrl = null
   pdf.save(`${bill.bill_number}.pdf`)
 }
 
-export async function downloadPOPDF(po, lineItems, company, verifyUrl = null) {
+export async function downloadPOPDF(po, lineItems, company, verifyUrl = null, vendorDetails = null) {
+  const vd = vendorDetails || {}
   const pdf = buildDocPDF({
     company,
     docTitle: 'PURCHASE ORDER',
     docNumber: po.po_number,
     docDate: po.po_date,
     dueDate: po.expected_delivery,
+    placeOfSupply: po.place_of_supply || null,
     partyLabel: 'Vendor',
     partyName: po.vendor_name,
-    partyGstin: po.vendor_gstin,
+    partyAddress: vd.address || po.delivery_address || null,
+    partyGstin: po.vendor_gstin || vd.gstin || null,
+    partyContactName: vd.contact_name || null,
+    partyPhone: vd.contact_phone || null,
+    partyEmail: vd.contact_email || null,
     lineItems,
     subtotal: po.subtotal || 0,
     discountAmount: po.discount_amount || 0,

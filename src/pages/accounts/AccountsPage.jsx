@@ -3268,6 +3268,24 @@ function LedgerTab({ companyId }) {
     enabled: !!companyId,
   })
 
+  // Pre-period query to compute Opening Balance
+  const { data: prePeriodTxns = [] } = useQuery({
+    queryKey: ['acct_pre_ledger', companyId, fromDate],
+    queryFn: async () => {
+      if (!fromDate) return []
+      const { data } = await supabase.from('account_transactions')
+        .select('type, amount').eq('company_id', companyId).lt('txn_date', fromDate)
+      return data || []
+    },
+    enabled: !!companyId && !!fromDate,
+  })
+
+  const openingBalance = useMemo(() => {
+    const inc = prePeriodTxns.filter(t => t.type === 'income').reduce((s,t) => s + Number(t.amount), 0)
+    const exp = prePeriodTxns.filter(t => t.type === 'expense').reduce((s,t) => s + Number(t.amount), 0)
+    return inc - exp  // positive = Cr (surplus), negative = Dr (deficit)
+  }, [prePeriodTxns])
+
   const filtered = useMemo(() => txns.filter(t => {
     if (typeFilter !== 'all' && t.type !== typeFilter) return false
     if (search.trim()) {
@@ -3279,6 +3297,19 @@ function LedgerTab({ companyId }) {
 
   const income  = useMemo(() => filtered.filter(t => t.type === 'income').reduce((s, t) => s + Number(t.amount), 0), [filtered])
   const expense = useMemo(() => filtered.filter(t => t.type === 'expense').reduce((s, t) => s + Number(t.amount), 0), [filtered])
+
+  // Running balance with Dr/Cr — Tally style
+  const filteredWithBalance = useMemo(() => {
+    let running = openingBalance
+    return filtered.map(t => {
+      const amt = Number(t.amount)
+      if (t.type === 'income')  running += amt
+      else                      running -= amt
+      return { ...t, runningBalance: running }
+    })
+  }, [filtered, openingBalance])
+
+  const closingBalance = openingBalance + income - expense
 
   // Category label helper
   const catLabel = (t) => {
@@ -3419,14 +3450,37 @@ function LedgerTab({ companyId }) {
           },
         })
       } else {
-        autoTable(doc, {
-          startY: 47,
-          margin: { left: M, right: M },
-          head: [['Date', 'Description', 'Expense Category', 'Mode', 'Ref / Voucher', 'Debit (₹)', 'Credit (₹)']],
-          body: filtered.map(t => [
+        // ── Tally-format detailed table: Opening + transactions + Closing ──
+        const _obSign = openingBalance >= 0 ? 'Cr' : 'Dr'
+        const _obAmt  = fmtINRLedger(Math.abs(openingBalance))
+        const _cbSign = closingBalance >= 0 ? 'Cr' : 'Dr'
+        const _cbAmt  = fmtINRLedger(Math.abs(closingBalance))
+
+        // Build body: Opening row + txn rows + Closing row
+        let _running = openingBalance
+        const tallyBody = []
+
+        // Opening Balance row
+        tallyBody.push([
+          fmtDateShort(fromDate),
+          'Opening Balance',
+          '',
+          '',
+          '',
+          openingBalance < 0 ? _obAmt : '',
+          openingBalance >= 0 ? _obAmt : '',
+          `${_obAmt} ${_obSign}`,
+          '_OPENING',
+        ])
+
+        filtered.forEach(t => {
+          const amt = Number(t.amount)
+          if (t.type === 'income')  _running += amt
+          else                      _running -= amt
+          const _rbSign = _running >= 0 ? 'Cr' : 'Dr'
+          tallyBody.push([
             fmtDateShort(t.txn_date),
             t.description || '',
-            // Actual expense sub-category (salary / fuel / travel etc.) — not just "expense"
             t.expense_category
               ? t.expense_category.replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase())
               : (t.reference_type === 'invoice_payment' ? 'Invoice Payment'
@@ -3434,11 +3488,32 @@ function LedgerTab({ companyId }) {
                 : (t.reference_type || '').replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase())),
             (t.payment_mode || '—').toUpperCase(),
             t.bank_reference || '—',
-            t.type === 'expense' ? fmtINRLedger(t.amount) : '',
-            t.type === 'income'  ? fmtINRLedger(t.amount) : '',
-          ]),
-          // ── Column totals in the footer row ──
-          foot: [['', '', '', '', 'TOTAL', fmtINRLedger(expense), fmtINRLedger(income)]],
+            t.type === 'expense' ? fmtINRLedger(amt) : '',
+            t.type === 'income'  ? fmtINRLedger(amt) : '',
+            `${fmtINRLedger(Math.abs(_running))} ${_rbSign}`,
+            t.type,
+          ])
+        })
+
+        // Closing Balance row
+        tallyBody.push([
+          fmtDateShort(toDate),
+          'Closing Balance',
+          '',
+          '',
+          '',
+          closingBalance < 0 ? _cbAmt : '',
+          closingBalance >= 0 ? _cbAmt : '',
+          `${_cbAmt} ${_cbSign}`,
+          '_CLOSING',
+        ])
+
+        autoTable(doc, {
+          startY: 47,
+          margin: { left: M, right: M },
+          head: [['Date', 'Particulars', 'Category', 'Mode', 'Voucher No.', 'Debit (₹)', 'Credit (₹)', 'Balance']],
+          body: tallyBody.map(r => r.slice(0, 8)),
+          foot: [['', '', '', '', 'TOTAL', fmtINRLedger(expense), fmtINRLedger(income), `${fmtINRLedger(Math.abs(closingBalance))} ${closingBalance >= 0 ? 'Cr' : 'Dr'}`]],
           showFoot: 'lastPage',
           styles: baseStyles,
           headStyles: headSt,
@@ -3450,16 +3525,29 @@ function LedgerTab({ companyId }) {
           bodyStyles:         { fillColor: [255, 255, 255] },
           columnStyles: {
             0: { cellWidth: 22 },
-            2: { cellWidth: 34 },
-            3: { cellWidth: 16, halign: 'center' },
-            4: { cellWidth: 26 },
-            5: { halign: 'right', cellWidth: 30, fontStyle: 'bold' },
-            6: { halign: 'right', cellWidth: 30, fontStyle: 'bold' },
+            2: { cellWidth: 30 },
+            3: { cellWidth: 14, halign: 'center' },
+            4: { cellWidth: 22 },
+            5: { halign: 'right', cellWidth: 26, fontStyle: 'bold' },
+            6: { halign: 'right', cellWidth: 26, fontStyle: 'bold' },
+            7: { halign: 'right', cellWidth: 26, fontStyle: 'bold' },
           },
           didParseCell: (d) => {
+            const rowTag = tallyBody[d.row.index]?.[8]
             if (d.section === 'body') {
-              if (d.column.index === 5 && d.cell.raw) d.cell.styles.textColor = [220, 38, 38]
-              if (d.column.index === 6 && d.cell.raw) d.cell.styles.textColor = [22, 163, 74]
+              // Opening / Closing balance rows — distinct shading
+              if (rowTag === '_OPENING' || rowTag === '_CLOSING') {
+                d.cell.styles.fillColor = [229, 231, 235]
+                d.cell.styles.fontStyle = 'bold'
+                d.cell.styles.textColor = [15, 23, 42]
+              }
+              if (d.column.index === 5 && d.cell.raw) d.cell.styles.textColor = rowTag === '_OPENING'||rowTag === '_CLOSING' ? [15,23,42] : [220, 38, 38]
+              if (d.column.index === 6 && d.cell.raw) d.cell.styles.textColor = rowTag === '_OPENING'||rowTag === '_CLOSING' ? [15,23,42] : [22, 163, 74]
+              // Running balance column
+              if (d.column.index === 7 && d.cell.raw && rowTag !== '_OPENING' && rowTag !== '_CLOSING') {
+                const rb = tallyBody[d.row.index]?.[7] || ''
+                d.cell.styles.textColor = rb.endsWith('Cr') ? [22,163,74] : [220,38,38]
+              }
             }
             if (d.section === 'foot') {
               if (d.column.index === 5) d.cell.styles.textColor = [220, 38, 38]
@@ -3468,26 +3556,6 @@ function LedgerTab({ companyId }) {
             }
           },
         })
-
-        // ── Summary block — LEFT side, one line each ──────────────────────────
-        const tY = doc.lastAutoTable.finalY + 6
-        doc.setDrawColor(220, 220, 220); doc.setLineWidth(0.2)
-        doc.line(M, tY - 2, M + 90, tY - 2)   // short line only under summary
-
-        doc.setFont('helvetica', 'bold'); doc.setFontSize(9)
-
-        doc.setTextColor(220, 38, 38)
-        doc.text(`Total Debit (Expense)  :   ₹${fmtINRLedger(expense)}`, M + 2, tY + 5)
-
-        doc.setTextColor(22, 163, 74)
-        doc.text(`Total Credit (Income)  :   ₹${fmtINRLedger(income)}`, M + 2, tY + 13)
-
-        const netPos = income - expense >= 0
-        doc.setTextColor(netPos ? 22 : 220, netPos ? 163 : 38, netPos ? 74 : 38)
-        doc.text(
-          `Net Balance               :   ₹${fmtINRLedger(Math.abs(income - expense))} ${netPos ? 'Cr' : 'Dr'}`,
-          M + 2, tY + 21
-        )
       }
 
       // ─── PAGE FOOTER ────────────────────────────────────────────────────────
@@ -3532,25 +3600,47 @@ function LedgerTab({ companyId }) {
       XLSX.utils.book_append_sheet(wb, wsInfo, 'Summary Info')
 
       if (detailed) {
-        // Detailed sheet
+        // Tally-format detailed sheet: Opening + running balance + Closing
         const rows = [
-          ['Date','Description','Type','Category','Payment Mode','Reference','Debit','Credit','Balance'],
+          [company?.name || ''],
+          ['ACCOUNT LEDGER (Tally Format)'],
+          [`Period: ${periodLabel}`],
+          [],
+          ['Date','Particulars','Type','Category','Payment Mode','Voucher No.','Debit (₹)','Credit (₹)','Balance'],
         ]
-        let balance = 0
-        filtered.forEach(t => {
+        // Opening Balance row
+        rows.push([
+          fmtDateShort(fromDate),
+          'Opening Balance', '', '', '', '',
+          openingBalance < 0 ? Math.abs(openingBalance) : '',
+          openingBalance >= 0 ? openingBalance : '',
+          openingBalance,
+        ])
+        let _run = openingBalance
+        filteredWithBalance.forEach(t => {
           const dr = t.type === 'expense' ? Number(t.amount) : 0
           const cr = t.type === 'income'  ? Number(t.amount) : 0
-          balance += cr - dr
           rows.push([
             fmtDateShort(t.txn_date), t.description || '', t.type,
-            t.reference_type || 'manual', t.payment_mode || '', t.bank_reference || '',
-            dr || '', cr || '', balance,
+            t.expense_category || t.reference_type || 'manual',
+            t.payment_mode || '', t.bank_reference || makeVoucherNumber(t.id, t.txn_date),
+            dr || '', cr || '', t.runningBalance,
           ])
         })
-        rows.push(['','','','','','','Total Debit →', expense, ''])
-        rows.push(['','','','','','','Total Credit →', '', income])
+        // Closing Balance row
+        rows.push([
+          fmtDateShort(toDate),
+          'Closing Balance', '', '', '', '',
+          closingBalance < 0 ? Math.abs(closingBalance) : '',
+          closingBalance >= 0 ? closingBalance : '',
+          closingBalance,
+        ])
+        rows.push([])
+        rows.push(['','','','','','Total Debit →', expense, '', ''])
+        rows.push(['','','','','','Total Credit →', '', income, ''])
+        rows.push(['','','','','','Closing Balance →', '', '', closingBalance])
         const ws = XLSX.utils.aoa_to_sheet(rows)
-        ws['!cols'] = [{ wch:12 },{ wch:40 },{ wch:10 },{ wch:18 },{ wch:14 },{ wch:18 },{ wch:14 },{ wch:14 },{ wch:14 }]
+        ws['!cols'] = [{ wch:12 },{ wch:40 },{ wch:10 },{ wch:18 },{ wch:14 },{ wch:18 },{ wch:14 },{ wch:14 },{ wch:16 }]
         XLSX.utils.book_append_sheet(wb, ws, 'Ledger Detail')
       }
 
@@ -3727,23 +3817,43 @@ function LedgerTab({ companyId }) {
                   })}
                 </div>
               )
-              /* ── Detailed view ── */
+              /* ── Detailed view (Tally format) ── */
               : (
                 <table className="w-full text-xs">
                   <thead className="sticky top-0 bg-dark-900 z-10">
                     <tr className="text-slate-500 border-b border-dark-700">
                       <th className="text-left px-4 py-3 font-semibold">Date</th>
-                      <th className="text-left px-4 py-3 font-semibold">Description</th>
+                      <th className="text-left px-4 py-3 font-semibold">Particulars</th>
                       <th className="text-left px-4 py-3 font-semibold hidden md:table-cell">Category</th>
                       <th className="text-left px-4 py-3 font-semibold hidden md:table-cell">Mode</th>
-                      <th className="text-left px-4 py-3 font-semibold hidden lg:table-cell">Reference</th>
-                      <th className="text-right px-4 py-3 font-semibold text-red-400">Debit</th>
-                      <th className="text-right px-4 py-3 font-semibold text-emerald-400">Credit</th>
+                      <th className="text-left px-4 py-3 font-semibold hidden lg:table-cell">Voucher No.</th>
+                      <th className="text-right px-4 py-3 font-semibold text-red-400">Debit (₹)</th>
+                      <th className="text-right px-4 py-3 font-semibold text-emerald-400">Credit (₹)</th>
+                      <th className="text-right px-4 py-3 font-semibold text-slate-400">Balance</th>
                       <th className="px-2 py-3 w-8"></th>
                     </tr>
                   </thead>
                   <tbody>
-                    {filtered.map(t => (
+                    {/* Opening Balance row */}
+                    <tr className="border-b border-dark-600 bg-dark-700/40">
+                      <td className="px-4 py-2.5 text-slate-400 whitespace-nowrap text-[11px]">{fmtDateShort(fromDate)}</td>
+                      <td className="px-4 py-2.5 font-semibold text-slate-300 text-[11px]">Opening Balance</td>
+                      <td className="px-4 py-2.5 hidden md:table-cell text-slate-500 text-[11px]">—</td>
+                      <td className="px-4 py-2.5 hidden md:table-cell text-slate-500 text-[11px]">—</td>
+                      <td className="px-4 py-2.5 hidden lg:table-cell text-slate-500 text-[11px]">—</td>
+                      <td className="px-4 py-2.5 text-right text-[11px] font-mono font-semibold text-red-400">
+                        {openingBalance < 0 ? fmt(Math.abs(openingBalance)) : ''}
+                      </td>
+                      <td className="px-4 py-2.5 text-right text-[11px] font-mono font-semibold text-emerald-400">
+                        {openingBalance >= 0 ? fmt(openingBalance) : ''}
+                      </td>
+                      <td className="px-4 py-2.5 text-right font-mono text-[11px] font-bold text-slate-300">
+                        {fmt(Math.abs(openingBalance))} {openingBalance >= 0 ? 'Cr' : 'Dr'}
+                      </td>
+                      <td className="px-2 py-2.5"></td>
+                    </tr>
+
+                    {filteredWithBalance.map(t => (
                       <tr key={t.id} className="border-b border-dark-700/50 hover:bg-dark-800 transition-colors">
                         <td className="px-4 py-3 text-slate-400 whitespace-nowrap">{fmtDateShort(t.txn_date)}</td>
                         <td className="px-4 py-3 text-slate-300 max-w-[200px]"><span className="truncate block">{t.description}</span></td>
@@ -3753,12 +3863,15 @@ function LedgerTab({ companyId }) {
                           </span>
                         </td>
                         <td className="px-4 py-3 text-slate-500 uppercase text-xs hidden md:table-cell">{t.payment_mode || '—'}</td>
-                        <td className="px-4 py-3 text-slate-500 hidden lg:table-cell">{t.bank_reference || '—'}</td>
+                        <td className="px-4 py-3 text-slate-500 hidden lg:table-cell">{t.bank_reference || makeVoucherNumber(t.id, t.txn_date)}</td>
                         <td className="px-4 py-3 text-right font-mono font-bold text-red-400 whitespace-nowrap">
                           {t.type === 'expense' ? fmt(t.amount) : ''}
                         </td>
                         <td className="px-4 py-3 text-right font-mono font-bold text-emerald-400 whitespace-nowrap">
                           {t.type === 'income' ? fmt(t.amount) : ''}
+                        </td>
+                        <td className={`px-4 py-3 text-right font-mono text-xs font-semibold whitespace-nowrap ${t.runningBalance >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                          {fmt(Math.abs(t.runningBalance))} {t.runningBalance >= 0 ? 'Cr' : 'Dr'}
                         </td>
                         <td className="px-2 py-3 text-center">
                           {t.type === 'expense' && (
@@ -3785,6 +3898,25 @@ function LedgerTab({ companyId }) {
                         </td>
                       </tr>
                     ))}
+
+                    {/* Closing Balance row */}
+                    <tr className="border-t border-dark-600 bg-dark-700/40">
+                      <td className="px-4 py-2.5 text-slate-400 whitespace-nowrap text-[11px]">{fmtDateShort(toDate)}</td>
+                      <td className="px-4 py-2.5 font-semibold text-slate-300 text-[11px]">Closing Balance</td>
+                      <td className="px-4 py-2.5 hidden md:table-cell"></td>
+                      <td className="px-4 py-2.5 hidden md:table-cell"></td>
+                      <td className="px-4 py-2.5 hidden lg:table-cell"></td>
+                      <td className="px-4 py-2.5 text-right text-[11px] font-mono font-semibold text-red-400">
+                        {closingBalance < 0 ? fmt(Math.abs(closingBalance)) : ''}
+                      </td>
+                      <td className="px-4 py-2.5 text-right text-[11px] font-mono font-semibold text-emerald-400">
+                        {closingBalance >= 0 ? fmt(closingBalance) : ''}
+                      </td>
+                      <td className={`px-4 py-2.5 text-right font-mono text-[11px] font-bold ${closingBalance >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                        {fmt(Math.abs(closingBalance))} {closingBalance >= 0 ? 'Cr' : 'Dr'}
+                      </td>
+                      <td className="px-2 py-2.5"></td>
+                    </tr>
                   </tbody>
                   <tfoot className="sticky bottom-0 bg-dark-900 border-t-2 border-dark-600">
                     <tr>
@@ -3793,6 +3925,9 @@ function LedgerTab({ companyId }) {
                       </td>
                       <td className="px-4 py-3 text-right font-mono font-bold text-red-400">{fmt(expense)}</td>
                       <td className="px-4 py-3 text-right font-mono font-bold text-emerald-400">{fmt(income)}</td>
+                      <td className="px-4 py-3 text-right font-mono font-bold text-slate-300">
+                        {fmt(Math.abs(closingBalance))} {closingBalance >= 0 ? 'Cr' : 'Dr'}
+                      </td>
                       <td className="px-2 py-3"></td>
                     </tr>
                   </tfoot>
