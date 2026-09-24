@@ -573,11 +573,126 @@ function MultiSelectFilter({ label, options, selected, onToggle, valueKey, label
   )
 }
 
+// ── Quick Record Payment Modal (used from invoice tiles) ──────────────────────
+function QuickPayModal({ inv, companyId, session, onClose, onSaved }) {
+  const today = new Date().toISOString().slice(0, 10)
+  const bal   = Math.max(0, Number(inv.balance_due ?? (Number(inv.total_amount||0) - Number(inv.paid_amount||0))))
+  const [form, setForm] = useState({
+    payment_date:  today,
+    amount:        String(bal),
+    payment_mode:  'bank_transfer',
+    bank_reference:'',
+    notes:         '',
+  })
+  const [saving, setSaving] = useState(false)
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+
+  const syncInvoice = async (invId) => {
+    const { data: allPmts } = await supabase.from('payments_received').select('amount').eq('invoice_id', invId)
+    const totalPaid = (allPmts||[]).reduce((s,p) => s + Number(p.amount||0), 0)
+    const { data: invRow } = await supabase.from('client_invoices').select('total_amount').eq('id', invId).single()
+    const total  = Number(invRow?.total_amount||0)
+    const newBal = Math.max(0, total - totalPaid)
+    const status = newBal <= 0 ? 'paid' : totalPaid > 0 ? 'partial' : 'sent'
+    await supabase.from('client_invoices').update({ paid_amount: totalPaid, balance_due: newBal, status }).eq('id', invId)
+  }
+
+  const save = async () => {
+    const amt = parseFloat(form.amount)
+    if (!amt || amt <= 0) return toast.error('Enter a valid amount')
+    setSaving(true)
+    try {
+      const prNum = await nextDocNumber(companyId, 'payment_recv').catch(() => `PR-${Date.now()}`)
+      const { data: pr, error } = await supabase.from('payments_received').insert({
+        company_id: companyId, payment_number: prNum,
+        payment_date: form.payment_date, invoice_id: inv.id,
+        client_name: inv.client_name || '', amount: amt,
+        payment_mode: form.payment_mode, bank_reference: form.bank_reference || null,
+        notes: form.notes || null, created_by: session?.user?.id,
+        project_id: inv.project_id || null, inv_equipment_id: inv.inv_equipment_id || null,
+        project_name: inv.project_name || null,
+      }).select().single()
+      if (error) throw error
+      await supabase.from('account_transactions').insert({
+        company_id: companyId, txn_date: form.payment_date, type: 'income',
+        description: `Payment received — ${prNum} (${inv.client_name || inv.invoice_number})`,
+        amount: amt, payment_mode: form.payment_mode, bank_reference: form.bank_reference || null,
+        reference_type: 'payment_received', reference_id: pr.id,
+        notes: form.notes || null,
+      })
+      await syncInvoice(inv.id)
+      toast.success(`${prNum} recorded`)
+      onSaved(); onClose()
+    } catch (e) { toast.error(e.message) }
+    finally { setSaving(false) }
+  }
+
+  const inp = 'w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500'
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onClose}>
+      <div className="bg-dark-800 border border-dark-700 rounded-2xl w-full max-w-md shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-dark-700">
+          <div>
+            <p className="font-bold text-slate-100">Record Payment</p>
+            <p className="text-xs text-slate-500 mt-0.5">{inv.client_name} · {inv.invoice_number}</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg text-slate-500 hover:text-slate-300 hover:bg-dark-700"><X className="w-4 h-4" /></button>
+        </div>
+
+        <div className="mx-5 mt-4 px-3 py-2.5 rounded-xl bg-amber-900/20 border border-amber-700/30 flex justify-between items-center">
+          <span className="text-xs text-amber-400 font-semibold">Balance Due</span>
+          <span className="font-mono text-sm font-bold text-amber-300">₹{bal.toLocaleString('en-IN',{maximumFractionDigits:0})}</span>
+        </div>
+
+        <div className="px-5 py-4 space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-slate-400 block mb-1">Payment Date</label>
+              <input type="date" value={form.payment_date} onChange={e => set('payment_date', e.target.value)} className={inp} />
+            </div>
+            <div>
+              <label className="text-xs text-slate-400 block mb-1">Amount (₹)</label>
+              <input type="number" value={form.amount} onChange={e => set('amount', e.target.value)} className={inp} />
+            </div>
+          </div>
+          <div>
+            <label className="text-xs text-slate-400 block mb-1">Payment Mode</label>
+            <select value={form.payment_mode} onChange={e => set('payment_mode', e.target.value)} className={inp}>
+              <option value="bank_transfer">Bank Transfer (NEFT/RTGS)</option>
+              <option value="upi">UPI</option>
+              <option value="cheque">Cheque</option>
+              <option value="cash">Cash</option>
+              <option value="imps">IMPS</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-xs text-slate-400 block mb-1">Reference / UTR / Cheque No.</label>
+            <input type="text" value={form.bank_reference} onChange={e => set('bank_reference', e.target.value)} className={inp} placeholder="UTR / Cheque number" />
+          </div>
+          <div>
+            <label className="text-xs text-slate-400 block mb-1">Notes (optional)</label>
+            <input type="text" value={form.notes} onChange={e => set('notes', e.target.value)} className={inp} placeholder="e.g. Part payment for invoice" />
+          </div>
+        </div>
+
+        <div className="px-5 pb-5 flex gap-3">
+          <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-dark-600 text-sm font-semibold text-slate-400 hover:text-slate-200 transition-all">Cancel</button>
+          <button onClick={save} disabled={saving} className="flex-1 py-2.5 rounded-xl bg-primary-600 hover:bg-primary-500 text-white text-sm font-semibold transition-all disabled:opacity-60">
+            {saving ? 'Saving…' : 'Record Payment'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function InvoicesTab({ companyId, session, initialInvoiceId }) {
   const qc = useQueryClient()
   const { company, userProfile } = useAuth()
   const [showCreate, setShowCreate] = useState(false)
   const [editingDoc, setEditingDoc] = useState(null)
+  const [quickPayInv, setQuickPayInv] = useState(null) // invoice for quick Record Payment modal
   const [search, setSearch] = useState('')
   // ── Filter panel state ─────────────────────────────────────────────────────
   const [showFilters, setShowFilters] = useState(false)
@@ -992,8 +1107,15 @@ function InvoicesTab({ companyId, session, initialInvoiceId }) {
                 <p className="text-xs text-slate-500">{fmtDate(inv.invoice_date)}{inv.due_date ? ` · Due ${fmtDate(inv.due_date)}` : ''}</p>
                 <div className="flex gap-1 items-center" onClick={e => e.stopPropagation()}>
                   {inv.status === 'draft' && <button onClick={() => updateStatus(inv.id, 'sent')} className="text-xs px-2 py-1 rounded-lg border border-blue-700/40 text-blue-400 hover:bg-blue-900/20"><Send className="w-3 h-3 inline mr-1" />Mark Sent</button>}
-                  {inv.invoice_type !== 'proforma' && inv.status === 'sent' && <button onClick={() => updateStatus(inv.id, 'paid')} className="text-xs px-2 py-1 rounded-lg border border-emerald-700/40 text-emerald-400 hover:bg-emerald-900/20"><CheckCircle className="w-3 h-3 inline mr-1" />Mark Paid</button>}
-                  {inv.invoice_type !== 'proforma' && inv.status === 'overdue' && <button onClick={() => updateStatus(inv.id, 'paid')} className="text-xs px-2 py-1 rounded-lg border border-emerald-700/40 text-emerald-400 hover:bg-emerald-900/20"><CheckCircle className="w-3 h-3 inline mr-1" />Mark Paid</button>}
+                  {inv.invoice_type !== 'proforma' && inv.status === 'sent' && <>
+                    <button onClick={() => setQuickPayInv(inv)} className="text-xs px-2 py-1 rounded-lg border border-primary-700/40 text-primary-400 hover:bg-primary-900/20 font-semibold">+ Record Payment</button>
+                    <button onClick={() => updateStatus(inv.id, 'paid')} className="text-xs px-2 py-1 rounded-lg border border-emerald-700/40 text-emerald-400 hover:bg-emerald-900/20"><CheckCircle className="w-3 h-3 inline mr-1" />Mark Paid</button>
+                  </>}
+                  {inv.invoice_type !== 'proforma' && inv.status === 'overdue' && <>
+                    <button onClick={() => setQuickPayInv(inv)} className="text-xs px-2 py-1 rounded-lg border border-primary-700/40 text-primary-400 hover:bg-primary-900/20 font-semibold">+ Record Payment</button>
+                    <button onClick={() => updateStatus(inv.id, 'paid')} className="text-xs px-2 py-1 rounded-lg border border-emerald-700/40 text-emerald-400 hover:bg-emerald-900/20"><CheckCircle className="w-3 h-3 inline mr-1" />Mark Paid</button>
+                  </>}
+                  {inv.invoice_type !== 'proforma' && inv.status === 'partial' && <button onClick={() => setQuickPayInv(inv)} className="text-xs px-2 py-1 rounded-lg border border-primary-700/40 text-primary-400 hover:bg-primary-900/20 font-semibold">+ Record Payment</button>}
                   {inv.invoice_type === 'proforma' && !['converted', 'cancelled'].includes(inv.status) && <button onClick={() => convertProforma(inv)} className="text-xs px-2 py-1 rounded-lg border border-violet-700/40 text-violet-400 hover:bg-violet-900/20">Convert to Tax Invoice</button>}
                   {!['paid','cancelled'].includes(inv.status) && !inv.billing_snapshot && <button onClick={() => openEdit(inv)} className="p-1.5 rounded-lg text-slate-500 hover:text-blue-400 hover:bg-blue-900/20" title="Edit"><Edit2 className="w-3.5 h-3.5" /></button>}
                   {!['paid','cancelled'].includes(inv.status) && <button onClick={() => voidInvoice(inv)} className="p-1.5 rounded-lg text-slate-500 hover:text-yellow-400 hover:bg-yellow-900/20" title="Void"><Ban className="w-3.5 h-3.5" /></button>}
@@ -1187,6 +1309,7 @@ function InvoicesTab({ companyId, session, initialInvoiceId }) {
             {/* Footer actions */}
             <div className="px-5 py-3 border-t border-dark-800 shrink-0 flex gap-2 flex-wrap" onClick={e => e.stopPropagation()}>
               {viewingInv.status === 'draft' && <button onClick={async () => { if (await updateStatus(viewingInv.id, 'sent')) setViewingInv(p => ({...p, status:'sent'})) }} className="flex-1 btn-ghost text-xs border-blue-700/40 text-blue-400"><Send className="w-3.5 h-3.5" /> Mark Sent</button>}
+              {viewingInv.invoice_type !== 'proforma' && ['sent','overdue','partial'].includes(viewingInv.status) && <button onClick={() => setQuickPayInv(viewingInv)} className="flex-1 btn-ghost text-xs border-primary-700/40 text-primary-400 font-semibold">+ Record Payment</button>}
               {viewingInv.invoice_type !== 'proforma' && ['sent','overdue'].includes(viewingInv.status) && <button onClick={async () => { if (await updateStatus(viewingInv.id, 'paid')) setViewingInv(p => ({...p, status:'paid'})) }} className="flex-1 btn-ghost text-xs border-emerald-700/40 text-emerald-400"><CheckCircle className="w-3.5 h-3.5" /> Mark Paid</button>}
               {viewingInv.invoice_type === 'proforma' && !['converted', 'cancelled'].includes(viewingInv.status) && <button onClick={() => convertProforma(viewingInv)} className="flex-1 btn-ghost text-xs text-violet-400">Convert to Tax Invoice</button>}
               {!['paid','cancelled'].includes(viewingInv.status) && !viewingInv.billing_snapshot && <button onClick={() => { closeView(); openEdit(viewingInv) }} className="flex-1 btn-ghost text-xs"><Edit2 className="w-3.5 h-3.5" /> Edit</button>}
@@ -1198,6 +1321,22 @@ function InvoicesTab({ companyId, session, initialInvoiceId }) {
         </div>
       )}
       {viewingInv && previewVisible && <InvoicePreviewModal inv={viewingInv} lineItems={viewingLines} company={company} onClose={() => setPreviewVisible(false)} onDownload={() => dlPDF(viewingInv)} />}
+
+      {/* Quick Record Payment modal */}
+      {quickPayInv && (
+        <QuickPayModal
+          inv={quickPayInv}
+          companyId={companyId}
+          session={session}
+          onClose={() => setQuickPayInv(null)}
+          onSaved={() => {
+            qc.invalidateQueries({ queryKey: ['sales_invoices', companyId] })
+            qc.invalidateQueries({ queryKey: ['payments_received', companyId] })
+            qc.invalidateQueries({ queryKey: ['dash_all_invoices', companyId] })
+            qc.invalidateQueries({ queryKey: ['acct_txns_ledger'] })
+          }}
+        />
+      )}
     </div>
   )
 }
