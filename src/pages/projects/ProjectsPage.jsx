@@ -422,7 +422,7 @@ function RateCard({ job, items, onChange }) {
 // ── Add / Edit Modal ───────────────────────────────────────────────────────────
 
 const INIT_FORM = {
-  project_name: '', project_code: '', division: '', client_id: '', status: 'tender',
+  project_name: '', project_code: '', division: '', client_id: '', billing_location_id: '', status: 'tender',
   site_name: '', address: '', city: '', state: '', pincode: '',
   site_lat: '', site_lng: '',
   mobilization_date: '', start_date: '', start_time: '',
@@ -451,9 +451,10 @@ function AddEditModal({ project, clients, onClose, onSaved }) {
   const [form, setForm] = useState(() => isEdit
     ? {
         ...INIT_FORM, ...project,
-        no_of_shifts:     String(project.no_of_shifts || 1),
-        client_id:        project.client_id        || '',
-        mobilization_date: project.mobilization_date || '',
+        no_of_shifts:        String(project.no_of_shifts || 1),
+        client_id:           project.client_id           || '',
+        billing_location_id: project.billing_location_id || '',
+        mobilization_date:   project.mobilization_date   || '',
         start_date:        project.start_date        || '',
         expected_end_date: project.expected_end_date || '',
         actual_end_date:   project.actual_end_date   || '',
@@ -565,6 +566,31 @@ function AddEditModal({ project, clients, onClose, onSaved }) {
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
+  // Billing locations for selected client
+  const { data: billingLocations = [] } = useQuery({
+    queryKey: ['client_billing_locations_for_picker', form.client_id],
+    queryFn: async () => {
+      const { data } = await supabase.from('client_billing_locations')
+        .select('*').eq('client_id', form.client_id)
+        .order('is_primary', { ascending: false }).order('location_name')
+      return data || []
+    },
+    enabled: !!form.client_id,
+  })
+
+  const selectBillingLocation = (locId) => {
+    set('billing_location_id', locId)
+    if (!locId) return
+    const loc = billingLocations.find(l => l.id === locId)
+    if (!loc) return
+    // Auto-fill division from location name if division is empty
+    if (!form.division && loc.location_name) set('division', loc.location_name)
+    // Auto-fill site state/city from location
+    if (loc.city && !form.city) set('city', loc.city)
+    if (loc.state && !form.state) set('state', loc.state)
+    if (loc.pincode && !form.pincode) set('pincode', loc.pincode)
+  }
+
   const handleSave = async () => {
     if (!form.project_name.trim()) { toast.error('Project name is required'); return }
     setSaving(true)
@@ -573,9 +599,10 @@ function AddEditModal({ project, clients, onClose, onSaved }) {
         company_id:    userProfile.company_id,
         project_name:  form.project_name.trim(),
         project_code:  form.project_code.trim() || null,
-        division:      form.division  || null,
-        client_id:     form.client_id || null,
-        status:        form.status,
+        division:            form.division             || null,
+        client_id:           form.client_id            || null,
+        billing_location_id: form.billing_location_id  || null,
+        status:              form.status,
         site_name:     form.site_name || null,
         address:       form.address   || null,
         city:          form.city      || null,
@@ -744,13 +771,25 @@ function AddEditModal({ project, clients, onClose, onSaved }) {
       <div className="space-y-3">
         <Sec icon={Building2} label="Client & Division" />
         <F label="Client">
-          <select className={sel()} value={form.client_id} onChange={e=>set('client_id',e.target.value)}>
+          <select className={sel()} value={form.client_id} onChange={e => { set('client_id', e.target.value); set('billing_location_id', '') }}>
             <option value="">Select client…</option>
             {clients.map(c => (
               <option key={c.id} value={c.id}>{c.display_name || c.business_name}</option>
             ))}
           </select>
         </F>
+        {billingLocations.length > 0 && (
+          <F label="Client Unit / Billing Location" hint="Which office or unit of this client is this project under?">
+            <select className={sel()} value={form.billing_location_id} onChange={e => selectBillingLocation(e.target.value)}>
+              <option value="">— Head Office / Default —</option>
+              {billingLocations.map(loc => (
+                <option key={loc.id} value={loc.id}>
+                  {loc.location_name}{loc.gstin ? ` · ${loc.gstin}` : ''}{loc.state ? ` (${loc.state})` : ''}
+                </option>
+              ))}
+            </select>
+          </F>
+        )}
         <F label="Client Division / Department"
           hint="Client's department or division managing this project">
           <input className={inp()} value={form.division}
