@@ -2441,7 +2441,7 @@ function DrilldownDetail({ drilldown, onClose, fmtM }) {
   )
 }
 
-function ProjectDetail({ project, companyId, docTotals, onClose, onEdit, onDelete }) {
+function ProjectDetail({ project, companyId, docTotals, onClose, onEdit, onDelete, onStatusChange }) {
   const { isAdvanced } = useDisplayMode()
   const [detailTab, setDetailTab] = useState('contract')
   const [showAssignForm, setShowAssignForm] = useState(false)
@@ -2604,6 +2604,19 @@ function ProjectDetail({ project, companyId, docTotals, onClose, onEdit, onDelet
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-red-400 border border-red-500/30 hover:bg-red-500/10 transition-colors">
             <Trash2 className="w-3.5 h-3.5"/> Delete
           </button>
+        )}
+        {/* Quick status change */}
+        {onStatusChange && (
+          <select
+            value={project.status}
+            onChange={e => onStatusChange(e.target.value)}
+            className="text-xs font-medium px-2 py-1.5 rounded-lg border border-dark-600 bg-dark-800 text-slate-300 hover:border-dark-400 cursor-pointer focus:outline-none"
+            title="Change project status"
+          >
+            {Object.entries(STATUS_CONFIG).map(([k, v]) => (
+              <option key={k} value={k}>{v.label}</option>
+            ))}
+          </select>
         )}
         <button onClick={onEdit}
           className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold bg-primary-600 hover:bg-primary-500 text-white transition-colors">
@@ -3199,6 +3212,16 @@ export default function ProjectsPage({ onNavigate, initialProjectId = null, init
     toast.success('Project deleted')
   }
 
+  const handleStatusChange = async (newStatus) => {
+    if (!viewing || newStatus === viewing.status) return
+    const { error } = await supabase.from('projects').update({ status: newStatus }).eq('id', viewing.id)
+    if (error) { toast.error(error.message); return }
+    const updated = { ...viewing, status: newStatus }
+    setViewing(updated)
+    qc.invalidateQueries(['projects'])
+    toast.success(`Status → ${STATUS_CONFIG[newStatus]?.label || newStatus}`)
+  }
+
   return (
     <div className="h-full flex flex-col bg-dark-900">
       {/* Header */}
@@ -3289,6 +3312,7 @@ export default function ProjectsPage({ onNavigate, initialProjectId = null, init
           onClose={closeProject}
           onEdit={() => { setEditing(viewing); setViewing(null) }}
           onDelete={isAdmin ? () => handleDelete(viewing) : undefined}
+          onStatusChange={isAdmin ? handleStatusChange : undefined}
         />
       )}
     </div>
