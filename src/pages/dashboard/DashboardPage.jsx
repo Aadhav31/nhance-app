@@ -881,7 +881,7 @@ function FinancialsSection({ companyId, range, onNavigate }) {
     queryKey: ['dash_all_invoices', companyId],
     queryFn: async () => {
       const { data } = await supabase.from('client_invoices')
-        .select('id,invoice_date,total_amount,paid_amount,balance_due,status,invoice_type')
+        .select('id,invoice_number,client_name,invoice_date,due_date,total_amount,paid_amount,balance_due,status,invoice_type')
         .eq('company_id', companyId)
         .neq('invoice_type', 'proforma')
         .neq('status', 'cancelled')
@@ -963,14 +963,20 @@ function FinancialsSection({ companyId, range, onNavigate }) {
         <DetailPanel title="Outstanding Invoices" onClose={() => setPanel(null)} onNavigate={onNavigate} navKey="sales" navLabel="Go to Sales">
           {outstanding.length === 0
             ? <p className="text-sm text-slate-500 text-center py-8">All invoices settled</p>
-            : outstanding.map(inv => (
-              <DetailRow key={inv.id}
-                title={inv.client_name || inv.invoice_number}
-                sub={`${inv.invoice_number} · Due ${fmtDate(inv.due_date)}`}
-                value={fmtINRShort(inv.balance_due)}
-                badge={inv.status}
-              />
-            ))
+            : outstanding.map(inv => {
+              const daysOld = inv.due_date
+                ? Math.floor((new Date() - new Date(inv.due_date)) / 86400000)
+                : null
+              const ageTxt = daysOld == null ? '' : daysOld > 0 ? ` · ${daysOld}d overdue` : daysOld === 0 ? ' · Due today' : ` · Due in ${Math.abs(daysOld)}d`
+              return (
+                <DetailRow key={inv.id}
+                  title={inv.client_name || inv.invoice_number || '—'}
+                  sub={`${inv.invoice_number || '—'}${ageTxt}`}
+                  value={fmtINRShort(inv.balance_due ?? (Number(inv.total_amount||0) - Number(inv.paid_amount||0)))}
+                  badge={inv.status}
+                />
+              )
+            })
           }
         </DetailPanel>
       )}
