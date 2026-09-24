@@ -357,6 +357,43 @@ function CreateInvoiceModal({ companyId, session, onClose, onSaved, initialDoc =
     setF('client_address', addrParts.join(', '))
     if (loc.state) setF('place_of_supply', loc.state)
   }
+
+  // Client-filtered projects for invoice project picker
+  const { data: clientProjectsForInvoice = [] } = useQuery({
+    queryKey: ['client_projects_for_invoice', selectedClientId],
+    queryFn: async () => {
+      const { data } = await supabase.from('projects')
+        .select('id, project_code, project_name, site_name, city, state, billing_location_id')
+        .eq('company_id', companyId).eq('client_id', selectedClientId)
+        .not('status', 'in', '("completed","cancelled")')
+        .order('created_at', { ascending: false })
+      return data || []
+    },
+    enabled: !!selectedClientId,
+  })
+
+  const selectProjectForInvoice = (projectId) => {
+    if (!projectId) return
+    const proj = clientProjectsForInvoice.find(p => p.id === projectId)
+    if (!proj) return
+    setF('project_name', proj.project_name || '')
+    setF('project_id', proj.id)
+    if (proj.billing_location_id) {
+      const loc = clientBillingLocations.find(l => l.id === proj.billing_location_id)
+      if (loc) {
+        if (loc.gstin) setF('client_gstin', loc.gstin)
+        const addrParts = [loc.billing_address, loc.city, loc.state, loc.pincode].filter(Boolean)
+        if (addrParts.length) setF('client_address', addrParts.join(', '))
+        if (loc.state) { setF('place_of_supply', loc.state); setF('place_of_supply_address', addrParts.join(', ')) }
+      }
+    } else {
+      // No billing location linked — fall back to site address
+      const addrParts = [proj.site_name, proj.city, proj.state].filter(Boolean)
+      if (addrParts.length) setF('client_address', addrParts.join(', '))
+      if (proj.state) setF('place_of_supply', proj.state)
+    }
+  }
+
   const { data: equipmentOptions = [] } = useQuery({
     queryKey: ['equip_list_invoice', companyId],
     queryFn: async () => {
@@ -491,14 +528,28 @@ function CreateInvoiceModal({ companyId, session, onClose, onSaved, initialDoc =
       <SectionHead label="Client Details" />
       <div className="grid grid-cols-2 gap-3">
         <div className="col-span-2"><Field label="Client / Company Name *"><ClientPicker companyId={companyId} value={form.client_name} onChange={n => setF('client_name', n)} onSelect={selectClient} className={inp()} /></Field></div>
+        {clientProjectsForInvoice.length > 0 && (
+          <div className="col-span-2">
+            <Field label="Select Project" hint="Auto-fills GSTIN, billing address and place of supply">
+              <select className={inp()} defaultValue="" onChange={e => selectProjectForInvoice(e.target.value)}>
+                <option value="">— Pick a project —</option>
+                {clientProjectsForInvoice.map(p => (
+                  <option key={p.id} value={p.id}>
+                    {p.project_code ? `${p.project_code} · ` : ''}{p.project_name}{p.site_name ? ` (${p.site_name})` : ''}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </div>
+        )}
         {clientBillingLocations.length > 0 && (
           <div className="col-span-2">
-            <Field label="Billing Location">
+            <Field label="Override Billing Location" hint="Override the project's billing location if needed">
               <select className={inp()} defaultValue="" onChange={e => {
                 const loc = clientBillingLocations.find(l => l.id === e.target.value)
                 if (loc) selectBillingLocation(loc)
               }}>
-                <option value="">— Use primary (default) —</option>
+                <option value="">— Use project / primary —</option>
                 {clientBillingLocations.map(loc => (
                   <option key={loc.id} value={loc.id}>
                     {loc.location_name}{loc.gstin ? ` · ${loc.gstin}` : ''}{loc.state ? ` (${loc.state})` : ''}
