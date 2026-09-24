@@ -61,7 +61,7 @@ function StatusBadge({ status }) {
 }
 
 // ── ContractForm ──────────────────────────────────────────────────────────────
-function ContractForm({ initial = {}, onSave, onClose, equipment, clients }) {
+function ContractForm({ initial = {}, onSave, onClose, equipment, eqLoading, clients }) {
   const { companyId, session } = useAuth()
   const [saving, setSaving] = useState(false)
   const [f, setF] = useState({
@@ -196,7 +196,7 @@ function ContractForm({ initial = {}, onSave, onClose, equipment, clients }) {
         <label className={labelCls}>Equipment <span className="text-red-400">*</span></label>
         <select className={sel()} value={f.equipment_id} onChange={e => onEquipmentChange(e.target.value)}>
           <option value="">
-            {equipment.length === 0 ? '— No equipment found. Add via Fleet page —' : '— Select equipment —'}
+            {eqLoading ? '— Loading equipment… —' : equipment.length === 0 ? '— No equipment found. Add via Fleet page —' : '— Select equipment —'}
           </option>
           {equipment.map(eq => (
             <option key={eq.id} value={eq.id}>
@@ -660,8 +660,8 @@ export default function HireContractsPage({ onNavigate, initialStatus = 'all' })
     enabled: !!companyId,
   })
 
-  const { data: equipment = [] } = useQuery({
-    queryKey: ['equipment_hire_list', companyId],
+  const { data: equipment = [], isLoading: eqLoading } = useQuery({
+    queryKey: ['equipment', companyId],   // shared key — uses Fleet page cache instantly
     queryFn: async () => {
       const { data, error } = await supabase.from('equipment')
         .select('id, name, equipment_number, equipment_type, status')
@@ -671,6 +671,7 @@ export default function HireContractsPage({ onNavigate, initialStatus = 'all' })
       return data || []
     },
     enabled: !!companyId,
+    staleTime: 60_000,
   })
 
   const { data: clients = [] } = useQuery({
@@ -841,6 +842,7 @@ export default function HireContractsPage({ onNavigate, initialStatus = 'all' })
         <ContractForm
           initial={editContract || {}}
           equipment={equipment}
+          eqLoading={eqLoading}
           clients={clients}
           onClose={() => { setShowForm(false); setEditContract(null) }}
           onSave={handleSaved}

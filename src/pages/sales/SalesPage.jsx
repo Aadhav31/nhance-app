@@ -14,7 +14,7 @@ import {
   Copy, Edit2, Trash2, Search, IndianRupee, Calendar, User,
   FileQuestion, Send, AlertTriangle, Building2, Phone, Mail,
   MapPin, BadgeCheck, Ban, FileDown, Sheet, ShieldOff,
-  SlidersHorizontal, ChevronDown, Wrench,
+  SlidersHorizontal, ChevronDown, Wrench, Eye,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format } from 'date-fns'
@@ -1635,6 +1635,24 @@ function QuotesTab({ companyId, session }) {
   const [editingDoc, setEditingDoc] = useState(null)
   const [search, setSearch] = useState('')
 
+  // ── Quote detail view ──────────────────────────────────────────────────────
+  const [viewingQuote, setViewingQuote] = useState(null)
+  const [viewingQuoteLines, setViewingQuoteLines] = useState([])
+  const [viewQuoteLoading, setViewQuoteLoading] = useState(false)
+
+  const openViewQuote = async (q) => {
+    setViewingQuote(q)
+    setViewQuoteLoading(true)
+    try {
+      const { data: ld, error } = await supabase.from('quote_line_items').select('*').eq('quote_id', q.id).order('sort_order')
+      if (error) throw error
+      setViewingQuoteLines(ld || [])
+    } catch (e) { toast.error(e.message || 'Could not load quote items'); setViewingQuote(null) }
+    setViewQuoteLoading(false)
+  }
+
+  const closeViewQuote = () => { setViewingQuote(null); setViewingQuoteLines([]) }
+
   const { data: quotes = [], isLoading } = useQuery({
     queryKey: ['quotes', companyId],
     queryFn: async () => {
@@ -1734,6 +1752,7 @@ function QuotesTab({ companyId, session }) {
                     <button onClick={() => updateStatus(q.id, 'accepted')} className="text-xs px-2 py-1 rounded-lg border border-emerald-700/40 text-emerald-400 hover:bg-emerald-900/20">Accept</button>
                     <button onClick={() => updateStatus(q.id, 'rejected')} className="text-xs px-2 py-1 rounded-lg border border-red-700/40 text-red-400 hover:bg-red-900/20">Reject</button>
                   </>}
+                  <button onClick={() => openViewQuote(q)} className="p-1.5 rounded-lg text-slate-500 hover:text-primary-400 hover:bg-primary-900/20" title="View Quote"><Eye className="w-3.5 h-3.5" /></button>
                   {!['accepted','rejected'].includes(q.status) && <button onClick={() => openEdit(q)} className="p-1.5 rounded-lg text-slate-500 hover:text-blue-400 hover:bg-blue-900/20" title="Edit"><Edit2 className="w-3.5 h-3.5" /></button>}
                   {!['accepted','rejected'].includes(q.status) && <button onClick={() => voidQuote(q)} className="p-1.5 rounded-lg text-slate-500 hover:text-yellow-400 hover:bg-yellow-900/20" title="Void"><Ban className="w-3.5 h-3.5" /></button>}
                   <button onClick={() => deleteQuote(q)} className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-900/20" title="Delete"><Trash2 className="w-3.5 h-3.5" /></button>
@@ -1747,6 +1766,151 @@ function QuotesTab({ companyId, session }) {
         </div>}
       </div>
       {(showCreate || editingDoc) && <CreateQuoteModal companyId={companyId} session={session} initialDoc={editingDoc} onClose={() => { setShowCreate(false); setEditingDoc(null) }} onSaved={() => { setShowCreate(false); setEditingDoc(null); qc.invalidateQueries(['quotes', companyId]) }} />}
+
+      {/* ── Quote Detail Drawer ──────────────────────────────────────────────── */}
+      {viewingQuote && (
+        <div className="fixed inset-0 z-40 flex">
+          <div className="flex-1 bg-black/40 backdrop-blur-sm" onClick={closeViewQuote} />
+          <div className="w-full max-w-xl bg-dark-900 border-l border-dark-700 flex flex-col shadow-2xl overflow-hidden">
+            {/* Header */}
+            <div className="px-5 py-4 border-b border-dark-800 flex items-start justify-between gap-3 shrink-0">
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs font-mono text-primary-400">{viewingQuote.quote_number}</span>
+                  <StatusBadge status={viewingQuote.status} />
+                </div>
+                <p className="text-base font-bold text-slate-100 mt-1">{viewingQuote.client_name}</p>
+                {viewingQuote.client_address && <p className="text-xs text-slate-500 mt-0.5">{viewingQuote.client_address}</p>}
+                {viewingQuote.client_gstin && <p className="text-xs text-slate-500">GSTIN: {viewingQuote.client_gstin}</p>}
+              </div>
+              <button onClick={closeViewQuote} className="p-1.5 rounded-lg text-slate-500 hover:text-slate-200 hover:bg-dark-700 shrink-0"><X className="w-4 h-4" /></button>
+            </div>
+
+            {/* Scrollable body */}
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
+              {viewQuoteLoading
+                ? <div className="flex justify-center py-16"><Loader2 className="w-5 h-5 animate-spin text-primary-400" /></div>
+                : <>
+                  {/* Meta */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="bg-dark-800 rounded-lg p-3">
+                      <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-0.5">Quote Date</p>
+                      <p className="text-sm font-semibold text-slate-100">{fmtDate(viewingQuote.quote_date)}</p>
+                    </div>
+                    <div className="bg-dark-800 rounded-lg p-3">
+                      <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-0.5">Valid Until</p>
+                      <p className="text-sm font-semibold text-slate-100">{viewingQuote.valid_until ? fmtDate(viewingQuote.valid_until) : '—'}</p>
+                    </div>
+                    {viewingQuote.project_name && (
+                      <div className="bg-dark-800 rounded-lg p-3 col-span-2">
+                        <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-0.5">Project</p>
+                        <p className="text-sm font-semibold text-slate-100 truncate">{viewingQuote.project_name}</p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Line items */}
+                  {viewingQuoteLines.length > 0 && (
+                    <div>
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2">Line Items</p>
+                      <div className="rounded-xl overflow-hidden border border-dark-700">
+                        <table className="w-full text-xs">
+                          <thead className="bg-dark-800">
+                            <tr>
+                              <th className="text-left px-3 py-2 text-slate-500 font-medium">Description</th>
+                              <th className="text-right px-3 py-2 text-slate-500 font-medium">Qty</th>
+                              <th className="text-right px-3 py-2 text-slate-500 font-medium">Rate</th>
+                              <th className="text-right px-3 py-2 text-slate-500 font-medium">Amount</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-dark-700">
+                            {viewingQuoteLines.map((l, i) => (
+                              <tr key={i} className="bg-dark-900">
+                                <td className="px-3 py-2 text-slate-200">
+                                  {l.description}
+                                  {(l.hsn_sac || l.sac_hsn_code) && <span className="block text-slate-500 text-[10px]">HSN/SAC {l.hsn_sac || l.sac_hsn_code}</span>}
+                                </td>
+                                <td className="px-3 py-2 text-right text-slate-400">{fmtInvoiceLine(l.quantity)} {l.unit}</td>
+                                <td className="px-3 py-2 text-right text-slate-400">₹{fmtInvoiceLine(l.rate)}</td>
+                                <td className="px-3 py-2 text-right text-slate-100 font-medium">₹{fmtInvoiceLine(l.amount)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Tax & totals */}
+                  <div className="bg-dark-800 rounded-xl p-4 space-y-2">
+                    {(viewingQuote.discount_amount > 0) && (
+                      <div className="flex justify-between text-xs">
+                        <span className="text-slate-500">Subtotal</span><span className="text-slate-300">{fmtINR(viewingQuote.subtotal)}</span>
+                      </div>
+                    )}
+                    {(viewingQuote.discount_amount > 0) && (
+                      <div className="flex justify-between text-xs">
+                        <span className="text-slate-500">Discount</span><span className="text-red-400">− {fmtINR(viewingQuote.discount_amount)}</span>
+                      </div>
+                    )}
+                    {viewingQuote.cgst_amount > 0 && (
+                      <div className="flex justify-between text-xs">
+                        <span className="text-slate-500">CGST ({viewingQuote.cgst_rate}%)</span><span className="text-slate-300">{fmtINR(viewingQuote.cgst_amount)}</span>
+                      </div>
+                    )}
+                    {viewingQuote.sgst_amount > 0 && (
+                      <div className="flex justify-between text-xs">
+                        <span className="text-slate-500">SGST ({viewingQuote.sgst_rate}%)</span><span className="text-slate-300">{fmtINR(viewingQuote.sgst_amount)}</span>
+                      </div>
+                    )}
+                    {viewingQuote.igst_amount > 0 && (
+                      <div className="flex justify-between text-xs">
+                        <span className="text-slate-500">IGST ({viewingQuote.igst_rate}%)</span><span className="text-slate-300">{fmtINR(viewingQuote.igst_amount)}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between pt-2 border-t border-dark-700">
+                      <span className="text-sm font-bold text-slate-200">Total</span>
+                      <span className="text-sm font-black text-slate-100">{fmtINR(viewingQuote.total_amount)}</span>
+                    </div>
+                  </div>
+
+                  {viewingQuote.notes && (
+                    <div className="bg-dark-800 rounded-xl p-4">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Notes</p>
+                      <p className="text-xs text-slate-300 whitespace-pre-wrap">{viewingQuote.notes}</p>
+                    </div>
+                  )}
+                  {viewingQuote.terms && (
+                    <div className="bg-dark-800 rounded-xl p-4">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">Terms & Conditions</p>
+                      <p className="text-xs text-slate-400 whitespace-pre-wrap">{viewingQuote.terms}</p>
+                    </div>
+                  )}
+                </>
+              }
+            </div>
+
+            {/* Footer actions */}
+            <div className="px-5 py-3 border-t border-dark-800 shrink-0 flex gap-2 flex-wrap">
+              {(viewingQuote.status === 'draft') && (
+                <button onClick={async () => { await updateStatus(viewingQuote.id, 'sent'); setViewingQuote(p => ({ ...p, status: 'sent' })) }}
+                  className="flex-1 btn-ghost text-xs border-blue-700/40 text-blue-400"><Send className="w-3.5 h-3.5" /> Mark Sent</button>
+              )}
+              {(viewingQuote.status === 'sent' || viewingQuote.status === 'draft') && <>
+                <button onClick={async () => { await updateStatus(viewingQuote.id, 'accepted'); setViewingQuote(p => ({ ...p, status: 'accepted' })) }}
+                  className="flex-1 btn-ghost text-xs border-emerald-700/40 text-emerald-400"><CheckCircle className="w-3.5 h-3.5" /> Accept</button>
+                <button onClick={async () => { await updateStatus(viewingQuote.id, 'rejected'); setViewingQuote(p => ({ ...p, status: 'rejected' })) }}
+                  className="flex-1 btn-ghost text-xs border-red-700/40 text-red-400"><Ban className="w-3.5 h-3.5" /> Reject</button>
+              </>}
+              {!['accepted', 'rejected'].includes(viewingQuote.status) && (
+                <button onClick={() => { closeViewQuote(); openEdit(viewingQuote) }} className="flex-1 btn-ghost text-xs"><Edit2 className="w-3.5 h-3.5" /> Edit</button>
+              )}
+              <button onClick={() => dlPDF(viewingQuote)} className="flex-1 btn-ghost text-xs text-emerald-400"><FileDown className="w-3.5 h-3.5" /> PDF</button>
+              <button onClick={() => dlXLSX(viewingQuote)} className="flex-1 btn-ghost text-xs text-teal-400"><Sheet className="w-3.5 h-3.5" /> Excel</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
