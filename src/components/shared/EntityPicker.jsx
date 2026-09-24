@@ -73,7 +73,7 @@ export function ClientPicker({ companyId, value, onChange, onSelect, placeholder
     const name = c.display_name || c.business_name || ''
     const addrParts = [c.registered_address, c.city, c.state, c.pincode].filter(Boolean)
     onChange(name)
-    onSelect?.({ name, gstin: c.gstin || '', address: addrParts.join(', '), state: c.state || '', payment_terms: c.payment_terms || '' })
+    onSelect?.({ name, gstin: c.gstin || '', address: addrParts.join(', '), state: c.state || '', payment_terms: c.payment_terms || '', client_id: c.id })
     setOpen(false)
   }
 

@@ -325,18 +325,38 @@ function CreateInvoiceModal({ companyId, session, onClose, onSaved, initialDoc =
     _gst_rate: null, _gst_desc: null, _hsn_open: false,
   })) : [blankLine()])
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
-  const selectClient = c => setForm(p => {
-    const days = Number.parseInt(c.payment_terms?.replace(/\D/g, '') || '', 10)
-    const date = p.invoice_date ? new Date(`${p.invoice_date}T12:00:00`) : null
-    if (date && Number.isFinite(days) && days > 0) date.setDate(date.getDate() + days)
-    return {
-      ...p, client_name: c.name, client_gstin: c.gstin || '',
-      client_address: c.address || '', place_of_supply: c.state || p.place_of_supply,
-      place_of_supply_address: c.address || p.place_of_supply_address,
-      due_date: date && Number.isFinite(days) && days > 0 && !p.due_date
-        ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}` : p.due_date,
-    }
+  const [selectedClientId, setSelectedClientId] = useState(null)
+  const { data: clientBillingLocations = [] } = useQuery({
+    queryKey: ['client_billing_locations_for_picker', selectedClientId],
+    queryFn: async () => {
+      const { data } = await supabase.from('client_billing_locations')
+        .select('*').eq('client_id', selectedClientId)
+        .order('is_primary', { ascending: false }).order('location_name')
+      return data || []
+    },
+    enabled: !!selectedClientId,
   })
+  const selectClient = c => {
+    setSelectedClientId(c.client_id || null)
+    setForm(p => {
+      const days = Number.parseInt(c.payment_terms?.replace(/\D/g, '') || '', 10)
+      const date = p.invoice_date ? new Date(`${p.invoice_date}T12:00:00`) : null
+      if (date && Number.isFinite(days) && days > 0) date.setDate(date.getDate() + days)
+      return {
+        ...p, client_name: c.name, client_gstin: c.gstin || '',
+        client_address: c.address || '', place_of_supply: c.state || p.place_of_supply,
+        place_of_supply_address: c.address || p.place_of_supply_address,
+        due_date: date && Number.isFinite(days) && days > 0 && !p.due_date
+          ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}` : p.due_date,
+      }
+    })
+  }
+  const selectBillingLocation = (loc) => {
+    setF('client_gstin', loc.gstin || '')
+    const addrParts = [loc.billing_address, loc.city, loc.state, loc.pincode].filter(Boolean)
+    setF('client_address', addrParts.join(', '))
+    if (loc.state) setF('place_of_supply', loc.state)
+  }
   const { data: equipmentOptions = [] } = useQuery({
     queryKey: ['equip_list_invoice', companyId],
     queryFn: async () => {
@@ -471,6 +491,23 @@ function CreateInvoiceModal({ companyId, session, onClose, onSaved, initialDoc =
       <SectionHead label="Client Details" />
       <div className="grid grid-cols-2 gap-3">
         <div className="col-span-2"><Field label="Client / Company Name *"><ClientPicker companyId={companyId} value={form.client_name} onChange={n => setF('client_name', n)} onSelect={selectClient} className={inp()} /></Field></div>
+        {clientBillingLocations.length > 0 && (
+          <div className="col-span-2">
+            <Field label="Billing Location">
+              <select className={inp()} defaultValue="" onChange={e => {
+                const loc = clientBillingLocations.find(l => l.id === e.target.value)
+                if (loc) selectBillingLocation(loc)
+              }}>
+                <option value="">— Use primary (default) —</option>
+                {clientBillingLocations.map(loc => (
+                  <option key={loc.id} value={loc.id}>
+                    {loc.location_name}{loc.gstin ? ` · ${loc.gstin}` : ''}{loc.state ? ` (${loc.state})` : ''}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </div>
+        )}
         <div className="col-span-2"><Field label="Billing Address"><textarea className={inp()} rows={2} value={form.client_address} onChange={e => setF('client_address', e.target.value)} /></Field></div>
         {isTax && (
           <div className="col-span-2">
@@ -574,13 +611,15 @@ function MultiSelectFilter({ label, options, selected, onToggle, valueKey, label
 }
 
 // ── Quick Record Payment Modal (used from invoice tiles) ──────────────────────
+const QUICK_PAY_MODES = ['cash','bank','upi','cheque','neft','rtgs']
+
 function QuickPayModal({ inv, companyId, session, onClose, onSaved }) {
   const today = new Date().toISOString().slice(0, 10)
   const bal   = Math.max(0, Number(inv.balance_due ?? (Number(inv.total_amount||0) - Number(inv.paid_amount||0))))
   const [form, setForm] = useState({
     payment_date:  today,
     amount:        String(bal),
-    payment_mode:  'bank_transfer',
+    payment_mode:  'bank',
     bank_reference:'',
     notes:         '',
   })
@@ -659,11 +698,7 @@ function QuickPayModal({ inv, companyId, session, onClose, onSaved }) {
           <div>
             <label className="text-xs text-slate-400 block mb-1">Payment Mode</label>
             <select value={form.payment_mode} onChange={e => set('payment_mode', e.target.value)} className={inp}>
-              <option value="bank_transfer">Bank Transfer (NEFT/RTGS)</option>
-              <option value="upi">UPI</option>
-              <option value="cheque">Cheque</option>
-              <option value="cash">Cash</option>
-              <option value="imps">IMPS</option>
+              {QUICK_PAY_MODES.map(m => <option key={m} value={m}>{m.toUpperCase()}</option>)}
             </select>
           </div>
           <div>

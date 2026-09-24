@@ -9,7 +9,7 @@ import {
   X, Loader2, CheckCircle, AlertTriangle, Edit2, User,
   BadgeCheck, FileText, MapPin, Shield, Users,
   IndianRupee, Archive, Trash2, Copy, Globe, AlertCircle,
-  UserCheck, Briefcase,
+  UserCheck, Briefcase, Star,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
@@ -1324,6 +1324,172 @@ function AddEditClientModal({ companyId, client, onClose }) {
   )
 }
 
+// ── Billing Locations ─────────────────────────────────────────────────────────
+function BillingLocationForm({ companyId, clientId, loc, onClose, onSaved }) {
+  const [form, setForm] = useState({
+    location_name: loc?.location_name || '',
+    gstin: loc?.gstin || '',
+    billing_address: loc?.billing_address || '',
+    city: loc?.city || '',
+    state: loc?.state || '',
+    pincode: loc?.pincode || '',
+    is_primary: loc?.is_primary || false,
+  })
+  const [saving, setSaving] = useState(false)
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+
+  // Auto-fill state from GSTIN
+  const handleGstin = (val) => {
+    set('gstin', val.toUpperCase())
+    if (val.length >= 2) {
+      const code = val.slice(0, 2)
+      const state = GSTIN_STATES[code]
+      if (state) set('state', state)
+    }
+  }
+
+  const save = async () => {
+    if (!form.location_name.trim()) return toast.error('Location name required')
+    setSaving(true)
+    try {
+      if (loc) {
+        const { error } = await supabase.from('client_billing_locations')
+          .update({ ...form, location_name: form.location_name.trim() }).eq('id', loc.id)
+        if (error) throw error
+      } else {
+        const { error } = await supabase.from('client_billing_locations')
+          .insert({ ...form, location_name: form.location_name.trim(), company_id: companyId, client_id: clientId })
+        if (error) throw error
+      }
+      toast.success(loc ? 'Location updated' : 'Location added')
+      onSaved()
+    } catch (e) { toast.error(e.message) } finally { setSaving(false) }
+  }
+
+  const inp = 'w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500'
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onClose}>
+      <div className="bg-dark-800 border border-dark-700 rounded-2xl w-full max-w-md shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-dark-700">
+          <p className="font-bold text-slate-100">{loc ? 'Edit Location' : 'Add Billing Location'}</p>
+          <button onClick={onClose} className="p-1.5 rounded-lg text-slate-500 hover:text-slate-300 hover:bg-dark-700"><X className="w-4 h-4" /></button>
+        </div>
+        <div className="px-5 py-4 space-y-3">
+          <div>
+            <label className="text-xs text-slate-400 block mb-1">Location Name *</label>
+            <input className={inp} value={form.location_name} onChange={e => set('location_name', e.target.value)} placeholder="e.g. Karnataka Office, Head Office" />
+          </div>
+          <div>
+            <label className="text-xs text-slate-400 block mb-1">GSTIN</label>
+            <input className={inp} value={form.gstin} onChange={e => handleGstin(e.target.value)} placeholder="29AAAAA0000A1Z5" maxLength={15} />
+          </div>
+          <div>
+            <label className="text-xs text-slate-400 block mb-1">Billing Address</label>
+            <textarea className={inp} rows={2} value={form.billing_address} onChange={e => set('billing_address', e.target.value)} placeholder="Street / building" />
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <div className="col-span-1">
+              <label className="text-xs text-slate-400 block mb-1">City</label>
+              <input className={inp} value={form.city} onChange={e => set('city', e.target.value)} />
+            </div>
+            <div className="col-span-1">
+              <label className="text-xs text-slate-400 block mb-1">State</label>
+              <input className={inp} value={form.state} onChange={e => set('state', e.target.value)} />
+            </div>
+            <div className="col-span-1">
+              <label className="text-xs text-slate-400 block mb-1">Pincode</label>
+              <input className={inp} value={form.pincode} onChange={e => set('pincode', e.target.value)} maxLength={6} />
+            </div>
+          </div>
+          <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+            <input type="checkbox" checked={form.is_primary} onChange={e => set('is_primary', e.target.checked)} className="accent-primary-500" />
+            Set as primary billing location
+          </label>
+        </div>
+        <div className="px-5 pb-5 flex gap-3">
+          <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-dark-600 text-sm font-semibold text-slate-400 hover:text-slate-200">Cancel</button>
+          <button onClick={save} disabled={saving} className="flex-1 py-2.5 rounded-xl bg-primary-600 hover:bg-primary-500 text-white text-sm font-semibold disabled:opacity-60">
+            {saving ? 'Saving…' : loc ? 'Update' : 'Add Location'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function BillingLocationsSection({ clientId, companyId }) {
+  const qc = useQueryClient()
+  const [showForm, setShowForm] = useState(false)
+  const [editing, setEditing] = useState(null)
+
+  const { data: locations = [] } = useQuery({
+    queryKey: ['client_billing_locations', clientId],
+    queryFn: async () => {
+      const { data } = await supabase.from('client_billing_locations')
+        .select('*').eq('client_id', clientId).order('is_primary', { ascending: false }).order('location_name')
+      return data || []
+    },
+    enabled: !!clientId,
+  })
+
+  const del = async (loc) => {
+    if (!window.confirm(`Delete "${loc.location_name}"?`)) return
+    await supabase.from('client_billing_locations').delete().eq('id', loc.id)
+    qc.invalidateQueries({ queryKey: ['client_billing_locations', clientId] })
+    qc.invalidateQueries({ queryKey: ['client_billing_locations_for_picker', clientId] })
+    toast.success('Location removed')
+  }
+
+  const onSaved = () => {
+    qc.invalidateQueries({ queryKey: ['client_billing_locations', clientId] })
+    qc.invalidateQueries({ queryKey: ['client_billing_locations_for_picker', clientId] })
+    setShowForm(false); setEditing(null)
+  }
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Billing Locations</p>
+        <button onClick={() => { setEditing(null); setShowForm(true) }}
+          className="flex items-center gap-1 text-xs text-primary-400 hover:text-primary-300 font-semibold">
+          <Plus className="w-3 h-3" /> Add
+        </button>
+      </div>
+      {locations.length === 0 ? (
+        <p className="text-xs text-slate-500 italic px-1">No additional billing locations. Add one for multi-state operations.</p>
+      ) : (
+        <div className="space-y-2">
+          {locations.map(loc => (
+            <div key={loc.id} className="bg-dark-700 rounded-xl px-3 py-2.5 flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <p className="text-xs font-semibold text-slate-200 truncate">{loc.location_name}</p>
+                  {loc.is_primary && <Star className="w-3 h-3 text-amber-400 shrink-0" fill="currentColor" />}
+                </div>
+                {loc.gstin && <p className="font-mono text-xs text-primary-400 mt-0.5">{loc.gstin}</p>}
+                <p className="text-xs text-slate-500 truncate">{[loc.billing_address, loc.city, loc.state, loc.pincode].filter(Boolean).join(', ')}</p>
+              </div>
+              <div className="flex gap-1 shrink-0">
+                <button onClick={() => { setEditing(loc); setShowForm(true) }} className="p-1.5 rounded-lg text-slate-500 hover:text-blue-400 hover:bg-blue-900/20"><Edit2 className="w-3 h-3" /></button>
+                <button onClick={() => del(loc)} className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-900/20"><Trash2 className="w-3 h-3" /></button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {(showForm || editing) && (
+        <BillingLocationForm
+          companyId={companyId} clientId={clientId}
+          loc={editing || null}
+          onClose={() => { setShowForm(false); setEditing(null) }}
+          onSaved={onSaved}
+        />
+      )}
+    </div>
+  )
+}
+
 // ── Client Detail Modal ───────────────────────────────────────────────────────
 function ClientDetail({ client, companyId, onClose, onEdit }) {
   const qc = useQueryClient()
@@ -1508,6 +1674,9 @@ function ClientDetail({ client, companyId, onClose, onEdit }) {
             )}
           </div>
         )}
+
+        {/* Billing Locations */}
+        <BillingLocationsSection clientId={client.id} companyId={companyId} />
 
         {/* Contacts */}
         <div>
