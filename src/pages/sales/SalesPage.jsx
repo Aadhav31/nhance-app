@@ -1407,6 +1407,52 @@ function CreateQuoteModal({ companyId, session, onClose, onSaved, initialDoc = n
     _gst_rate: null, _gst_desc: null, _hsn_open: false,
   })) : [blankLine()])
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
+
+  // Project picker state
+  const [selectedClientId, setSelectedClientId] = useState(null)
+
+  const { data: clientProjects = [] } = useQuery({
+    queryKey: ['projects_for_quote_picker', selectedClientId],
+    queryFn: async () => {
+      const { data } = await supabase.from('projects')
+        .select('id, project_name, project_code, site_name, city, state, billing_location_id, status')
+        .eq('company_id', companyId).eq('client_id', selectedClientId)
+        .not('status', 'in', '("completed","cancelled")')
+        .order('created_at', { ascending: false })
+      return data || []
+    },
+    enabled: !!selectedClientId,
+  })
+
+  const { data: clientBillingLocs = [] } = useQuery({
+    queryKey: ['client_billing_locations_for_picker', selectedClientId],
+    queryFn: async () => {
+      const { data } = await supabase.from('client_billing_locations')
+        .select('*').eq('client_id', selectedClientId)
+      return data || []
+    },
+    enabled: !!selectedClientId,
+  })
+
+  const selectProject = (projectId) => {
+    if (!projectId) return
+    const proj = clientProjects.find(p => p.id === projectId)
+    if (!proj) return
+    // Fill project name
+    setF('project_name', proj.project_name || '')
+    // Fill address from project site
+    const addrParts = [proj.site_name, proj.city, proj.state].filter(Boolean)
+    if (addrParts.length) setF('client_address', addrParts.join(', '))
+    // Fill GSTIN from the project's billing location if set
+    if (proj.billing_location_id) {
+      const loc = clientBillingLocs.find(l => l.id === proj.billing_location_id)
+      if (loc?.gstin) setF('client_gstin', loc.gstin)
+      if (loc) {
+        const locAddr = [loc.billing_address, loc.city, loc.state, loc.pincode].filter(Boolean)
+        if (locAddr.length) setF('client_address', locAddr.join(', '))
+      }
+    }
+  }
   const subtotal = useMemo(() => lines.reduce((s, l) => s + (l.amount || 0), 0), [lines])
   const taxable  = subtotal - (parseFloat(form.discount_amount) || 0)
   const isTax    = form.is_tax_invoice !== false
@@ -1481,7 +1527,30 @@ function CreateQuoteModal({ companyId, session, onClose, onSaved, initialDoc = n
       <div className="space-y-5">
       <SectionHead label="Client Details" />
       <div className="grid grid-cols-2 gap-3">
-        <div className="col-span-2"><Field label="Client / Company Name *"><ClientPicker companyId={companyId} value={form.client_name} onChange={n => setF('client_name', n)} onSelect={c => setForm(p => ({ ...p, client_name: c.name, client_gstin: c.gstin || p.client_gstin }))} className={inp()} /></Field></div>
+        <div className="col-span-2">
+          <Field label="Client / Company Name *">
+            <ClientPicker companyId={companyId} value={form.client_name} onChange={n => setF('client_name', n)}
+              onSelect={c => {
+                setSelectedClientId(c.client_id || null)
+                setForm(p => ({ ...p, client_name: c.name, client_gstin: c.gstin || p.client_gstin, client_address: c.address || p.client_address }))
+              }}
+              className={inp()} />
+          </Field>
+        </div>
+        {clientProjects.length > 0 && (
+          <div className="col-span-2">
+            <Field label="Select Project" hint="Auto-fills GSTIN, address and project name">
+              <select className={inp()} defaultValue="" onChange={e => selectProject(e.target.value)}>
+                <option value="">— Pick a project —</option>
+                {clientProjects.map(p => (
+                  <option key={p.id} value={p.id}>
+                    {p.project_code ? `${p.project_code} · ` : ''}{p.project_name}{p.site_name ? ` (${p.site_name})` : ''}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </div>
+        )}
         <TaxTypeToggle isTax={isTax} onToggle={v => setF('is_tax_invoice', v)} label="Quote" />
         {isTax && (
           <div className="col-span-2">
@@ -1490,7 +1559,9 @@ function CreateQuoteModal({ companyId, session, onClose, onSaved, initialDoc = n
             </Field>
           </div>
         )}
-        <Field label="Project / Work Order"><input className={inp()} value={form.project_name} onChange={e => setF('project_name', e.target.value)} /></Field>
+        <Field label="Project / Work Order Reference">
+          <input className={inp()} value={form.project_name} onChange={e => setF('project_name', e.target.value)} placeholder="Auto-filled from project picker above" />
+        </Field>
         <Field label="Quote Date"><input type="date" className={inp()} value={form.quote_date} onChange={e => setF('quote_date', e.target.value)} /></Field>
         <Field label="Valid Until"><input type="date" className={inp()} value={form.valid_until} onChange={e => setF('valid_until', e.target.value)} /></Field>
       </div>
