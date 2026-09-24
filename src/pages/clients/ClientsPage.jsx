@@ -1334,11 +1334,14 @@ function BillingLocationForm({ companyId, clientId, loc, onClose, onSaved }) {
     state: loc?.state || '',
     pincode: loc?.pincode || '',
     is_primary: loc?.is_primary || false,
+    contact_name: loc?.contact_name || '',
+    contact_designation: loc?.contact_designation || '',
+    contact_phone: loc?.contact_phone || '',
+    contact_email: loc?.contact_email || '',
   })
   const [saving, setSaving] = useState(false)
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
-  // Auto-fill state from GSTIN
   const handleGstin = (val) => {
     set('gstin', val.toUpperCase())
     if (val.length >= 2) {
@@ -1352,13 +1355,13 @@ function BillingLocationForm({ companyId, clientId, loc, onClose, onSaved }) {
     if (!form.location_name.trim()) return toast.error('Location name required')
     setSaving(true)
     try {
+      const payload = { ...form, location_name: form.location_name.trim() }
       if (loc) {
-        const { error } = await supabase.from('client_billing_locations')
-          .update({ ...form, location_name: form.location_name.trim() }).eq('id', loc.id)
+        const { error } = await supabase.from('client_billing_locations').update(payload).eq('id', loc.id)
         if (error) throw error
       } else {
         const { error } = await supabase.from('client_billing_locations')
-          .insert({ ...form, location_name: form.location_name.trim(), company_id: companyId, client_id: clientId })
+          .insert({ ...payload, company_id: companyId, client_id: clientId })
         if (error) throw error
       }
       toast.success(loc ? 'Location updated' : 'Location added')
@@ -1370,44 +1373,57 @@ function BillingLocationForm({ companyId, clientId, loc, onClose, onSaved }) {
 
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-dark-800 border border-dark-700 rounded-2xl w-full max-w-md shadow-2xl" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-5 py-4 border-b border-dark-700">
+      <div className="bg-dark-800 border border-dark-700 rounded-2xl w-full max-w-lg shadow-2xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-dark-700 shrink-0">
           <p className="font-bold text-slate-100">{loc ? 'Edit Location' : 'Add Billing Location'}</p>
           <button onClick={onClose} className="p-1.5 rounded-lg text-slate-500 hover:text-slate-300 hover:bg-dark-700"><X className="w-4 h-4" /></button>
         </div>
-        <div className="px-5 py-4 space-y-3">
+        <div className="px-5 py-4 space-y-4 overflow-y-auto flex-1">
+          {/* Location & GST */}
           <div>
-            <label className="text-xs text-slate-400 block mb-1">Location Name *</label>
-            <input className={inp} value={form.location_name} onChange={e => set('location_name', e.target.value)} placeholder="e.g. Karnataka Office, Head Office" />
-          </div>
-          <div>
-            <label className="text-xs text-slate-400 block mb-1">GSTIN</label>
-            <input className={inp} value={form.gstin} onChange={e => handleGstin(e.target.value)} placeholder="29AAAAA0000A1Z5" maxLength={15} />
-          </div>
-          <div>
-            <label className="text-xs text-slate-400 block mb-1">Billing Address</label>
-            <textarea className={inp} rows={2} value={form.billing_address} onChange={e => set('billing_address', e.target.value)} placeholder="Street / building" />
-          </div>
-          <div className="grid grid-cols-3 gap-2">
-            <div className="col-span-1">
-              <label className="text-xs text-slate-400 block mb-1">City</label>
-              <input className={inp} value={form.city} onChange={e => set('city', e.target.value)} />
-            </div>
-            <div className="col-span-1">
-              <label className="text-xs text-slate-400 block mb-1">State</label>
-              <input className={inp} value={form.state} onChange={e => set('state', e.target.value)} />
-            </div>
-            <div className="col-span-1">
-              <label className="text-xs text-slate-400 block mb-1">Pincode</label>
-              <input className={inp} value={form.pincode} onChange={e => set('pincode', e.target.value)} maxLength={6} />
+            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Location Details</p>
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs text-slate-400 block mb-1">Location Name *</label>
+                <input className={inp} value={form.location_name} onChange={e => set('location_name', e.target.value)} placeholder="e.g. Kerala Office, Head Office" />
+              </div>
+              <div>
+                <label className="text-xs text-slate-400 block mb-1">GSTIN</label>
+                <input className={inp} value={form.gstin} onChange={e => handleGstin(e.target.value)} placeholder="29AAAAA0000A1Z5" maxLength={15} />
+              </div>
+              <div>
+                <label className="text-xs text-slate-400 block mb-1">Billing Address</label>
+                <textarea className={inp} rows={2} value={form.billing_address} onChange={e => set('billing_address', e.target.value)} placeholder="Street / building" />
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <div><label className="text-xs text-slate-400 block mb-1">City</label><input className={inp} value={form.city} onChange={e => set('city', e.target.value)} /></div>
+                <div><label className="text-xs text-slate-400 block mb-1">State</label><input className={inp} value={form.state} onChange={e => set('state', e.target.value)} /></div>
+                <div><label className="text-xs text-slate-400 block mb-1">Pincode</label><input className={inp} value={form.pincode} onChange={e => set('pincode', e.target.value)} maxLength={6} /></div>
+              </div>
             </div>
           </div>
+
+          {/* Contact Person */}
+          <div>
+            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Contact Person at this Location</p>
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-2">
+                <div><label className="text-xs text-slate-400 block mb-1">Name</label><input className={inp} value={form.contact_name} onChange={e => set('contact_name', e.target.value)} placeholder="Mr. Rajesh Kumar" /></div>
+                <div><label className="text-xs text-slate-400 block mb-1">Designation</label><input className={inp} value={form.contact_designation} onChange={e => set('contact_designation', e.target.value)} placeholder="Site Manager" /></div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div><label className="text-xs text-slate-400 block mb-1">Phone</label><input className={inp} value={form.contact_phone} onChange={e => set('contact_phone', e.target.value)} placeholder="+91 98765 43210" /></div>
+                <div><label className="text-xs text-slate-400 block mb-1">Email</label><input className={inp} value={form.contact_email} onChange={e => set('contact_email', e.target.value)} placeholder="site@company.com" /></div>
+              </div>
+            </div>
+          </div>
+
           <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
             <input type="checkbox" checked={form.is_primary} onChange={e => set('is_primary', e.target.checked)} className="accent-primary-500" />
             Set as primary billing location
           </label>
         </div>
-        <div className="px-5 pb-5 flex gap-3">
+        <div className="px-5 pb-5 pt-3 border-t border-dark-700 flex gap-3 shrink-0">
           <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-dark-600 text-sm font-semibold text-slate-400 hover:text-slate-200">Cancel</button>
           <button onClick={save} disabled={saving} className="flex-1 py-2.5 rounded-xl bg-primary-600 hover:bg-primary-500 text-white text-sm font-semibold disabled:opacity-60">
             {saving ? 'Saving…' : loc ? 'Update' : 'Add Location'}
@@ -1469,6 +1485,12 @@ function BillingLocationsSection({ clientId, companyId }) {
                 </div>
                 {loc.gstin && <p className="font-mono text-xs text-primary-400 mt-0.5">{loc.gstin}</p>}
                 <p className="text-xs text-slate-500 truncate">{[loc.billing_address, loc.city, loc.state, loc.pincode].filter(Boolean).join(', ')}</p>
+                {loc.contact_name && (
+                  <div className="flex items-center gap-3 mt-1.5 pt-1.5 border-t border-dark-600">
+                    <span className="text-xs text-slate-400 font-medium truncate">{loc.contact_name}{loc.contact_designation ? ` · ${loc.contact_designation}` : ''}</span>
+                    {loc.contact_phone && <a href={`tel:${loc.contact_phone}`} className="text-xs text-emerald-400 hover:underline shrink-0">{loc.contact_phone}</a>}
+                  </div>
+                )}
               </div>
               <div className="flex gap-1 shrink-0">
                 <button onClick={() => { setEditing(loc); setShowForm(true) }} className="p-1.5 rounded-lg text-slate-500 hover:text-blue-400 hover:bg-blue-900/20"><Edit2 className="w-3 h-3" /></button>
