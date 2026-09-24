@@ -2444,6 +2444,7 @@ function DrilldownDetail({ drilldown, onClose, fmtM }) {
 function ProjectDetail({ project, companyId, docTotals, onClose, onEdit, onDelete, onStatusChange }) {
   const { isAdvanced } = useDisplayMode()
   const [detailTab, setDetailTab] = useState('contract')
+  const tabsRef = useRef(null)
   const [showAssignForm, setShowAssignForm] = useState(false)
   const [assignEquipId, setAssignEquipId]   = useState('')
   const [assignBusy, setAssignBusy]         = useState(false)
@@ -2627,10 +2628,15 @@ function ProjectDetail({ project, companyId, docTotals, onClose, onEdit, onDelet
       <div className="space-y-6 pb-8">
 
       {/* ══ OUTSTANDING DUES BANNER (closed projects) ════════════════════ */}
-      {['completed', 'closed', 'terminated'].includes(project.status) && (() => {
+      {(() => {
+        if (!['completed', 'closed', 'terminated'].includes(project.status)) return null
         const openInvs = projectInvoices.filter(i => Number(i.balance_due) > 0 && i.status !== 'cancelled')
         if (!openInvs.length) return null
         const total = openInvs.reduce((s, i) => s + (Number(i.balance_due) || 0), 0)
+        const goToInvoices = () => {
+          setDetailTab('invoices')
+          setTimeout(() => tabsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
+        }
         return (
           <div className="flex items-start gap-3 bg-orange-500/10 border border-orange-500/40 rounded-xl px-4 py-3">
             <AlertTriangle className="w-4 h-4 text-orange-400 shrink-0 mt-0.5" />
@@ -2640,7 +2646,11 @@ function ProjectDetail({ project, companyId, docTotals, onClose, onEdit, onDelet
                 ₹{total.toLocaleString('en-IN')} unpaid across {openInvs.length} invoice{openInvs.length > 1 ? 's' : ''}. Clear before final closure.
               </p>
             </div>
-            <button onClick={() => setDetailTab('invoices')} className="text-[11px] font-semibold text-orange-300 hover:text-orange-200 whitespace-nowrap shrink-0">
+            <button
+              type="button"
+              onClick={goToInvoices}
+              className="text-[11px] font-semibold text-orange-300 hover:text-orange-200 whitespace-nowrap shrink-0 cursor-pointer"
+            >
               View Invoices →
             </button>
           </div>
@@ -2711,7 +2721,7 @@ function ProjectDetail({ project, companyId, docTotals, onClose, onEdit, onDelet
       </div>
 
       {/* ══ TAB BAR ══════════════════════════════════════════════════════ */}
-      <div className="border-b border-dark-600">
+      <div ref={tabsRef} className="border-b border-dark-600">
         <div className="flex overflow-x-auto">
           {DTABS.map(t => (
             <button key={t.id} onClick={() => setDetailTab(t.id)}
