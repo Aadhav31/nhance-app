@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { ROLES } from '../../lib/constants'
+import { nextDocNumber } from '../../utils/docNumbers'
 
 // ── Chart Palette ──────────────────────────────────────────────────────────────
 const C = {
@@ -257,6 +258,146 @@ function Section({ icon: Icon, title, children }) {
         <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">{title}</h2>
       </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">{children}</div>
+    </div>
+  )
+}
+
+// ── Record Payment Modal ───────────────────────────────────────────────────────
+function RecordPaymentModal({ inv, companyId, onClose, onSaved }) {
+  const today = new Date().toISOString().slice(0, 10)
+  const balanceDue = inv.balance_due ?? (Number(inv.total_amount||0) - Number(inv.paid_amount||0))
+
+  const [form, setForm] = useState({
+    payment_date: today,
+    amount: String(Math.max(0, balanceDue)),
+    payment_mode: 'bank_transfer',
+    bank_reference: '',
+    notes: '',
+  })
+  const [saving, setSaving] = useState(false)
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+
+  const syncInvoice = async (invId) => {
+    const { data: allPmts } = await supabase
+      .from('payments_received').select('amount').eq('invoice_id', invId)
+    const totalPaid = (allPmts || []).reduce((s, p) => s + Number(p.amount || 0), 0)
+    const { data: invRow } = await supabase
+      .from('client_invoices').select('total_amount').eq('id', invId).single()
+    const total = Number(invRow?.total_amount || 0)
+    const bal   = Math.max(0, total - totalPaid)
+    const status = bal <= 0 ? 'paid' : totalPaid > 0 ? 'partial' : 'sent'
+    await supabase.from('client_invoices')
+      .update({ paid_amount: totalPaid, balance_due: bal, status }).eq('id', invId)
+  }
+
+  const save = async () => {
+    const amt = parseFloat(form.amount)
+    if (!amt || amt <= 0) return toast.error('Enter a valid amount')
+    setSaving(true)
+    try {
+      const prNum = await nextDocNumber(companyId, 'payment_recv').catch(() => `PR-${Date.now()}`)
+      const { data: pr, error } = await supabase.from('payments_received').insert({
+        company_id: companyId,
+        payment_number: prNum,
+        payment_date: form.payment_date,
+        invoice_id: inv.id,
+        client_name: inv.client_name || '',
+        amount: amt,
+        payment_mode: form.payment_mode,
+        bank_reference: form.bank_reference || null,
+        notes: form.notes || null,
+        created_by: (await supabase.auth.getSession()).data?.session?.user?.id || null,
+      }).select().single()
+      if (error) throw error
+      // Write to account ledger
+      await supabase.from('account_transactions').insert({
+        company_id: companyId,
+        txn_date: form.payment_date,
+        type: 'income',
+        description: `Payment received — ${prNum} (${inv.client_name || inv.invoice_number})`,
+        amount: amt,
+        payment_mode: form.payment_mode,
+        bank_reference: form.bank_reference || null,
+        reference_type: 'payment_received',
+        reference_id: pr.id,
+        notes: form.notes || null,
+      })
+      await syncInvoice(inv.id)
+      toast.success(`Payment ${prNum} recorded`)
+      onSaved()
+      onClose()
+    } catch (e) {
+      toast.error(e.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const inputCls = 'w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500'
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onClose}>
+      <div className="bg-dark-800 border border-dark-700 rounded-2xl w-full max-w-md shadow-2xl" onClick={e => e.stopPropagation()}>
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-dark-700">
+          <div>
+            <p className="font-bold text-slate-100">Record Payment</p>
+            <p className="text-xs text-slate-500 mt-0.5">{inv.client_name} · {inv.invoice_number}</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg text-slate-500 hover:text-slate-300 hover:bg-dark-700">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Balance info */}
+        <div className="mx-5 mt-4 px-3 py-2.5 rounded-xl bg-amber-900/20 border border-amber-700/30 flex justify-between items-center">
+          <span className="text-xs text-amber-400 font-semibold">Balance Due</span>
+          <span className="font-mono text-sm font-bold text-amber-300">₹{balanceDue.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</span>
+        </div>
+
+        {/* Form */}
+        <div className="px-5 py-4 space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-slate-400 block mb-1">Payment Date</label>
+              <input type="date" value={form.payment_date} onChange={e => set('payment_date', e.target.value)} className={inputCls} />
+            </div>
+            <div>
+              <label className="text-xs text-slate-400 block mb-1">Amount (₹)</label>
+              <input type="number" value={form.amount} onChange={e => set('amount', e.target.value)} className={inputCls} placeholder="0" />
+            </div>
+          </div>
+          <div>
+            <label className="text-xs text-slate-400 block mb-1">Payment Mode</label>
+            <select value={form.payment_mode} onChange={e => set('payment_mode', e.target.value)} className={inputCls}>
+              <option value="bank_transfer">Bank Transfer (NEFT/RTGS)</option>
+              <option value="upi">UPI</option>
+              <option value="cheque">Cheque</option>
+              <option value="cash">Cash</option>
+              <option value="imps">IMPS</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-xs text-slate-400 block mb-1">Reference / Cheque No.</label>
+            <input type="text" value={form.bank_reference} onChange={e => set('bank_reference', e.target.value)} className={inputCls} placeholder="UTR / Cheque number" />
+          </div>
+          <div>
+            <label className="text-xs text-slate-400 block mb-1">Notes (optional)</label>
+            <input type="text" value={form.notes} onChange={e => set('notes', e.target.value)} className={inputCls} placeholder="e.g. Part payment for Oct" />
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="px-5 pb-5 flex gap-3">
+          <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-dark-600 text-sm font-semibold text-slate-400 hover:text-slate-200 hover:border-dark-500 transition-all">
+            Cancel
+          </button>
+          <button onClick={save} disabled={saving}
+            className="flex-1 py-2.5 rounded-xl bg-primary-600 hover:bg-primary-500 text-white text-sm font-semibold transition-all disabled:opacity-60">
+            {saving ? 'Saving…' : 'Record Payment'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
@@ -873,6 +1014,8 @@ function ShiftLogTable({ shifts }) {
 
 function FinancialsSection({ companyId, range, onNavigate }) {
   const [panel, setPanel] = useState(null)
+  const [payingInv, setPayingInv] = useState(null) // invoice selected for payment
+  const qc = useQueryClient()
   const { data: invoices  = [] } = useInvoiceData(companyId, range)
   const { data: bills     = [] } = useBillData(companyId, range)
   const { data: payments  = [] } = usePaymentsData(companyId, range)
@@ -968,17 +1111,41 @@ function FinancialsSection({ companyId, range, onNavigate }) {
                 ? Math.floor((new Date() - new Date(inv.due_date)) / 86400000)
                 : null
               const ageTxt = daysOld == null ? '' : daysOld > 0 ? ` · ${daysOld}d overdue` : daysOld === 0 ? ' · Due today' : ` · Due in ${Math.abs(daysOld)}d`
+              const bal = inv.balance_due ?? (Number(inv.total_amount||0) - Number(inv.paid_amount||0))
               return (
-                <DetailRow key={inv.id}
-                  title={inv.client_name || inv.invoice_number || '—'}
-                  sub={`${inv.invoice_number || '—'}${ageTxt}`}
-                  value={fmtINRShort(inv.balance_due ?? (Number(inv.total_amount||0) - Number(inv.paid_amount||0)))}
-                  badge={inv.status}
-                />
+                <div key={inv.id} className="flex items-center gap-2 py-2 px-3 rounded-lg bg-dark-700/50 border border-dark-700">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm text-slate-200 truncate">{inv.client_name || inv.invoice_number || '—'}</p>
+                    <p className="text-xs text-slate-500">{inv.invoice_number || '—'}{ageTxt}</p>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <p className="text-sm font-semibold text-slate-100">{fmtINRShort(bal)}</p>
+                    <p className={`text-xs capitalize ${STATUS_COLOR[inv.status] || 'text-slate-400'}`}>{inv.status}</p>
+                  </div>
+                  <button
+                    onClick={() => setPayingInv(inv)}
+                    className="shrink-0 ml-1 px-2.5 py-1.5 rounded-lg bg-emerald-700/30 border border-emerald-600/40 text-emerald-300 text-xs font-semibold hover:bg-emerald-700/50 transition-all whitespace-nowrap">
+                    + Payment
+                  </button>
+                </div>
               )
             })
           }
         </DetailPanel>
+      )}
+
+      {/* Record Payment Modal */}
+      {payingInv && (
+        <RecordPaymentModal
+          inv={payingInv}
+          companyId={companyId}
+          onClose={() => setPayingInv(null)}
+          onSaved={() => {
+            qc.invalidateQueries({ queryKey: ['dash_all_invoices', companyId] })
+            qc.invalidateQueries({ queryKey: ['dash_invoices', companyId] })
+            qc.invalidateQueries({ queryKey: ['acct_txns_ledger'] })
+          }}
+        />
       )}
       {panel === 'bills' && (
         <DetailPanel title="Bills Due" onClose={() => setPanel(null)} onNavigate={onNavigate} navKey="purchase" navLabel="Go to Purchase">
