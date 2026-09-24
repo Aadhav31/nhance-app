@@ -10,7 +10,7 @@ import {
   Droplet, Building2, Trash2, Edit2, IndianRupee, ExternalLink,
   Cpu, Phone, Mail, FolderOpen, Navigation, UserPlus, RefreshCw, Clock,
   Upload, Download, Eye, File, ShoppingBag, Briefcase, PenLine, LayoutGrid,
-  AlertTriangle, CheckCircle2, Paperclip,
+  AlertTriangle, CheckCircle2, Paperclip, Bell, XCircle,
 } from 'lucide-react'
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -2626,6 +2626,27 @@ function ProjectDetail({ project, companyId, docTotals, onClose, onEdit, onDelet
     >
       <div className="space-y-6 pb-8">
 
+      {/* ══ OUTSTANDING DUES BANNER (closed projects) ════════════════════ */}
+      {['completed', 'closed', 'terminated'].includes(project.status) && (() => {
+        const openInvs = projectInvoices.filter(i => Number(i.balance_due) > 0 && i.status !== 'cancelled')
+        if (!openInvs.length) return null
+        const total = openInvs.reduce((s, i) => s + (Number(i.balance_due) || 0), 0)
+        return (
+          <div className="flex items-start gap-3 bg-orange-500/10 border border-orange-500/40 rounded-xl px-4 py-3">
+            <AlertTriangle className="w-4 h-4 text-orange-400 shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-semibold text-orange-300">Outstanding Dues — Project {STATUS_CONFIG[project.status]?.label}</p>
+              <p className="text-xs text-slate-400 mt-0.5">
+                ₹{total.toLocaleString('en-IN')} unpaid across {openInvs.length} invoice{openInvs.length > 1 ? 's' : ''}. Clear before final closure.
+              </p>
+            </div>
+            <button onClick={() => setDetailTab('invoices')} className="text-[11px] font-semibold text-orange-300 hover:text-orange-200 whitespace-nowrap shrink-0">
+              View Invoices →
+            </button>
+          </div>
+        )
+      })()}
+
       {/* ══ PROJECT OVERVIEW HEADER ══════════════════════════════════════ */}
       <div className="grid grid-cols-3 gap-5">
         {/* Left 2/3 — project meta */}
@@ -2992,7 +3013,7 @@ function ProjectDetail({ project, companyId, docTotals, onClose, onEdit, onDelet
 
 // ── Project Card ───────────────────────────────────────────────────────────────
 
-function ProjectCard({ project, docTotals, onClick }) {
+function ProjectCard({ project, docTotals, outstandingDues, onClick }) {
   const clientName = project.clients?.display_name || project.clients?.business_name
   const mapsHref = project.site_lat && project.site_lng
     ? `https://maps.google.com/?q=${project.site_lat},${project.site_lng}`
@@ -3010,7 +3031,14 @@ function ProjectCard({ project, docTotals, onClick }) {
             <p className="text-[11px] text-primary-500 font-mono mt-0.5">{project.project_code}</p>
           )}
         </div>
-        <StatusBadge status={project.status}/>
+        <div className="flex items-center gap-1.5">
+          <StatusBadge status={project.status}/>
+          {outstandingDues > 0 && ['completed','closed','terminated'].includes(project.status) && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-orange-500/15 text-orange-300 border border-orange-500/30">
+              <AlertTriangle className="w-2.5 h-2.5"/> Dues ₹{outstandingDues.toLocaleString('en-IN')}
+            </span>
+          )}
+        </div>
       </div>
       <div className="flex flex-wrap gap-2 mb-3">
         {project.nature_of_job && <JobBadge type={project.nature_of_job}/>}
@@ -3137,6 +3165,32 @@ export default function ProjectsPage({ onNavigate, initialProjectId = null, init
     enabled: !!companyId,
   })
 
+  // Outstanding dues for closed/completed/terminated projects — one query, summed per project
+  const { data: closedProjectDues = [] } = useQuery({
+    queryKey: ['closed_project_dues', companyId],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('client_invoices')
+        .select('project_id, balance_due')
+        .eq('company_id', companyId)
+        .gt('balance_due', 0)
+        .neq('status', 'cancelled')
+        .not('project_id', 'is', null)
+      return data || []
+    },
+    staleTime: 30_000,
+    enabled: !!companyId,
+  })
+
+  // { [project_id]: totalOutstanding }
+  const outstandingByProject = useMemo(() => {
+    const map = {}
+    closedProjectDues.forEach(r => {
+      map[r.project_id] = (map[r.project_id] || 0) + (Number(r.balance_due) || 0)
+    })
+    return map
+  }, [closedProjectDues])
+
   // Fetch all document amounts for this company in one shot → sum per project
   const { data: allDocAmounts = [] } = useQuery({
     queryKey: ['project_doc_amounts', companyId],
@@ -3212,6 +3266,8 @@ export default function ProjectsPage({ onNavigate, initialProjectId = null, init
     toast.success('Project deleted')
   }
 
+  const [duesWarning, setDuesWarning] = useState(null) // { project, status, invoices, total }
+
   const handleStatusChange = async (newStatus) => {
     if (!viewing || newStatus === viewing.status) return
     const { error } = await supabase.from('projects').update({ status: newStatus }).eq('id', viewing.id)
@@ -3220,6 +3276,28 @@ export default function ProjectsPage({ onNavigate, initialProjectId = null, init
     setViewing(updated)
     qc.invalidateQueries(['projects'])
     toast.success(`Status → ${STATUS_CONFIG[newStatus]?.label || newStatus}`)
+
+    // Check for outstanding dues when closing a project
+    if (['completed', 'closed', 'terminated'].includes(newStatus)) {
+      const { data: openInvoices } = await supabase
+        .from('client_invoices')
+        .select('id, invoice_number, invoice_date, total_amount, paid_amount, balance_due, status')
+        .eq('project_id', viewing.id)
+        .gt('balance_due', 0)
+        .neq('status', 'cancelled')
+      if (openInvoices?.length) {
+        const total = openInvoices.reduce((s, i) => s + (Number(i.balance_due) || 0), 0)
+        setDuesWarning({ project: updated, status: newStatus, invoices: openInvoices, total })
+        // Persist notification
+        await supabase.from('notifications').insert({
+          company_id: companyId,
+          type: 'outstanding_dues',
+          title: `Outstanding dues on ${STATUS_CONFIG[newStatus]?.label} project`,
+          body: `"${viewing.project_name}" was marked ${STATUS_CONFIG[newStatus]?.label} but has ₹${total.toLocaleString('en-IN')} outstanding across ${openInvoices.length} invoice${openInvoices.length > 1 ? 's' : ''}. Clear dues before closing.`,
+          metadata: { project_id: viewing.id, project_name: viewing.project_name, outstanding: total, invoice_count: openInvoices.length },
+        }).catch(() => {})
+      }
+    }
   }
 
   return (
@@ -3283,7 +3361,7 @@ export default function ProjectsPage({ onNavigate, initialProjectId = null, init
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filtered.map(p => <ProjectCard key={p.id} project={p} docTotals={docTotalsByProject[p.id]} onClick={() => openProject(p)}/>)}
+            {filtered.map(p => <ProjectCard key={p.id} project={p} docTotals={docTotalsByProject[p.id]} outstandingDues={outstandingByProject[p.id] || 0} onClick={() => openProject(p)}/>)}
           </div>
         )}
       </div>
@@ -3314,6 +3392,63 @@ export default function ProjectsPage({ onNavigate, initialProjectId = null, init
           onDelete={isAdmin ? () => handleDelete(viewing) : undefined}
           onStatusChange={isAdmin ? handleStatusChange : undefined}
         />
+      )}
+
+      {/* ── Outstanding Dues Warning Modal ─────────────────────────────────── */}
+      {duesWarning && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="bg-dark-900 border border-orange-500/40 rounded-2xl shadow-2xl w-full max-w-lg">
+            {/* Header */}
+            <div className="flex items-start gap-3 p-5 border-b border-dark-700">
+              <div className="w-10 h-10 rounded-full bg-orange-500/15 flex items-center justify-center shrink-0">
+                <Bell className="w-5 h-5 text-orange-400" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-bold text-slate-100">Outstanding Dues — Action Required</p>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  <span className="font-semibold text-orange-300">{duesWarning.project.project_name}</span> was marked{' '}
+                  <span className="font-semibold">{STATUS_CONFIG[duesWarning.status]?.label}</span> but still has unpaid invoices.
+                </p>
+              </div>
+              <button onClick={() => setDuesWarning(null)} className="p-1.5 rounded-lg text-slate-500 hover:text-slate-200 hover:bg-dark-700 shrink-0">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Invoices list */}
+            <div className="p-5 space-y-3 max-h-72 overflow-y-auto">
+              {duesWarning.invoices.map(inv => (
+                <div key={inv.id} className="flex items-center justify-between bg-dark-800 rounded-xl px-4 py-3">
+                  <div>
+                    <p className="text-xs font-mono text-primary-400">{inv.invoice_number}</p>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      Total ₹{Number(inv.total_amount).toLocaleString('en-IN')} · Paid ₹{Number(inv.paid_amount || 0).toLocaleString('en-IN')}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm font-bold text-orange-300">₹{Number(inv.balance_due).toLocaleString('en-IN')}</p>
+                    <p className="text-[10px] text-slate-500">balance due</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Total + actions */}
+            <div className="px-5 pb-5 space-y-3">
+              <div className="flex justify-between items-center bg-orange-500/10 border border-orange-500/30 rounded-xl px-4 py-3">
+                <span className="text-sm font-semibold text-orange-200">Total Outstanding</span>
+                <span className="text-lg font-black text-orange-300">₹{duesWarning.total.toLocaleString('en-IN')}</span>
+              </div>
+              <p className="text-[11px] text-slate-500 text-center">
+                A notification has been logged. The accounts team should clear these dues before final closure.
+              </p>
+              <button onClick={() => setDuesWarning(null)}
+                className="w-full py-2 rounded-xl text-sm font-semibold bg-orange-600 hover:bg-orange-500 text-white transition-colors">
+                Acknowledged — I'll follow up
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )
