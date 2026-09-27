@@ -344,7 +344,8 @@ function buildDocPDF(opts) {
       pdf.text('Notes', ML+2, wordsEndY)
       pdf.setFont('helvetica','normal')
       pdf.setFontSize(7.5)
-      const noteLines = pdf.splitTextToSize(notes, 88)
+      const safeNotes = (notes || '').replace(/₹/g, 'Rs.').replace(/₹/g, 'Rs.').replace(/¹/g, '1')
+      const noteLines = pdf.splitTextToSize(safeNotes, 88)
       noteLines.forEach((l, i) => pdf.text(l, ML+2, wordsEndY+4.5+i*4))
     }
 
@@ -420,7 +421,12 @@ function buildDocPDF(opts) {
       pdf.setFont('helvetica','normal')
       pdf.setFontSize(7.5)
       pdf.setTextColor(60,60,60)
-      const tncLines = pdf.splitTextToSize(termsAndConditions, W-ML-MR-4)
+      // Helvetica can't render ₹ — normalise to "Rs." before splitting
+      const safeTerms = termsAndConditions
+        .replace(/₹/g, 'Rs.')
+        .replace(/₹/g, 'Rs.')   // Unicode rupee sign U+20B9
+        .replace(/¹/g, '1')     // superscript-1 artefact from bad paste
+      const tncLines = pdf.splitTextToSize(safeTerms, W-ML-MR-4)
       tncLines.forEach((l, i) => pdf.text(l, ML+2, tncY + 5 + i*4))
     }
   }
