@@ -742,7 +742,7 @@ function AppShell() {
       case 'approval_center':
         return (
           <Suspense fallback={<LoadingScreen message="Loading Approval Centre…" />}>
-            <ApprovalCenterPage />
+            <ApprovalCenterPage onNavigate={handleNavigate} />
           </Suspense>
         )
       case 'audit_log':

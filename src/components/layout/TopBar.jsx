@@ -5,6 +5,7 @@ import { useTheme } from '../../contexts/ThemeContext'
 import { fmtDate } from '../../lib/utils'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
+import { isWorkflowEngineUnavailable } from '../../lib/approvalWorkflow'
 
 const PAGE_TITLES = {
   dashboard:   { title: 'Dashboard',               subtitle: 'Overview of your operations' },
@@ -61,19 +62,27 @@ export default function TopBar({ activePage, onMenuToggle, onNavigate }) {
       ? ['manager']
       : userRole === 'accounts'
         ? ['accounts']
-        : []
+        : userRole === 'supervisor'
+          ? ['supervisor']
+          : []
 
   const { data: pendingCount = 0 } = useQuery({
     queryKey: ['approval_badge', companyId, ...visibleRoles],
     queryFn: async () => {
       if (visibleRoles.length === 0) return 0
-      const { count } = await supabase
+      const { count, error } = await supabase
+        .from('approval_task_inbox')
+        .select('task_id', { count: 'exact', head: true })
+      if (!error) return count || 0
+      if (!isWorkflowEngineUnavailable(error)) throw error
+      const { count: legacyCount, error: legacyError } = await supabase
         .from('approval_requests')
         .select('id', { count: 'exact', head: true })
         .eq('company_id', companyId)
         .eq('status', 'pending')
         .in('required_role', visibleRoles)
-      return count || 0
+      if (legacyError) throw legacyError
+      return legacyCount || 0
     },
     enabled: !!companyId && visibleRoles.length > 0,
     refetchInterval: 30_000,

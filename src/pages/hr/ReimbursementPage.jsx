@@ -73,44 +73,21 @@ function StatusBadge({ status }) {
 
 // ── Action modal ──────────────────────────────────────────────────────────────
 function ActionModal({ record, onClose, onDone, reviewerName, reviewerId }) {
-  const [action,  setAction]  = useState('')   // 'approve'|'reject'|'reimburse'
-  const [notes,   setNotes]   = useState('')
+  const [action,  setAction]  = useState('')
   const [mode,    setMode]    = useState('cash')
   const [saving,  setSaving]  = useState(false)
   const qc = useQueryClient()
 
   const handleSave = async () => {
-    if (action === 'reject' && !notes.trim()) {
-      toast.error('Please provide a reason for rejection')
-      return
-    }
+    if (action !== 'reimburse' || record.status !== 'approved') return
     setSaving(true)
     try {
-      let update = {}
-      if (action === 'approve') {
-        update = {
-          status:           'approved',
-          reviewed_by:      reviewerId,
-          reviewed_by_name: reviewerName,
-          reviewed_at:      new Date().toISOString(),
-          review_notes:     notes.trim() || null,
-        }
-      } else if (action === 'reject') {
-        update = {
-          status:           'rejected',
-          reviewed_by:      reviewerId,
-          reviewed_by_name: reviewerName,
-          reviewed_at:      new Date().toISOString(),
-          review_notes:     notes.trim(),
-        }
-      } else if (action === 'reimburse') {
-        update = {
-          status:              'reimbursed',
-          reimbursed_by:       reviewerId,
-          reimbursed_by_name:  reviewerName,
-          reimbursed_at:       new Date().toISOString(),
-          reimbursed_mode:     mode,
-        }
+      const update = {
+        status:              'reimbursed',
+        reimbursed_by:       reviewerId,
+        reimbursed_by_name:  reviewerName,
+        reimbursed_at:       new Date().toISOString(),
+        reimbursed_mode:     mode,
       }
 
       const { error } = await supabase
@@ -120,11 +97,7 @@ function ActionModal({ record, onClose, onDone, reviewerName, reviewerId }) {
 
       if (error) throw error
 
-      toast.success(
-        action === 'approve' ? 'Expense approved' :
-        action === 'reject'  ? 'Expense rejected' :
-        'Marked as reimbursed'
-      )
+      toast.success('Marked as reimbursed')
       qc.invalidateQueries({ queryKey: ['reimb_all'] })
       onDone()
       onClose()
@@ -170,35 +143,6 @@ function ActionModal({ record, onClose, onDone, reviewerName, reviewerId }) {
             </div>
           )}
 
-          {/* Action picker */}
-          {record.status === 'pending' && (
-            <div>
-              <p className="text-xs text-slate-400 font-semibold mb-2 uppercase tracking-wide">Action</p>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setAction('approve')}
-                  className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl border text-sm font-semibold transition-all ${
-                    action === 'approve'
-                      ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400'
-                      : 'bg-dark-700 border-dark-600 text-slate-400'
-                  }`}
-                >
-                  <CheckCircle2 className="w-4 h-4" /> Approve
-                </button>
-                <button
-                  onClick={() => setAction('reject')}
-                  className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl border text-sm font-semibold transition-all ${
-                    action === 'reject'
-                      ? 'bg-red-500/15 border-red-500/40 text-red-400'
-                      : 'bg-dark-700 border-dark-600 text-slate-400'
-                  }`}
-                >
-                  <XCircle className="w-4 h-4" /> Reject
-                </button>
-              </div>
-            </div>
-          )}
-
           {record.status === 'approved' && (
             <div>
               <p className="text-xs text-slate-400 font-semibold mb-2 uppercase tracking-wide">Action</p>
@@ -237,43 +181,15 @@ function ActionModal({ record, onClose, onDone, reviewerName, reviewerId }) {
             </div>
           )}
 
-          {/* Notes (for approve/reject) */}
-          {(action === 'approve' || action === 'reject') && (
-            <div>
-              <p className="text-xs text-slate-400 font-semibold mb-1.5 uppercase tracking-wide">
-                Notes {action === 'reject' && <span className="text-red-400">*</span>}
-              </p>
-              <textarea
-                rows={2}
-                placeholder={action === 'reject' ? 'Reason for rejection (required)' : 'Optional comments…'}
-                value={notes}
-                onChange={e => setNotes(e.target.value)}
-                className="w-full bg-dark-700 border border-dark-600 rounded-xl px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-primary-500 placeholder-slate-600 resize-none"
-              />
-            </div>
-          )}
-
           {/* Confirm button */}
           {action && (
             <button
               onClick={handleSave}
               disabled={saving}
-              className={`w-full flex items-center justify-center gap-2 py-3.5 rounded-xl text-sm font-bold transition-all disabled:opacity-60 ${
-                action === 'approve'   ? 'bg-emerald-600 text-white' :
-                action === 'reject'    ? 'bg-red-600 text-white' :
-                                         'bg-sky-600 text-white'
-              }`}
+              className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl bg-sky-600 text-white text-sm font-bold transition-all disabled:opacity-60"
             >
-              {saving
-                ? <Loader2 className="w-4 h-4 animate-spin" />
-                : action === 'approve' ? <CheckCircle2 className="w-4 h-4" />
-                : action === 'reject'  ? <XCircle className="w-4 h-4" />
-                :                        <Banknote className="w-4 h-4" />
-              }
-              {saving ? 'Saving…' :
-               action === 'approve'   ? 'Confirm Approval' :
-               action === 'reject'    ? 'Confirm Rejection' :
-                                        'Confirm Reimbursement'}
+              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Banknote className="w-4 h-4" />}
+              {saving ? 'Saving…' : 'Confirm Reimbursement'}
             </button>
           )}
         </div>
@@ -361,7 +277,7 @@ function ExpenseRow({ r, onAction, onReceipt }) {
             className="flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-lg bg-primary-600 text-white"
           >
             <Eye className="w-3.5 h-3.5" />
-            {r.status === 'pending' ? 'Review' : 'Reimburse'}
+            {r.status === 'pending' ? 'Approval Centre' : 'Reimburse'}
           </button>
         )}
       </div>
@@ -552,7 +468,7 @@ export default function ReimbursementPage({ onNavigate, initialStatus = 'pending
                 <ExpenseRow
                   key={r.id}
                   r={r}
-                  onAction={setActiveRecord}
+                  onAction={record => record.status === 'pending' ? onNavigate?.('approval_center') : setActiveRecord(record)}
                   onReceipt={setLightboxUrl}
                 />
               ))}

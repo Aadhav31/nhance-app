@@ -13,6 +13,7 @@ import { useState, useRef, useCallback } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
+import { submitApprovalCase } from '../../lib/approvalWorkflow'
 import toast from 'react-hot-toast'
 import { format } from 'date-fns'
 import {
@@ -163,7 +164,7 @@ function SubmitForm({ employeeId, employeeName, employeeRole, companyId, onDone 
         try { receipt_url = await uploadReceipt(receiptBlob, employeeId) } catch { /* non-blocking */ }
       }
 
-      const { error } = await supabase.from('employee_reimbursements').insert({
+      const { data: claim, error } = await supabase.from('employee_reimbursements').insert({
         company_id:    companyId,
         employee_id:   employeeId,
         employee_name: employeeName,
@@ -175,8 +176,16 @@ function SubmitForm({ employeeId, employeeName, employeeRole, companyId, onDone 
         receipt_url,
         flags:         billRef.trim() ? { bill_ref: billRef.trim() } : {},
         status:        'pending',
-      })
+      }).select('id').single()
       if (error) throw error
+
+      await submitApprovalCase({
+        companyId, documentType: 'employee_reimbursement', documentId: claim.id,
+        documentRef: billRef.trim() || `CLAIM-${claim.id.slice(0, 8)}`,
+        title: `Reimbursement · ${employeeName}`, amount: Number(amount),
+        requesterId: employeeId, requesterName: employeeName,
+        snapshot: { employee: employeeName, category: cat, expense_date: date, description: desc.trim() || null, receipt_attached: Boolean(receipt_url), bill_reference: billRef.trim() || null },
+      })
 
       toast.success('Expense submitted for approval')
       qc.invalidateQueries({ queryKey: ['emp_reimb', employeeId] })

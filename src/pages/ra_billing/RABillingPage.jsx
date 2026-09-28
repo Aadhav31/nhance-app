@@ -22,6 +22,7 @@ import { nextDocNumber } from '../../utils/docNumbers'
 import { generateRABillPDF } from '../../lib/raBillPDF'
 import { logAction } from '../../lib/auditLog'
 import { filterRABills } from '../../lib/commercialFilters'
+import { submitApprovalCase } from '../../lib/approvalWorkflow'
 import toast from 'react-hot-toast'
 import {
   Plus, X, Search, Loader2, ArrowLeft, FileText, Pencil, Trash2,
@@ -480,7 +481,7 @@ function RaiseRABillModal({ companyId, session, onClose, onSaved, preselectedBoq
 }
 
 // ── RA Bill Detail ────────────────────────────────────────────────────────────
-function RABillDetail({ ra: initialRa, companyId, session, company, profile, onBack, onRefresh }) {
+function RABillDetail({ ra: initialRa, companyId, session, company, profile, onBack, onRefresh, onNavigate }) {
   const qc = useQueryClient()
   const [ra, setRa] = useState(initialRa)
   const [showPaymentModal, setShowPaymentModal] = useState(false)
@@ -529,38 +530,23 @@ function RABillDetail({ ra: initialRa, companyId, session, company, profile, onB
 
   const updateStatus = async (status) => {
     if (status === 'paid') { setShowPaymentModal(true); return }
-    await supabase.from('ra_bills').update({ status }).eq('id', ra.id)
-
-    // Approval workflow integration
     const userName = profile?.full_name || session?.user?.email || 'Unknown'
     if (status === 'submitted') {
-      // Create an approval request — manager must certify before payment
       const boq = ra.boq || {}
-      await supabase.from('approval_requests').insert({
-        company_id:        companyId,
-        module:            'ra_bill',
-        record_id:         ra.id,
-        record_ref:        ra.ra_number,
-        description:       `RA Bill submitted for approval — ${boq.client_name || ''} · ${boq.title || ''}`,
-        amount:            ra.net_payable,
-        requested_by:      session?.user?.id,
-        requested_by_name: userName,
-        required_role:     'manager',
-        is_blocking:       true,
-        status:            'pending',
+      await submitApprovalCase({
+        companyId, documentType: 'ra_bill', documentId: ra.id,
+        documentRef: ra.ra_number,
+        title: `RA Bill · ${boq.client_name || ''} · ${boq.title || ''}`,
+        amount: ra.net_payable, requesterId: session?.user?.id, requesterName: userName,
+        snapshot: {
+          client: boq.client_name || null, project: boq.project_name || null,
+          work_order: boq.work_order_number || null, billing_period: `${ra.period_from || '—'} to ${ra.period_to || '—'}`,
+          certified_amount: ra.certified_amount, deductions,
+        },
       })
-    } else if (status === 'approved') {
-      // Resolve any pending approval_request for this bill
-      await supabase.from('approval_requests')
-        .update({
-          status:           'approved',
-          reviewed_by_name: userName,
-          review_date:      new Date().toISOString(),
-          review_comments:  'Marked approved directly on bill',
-        })
-        .eq('module', 'ra_bill')
-        .eq('record_id', ra.id)
-        .eq('status', 'pending')
+      await supabase.from('ra_bills').update({ status: 'submitted' }).eq('id', ra.id)
+    } else {
+      await supabase.from('ra_bills').update({ status }).eq('id', ra.id)
     }
 
     // Audit log
@@ -828,7 +814,7 @@ function RABillDetail({ ra: initialRa, companyId, session, company, profile, onB
               <>
                 <button onClick={() => updateStatus('submitted')}
                   className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg bg-amber-500/15 text-amber-400 hover:bg-amber-500/25 border border-amber-700/40 font-semibold">
-                  <Send className="w-3.5 h-3.5" /> Submit to Client
+                  <Send className="w-3.5 h-3.5" /> Submit for Approval
                 </button>
                 <button onClick={deleteRA}
                   className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-700/40 font-semibold">
@@ -837,9 +823,9 @@ function RABillDetail({ ra: initialRa, companyId, session, company, profile, onB
               </>
             )}
             {ra.status === 'submitted' && (
-              <button onClick={() => updateStatus('approved')}
+              <button onClick={() => onNavigate?.('approval_center')}
                 className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 border border-emerald-700/40 font-semibold">
-                <BadgeCheck className="w-3.5 h-3.5" /> Mark Approved / Certified
+                <BadgeCheck className="w-3.5 h-3.5" /> View Approval Chain
               </button>
             )}
             {ra.status === 'approved' && (
@@ -848,12 +834,7 @@ function RABillDetail({ ra: initialRa, companyId, session, company, profile, onB
                 <Banknote className="w-3.5 h-3.5" /> Record Payment & Mark Paid
               </button>
             )}
-            {ra.status === 'submitted' && (
-              <button onClick={() => updateStatus('draft')}
-                className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg bg-dark-700 text-slate-400 hover:bg-dark-600 border border-dark-600 font-semibold">
-                <ArrowLeft className="w-3.5 h-3.5" /> Recall to Draft
-              </button>
-            )}
+            {ra.status === 'submitted' && <p className="flex items-center text-xs text-slate-500">Withdraw or review decisions from Approval Centre.</p>}
           </div>
         </div>
       </div>
@@ -1082,7 +1063,7 @@ function RABillingList({
 export default function RABillingPage({
   onNavigate, initialMetric = 'all', initialStatus = 'all', initialBoqId = 'all', initialRaId = null,
 }) {
-  const { companyId, session, company, profile } = useAuth()
+  const { companyId, session, company, userProfile: profile } = useAuth()
   const qc = useQueryClient()
   const [selectedRA, setSelectedRA] = useState(null)
   const [metricFilter, setMetricFilter] = useState(() => VALID_RA_METRICS.has(initialMetric) ? initialMetric : 'all')
@@ -1156,6 +1137,7 @@ export default function RABillingPage({
             profile={profile}
             onBack={handleBack}
             onRefresh={handleRefresh}
+            onNavigate={onNavigate}
           />
         ) : (
           <RABillingList

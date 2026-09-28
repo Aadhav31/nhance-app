@@ -5,6 +5,7 @@ import PagePanel from '../../components/shared/PagePanel'
 import { useAuth } from '../../contexts/AuthContext'
 import { nextDocNumber } from '../../utils/docNumbers'
 import { UOM_LIST } from '../../utils/units'
+import { isWorkflowEngineUnavailable, submitApprovalCase } from '../../lib/approvalWorkflow'
 import {
   Package, Plus, X, Loader2, Search, ChevronRight, AlertTriangle,
   ArrowDownCircle, ArrowUpCircle, RefreshCcw, Shuffle, Store,
@@ -1833,9 +1834,11 @@ function StockOutTab({ companyId, session }) {
 // ── TRANSFERS TAB ─────────────────────────────────────────────────────────────
 function TransfersTab({ companyId, session }) {
   const qc = useQueryClient()
+  const { userProfile, role } = useAuth()
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving]         = useState(false)
   const [reversing, setReversing]   = useState(null)
+  const [processingRequest, setProcessingRequest] = useState(null)
   const [form, setForm] = useState({ item_id:'', store_id:'', to_store_id:'', quantity:'', txn_date: todayStr(), notes:'' })
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
   const { items, stores } = useInventoryData(companyId)
@@ -1873,22 +1876,83 @@ function TransfersTab({ companyId, session }) {
     enabled: !!companyId,
   })
 
+  const { data: transferRequests = [], isLoading: requestsLoading } = useQuery({
+    queryKey: ['stock_transfer_requests', companyId],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('asset_transfer_requests')
+        .select('id,transfer_number,status,quantity,required_by,reason,created_at,inventory_items(item_name,unit),from_store:stores!from_store_id(store_name),to_store:stores!to_store_id(store_name)')
+        .eq('company_id', companyId).eq('asset_kind', 'tools_tackles')
+        .in('status', ['in_review', 'approved', 'dispatched'])
+        .order('created_at', { ascending: false })
+      if (error && isWorkflowEngineUnavailable(error)) return []
+      if (error) throw error
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+
+  const canExecuteTransfer = ['supervisor', 'manager', 'admin'].includes(role)
+
+  const executeApprovedTransfer = async (request) => {
+    if (!window.confirm(`Dispatch ${request.transfer_number}? Stock will move to the destination store and cannot be posted twice.`)) return
+    setProcessingRequest(request.id)
+    try {
+      const { error } = await supabase.rpc('execute_approved_stock_transfer', { p_request_id: request.id })
+      if (error) throw error
+      toast.success(`${request.transfer_number} dispatched — stock updated atomically`)
+      qc.invalidateQueries({ queryKey: ['stock_transfer_requests', companyId] })
+      qc.invalidateQueries({ queryKey: ['stxn_transfer', companyId] })
+      qc.invalidateQueries({ queryKey: ['inv_stock', companyId] })
+    } catch (error) { toast.error(error.message) } finally { setProcessingRequest(null) }
+  }
+
+  const receiveTransfer = async (request) => {
+    if (!window.confirm(`Confirm that ${request.transfer_number} was received at ${request.to_store?.store_name || 'the destination'}?`)) return
+    setProcessingRequest(request.id)
+    try {
+      const { error } = await supabase.rpc('receive_asset_transfer', { p_request_id: request.id })
+      if (error) throw error
+      toast.success(`${request.transfer_number} marked received`)
+      qc.invalidateQueries({ queryKey: ['stock_transfer_requests', companyId] })
+      qc.invalidateQueries({ queryKey: ['approval_history', companyId] })
+    } catch (error) { toast.error(error.message) } finally { setProcessingRequest(null) }
+  }
+
   const reverseTransfer = async (t) => {
-    if (!window.confirm(`Reverse transfer of ${fmtQty(t.quantity, t.inventory_items?.unit)} back from "${t.to_store?.store_name}" to "${t.from_store?.store_name}"?`)) return
+    if (!window.confirm(`Request reversal of ${fmtQty(t.quantity, t.inventory_items?.unit)} back from "${t.to_store?.store_name}" to "${t.from_store?.store_name}"? The reversal will follow the same approval chain.`)) return
     setReversing(t.id)
     try {
       const trfNum = await nextDocNumber(companyId, 'stock_transfer').catch(() => `TRF-${Date.now()}`)
-      const { error } = await supabase.from('stock_transactions').insert({
-        company_id: companyId, txn_number: trfNum, txn_type: 'transfer',
-        txn_date: todayStr(), item_id: t.item_id,
-        store_id: t.to_store_id, to_store_id: t.store_id,   // swapped
-        quantity: t.quantity, notes: `Reversal of ${t.txn_number}`,
-        created_by: session.user.id,
-      })
-      if (error) throw error
-      toast.success(`Transfer reversed — ${trfNum}`)
-      qc.invalidateQueries(['stxn_transfer', companyId])
-      qc.invalidateQueries(['inv_stock', companyId])
+      const { data: request, error: requestError } = await supabase.from('asset_transfer_requests').insert({
+        company_id: companyId, transfer_number: trfNum, asset_kind: 'tools_tackles', item_id: t.item_id,
+        quantity: t.quantity, from_store_id: t.to_store_id, to_store_id: t.store_id,
+        required_by: todayStr(), reason: `Reversal of ${t.txn_number}`,
+        notes: `Corrective reversal requested for ${t.txn_number}`, status: 'draft', requested_by: session.user.id,
+      }).select('id').single()
+      if (requestError && isWorkflowEngineUnavailable(requestError)) {
+        const { error } = await supabase.from('stock_transactions').insert({
+          company_id: companyId, txn_number: trfNum, txn_type: 'transfer', txn_date: todayStr(),
+          item_id: t.item_id, store_id: t.to_store_id, to_store_id: t.store_id,
+          quantity: t.quantity, notes: `Reversal of ${t.txn_number}`, created_by: session.user.id,
+        })
+        if (error) throw error
+        toast.success(`Transfer reversed — ${trfNum}`)
+      } else {
+        if (requestError) throw requestError
+        await submitApprovalCase({
+          companyId, documentType: 'stock_transfer', documentId: request.id, documentRef: trfNum,
+          title: `Transfer reversal · ${t.inventory_items?.item_name || 'Item'}`,
+          amount: Number(t.quantity), metricLabel: t.inventory_items?.unit || 'units',
+          requesterId: session.user.id, requesterName: userProfile?.full_name,
+          snapshot: { reversal_of: t.txn_number, item: t.inventory_items?.item_name, quantity: t.quantity,
+            unit: t.inventory_items?.unit, from: t.to_store?.store_name, to: t.from_store?.store_name },
+        })
+        toast.success(`Reversal ${trfNum} submitted for approval`)
+      }
+      qc.invalidateQueries({ queryKey: ['stock_transfer_requests', companyId] })
+      qc.invalidateQueries({ queryKey: ['stxn_transfer', companyId] })
+      qc.invalidateQueries({ queryKey: ['inv_stock', companyId] })
+      qc.invalidateQueries({ queryKey: ['approval_inbox'] })
     } catch (e) { toast.error(e.message) } finally { setReversing(null) }
   }
 
@@ -1902,29 +1966,79 @@ function TransfersTab({ companyId, session }) {
     setSaving(true)
     try {
       const trfNum = await nextDocNumber(companyId, 'stock_transfer').catch(() => `TRF-${Date.now()}`)
-      const { error } = await supabase.from('stock_transactions').insert({
-        company_id: companyId, txn_number: trfNum, txn_type: 'transfer',
-        txn_date: form.txn_date, item_id: form.item_id,
-        store_id: form.store_id, to_store_id: form.to_store_id,
-        quantity: parseFloat(form.quantity), notes: form.notes || null,
-        created_by: session.user.id,
-      })
-      if (error) throw error
-      toast.success(`Stock transferred — ${trfNum}`)
+      const source = stores.find(s => s.id === form.store_id)
+      const destination = stores.find(s => s.id === form.to_store_id)
+      const { data: request, error: requestError } = await supabase.from('asset_transfer_requests').insert({
+        company_id: companyId, transfer_number: trfNum, asset_kind: 'tools_tackles',
+        item_id: form.item_id, quantity: parseFloat(form.quantity),
+        from_store_id: form.store_id, to_store_id: form.to_store_id,
+        required_by: form.txn_date, reason: form.notes || 'Inter-site stock requirement',
+        notes: form.notes || null, status: 'draft', requested_by: session.user.id,
+      }).select('id').single()
+
+      if (requestError && isWorkflowEngineUnavailable(requestError)) {
+        // Safe rollout fallback: production keeps its current transfer behaviour
+        // until the reviewed workflow migration is published.
+        const { error } = await supabase.from('stock_transactions').insert({
+          company_id: companyId, txn_number: trfNum, txn_type: 'transfer',
+          txn_date: form.txn_date, item_id: form.item_id,
+          store_id: form.store_id, to_store_id: form.to_store_id,
+          quantity: parseFloat(form.quantity), notes: form.notes || null,
+          created_by: session.user.id,
+        })
+        if (error) throw error
+        toast.success(`Stock transferred — ${trfNum}`)
+      } else {
+        if (requestError) throw requestError
+        await submitApprovalCase({
+          companyId, documentType: 'stock_transfer', documentId: request.id,
+          documentRef: trfNum, title: `Tools & tackles transfer · ${selectedItem?.item_name || 'Item'}`,
+          amount: parseFloat(form.quantity), metricLabel: unit || 'units',
+          requesterId: session.user.id, requesterName: userProfile?.full_name,
+          snapshot: { item: selectedItem?.item_name, quantity: parseFloat(form.quantity), unit, from: source?.store_name, to: destination?.store_name, required_by: form.txn_date, reason: form.notes || null },
+        })
+        toast.success(`Transfer ${trfNum} submitted for source, P&M and destination approval`)
+      }
       setShowCreate(false)
       setForm({ item_id:'', store_id:'', to_store_id:'', quantity:'', txn_date: todayStr(), notes:'' })
       qc.invalidateQueries(['stxn_transfer', companyId])
       qc.invalidateQueries(['inv_stock', companyId])
+      qc.invalidateQueries({ queryKey: ['stock_transfer_requests', companyId] })
+      qc.invalidateQueries({ queryKey: ['approval_inbox'] })
     } catch (e) { toast.error(e.message) } finally { setSaving(false) }
   }
 
   return (
     <div className="flex flex-col h-full">
       <div className="px-4 py-3 border-b border-dark-800 shrink-0 flex items-center justify-between">
-        <span className="text-xs bg-dark-800 rounded-xl px-3 py-2 text-slate-500">{txns.length} transfers</span>
+        <div className="flex items-center gap-2">
+          <span className="text-xs bg-dark-800 rounded-xl px-3 py-2 text-slate-500">{txns.length} completed</span>
+          {transferRequests.length > 0 && <span className="text-xs bg-amber-500/10 border border-amber-500/20 rounded-xl px-3 py-2 text-amber-300">{transferRequests.length} active requests</span>}
+        </div>
         <button onClick={() => setShowCreate(true)} className="btn-primary"><Plus className="w-4 h-4" /> Transfer Stock</button>
       </div>
       <div className="flex-1 overflow-y-auto px-4 pb-4 pt-3">
+        {(requestsLoading || transferRequests.length > 0) && <div className="mb-4 rounded-xl border border-primary-500/20 bg-primary-500/5 p-3">
+          <div className="mb-2 flex items-center justify-between">
+            <div><p className="text-sm font-semibold text-slate-100">Approval &amp; dispatch queue</p><p className="text-[11px] text-slate-500">Approval, physical dispatch and destination receipt are recorded separately.</p></div>
+            {requestsLoading && <Loader2 className="h-4 w-4 animate-spin text-primary-400" />}
+          </div>
+          <div className="space-y-2">
+            {transferRequests.map(request => {
+              const tone = request.status === 'approved' ? 'text-emerald-300 bg-emerald-500/10 border-emerald-500/20' : request.status === 'dispatched' ? 'text-blue-300 bg-blue-500/10 border-blue-500/20' : 'text-amber-300 bg-amber-500/10 border-amber-500/20'
+              return <div key={request.id} className="flex flex-col gap-3 rounded-lg border border-dark-700 bg-dark-900/70 p-3 sm:flex-row sm:items-center">
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2"><span className="font-mono text-[11px] text-primary-400">{request.transfer_number}</span><span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase ${tone}`}>{request.status.replace('_', ' ')}</span></div>
+                  <p className="mt-1 truncate text-sm font-semibold text-slate-100">{request.inventory_items?.item_name} · {fmtQty(request.quantity, request.inventory_items?.unit)}</p>
+                  <p className="text-xs text-slate-400">{request.from_store?.store_name || '—'} <span className="mx-1 text-slate-600">→</span> {request.to_store?.store_name || '—'}</p>
+                </div>
+                {canExecuteTransfer && request.status === 'approved' && <button type="button" onClick={() => executeApprovedTransfer(request)} disabled={processingRequest === request.id} className="btn-primary shrink-0 text-xs">{processingRequest === request.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Shuffle className="h-3.5 w-3.5" />}Dispatch approved transfer</button>}
+                {canExecuteTransfer && request.status === 'dispatched' && <button type="button" onClick={() => receiveTransfer(request)} disabled={processingRequest === request.id} className="btn-primary shrink-0 text-xs">{processingRequest === request.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle className="h-3.5 w-3.5" />}Confirm receipt</button>}
+                {request.status === 'in_review' && <span className="shrink-0 text-xs text-slate-500">Waiting in Approval Centre</span>}
+              </div>
+            })}
+          </div>
+        </div>}
         {isLoading ? <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-primary-400" /></div>
         : txns.length === 0 ? <div className="flex flex-col items-center py-16 gap-2 text-slate-500"><Shuffle className="w-10 h-10 text-slate-700" /><p>No transfers yet</p></div>
         : <div className="space-y-2">
@@ -1969,7 +2083,7 @@ function TransfersTab({ companyId, session }) {
         )
         return (
         <Modal title="Transfer Stock" onClose={() => setShowCreate(false)} wide
-          footer={<><button onClick={() => setShowCreate(false)} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Transfer'}</button></>}>
+          footer={<><button onClick={() => setShowCreate(false)} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Submit Transfer'}</button></>}>
           <div className="col-span-2">
             <Field label="Item *">
               <select className={inp()} value={form.item_id} onChange={e => setF('item_id', e.target.value)}>

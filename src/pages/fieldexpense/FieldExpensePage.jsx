@@ -11,6 +11,7 @@ import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import { nextDocNumber } from '../../utils/docNumbers'
 import { UOM_LIST } from '../../utils/units'
+import { submitApprovalCase } from '../../lib/approvalWorkflow'
 import {
   Receipt, Camera, X, ChevronDown, Loader2, CheckCircle2,
   ArrowLeft, Plus, AlertCircle, IndianRupee, Smartphone,
@@ -366,6 +367,19 @@ function ExpenseForm({ companyId, userId, userRole, userName, onSuccess, onBack 
       const { data: expense, error } = await supabase.from('field_expenses').insert(payload).select('id').single()
       if (error) throw error
 
+      await submitApprovalCase({
+        companyId, documentType: 'field_expense', documentId: expense.id,
+        documentRef: form.bill_number || `EXP-${expense.id.slice(0, 8)}`,
+        title: `Field expense · ${form.payee_name.trim()}`, amount: parseFloat(form.amount),
+        projectId: form.project_id || null, requesterId: userId, requesterName: userName,
+        snapshot: {
+          project: selPrj?.project_name || null, equipment: selEq?.name || null,
+          category: form.category, payee: form.payee_name.trim(), expense_date: form.expense_date,
+          payment_mode: form.payment_mode, bill_number: form.bill_number || null,
+          evidence_attached: Boolean(billPhotoUrl),
+        },
+      })
+
       // Auto-create inventory if applicable
       if (needsInvDetails && expense?.id) {
         await createInventoryEntry(expense.id, form.amount)
@@ -387,9 +401,9 @@ function ExpenseForm({ companyId, userId, userRole, userName, onSuccess, onBack 
       qc.invalidateQueries({ queryKey: ['inv_stock'] })
 
       if (voucher?.voucher_number) {
-        toast.success(`Expense recorded · Voucher ${voucher.voucher_number}`, { duration: 5000 })
+        toast.success(`Expense submitted for approval · Voucher ${voucher.voucher_number}`, { duration: 5000 })
       } else {
-        toast.success('Expense recorded!')
+        toast.success('Expense submitted for approval')
       }
       setForm(INIT)
       setBillPhoto(null)
@@ -1509,6 +1523,7 @@ function ExpenseHistory({ companyId, userId, userRole }) {
                           <span className={`text-[10px] flex items-center gap-1 justify-end ${pay?.color || 'text-slate-400'}`}>
                             <PayIcon className="w-3 h-3" />{pay?.label || exp.payment_mode}
                           </span>
+                          {exp.approval_status && exp.approval_status !== 'not_submitted' && <span className={`mt-1 inline-flex rounded-full border px-1.5 py-0.5 text-[9px] font-bold capitalize ${exp.approval_status === 'approved' ? 'border-emerald-600/40 bg-emerald-500/10 text-emerald-400' : exp.approval_status === 'rejected' ? 'border-red-600/40 bg-red-500/10 text-red-400' : exp.approval_status === 'returned' ? 'border-sky-600/40 bg-sky-500/10 text-sky-400' : 'border-amber-600/40 bg-amber-500/10 text-amber-400'}`}>{exp.approval_status.replace('_', ' ')}</span>}
                         </div>
                       </div>
 

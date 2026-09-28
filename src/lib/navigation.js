@@ -13,7 +13,7 @@ export const SYSTEM_NAV_ITEMS = [
   { key: 'chat', label: 'Team Chat', icon: 'MessageSquare', module: MODULES.CORE,
     roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
   { key: 'approval_center', label: 'Approval Centre', icon: 'CheckCircle2', module: MODULES.CORE,
-    roles: [ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
+    roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN] },
   { key: 'audit_log', label: 'Audit Log', icon: 'Shield', module: MODULES.CORE,
     roles: [ROLES.ADMIN] },
   { key: 'settings', label: 'Settings', icon: 'Settings', module: MODULES.CORE,

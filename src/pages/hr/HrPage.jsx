@@ -4,6 +4,7 @@ import { supabase } from '../../lib/supabase'
 import PagePanel from '../../components/shared/PagePanel'
 import { useAuth } from '../../contexts/AuthContext'
 import { nextDocNumber } from '../../utils/docNumbers'
+import { submitApprovalCase } from '../../lib/approvalWorkflow'
 import {
   Users, Plus, X, Loader2, Save, Trash2, Edit2,
   Phone, Calendar, CreditCard, FileText,
@@ -16,8 +17,9 @@ import { format, getDaysInMonth, parseISO } from 'date-fns'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const DEPARTMENTS = [
-  'Plant & Machinery (P&M)', 'Projects', 'Site / Field', 'Transport',
-  'Admin', 'Accounts', 'Management', 'Other'
+  'Plant & Machinery (P&M)', 'P&M', 'Projects', 'Site / Field', 'Stores',
+  'Procurement', 'Commercial', 'Transport', 'Finance', 'Accounts', 'HR',
+  'Admin', 'Management', 'Other'
 ]
 
 const DESIGNATIONS = [
@@ -3251,9 +3253,9 @@ function PayrollTab({ companyId }) {
 }
 
 // ── Leaves Tab ────────────────────────────────────────────────────────────────
-function LeavesTab({ companyId }) {
+function LeavesTab({ companyId, onNavigate }) {
   const qc = useQueryClient()
-  const { role } = useAuth()
+  const { role, session, userProfile } = useAuth()
   const isAdmin = ['admin', 'superadmin', 'manager'].includes(role)
   const [showAdd, setShowAdd]         = useState(false)
   const [selectedEmp, setSelectedEmp] = useState('')
@@ -3293,24 +3295,27 @@ function LeavesTab({ companyId }) {
     const days = calcDays(leaveForm.from_date, leaveForm.to_date)
     setSaving(true)
     try {
-      const { error } = await supabase.from('hr_leaves').insert({
+      const { data: leave, error } = await supabase.from('hr_leaves').insert({
         company_id: companyId, employee_id: selectedEmp,
         leave_type: leaveForm.leave_type, from_date: leaveForm.from_date,
         to_date: leaveForm.to_date, days, reason: leaveForm.reason || null, status: 'pending',
-      })
+      }).select('id').single()
       if (error) throw error
-      toast.success('Leave applied')
+      const employee = employees.find(item => item.id === selectedEmp)
+      await submitApprovalCase({
+        companyId, documentType: 'leave_request', documentId: leave.id,
+        documentRef: employee?.employee_number || `LEAVE-${leave.id.slice(0, 8)}`,
+        title: `Leave request · ${employee?.name || 'Employee'}`, amount: days,
+        metricLabel: 'Leave days', requesterId: session?.user?.id,
+        requesterName: userProfile?.full_name,
+        snapshot: { employee: employee?.name, leave_type: leaveForm.leave_type, from_date: leaveForm.from_date, to_date: leaveForm.to_date, reason: leaveForm.reason || null },
+      })
+      toast.success('Leave submitted into the approval chain')
       qc.invalidateQueries(['hr_leaves', companyId])
       setShowAdd(false)
       setLeaveForm({ leave_type: 'casual', from_date: '', to_date: '', reason: '' })
       setSelectedEmp('')
     } catch (err) { toast.error(err.message || 'Failed') } finally { setSaving(false) }
-  }
-
-  const updateStatus = async (id, status) => {
-    await supabase.from('hr_leaves').update({ status, approved_at: new Date().toISOString() }).eq('id', id)
-    qc.invalidateQueries(['hr_leaves', companyId])
-    toast.success(status === 'approved' ? 'Approved' : 'Rejected')
   }
 
   const statusCls = {
@@ -3389,16 +3394,10 @@ function LeavesTab({ companyId }) {
                   </div>
                   {l.reason && <p className="text-xs text-slate-500 mt-1">{l.reason}</p>}
                   {isAdmin && l.status === 'pending' && (
-                    <div className="flex gap-2 mt-2">
-                      <button onClick={() => updateStatus(l.id, 'approved')}
-                        className="flex-1 text-xs py-1.5 rounded-lg bg-emerald-600/20 border border-emerald-700/40 text-emerald-400 hover:bg-emerald-600/30">
-                        ✓ Approve
-                      </button>
-                      <button onClick={() => updateStatus(l.id, 'rejected')}
-                        className="flex-1 text-xs py-1.5 rounded-lg bg-red-600/10 border border-red-700/30 text-red-400 hover:bg-red-600/20">
-                        ✗ Reject
-                      </button>
-                    </div>
+                    <button onClick={() => onNavigate?.('approval_center')}
+                      className="mt-2 w-full text-xs py-1.5 rounded-lg bg-primary-600/15 border border-primary-700/40 text-primary-400 hover:bg-primary-600/25">
+                      Open approval chain →
+                    </button>
                   )}
                 </div>
               )
@@ -3754,7 +3753,7 @@ export default function HRPage({ onNavigate, initialTab = 'employees' }) {
         {activeTab === 'employees'     && <EmployeesTab     companyId={companyId} />}
         {activeTab === 'attendance'    && <AttendanceTab    companyId={companyId} />}
         {activeTab === 'payroll'       && <PayrollTab       companyId={companyId} />}
-        {activeTab === 'leaves'        && <LeavesTab        companyId={companyId} />}
+        {activeTab === 'leaves'        && <LeavesTab        companyId={companyId} onNavigate={onNavigate} />}
         {activeTab === 'substitutions' && <SubstitutionsTab companyId={companyId} />}
       </div>
 

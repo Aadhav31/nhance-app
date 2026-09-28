@@ -7,6 +7,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import { nextEquipmentNumber } from '../../utils/docNumbers'
+import { isWorkflowEngineUnavailable, submitApprovalCase } from '../../lib/approvalWorkflow'
 import {
   EQUIPMENT_TYPES, EQUIPMENT_CATEGORIES, getMeterType, getPrefix, getSubCategories, getAttachments,
   getEquipmentTypes,
@@ -1980,7 +1981,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
   const [remarksText,   setRemarksText]   = useState(equipmentProp.notes || '')
   const [savingRemarks, setSavingRemarks] = useState(false)
   const qc   = useQueryClient()
-  const { role } = useAuth()
+  const { role, userProfile, session, company } = useAuth()
   const isAdmin  = ['admin', 'superadmin', 'manager'].includes(role)
 
   useEffect(() => {
@@ -2695,7 +2696,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
 
       if (fromProjectName) {
         // Transfer detected — pause and show TC capture modal
-        setTcPending({ fromProject: fromProjectName, toProject: toProjectName, fromDepId: existingDep.id })
+        setTcPending({ fromProject: fromProjectName, toProject: toProjectName, fromDepId: existingDep.id, fromProjectId: existingDep.project_id })
         setShowTCModal(true)
         setDeploySaving(false)
         return
@@ -2708,7 +2709,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
 
   // Phase 2: Do all DB work, optionally with TC details captured from modal.
   // tcDetails = { fuelLevel, condition, conditionNotes, fromIncharge, fromDesig, toIncharge, toDesig, authorizedBy, meterReading }
-  const completeDeploy = async (tcDetails, fromProjectName, fromDepId) => {
+  const completeDeploy = async (tcDetails, fromProjectName, fromDepId, fromProjectId = null) => {
     setDeploySaving(true)
     try {
       const selectedRate  = rateItems.find(r => r.id === deployRateItemId) || null
@@ -2755,9 +2756,66 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
         hour_meter_photo_url: deployMeterPhotoUrl   || null,
         deployment_location:  deployGpsLoc?.address || deploySiteName || null,
       }
-      const { error } = await supabase.rpc('planner_deploy_equipment', {
-        p_data: deploymentData, p_from_deployment_id: fromDepId || null,
-      })
+
+      let approvedTransfer = null
+      if (fromDepId) {
+        const { data: approved, error: approvedError } = await supabase.from('asset_transfer_requests')
+          .select('id,status,transfer_number')
+          .eq('company_id', companyId).eq('asset_kind', 'equipment')
+          .eq('equipment_id', equipment.id).eq('from_project_id', fromProjectId)
+          .eq('to_project_id', deployProjectId).eq('status', 'approved')
+          .order('created_at', { ascending: false }).limit(1).maybeSingle()
+
+        if (approvedError && !isWorkflowEngineUnavailable(approvedError)) throw approvedError
+        approvedTransfer = approved || null
+
+        if (!approvedTransfer && !approvedError) {
+          const { data: openRequest } = await supabase.from('asset_transfer_requests')
+            .select('id,transfer_number,status').eq('company_id', companyId)
+            .eq('asset_kind', 'equipment').eq('equipment_id', equipment.id)
+            .eq('from_project_id', fromProjectId).eq('to_project_id', deployProjectId)
+            .in('status', ['draft','in_review','returned']).order('created_at', { ascending: false }).limit(1).maybeSingle()
+          if (openRequest?.status === 'in_review') {
+            toast(`Transfer ${openRequest.transfer_number} is still in the approval chain`, { icon: '⏳' })
+            setShowTCModal(false); setTcPending(null)
+            return
+          }
+
+          const transferNumber = `ETR-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`
+          const { data: request, error: requestError } = await supabase.from('asset_transfer_requests').insert({
+            company_id: companyId, transfer_number: transferNumber, asset_kind: 'equipment',
+            equipment_id: equipment.id, from_project_id: fromProjectId, to_project_id: deployProjectId,
+            required_by: today, reason: deploySiteName ? `Required at ${deploySiteName}` : 'Inter-site deployment requirement',
+            notes: deployWorkOrderRef ? `Work order: ${deployWorkOrderRef}` : null,
+            status: 'draft', requested_by: session.user.id,
+          }).select('id').single()
+          if (requestError) throw requestError
+          await submitApprovalCase({
+            companyId, documentType: 'equipment_transfer', documentId: request.id,
+            documentRef: transferNumber,
+            title: `Equipment transfer · ${equipment.name}${equipment.equipment_number ? ` (${equipment.equipment_number})` : ''}`,
+            requesterId: session.user.id, requesterName: userProfile?.full_name,
+            projectId: deployProjectId,
+            snapshot: {
+              equipment: equipment.name, equipment_number: equipment.equipment_number,
+              from_project: fromProjectName, to_project: toProjectName,
+              meter_reading: tcDetails?.meterReading || deployHourMeter || equipment.current_meter_reading || null,
+              condition: tcDetails?.condition || null, expected_return: deployExpectedReturn || null,
+              work_order: deployWorkOrderRef || null,
+            },
+          })
+          setShowTCModal(false); setTcPending(null)
+          toast.success(`Transfer ${transferNumber} submitted for source, P&M and destination approval`)
+          return
+        }
+        // If the workflow schema is not published yet, approvedError is a schema
+        // miss and the legacy direct-transfer path below remains unchanged.
+      }
+      const rpcName = approvedTransfer ? 'execute_approved_equipment_transfer' : 'planner_deploy_equipment'
+      const rpcArgs = approvedTransfer
+        ? { p_request_id: approvedTransfer.id, p_data: deploymentData, p_from_deployment_id: fromDepId || null, p_plan_id: null }
+        : { p_data: deploymentData, p_from_deployment_id: fromDepId || null }
+      const { error } = await supabase.rpc(rpcName, rpcArgs)
       if (error) throw error
 
       await refreshEquipment()
@@ -4444,7 +4502,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
           meterReading={deployHourMeter || equipment.current_meter_reading || ''}
           authorizedBy={userProfile?.full_name || ''}
           deploySaving={deploySaving}
-          onConfirm={(tcDetails) => completeDeploy(tcDetails, tcPending.fromProject, tcPending.fromDepId)}
+          onConfirm={(tcDetails) => completeDeploy(tcDetails, tcPending.fromProject, tcPending.fromDepId, tcPending.fromProjectId)}
           onCancel={() => { setShowTCModal(false); setTcPending(null) }}
         />
       )}

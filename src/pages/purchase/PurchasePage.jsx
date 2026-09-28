@@ -24,6 +24,7 @@ import { createVerification, voidVerification } from '../../lib/docVerify'
 import {
   downloadBillXLSX, downloadPOXLSX, downloadPaymentMadeXLSX,
 } from '../../lib/docXLSX'
+import { isWorkflowEngineUnavailable, submitApprovalCase } from '../../lib/approvalWorkflow'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const todayStr = () => new Date().toISOString().split('T')[0]
@@ -40,6 +41,10 @@ const STATUS_COLORS = {
   overdue:             'bg-red-500/10 text-red-400 border-red-700/40',
   cancelled:           'bg-red-500/10 text-red-400 border-red-700/40',
   pending_approval:    'bg-orange-500/15 text-orange-400 border-orange-600/50',
+  in_review:           'bg-orange-500/15 text-orange-400 border-orange-600/50',
+  approved:            'bg-emerald-500/10 text-emerald-400 border-emerald-700/40',
+  rejected:            'bg-red-500/10 text-red-400 border-red-700/40',
+  returned:            'bg-sky-500/10 text-sky-400 border-sky-700/40',
   confirmed:           'bg-emerald-500/10 text-emerald-400 border-emerald-700/40',
   partially_received:  'bg-yellow-500/10 text-yellow-400 border-yellow-700/40',
   received:            'bg-emerald-500/10 text-emerald-400 border-emerald-700/40',
@@ -61,6 +66,10 @@ const STATUS_LABELS = {
   issued:              'Issued',
   applied:             'Applied',
   pending_approval:    '⚠ Needs Approval',
+  in_review:           'In Approval',
+  approved:            'Approved',
+  rejected:            'Rejected',
+  returned:            'Returned',
 }
 
 function StatusBadge({ status }) {
@@ -893,6 +902,7 @@ function VendorsTab({ companyId, session }) {
 // ── EXPENSES TAB ──────────────────────────────────────────────────────────────
 function ExpensesTab({ companyId, session }) {
   const qc = useQueryClient()
+  const { userProfile } = useAuth()
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState({ description: '', amount: '', expense_date: todayStr(), category: 'spares', vendor_id: '', payment_mode: 'cash', reference: '', notes: '' })
@@ -1002,7 +1012,14 @@ function ExpensesTab({ companyId, session }) {
         notes:          form.notes || null, created_by: session.user.id,
       })
 
-      toast.success('Expense recorded')
+      await submitApprovalCase({
+        companyId, documentType: 'expense', documentId: exp.id,
+        documentRef: `EXP-${exp.id.slice(0, 8)}`, title: `Purchase expense · ${form.description.trim()}`,
+        amount: amt, requesterId: session.user.id, requesterName: userProfile?.full_name,
+        snapshot: { category: form.category, expense_date: form.expense_date, payment_mode: form.payment_mode, reference: form.reference || null, notes: form.notes || null },
+      })
+
+      toast.success('Expense submitted for approval')
       setShowCreate(false)
       setForm({ description: '', amount: '', expense_date: todayStr(), category: 'spares', vendor_id: '', payment_mode: 'cash', reference: '', notes: '' })
       qc.invalidateQueries(['purchase_expenses', companyId])
@@ -1451,7 +1468,7 @@ function BillDetailPanel({ bill: b, companyId, onClose, onEdit, onPDF, onXLSX })
 }
 
 // ── BILLS TAB ─────────────────────────────────────────────────────────────────
-function BillsTab({ companyId, session, initialStockTxnId }) {
+function BillsTab({ companyId, session, initialStockTxnId, onNavigate }) {
   const qc = useQueryClient()
   const { company, userProfile, industryType } = useAuth()
   const isCrusher = industryType === 'crusher'
@@ -1653,6 +1670,10 @@ function BillsTab({ companyId, session, initialStockTxnId }) {
   }
 
   const deleteBill = async (bill) => {
+    if (bill.status === 'pending_approval') {
+      onNavigate?.('approval_center')
+      return toast.error('Withdraw the open approval before deleting this bill')
+    }
     if (Number(bill.paid_amount) > 0) return toast.error('Cannot delete a paid bill. Void it instead.')
     if (!window.confirm(`Delete Bill ${bill.bill_number}? Stock movements will be reversed.`)) return
     try {
@@ -1668,6 +1689,10 @@ function BillsTab({ companyId, session, initialStockTxnId }) {
   }
 
   const voidBill = async (bill) => {
+    if (bill.status === 'pending_approval') {
+      onNavigate?.('approval_center')
+      return toast.error('Withdraw the open approval before voiding this bill')
+    }
     if (!window.confirm(`Void Bill ${bill.bill_number}? It will be marked cancelled.`)) return
     const { error } = await supabase.from('bills').update({ status: 'cancelled' }).eq('id', bill.id)
     if (error) return toast.error(error.message)
@@ -1742,12 +1767,6 @@ function BillsTab({ companyId, session, initialStockTxnId }) {
     enabled: !!companyId,
     staleTime: 5 * 60_000,
   })
-  const priceCatalogMap = useMemo(() => {
-    const m = new Map()
-    for (const c of priceCatalog) m.set(c.description, c)
-    return m
-  }, [priceCatalog])
-
   const { data: vendors = [] } = useQuery({
     queryKey: ['vendors_list', companyId],
     queryFn: async () => {
@@ -1911,20 +1930,8 @@ function BillsTab({ companyId, session, initialStockTxnId }) {
           cgst_rate: 0, sgst_rate: 0, igst_rate: 0,
           cgst_amount: cgst_amt, sgst_amount: sgst_amt, igst_amount: igst_amt,
           total_amount: total, balance_due: Math.max(0, total - (Number(editing.paid_amount) || 0)),
-          // Promote draft → pending (or pending_approval if any line exceeds price threshold)
-          status: (() => {
-            if (!['draft','pending','pending_approval'].includes(editing.status)) return editing.status
-            const overpriced = validLines.some(l => {
-              const rate = parseFloat(l.rate) || 0
-              const key  = l.description.toLowerCase().trim()
-              const cat  = priceCatalogMap.get(key)
-              if (!cat) return false
-              const ref = cat.benchmark_price || cat.avg_purchase_price
-              if (!ref) return false
-              return (rate - ref) / ref * 100 > (cat.overpay_threshold || 20)
-            })
-            return overpriced ? 'pending_approval' : 'pending'
-          })(),
+          // Any vendor liability must pass the configured certification chain.
+          status: ['draft','pending','pending_approval','rejected'].includes(editing.status) ? 'pending_approval' : editing.status,
           notes: form.notes || null,
           // Facility: loading point for crusher, equipment for others
           equipment_id:     isCrusher ? null : (form.equipment_id || null),
@@ -1946,6 +1953,15 @@ function BillsTab({ companyId, session, initialStockTxnId }) {
             const url = await uploadBillAttachment(editing.id, attachFile)
             await supabase.from('bills').update({ attachment_url: url }).eq('id', editing.id)
           } catch (e) { toast.error(`Attachment upload failed: ${e.message}`) }
+        }
+        if (editing.status !== 'pending_approval') {
+          await submitApprovalCase({
+            companyId, documentType: 'vendor_bill', documentId: editing.id,
+            documentRef: editing.bill_number, title: `Vendor invoice · ${vendor?.name || 'Vendor'}`,
+            amount: total, vendorId: form.vendor_id, requesterId: session.user.id,
+            requesterName: userProfile?.full_name,
+            snapshot: { vendor: vendor?.name, vendor_gstin: form.vendor_gstin || null, bill_date: form.bill_date, due_date: dueDateVal || null, invoice_reference: form.bill_ref || null, line_items: validLines.length },
+          })
         }
         toast.success(`Bill ${editing.bill_number} updated`)
         closeModal()
@@ -1971,20 +1987,7 @@ function BillsTab({ companyId, session, initialStockTxnId }) {
         total_amount: total,
         paid_amount: 0,
         balance_due: total,
-        status: (() => {
-          // Approval gate: if any line item rate exceeds the catalog benchmark by more than threshold → pending_approval
-          const overpriced = validLines.some(l => {
-            const rate = parseFloat(l.rate) || 0
-            const key  = l.description.toLowerCase().trim()
-            const cat  = priceCatalogMap.get(key)
-            if (!cat) return false
-            const ref = cat.benchmark_price || cat.avg_purchase_price
-            if (!ref) return false
-            const pct = (rate - ref) / ref * 100
-            return pct > (cat.overpay_threshold || 20)
-          })
-          return overpriced ? 'pending_approval' : 'pending'
-        })(),
+        status: 'pending_approval',
         notes: form.notes || null, created_by: session.user.id,
         // Facility: loading point for crusher, equipment for others
         equipment_id:     isCrusher ? null : (form.equipment_id || null),
@@ -2096,6 +2099,14 @@ function BillsTab({ companyId, session, initialStockTxnId }) {
         qc.invalidateQueries(['fuel_tanks', companyId])
         qc.invalidateQueries(['fuel_tanks_for_bill', companyId])
       }
+
+      await submitApprovalCase({
+        companyId, documentType: 'vendor_bill', documentId: id, documentRef: blNum,
+        title: `Vendor invoice · ${vendor?.name || 'Vendor'}`, amount: total,
+        vendorId: form.vendor_id, requesterId: session.user.id,
+        requesterName: userProfile?.full_name,
+        snapshot: { vendor: vendor?.name, vendor_gstin: form.vendor_gstin || null, bill_date: form.bill_date, due_date: dueDateVal || null, invoice_reference: form.bill_ref || null, line_items: validLines.length, attachment: Boolean(attachFile) },
+      })
 
       closeModal()
       qc.invalidateQueries(['bills', companyId])
@@ -2264,9 +2275,9 @@ function BillsTab({ companyId, session, initialStockTxnId }) {
                   {/* Draft bills: show Initiate Bill CTA; others: show pencil edit */}
                   {b.status === 'pending_approval' ? (
                     <button
-                      onClick={e => { e.stopPropagation(); updateStatus(b.id, 'pending') }}
+                      onClick={e => { e.stopPropagation(); onNavigate?.('approval_center') }}
                       className="flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 bg-orange-600 hover:bg-orange-500 text-white rounded-lg transition-colors whitespace-nowrap">
-                      Approve Bill ✓
+                      View approval chain →
                     </button>
                   ) : b.status === 'draft' ? (
                     <button
@@ -2707,7 +2718,7 @@ function BillsTab({ companyId, session, initialStockTxnId }) {
 }
 
 // ── PURCHASE ORDERS TAB ───────────────────────────────────────────────────────
-function PurchaseOrdersTab({ companyId, session }) {
+function PurchaseOrdersTab({ companyId, session, onNavigate }) {
   const qc = useQueryClient()
   const { company, userProfile } = useAuth()
   const [showCreate, setShowCreate] = useState(false)
@@ -2770,6 +2781,10 @@ function PurchaseOrdersTab({ companyId, session }) {
   }
 
   const deletePO = async (po) => {
+    if (po.status === 'pending_approval') {
+      onNavigate?.('approval_center')
+      return toast.error('Withdraw the open approval before deleting this PO')
+    }
     if (['received','partially_received'].includes(po.status)) return toast.error('Cannot delete a received PO. Void it instead.')
     if (!window.confirm(`Delete PO ${po.po_number}?`)) return
     try {
@@ -2782,6 +2797,10 @@ function PurchaseOrdersTab({ companyId, session }) {
   }
 
   const voidPO = async (po) => {
+    if (po.status === 'pending_approval') {
+      onNavigate?.('approval_center')
+      return toast.error('Withdraw the open approval before voiding this PO')
+    }
     if (!window.confirm(`Void PO ${po.po_number}?`)) return
     const { error } = await supabase.from('purchase_orders').update({ status: 'cancelled' }).eq('id', po.id)
     if (error) return toast.error(error.message)
@@ -2860,7 +2879,7 @@ function PurchaseOrdersTab({ companyId, session }) {
         subtotal, discount_amount: parseFloat(form.discount_amount) || 0, taxable_amount: taxable,
         cgst_rate: 0, sgst_rate: 0, igst_rate: 0,
         cgst_amount: cgst_amt, sgst_amount: sgst_amt, igst_amount: igst_amt,
-        total_amount: total, status: 'confirmed', notes: form.notes || null, created_by: session.user.id,
+        total_amount: total, status: 'pending_approval', notes: form.notes || null, created_by: session.user.id,
       })
       if (error) throw error
       const items = validLines.map((l, i) => ({
@@ -2869,7 +2888,14 @@ function PurchaseOrdersTab({ companyId, session }) {
         rate: parseFloat(l.rate) || 0, amount: l.amount, sort_order: i,
       }))
       if (items.length > 0) { const { error: le } = await supabase.from('po_line_items').insert(items); if (le) throw le }
-      toast.success(`Purchase Order ${poNum} created`)
+      await submitApprovalCase({
+        companyId, documentType: 'purchase_order', documentId: id, documentRef: poNum,
+        title: `Purchase order · ${vendor?.name || 'Vendor'}`, amount: total,
+        vendorId: form.vendor_id, requesterId: session.user.id,
+        requesterName: userProfile?.full_name,
+        snapshot: { vendor: vendor?.name, po_date: form.po_date, expected_delivery: form.expected_delivery || null, delivery_address: form.delivery_address || null, line_items: validLines.length },
+      })
+      toast.success(`Purchase Order ${poNum} submitted for approval`)
       closeModal()
       qc.invalidateQueries({ queryKey: ['purchase_orders', companyId] })
     } catch (e) { toast.error(e.message) } finally { setSaving(false) }
@@ -2956,6 +2982,74 @@ function PurchaseOrdersTab({ companyId, session }) {
       )}
     </div>
   )
+}
+
+// ── VENDOR WORK ORDERS TAB ────────────────────────────────────────────────────
+function WorkOrdersTab({ companyId, session }) {
+  const qc = useQueryClient()
+  const { userProfile } = useAuth()
+  const [showCreate, setShowCreate] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const initial = { vendor_id: '', project_id: '', work_order_date: todayStr(), scope_of_work: '', contract_amount: '', start_date: '', completion_date: '', payment_terms: '', retention_percent: '0', performance_security: '', notes: '' }
+  const [form, setForm] = useState(initial)
+  const setF = (key, value) => setForm(current => ({ ...current, [key]: value }))
+
+  const { data: workOrders = [], isLoading } = useQuery({
+    queryKey: ['vendor_work_orders', companyId],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('vendor_work_orders').select('*, projects(project_name)')
+        .eq('company_id', companyId).order('created_at', { ascending: false })
+      if (error && isWorkflowEngineUnavailable(error)) return []
+      if (error) throw error
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+  const { data: vendors = [] } = useQuery({
+    queryKey: ['vendors_work_orders', companyId],
+    queryFn: async () => (await supabase.from('vendors').select('id,name').eq('company_id', companyId).eq('is_active', true).order('name')).data || [],
+    enabled: !!companyId && showCreate,
+  })
+  const { data: projects = [] } = useQuery({
+    queryKey: ['projects_work_orders', companyId],
+    queryFn: async () => (await supabase.from('projects').select('id,project_name').eq('company_id', companyId).eq('is_active', true).order('project_name')).data || [],
+    enabled: !!companyId && showCreate,
+  })
+
+  const save = async () => {
+    if (!form.vendor_id) return toast.error('Select a vendor')
+    if (!form.scope_of_work.trim()) return toast.error('Enter the scope of work')
+    if (!(Number(form.contract_amount) > 0)) return toast.error('Enter a valid contract amount')
+    setSaving(true)
+    try {
+      const vendor = vendors.find(item => item.id === form.vendor_id)
+      const project = projects.find(item => item.id === form.project_id)
+      const number = await nextDocNumber(companyId, 'work_order').catch(() => `WO-${Date.now()}`)
+      const { data: workOrder, error } = await supabase.from('vendor_work_orders').insert({
+        company_id: companyId, work_order_number: number, work_order_date: form.work_order_date,
+        vendor_id: form.vendor_id, vendor_name: vendor?.name || '', project_id: form.project_id || null,
+        scope_of_work: form.scope_of_work.trim(), contract_amount: Number(form.contract_amount),
+        start_date: form.start_date || null, completion_date: form.completion_date || null,
+        payment_terms: form.payment_terms || null, retention_percent: Number(form.retention_percent) || 0,
+        performance_security: form.performance_security || null, notes: form.notes || null,
+        status: 'draft', created_by: session.user.id,
+      }).select('id').single()
+      if (error) throw error
+      await submitApprovalCase({
+        companyId, documentType: 'work_order', documentId: workOrder.id, documentRef: number,
+        title: `Vendor work order · ${vendor?.name || 'Vendor'}`, amount: Number(form.contract_amount),
+        projectId: form.project_id || null, vendorId: form.vendor_id,
+        requesterId: session.user.id, requesterName: userProfile?.full_name,
+        snapshot: { vendor: vendor?.name, project: project?.project_name || null, scope: form.scope_of_work.trim(), start_date: form.start_date || null, completion_date: form.completion_date || null, payment_terms: form.payment_terms || null, retention_percent: Number(form.retention_percent) || 0 },
+      })
+      toast.success(`Work order ${number} submitted for approval`)
+      setShowCreate(false); setForm(initial)
+      qc.invalidateQueries({ queryKey: ['vendor_work_orders'] })
+      qc.invalidateQueries({ queryKey: ['approval_inbox'] })
+    } catch (error) { toast.error(error.message || 'Failed to create work order') } finally { setSaving(false) }
+  }
+
+  return <div className="flex h-full flex-col"><div className="flex shrink-0 items-center justify-between border-b border-dark-800 px-4 py-3"><span className="rounded-xl bg-dark-800 px-3 py-2 text-xs text-slate-500">{workOrders.length} work orders</span><button type="button" onClick={() => setShowCreate(true)} className="btn-primary"><Plus className="h-4 w-4" />New Work Order</button></div><div className="flex-1 overflow-y-auto p-4">{isLoading ? <div className="flex justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-primary-400" /></div> : workOrders.length ? <div className="space-y-2">{workOrders.map(order => <div key={order.id} className="rounded-xl border border-dark-700 bg-dark-800 p-4"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="flex items-center gap-2"><span className="text-xs font-mono text-primary-500">{order.work_order_number}</span><StatusBadge status={order.status} /></div><p className="mt-1 text-sm font-bold text-slate-100">{order.vendor_name}</p><p className="mt-0.5 truncate text-xs text-slate-500">{order.projects?.project_name || 'Company'} · {order.scope_of_work}</p></div><p className="shrink-0 text-lg font-black text-slate-100">{fmtINR(order.contract_amount)}</p></div><p className="mt-2 text-[11px] text-slate-600">{fmtDate(order.work_order_date)}{order.completion_date ? ` · Completion ${fmtDate(order.completion_date)}` : ''}</p></div>)}</div> : <div className="py-16 text-center"><FileText className="mx-auto h-10 w-10 text-slate-700" /><p className="mt-2 text-sm text-slate-500">No vendor work orders yet</p><p className="mt-1 text-xs text-slate-600">Create one to start technical, commercial and finance approval.</p></div>}</div>{showCreate ? <Modal title="New Vendor Work Order" subtitle="The order is issued only after the full approval chain." onClose={() => setShowCreate(false)} footer={<><button type="button" onClick={() => setShowCreate(false)} className="flex-1 btn-ghost">Cancel</button><button type="button" onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Submit for Approval'}</button></>}><div className="grid grid-cols-2 gap-3"><div className="col-span-2"><Field label="Vendor *"><select className={inp()} value={form.vendor_id} onChange={event => setF('vendor_id', event.target.value)}><option value="">-- Select vendor --</option>{vendors.map(vendor => <option key={vendor.id} value={vendor.id}>{vendor.name}</option>)}</select></Field></div><div className="col-span-2"><Field label="Project"><select className={inp()} value={form.project_id} onChange={event => setF('project_id', event.target.value)}><option value="">Company-level</option>{projects.map(project => <option key={project.id} value={project.id}>{project.project_name}</option>)}</select></Field></div><Field label="Work Order Date"><input type="date" className={inp()} value={form.work_order_date} onChange={event => setF('work_order_date', event.target.value)} /></Field><Field label="Contract Amount (₹) *"><input type="number" className={inp()} value={form.contract_amount} onChange={event => setF('contract_amount', event.target.value)} /></Field><Field label="Start Date"><input type="date" className={inp()} value={form.start_date} onChange={event => setF('start_date', event.target.value)} /></Field><Field label="Completion Date"><input type="date" className={inp()} value={form.completion_date} onChange={event => setF('completion_date', event.target.value)} /></Field><div className="col-span-2"><Field label="Scope of Work *"><textarea rows={3} className={inp()} value={form.scope_of_work} onChange={event => setF('scope_of_work', event.target.value)} /></Field></div><Field label="Retention %"><input type="number" className={inp()} value={form.retention_percent} onChange={event => setF('retention_percent', event.target.value)} /></Field><Field label="Performance Security"><input className={inp()} value={form.performance_security} onChange={event => setF('performance_security', event.target.value)} /></Field><div className="col-span-2"><Field label="Payment Terms"><input className={inp()} value={form.payment_terms} onChange={event => setF('payment_terms', event.target.value)} /></Field></div><div className="col-span-2"><Field label="Notes"><textarea rows={2} className={inp()} value={form.notes} onChange={event => setF('notes', event.target.value)} /></Field></div></div></Modal> : null}</div>
 }
 
 // ── VENDOR CREDITS TAB ────────────────────────────────────────────────────────
@@ -3110,7 +3204,7 @@ function VendorCreditsTab({ companyId, session }) {
 // ── PAYMENTS MADE TAB ─────────────────────────────────────────────────────────
 function PaymentsMadeTab({ companyId, session }) {
   const qc = useQueryClient()
-  const { company, userProfile } = useAuth()
+  const { company, userProfile, role } = useAuth()
   const [showCreate, setShowCreate] = useState(false)
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState({ vendor_id: '', amount: '', payment_date: todayStr(), payment_mode: 'bank', bank_reference: '', notes: '' })
@@ -3170,6 +3264,20 @@ function PaymentsMadeTab({ companyId, session }) {
     enabled: !!companyId,
   })
 
+  const { data: paymentRequests = [] } = useQuery({
+    queryKey: ['vendor_payment_requests', companyId],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('vendor_payment_requests')
+        .select('*, bills(bill_number)').eq('company_id', companyId)
+        .neq('status', 'processed').neq('status', 'cancelled')
+        .order('created_at', { ascending: false }).limit(100)
+      if (error && isWorkflowEngineUnavailable(error)) return []
+      if (error) throw error
+      return data || []
+    },
+    enabled: !!companyId,
+  })
+
   const { data: vendors = [] } = useQuery({
     queryKey: ['vendors_list', companyId],
     queryFn: async () => {
@@ -3223,6 +3331,33 @@ function PaymentsMadeTab({ companyId, session }) {
         qc.invalidateQueries(['ledger', companyId])
         return
       }
+      const requestNum = await nextDocNumber(companyId, 'vendor_payment_request').catch(() => `VPR-${Date.now()}`)
+      const { data: request, error: requestError } = await supabase.from('vendor_payment_requests').insert({
+        company_id: companyId, request_number: requestNum,
+        bill_id: billId || null, vendor_id: form.vendor_id, vendor_name: vendor?.name || '',
+        requested_amount: amt, requested_payment_date: form.payment_date,
+        payment_mode: form.payment_mode, notes: form.notes || null,
+        status: 'draft', requested_by: session.user.id,
+      }).select('id').single()
+
+      if (!requestError) {
+        await submitApprovalCase({
+          companyId, documentType: 'vendor_payment', documentId: request.id,
+          documentRef: requestNum, title: `Vendor payment · ${vendor?.name || 'Vendor'}`,
+          amount: amt, vendorId: form.vendor_id, requesterId: session.user.id,
+          requesterName: userProfile?.full_name,
+          snapshot: { vendor: vendor?.name, bill: openBills.find(b => b.id === billId)?.bill_number || null, requested_payment_date: form.payment_date, payment_mode: form.payment_mode, bank_reference_entered: Boolean(form.bank_reference), notes: form.notes || null },
+        })
+        toast.success(`Payment request ${requestNum} submitted for approval`)
+        closeModal()
+        qc.invalidateQueries({ queryKey: ['vendor_payment_requests'] })
+        qc.invalidateQueries({ queryKey: ['approval_inbox'] })
+        return
+      }
+      if (!isWorkflowEngineUnavailable(requestError)) throw requestError
+
+      // Migration-safe fallback for the preview branch. Existing production
+      // behaviour remains available until the approval engine is published.
       const pmNum = await nextDocNumber(companyId, 'payment_made').catch(() => `PM-${Date.now()}`)
       const { data: pm, error } = await supabase.from('payments_made').insert({
         company_id: companyId, payment_number: pmNum,
@@ -3252,13 +3387,35 @@ function PaymentsMadeTab({ companyId, session }) {
     } catch (e) { toast.error(e.message) } finally { setSaving(false) }
   }
 
+  const processApprovedRequest = async request => {
+    const reference = request.payment_mode === 'cash'
+      ? ''
+      : window.prompt(`Enter bank / cheque reference for ${request.request_number}`)
+    if (request.payment_mode !== 'cash' && !reference) return
+    try {
+      const { error } = await supabase.rpc('process_vendor_payment_request', {
+        p_request_id: request.id,
+        p_payment_date: request.requested_payment_date || todayStr(),
+        p_payment_mode: request.payment_mode || 'bank',
+        p_bank_reference: reference || null,
+      })
+      if (error) throw error
+      toast.success(`Payment ${request.request_number} processed and posted to the ledger`)
+      qc.invalidateQueries({ queryKey: ['vendor_payment_requests'] })
+      qc.invalidateQueries({ queryKey: ['payments_made'] })
+      qc.invalidateQueries({ queryKey: ['bills'] })
+      qc.invalidateQueries({ queryKey: ['ledger'] })
+    } catch (error) { toast.error(error.message || 'Payment processing failed') }
+  }
+
   return (
     <div className="flex flex-col h-full">
       <div className="px-4 py-3 border-b border-dark-800 shrink-0 flex items-center justify-between">
         <div className="bg-dark-800 rounded-xl px-3 py-2 text-xs"><span className="text-slate-500">Total Paid Out </span><span className="font-bold text-red-400">{fmtINR(totalPaid)}</span></div>
-        <button onClick={openCreate} className="btn-primary"><Plus className="w-4 h-4" /> Record Payment</button>
+        <button onClick={openCreate} className="btn-primary"><Plus className="w-4 h-4" /> Request Payment</button>
       </div>
       <div className="flex-1 overflow-y-auto px-4 pb-4 pt-3">
+        {paymentRequests.length > 0 && <div className="mb-4 rounded-xl border border-amber-500/25 bg-amber-500/5 p-3"><div className="mb-2 flex items-center justify-between"><p className="text-xs font-bold text-amber-300">Payment approval queue</p><span className="text-[10px] text-slate-500">{paymentRequests.length} open</span></div><div className="space-y-2">{paymentRequests.map(request => <div key={request.id} className="flex items-center justify-between gap-3 rounded-lg border border-dark-700 bg-dark-800 px-3 py-2"><div className="min-w-0"><div className="flex items-center gap-2"><span className="text-xs font-mono text-primary-400">{request.request_number}</span><span className={`rounded-full border px-1.5 py-0.5 text-[10px] font-bold ${request.status === 'approved' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400' : request.status === 'rejected' ? 'border-red-500/30 bg-red-500/10 text-red-400' : 'border-amber-500/30 bg-amber-500/10 text-amber-400'}`}>{request.status.replace('_', ' ')}</span></div><p className="truncate text-xs font-semibold text-slate-200">{request.vendor_name}{request.bills?.bill_number ? ` · ${request.bills.bill_number}` : ''}</p></div><div className="flex shrink-0 items-center gap-2"><span className="text-sm font-black text-slate-100">{fmtINR(request.requested_amount)}</span>{request.status === 'approved' && ['accounts','admin'].includes(role) ? <button type="button" onClick={() => processApprovedRequest(request)} className="rounded-lg bg-emerald-600 px-2.5 py-1.5 text-[11px] font-bold text-white hover:bg-emerald-500">Process</button> : null}</div></div>)}</div></div>}
         {isLoading ? <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-primary-400" /></div>
         : payments.length === 0 ? <div className="flex flex-col items-center py-16 gap-2 text-slate-500"><ArrowUpCircle className="w-10 h-10 text-slate-700" /><p>No payments made yet</p></div>
         : <div className="space-y-2">
@@ -3289,8 +3446,8 @@ function PaymentsMadeTab({ companyId, session }) {
         </div>}
       </div>
       {showCreate && (
-        <Modal title={editing ? `Edit Payment · ${editing.payment_number}` : 'Record Payment'} onClose={closeModal}
-          footer={<><button onClick={closeModal} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : editing ? 'Update Payment' : 'Record Payment'}</button></>}>
+        <Modal title={editing ? `Edit Payment · ${editing.payment_number}` : 'Request Vendor Payment'} subtitle={editing ? undefined : 'Payment is posted only after the approval chain is complete.'} onClose={closeModal}
+          footer={<><button onClick={closeModal} className="flex-1 btn-ghost">Cancel</button><button onClick={save} disabled={saving} className="flex-1 btn-primary">{saving ? <Loader2 className="w-4 h-4 animate-spin" /> : editing ? 'Update Payment' : 'Submit Request'}</button></>}>
           <Field label="Vendor *">
             <select className={inp()} value={form.vendor_id} onChange={e => { setF('vendor_id', e.target.value); setBillId('') }}>
               <option value="">-- Select vendor --</option>
@@ -3807,7 +3964,7 @@ function ItemCatalogueTab({ companyId, session }) {
 }
 
 // ── MAIN PURCHASE PAGE ────────────────────────────────────────────────────────
-const PURCHASE_TAB_IDS = new Set(['vendors', 'expenses', 'bills', 'pos', 'vcredits', 'payments', 'vehicles'])
+const PURCHASE_TAB_IDS = new Set(['vendors', 'expenses', 'bills', 'pos', 'work_orders', 'vcredits', 'payments', 'vehicles'])
 
 export default function PurchasePage({ onNavigate, initialTab = 'vendors', initialStockTxnId }) {
   const { companyId, session } = useAuth()
@@ -3827,6 +3984,7 @@ export default function PurchasePage({ onNavigate, initialTab = 'vendors', initi
     { id: 'expenses', label: 'Expenses',          icon: Wallet },
     { id: 'bills',    label: 'Bills',             icon: FileText },
     { id: 'pos',      label: 'Purchase Orders',   icon: ShoppingCart },
+    { id: 'work_orders', label: 'Work Orders',     icon: FileText },
     { id: 'vcredits', label: 'Vendor Credits',    icon: RefreshCcw },
     { id: 'payments', label: 'Payments Made',     icon: ArrowUpCircle },
     { id: 'vehicles',  label: 'Vehicles',          icon: Truck },
@@ -3862,8 +4020,9 @@ export default function PurchasePage({ onNavigate, initialTab = 'vendors', initi
       <div className="flex-1 overflow-hidden">
         {activeTab === 'vendors'  && <VendorsTab  companyId={companyId} session={session} />}
         {activeTab === 'expenses' && <ExpensesTab companyId={companyId} session={session} />}
-        {activeTab === 'bills'    && <BillsTab    companyId={companyId} session={session} initialStockTxnId={initialStockTxnId} />}
-        {activeTab === 'pos'      && <PurchaseOrdersTab companyId={companyId} session={session} />}
+        {activeTab === 'bills'    && <BillsTab    companyId={companyId} session={session} initialStockTxnId={initialStockTxnId} onNavigate={onNavigate} />}
+        {activeTab === 'pos'      && <PurchaseOrdersTab companyId={companyId} session={session} onNavigate={onNavigate} />}
+        {activeTab === 'work_orders' && <WorkOrdersTab companyId={companyId} session={session} />}
         {activeTab === 'vcredits' && <VendorCreditsTab  companyId={companyId} session={session} />}
         {activeTab === 'payments' && <PaymentsMadeTab   companyId={companyId} session={session} />}
         {activeTab === 'vehicles' && (
