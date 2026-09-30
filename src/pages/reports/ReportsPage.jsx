@@ -2,6 +2,14 @@ import { useState, useMemo, useCallback, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
+import { downloadReportXLSX } from '../../lib/docXLSX'
+import { downloadTablePDF } from '../../lib/reportPDF'
+import {
+  buildOutstandingInvoiceRows,
+  filterOutstandingInvoices,
+  groupOutstandingInvoices,
+  summarizeOutstandingInvoices,
+} from '../../lib/invoiceOutstandingReport'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -18,6 +26,7 @@ const REPORTS = [
   { id: 'payroll',           cat: 'HR & Payroll',  label: 'Payroll Summary',        desc: 'Salary structure and net pay estimate' },
   { id: 'maintenance_cost',  cat: 'Maintenance',   label: 'Maintenance Cost',       desc: 'Maintenance spend by equipment & type' },
   { id: 'revenue',           cat: 'Finance',       label: 'Revenue & Collections',  desc: 'Invoiced, collected & outstanding' },
+  { id: 'invoice_outstanding', cat: 'Finance',     label: 'Outstanding Receivables', desc: 'Who owes how much — invoice, client and project views with PDF and Excel' },
   { id: 'invoice_aging',     cat: 'Finance',       label: 'Invoice Aging',          desc: 'Outstanding dues bucketed by age' },
   { id: 'expense_report',    cat: 'Finance',       label: 'Expense Breakdown',      desc: 'Expenses by category and vendor' },
   { id: 'project_pl',        cat: 'Projects',      label: 'Project Summary',        desc: 'Project-wise hours, costs & revenue' },
@@ -34,8 +43,9 @@ const REPORT_IDS = new Set(REPORTS.map(report => report.id))
 const fmt  = n => '₹' + (Number(n)||0).toLocaleString('en-IN', { maximumFractionDigits: 0 })
 const fmtN = (n, dec=1) => (Number(n)||0).toLocaleString('en-IN', { maximumFractionDigits: dec })
 const fmtDate = d => d ? new Date(d).toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' }) : '—'
-const monthStart = () => { const d=new Date(); d.setDate(1); return d.toISOString().slice(0,10) }
-const todayStr = () => new Date().toISOString().slice(0,10)
+const inputDate = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+const monthStart = () => { const d=new Date(); d.setDate(1); return inputDate(d) }
+const todayStr = () => inputDate(new Date())
 
 function exportCSV(rows, cols, filename) {
   const header = cols.map(c=>c.label).join(',')
@@ -1393,6 +1403,280 @@ function InvoiceAgingReport({ companyId }) {
   )
 }
 
+// ─── Outstanding Receivables ─────────────────────────────────────────────────
+
+function OutstandingReceivablesReport({ companyId, onNavigate }) {
+  const [view, setView] = useState('invoice')
+  const [search, setSearch] = useState('')
+  const [client, setClient] = useState('')
+  const [project, setProject] = useState('')
+  const [ageing, setAgeing] = useState('all')
+  const asOfDate = useMemo(() => todayStr(), [])
+
+  const { data: reportData = { invoices: [], companyName: '' }, isLoading, error } = useQuery({
+    queryKey: ['rpt_outstanding_receivables', companyId],
+    queryFn: async () => {
+      const fetchInvoices = async () => {
+        const pageSize = 1000
+        const invoices = []
+        for (let from = 0; ; from += pageSize) {
+          const { data, error: pageError } = await supabase.from('client_invoices')
+            .select('id,invoice_number,invoice_date,due_date,client_id,client_name,project_id,project_name,total_amount,paid_amount,balance_due,status,invoice_type')
+            .eq('company_id', companyId)
+            .in('status', ['sent', 'partial', 'overdue'])
+            .order('due_date', { ascending: true })
+            .order('id', { ascending: true })
+            .range(from, from + pageSize - 1)
+          if (pageError) throw pageError
+          invoices.push(...(data || []))
+          if (!data || data.length < pageSize) break
+        }
+        return invoices
+      }
+      const [invoiceResult, companyResult] = await Promise.all([
+        fetchInvoices(),
+        supabase.from('companies').select('name').eq('id', companyId).maybeSingle(),
+      ])
+      if (companyResult.error) throw companyResult.error
+      return {
+        invoices: invoiceResult,
+        companyName: companyResult.data?.name || 'NHANCE',
+      }
+    },
+    enabled: !!companyId,
+    staleTime: 30_000,
+  })
+
+  const allRows = useMemo(
+    () => buildOutstandingInvoiceRows(reportData.invoices, asOfDate),
+    [asOfDate, reportData.invoices],
+  )
+  const clientOptions = useMemo(() => [...new Set(allRows.map(row => row.clientName))].sort(), [allRows])
+  const projectOptions = useMemo(() => [...new Set(allRows.map(row => row.projectName))].sort(), [allRows])
+  const filteredRows = useMemo(() => filterOutstandingInvoices(allRows, {
+    search, client, project, ageing,
+  }), [ageing, allRows, client, project, search])
+  const summary = useMemo(() => summarizeOutstandingInvoices(filteredRows), [filteredRows])
+  const groupedRows = useMemo(
+    () => view === 'invoice' ? [] : groupOutstandingInvoices(filteredRows, view),
+    [filteredRows, view],
+  )
+
+  const clearFilters = () => {
+    setSearch('')
+    setClient('')
+    setProject('')
+    setAgeing('all')
+  }
+  const hasFilters = Boolean(search || client || project || ageing !== 'all')
+  const moneyExport = amount => `INR ${Number(amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+
+  const exportConfig = useMemo(() => {
+    if (view === 'invoice') {
+      return {
+        title: 'Outstanding Receivables - Invoice-wise',
+        columns: [
+          { key: 'invoice', label: 'Invoice' }, { key: 'client', label: 'Client' },
+          { key: 'project', label: 'Project' }, { key: 'invoice_date', label: 'Invoice Date' },
+          { key: 'due_date', label: 'Due Date' }, { key: 'ageing', label: 'Ageing' },
+          { key: 'billed', label: 'Billed' }, { key: 'paid', label: 'Paid' },
+          { key: 'outstanding', label: 'Outstanding' }, { key: 'status', label: 'Status' },
+        ],
+        rows: filteredRows.map(row => ({
+          invoice: row.invoice_number, client: row.clientName, project: row.projectName,
+          invoice_date: row.invoice_date || '', due_date: row.due_date || '', ageing: row.ageingLabel,
+          billed: row.totalAmount, paid: row.paidAmount, outstanding: row.outstanding, status: row.status,
+        })),
+        moneyKeys: new Set(['billed', 'paid', 'outstanding']),
+      }
+    }
+    const dimensionLabel = view === 'client' ? 'Client' : 'Project'
+    return {
+      title: `Outstanding Receivables - ${dimensionLabel}-wise`,
+      columns: [
+        { key: 'name', label: dimensionLabel }, { key: 'invoices', label: 'Invoices' },
+        { key: 'billed', label: 'Billed' }, { key: 'paid', label: 'Paid' },
+        { key: 'not_due', label: 'Not Due' }, { key: 'overdue', label: 'Overdue' },
+        { key: 'outstanding', label: 'Outstanding' }, { key: 'oldest_due', label: 'Oldest Due' },
+      ],
+      rows: groupedRows.map(row => ({
+        name: row.name, invoices: row.invoiceCount, billed: row.billed, paid: row.paid,
+        not_due: row.notDue, overdue: row.overdue, outstanding: row.outstanding,
+        oldest_due: row.oldestDueDate || '',
+      })),
+      moneyKeys: new Set(['billed', 'paid', 'not_due', 'overdue', 'outstanding']),
+    }
+  }, [filteredRows, groupedRows, view])
+
+  const downloadExcel = () => downloadReportXLSX(exportConfig.title, exportConfig.columns, exportConfig.rows)
+  const downloadPDF = () => downloadTablePDF({
+    title: exportConfig.title,
+    subtitle: `As of ${fmtDate(asOfDate)}${hasFilters ? ' · Filtered view' : ''}`,
+    companyName: reportData.companyName,
+    columns: exportConfig.columns.map(column => ({
+      ...column,
+      align: exportConfig.moneyKeys.has(column.key) ? 'right' : 'left',
+    })),
+    rows: exportConfig.rows.map(row => Object.fromEntries(Object.entries(row).map(([key, value]) => [
+      key, exportConfig.moneyKeys.has(key) ? moneyExport(value) : value,
+    ]))),
+    summary: [
+      `${summary.invoices} invoices`,
+      `${summary.clients.size} clients`,
+      `Outstanding ${moneyExport(summary.outstanding)}`,
+      `Overdue ${moneyExport(summary.overdue)}`,
+    ],
+  })
+
+  const openGroupInvoices = row => {
+    if (view === 'client') setClient(row.name)
+    else setProject(row.name)
+    setView('invoice')
+  }
+
+  if (isLoading) return <Spinner />
+  if (error) return <Empty msg={`Could not load outstanding invoices: ${error.message}`} />
+
+  const ageingClass = bucket => bucket === 'not_due'
+    ? 'bg-slate-700/60 text-slate-300'
+    : bucket === '1_30'
+      ? 'bg-amber-500/15 text-amber-300'
+      : bucket === '31_60'
+        ? 'bg-orange-500/15 text-orange-300'
+        : 'bg-red-500/15 text-red-300'
+
+  return (
+    <div>
+      <div className="mb-4 rounded-xl border border-dark-600 bg-gradient-to-r from-[#581c30]/30 to-dark-800 p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold text-slate-100">Outstanding receivables control</p>
+            <p className="mt-1 max-w-2xl text-[11px] leading-relaxed text-slate-400">
+              Shows issued invoices that still have a balance. Drafts, proformas, cancelled and fully-paid invoices are excluded.
+              Balances are recalculated from invoice value minus recorded payments.
+            </p>
+          </div>
+          <span className="rounded-full border border-[#8b3152]/50 bg-[#581c30]/35 px-3 py-1 text-[10px] font-semibold text-rose-200">
+            As of {fmtDate(asOfDate)}
+          </span>
+        </div>
+      </div>
+
+      <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-5">
+        <StatCard label="Outstanding" value={fmt(summary.outstanding)} accent="text-rose-300" sub={`${summary.invoices} open invoices`} />
+        <StatCard label="Overdue" value={fmt(summary.overdue)} accent="text-red-400" />
+        <StatCard label="Not Due" value={fmt(summary.notDue)} accent="text-sky-400" />
+        <StatCard label="Clients Owing" value={summary.clients.size} />
+        <StatCard label="Projects" value={summary.projects.size} />
+      </div>
+
+      <div className="mb-4 rounded-xl border border-dark-600 bg-dark-800 p-3">
+        <div className="flex flex-wrap gap-2">
+          <input
+            value={search}
+            onChange={event => setSearch(event.target.value)}
+            placeholder="Search invoice, client or project…"
+            aria-label="Search outstanding invoices"
+            className="min-w-[220px] flex-1 rounded-lg border border-dark-500 bg-dark-900 px-3 py-2 text-xs text-slate-200 outline-none focus:border-[#8b3152]"
+          />
+          <select value={client} onChange={event => setClient(event.target.value)} aria-label="Filter by client"
+            className="rounded-lg border border-dark-500 bg-dark-900 px-3 py-2 text-xs text-slate-300 outline-none focus:border-[#8b3152]">
+            <option value="">All clients</option>
+            {clientOptions.map(name => <option key={name} value={name}>{name}</option>)}
+          </select>
+          <select value={project} onChange={event => setProject(event.target.value)} aria-label="Filter by project"
+            className="rounded-lg border border-dark-500 bg-dark-900 px-3 py-2 text-xs text-slate-300 outline-none focus:border-[#8b3152]">
+            <option value="">All projects</option>
+            {projectOptions.map(name => <option key={name} value={name}>{name}</option>)}
+          </select>
+          <select value={ageing} onChange={event => setAgeing(event.target.value)} aria-label="Filter by ageing"
+            className="rounded-lg border border-dark-500 bg-dark-900 px-3 py-2 text-xs text-slate-300 outline-none focus:border-[#8b3152]">
+            <option value="all">All ageing</option>
+            <option value="not_due">Not due</option>
+            <option value="1_30">1–30 days</option>
+            <option value="31_60">31–60 days</option>
+            <option value="61_90">61–90 days</option>
+            <option value="90_plus">90+ days</option>
+          </select>
+          {hasFilters && <button type="button" onClick={clearFilters} className="rounded-lg border border-dark-500 px-3 py-2 text-xs text-slate-400 hover:text-slate-200">Clear</button>}
+        </div>
+      </div>
+
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <div className="inline-flex rounded-lg border border-dark-600 bg-dark-800 p-1">
+          {[
+            ['invoice', 'Invoice-wise'], ['client', 'Client-wise'], ['project', 'Project-wise'],
+          ].map(([key, label]) => (
+            <button key={key} type="button" onClick={() => setView(key)} aria-pressed={view === key}
+              className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${view === key ? 'bg-[#7a2948] text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <div className="flex gap-2">
+          <button type="button" onClick={downloadPDF} disabled={!exportConfig.rows.length}
+            className="rounded-lg border border-dark-500 bg-dark-800 px-3 py-2 text-xs font-medium text-slate-200 transition-colors hover:border-[#8b3152] disabled:cursor-not-allowed disabled:opacity-40">
+            ↓ Download PDF
+          </button>
+          <button type="button" onClick={downloadExcel} disabled={!exportConfig.rows.length}
+            className="rounded-lg border border-[#8b3152]/70 bg-[#581c30]/30 px-3 py-2 text-xs font-medium text-rose-100 transition-colors hover:bg-[#581c30]/50 disabled:cursor-not-allowed disabled:opacity-40">
+            ↓ Download Excel
+          </button>
+        </div>
+      </div>
+
+      <div className="overflow-x-auto rounded-xl border border-dark-600 bg-dark-800">
+        {view === 'invoice' ? (
+          <table className="w-full min-w-[1100px] text-sm">
+            <THead cols={['Invoice', 'Client', 'Project', 'Invoice Date', 'Due Date', 'Ageing', 'Billed', 'Paid', 'Outstanding', 'Status']} />
+            <tbody>
+              {filteredRows.map(row => (
+                <tr key={row.id} className="border-b border-dark-700 transition-colors hover:bg-dark-700/40">
+                  <td className="px-3 py-2.5">
+                    <button type="button" onClick={() => onNavigate?.('sales', { tab: 'invoices', invoiceId: row.id })}
+                      className="font-mono text-xs font-semibold text-primary-400 hover:text-primary-300 hover:underline">
+                      {row.invoice_number}
+                    </button>
+                  </td>
+                  <td className="px-3 py-2.5 text-xs font-medium text-slate-200">{row.clientName}</td>
+                  <td className="px-3 py-2.5 text-xs text-slate-400">{row.projectName}</td>
+                  <td className="px-3 py-2.5 text-xs text-slate-400">{fmtDate(row.invoice_date)}</td>
+                  <td className="px-3 py-2.5 text-xs text-slate-300">{fmtDate(row.due_date)}</td>
+                  <td className="px-3 py-2.5"><span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${ageingClass(row.ageingBucket)}`}>{row.ageingLabel}</span></td>
+                  <td className="px-3 py-2.5 text-right font-mono text-xs text-slate-300">{fmt(row.totalAmount)}</td>
+                  <td className="px-3 py-2.5 text-right font-mono text-xs text-emerald-400">{fmt(row.paidAmount)}</td>
+                  <td className="px-3 py-2.5 text-right font-mono text-xs font-bold text-rose-300">{fmt(row.outstanding)}</td>
+                  <td className="px-3 py-2.5"><span className="rounded-full bg-dark-600 px-2 py-0.5 text-[10px] capitalize text-slate-300">{row.status}</span></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <table className="w-full min-w-[900px] text-sm">
+            <THead cols={[view === 'client' ? 'Client' : 'Project', 'Invoices', 'Billed', 'Paid', 'Not Due', 'Overdue', 'Outstanding', 'Oldest Due', '']} />
+            <tbody>
+              {groupedRows.map(row => (
+                <tr key={row.id} className="border-b border-dark-700 transition-colors hover:bg-dark-700/40">
+                  <td className="px-3 py-2.5 text-xs font-semibold text-slate-100">{row.name}</td>
+                  <td className="px-3 py-2.5 text-center font-mono text-xs text-slate-300">{row.invoiceCount}</td>
+                  <td className="px-3 py-2.5 text-right font-mono text-xs text-slate-300">{fmt(row.billed)}</td>
+                  <td className="px-3 py-2.5 text-right font-mono text-xs text-emerald-400">{fmt(row.paid)}</td>
+                  <td className="px-3 py-2.5 text-right font-mono text-xs text-sky-400">{fmt(row.notDue)}</td>
+                  <td className="px-3 py-2.5 text-right font-mono text-xs text-red-400">{fmt(row.overdue)}</td>
+                  <td className="px-3 py-2.5 text-right font-mono text-xs font-bold text-rose-300">{fmt(row.outstanding)}</td>
+                  <td className="px-3 py-2.5 text-xs text-slate-400">{fmtDate(row.oldestDueDate)}{row.maxDaysOverdue > 0 ? <span className="block text-[10px] text-red-400">{row.maxDaysOverdue} days overdue</span> : null}</td>
+                  <td className="px-3 py-2.5 text-right"><button type="button" onClick={() => openGroupInvoices(row)} className="text-[11px] font-medium text-primary-400 hover:text-primary-300">View invoices →</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        {!filteredRows.length && <div className="py-12 text-center text-sm text-slate-500">No outstanding invoices match these filters.</div>}
+      </div>
+    </div>
+  )
+}
+
 // ─── Expense Report ───────────────────────────────────────────────────────────
 
 function ExpenseReport({ companyId, from, to }) {
@@ -2348,7 +2632,7 @@ function FuelVsBenchmarkReport({ companyId, from, to }) {
 
 // ─── Dispatcher ───────────────────────────────────────────────────────────────
 
-function ReportContent({ reportId, companyId, from, to }) {
+function ReportContent({ reportId, companyId, from, to, onNavigate }) {
   const p = { companyId, from, to }
   switch (reportId) {
     case 'fleet_status':       return <FleetStatusReport       companyId={companyId} />
@@ -2363,6 +2647,7 @@ function ReportContent({ reportId, companyId, from, to }) {
     case 'payroll':           return <PayrollReport          companyId={companyId} />
     case 'maintenance_cost':  return <MaintenanceCostReport  {...p} />
     case 'revenue':           return <RevenueReport          {...p} />
+    case 'invoice_outstanding': return <OutstandingReceivablesReport companyId={companyId} onNavigate={onNavigate} />
     case 'invoice_aging':     return <InvoiceAgingReport     companyId={companyId} />
     case 'expense_report':    return <ExpenseReport          {...p} />
     case 'project_pl':        return <ProjectPLReport        {...p} />
@@ -2436,10 +2721,10 @@ export default function ReportsPage({
           <p className="text-[11px] text-slate-500 mt-0.5">{current?.desc}</p>
         </div>
         <div className="flex-1 overflow-y-auto px-4 md:px-6 pt-4 pb-8">
-          {!['payroll','invoice_aging','stock_status'].includes(activeReport) && (
+          {!['payroll','invoice_outstanding','invoice_aging','stock_status'].includes(activeReport) && (
             <FilterBar from={from} setFrom={selectFrom} to={to} setTo={selectTo} />
           )}
-          <ReportContent reportId={activeReport} companyId={companyId} from={from} to={to} />
+          <ReportContent reportId={activeReport} companyId={companyId} from={from} to={to} onNavigate={onNavigate} />
         </div>
       </main>
     </div>
