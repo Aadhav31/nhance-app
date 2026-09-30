@@ -1339,6 +1339,16 @@ function AddExpenseModal({ companyId, session, equipmentList, onClose, onSaved }
       }).select().single()
       if (ee) throw ee
 
+      const { error: te } = await supabase.from('account_transactions').insert({
+        company_id: companyId, txn_date: form.expense_date, type: 'expense',
+        description, amount, gst_amount, payment_mode: form.payment_mode,
+        bank_reference: form.bank_reference.trim() || null,
+        reference_type: 'expense', reference_id: exp.id,
+        equipment_id: equipId,
+        notes: form.notes.trim() || null, created_by: session.user.id,
+      })
+      if (te) throw te
+
       const approval = await submitApprovalCase({
         companyId,
         documentType: 'expense',
@@ -1357,16 +1367,6 @@ function AddExpenseModal({ companyId, session, equipmentList, onClose, onSaved }
           notes: form.notes.trim() || null,
         },
       })
-
-      const { error: te } = await supabase.from('account_transactions').insert({
-        company_id: companyId, txn_date: form.expense_date, type: 'expense',
-        description, amount, gst_amount, payment_mode: form.payment_mode,
-        bank_reference: form.bank_reference.trim() || null,
-        reference_type: 'expense', reference_id: exp.id,
-        equipment_id: equipId,
-        notes: form.notes.trim() || null, created_by: session.user.id,
-      })
-      if (te) throw te
 
       toast.success(approval.approvalRequired
         ? 'Expense recorded and sent to the Approval Centre'
