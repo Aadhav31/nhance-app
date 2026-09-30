@@ -1,10 +1,10 @@
-import { invoiceReceivablesTable } from './invoiceReceivables.js'
+import { invoiceReceivablesBasis, invoiceReceivablesTable } from './invoiceReceivables.js'
 
 const viewLabels = { invoice: 'Invoice-wise', client: 'Client-wise', project: 'Project-wise' }
 const currency = value => Number(value || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const filename = (view, date, extension) => `invoice_receivables_${view}_${date}.${extension}`
 
-export async function createInvoiceReceivablesWorkbook({ rows, companyName, reportDate, filterDescription, view }) {
+export async function createInvoiceReceivablesWorkbook({ rows, companyName, reportDate, filterDescription, view, includeProforma = rows.some(row => row.isProforma) }) {
   const XLSX = await import('xlsx')
   const workbook = XLSX.utils.book_new()
   for (const tab of [view, ...['invoice', 'client', 'project'].filter(v => v !== view)]) {
@@ -33,7 +33,7 @@ export async function createInvoiceReceivablesWorkbook({ rows, companyName, repo
     ['Company', companyName || 'Nhance'], ['Report date', reportDate], ['Filters', filterDescription],
     ['Invoice count', rows.length], ['Billed (INR)', totals.billed], ['Collected (INR)', totals.received],
     ['Outstanding (INR)', totals.balance], ['Overdue (INR)', totals.overdue],
-    ['Basis', 'Issued invoices less recorded invoice payments. Drafts, proformas and cancelled invoices excluded.'],
+    ['Basis', invoiceReceivablesBasis(includeProforma)],
     ['Scope', 'Client opening balances, unallocated advances and credit notes are separate from invoice balances.'],
   ])
   summary['!cols'] = [{ wch: 24 }, { wch: 90 }]
@@ -47,7 +47,7 @@ export async function downloadInvoiceReceivablesExcel(report) {
   XLSX.writeFile(workbook, filename(report.view, report.reportDate, 'xlsx'))
 }
 
-export async function createInvoiceReceivablesPDF({ rows, companyName, reportDate, filterDescription, view }) {
+export async function createInvoiceReceivablesPDF({ rows, companyName, reportDate, filterDescription, view, includeProforma = rows.some(row => row.isProforma) }) {
   const [{ jsPDF }, { default: autoTable }] = await Promise.all([import('jspdf'), import('jspdf-autotable')])
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
   const { columns, rows: tableRows, totals } = invoiceReceivablesTable(rows, view)
@@ -69,7 +69,8 @@ export async function createInvoiceReceivablesPDF({ rows, companyName, reportDat
   const pageCount = doc.getNumberOfPages()
   for (let page = 1; page <= pageCount; page++) {
     doc.setPage(page).setFontSize(7).setTextColor(100)
-    doc.text('Issued invoices less recorded payments. Opening balances, unallocated advances and credit notes are separate.', 10, 199)
+    doc.text(invoiceReceivablesBasis(includeProforma), 10, 195)
+    doc.text('Opening balances, unallocated advances and credit notes are separate from invoice balances.', 10, 199)
     doc.text(`Page ${page} of ${pageCount} | INR`, 287, 204, { align: 'right' })
   }
   return doc

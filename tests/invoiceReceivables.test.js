@@ -33,6 +33,28 @@ test('drafts, cancellations and converted proformas never become receivables', (
   assert.deepEqual(rows.map(r => r.id), ['issued'])
 })
 
+test('proforma inclusion is optional and excludes converted documents even when their status update failed', () => {
+  const source = [
+    invoice('tax', { converted_from_id: 'linked', total_amount: 200, paid_amount: 0 }),
+    invoice('open', { invoice_type: ' Proforma ', total_amount: 50, paid_amount: 10 }),
+    invoice('linked', { invoice_type: 'proforma', status: 'sent' }),
+    invoice('converted', { invoice_type: 'proforma', status: 'CONVERTED' }),
+    invoice('draft', { invoice_type: 'proforma', status: 'draft' }),
+    invoice('cancelled', { invoice_type: 'proforma', status: 'cancelled' }),
+    invoice('void', { invoice_type: 'proforma', status: 'void' }),
+    invoice('linked-to-draft', { invoice_type: 'proforma' }),
+    invoice('draft-tax', { status: 'draft', converted_from_id: 'linked-to-draft' }),
+  ]
+  assert.deepEqual(build(source).map(r => r.id), ['tax'])
+  const rows = buildInvoiceReceivables(source, clients, projects, '2026-09-30', { includeProforma: true })
+  assert.deepEqual(rows.map(r => r.id), ['tax', 'open'])
+  assert.equal(rows[1].documentType, 'Proforma')
+  assert.equal(rows[1].balance, 40)
+  assert.equal(sumInvoiceReceivables(rows).balance, 240)
+  for (const view of ['client', 'project']) assert.deepEqual(invoiceReceivablesTable(rows, view).totals, sumInvoiceReceivables(rows))
+  assert.equal(invoiceReceivablesTable(rows).columns.find(c => c.key === 'documentType').label, 'Type')
+})
+
 test('missing and future due dates are not overdue; paid/overpaid invoices do not offset other debt', () => {
   const rows = build([
     invoice('missing', { due_date: null }), invoice('future', { due_date: '2099-01-01' }),

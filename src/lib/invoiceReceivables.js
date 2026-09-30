@@ -26,7 +26,7 @@ function uniqueIndex(items, values) {
 }
 
 /** Invoice snapshots remain usable when a client/project has been renamed or removed. */
-export function buildInvoiceReceivables(invoices, clients = [], projects = [], today = localReportDate()) {
+export function buildInvoiceReceivables(invoices, clients = [], projects = [], today = localReportDate(), { includeProforma = false } = {}) {
   const clientsByGstin = uniqueIndex(clients, c => [c.gstin])
   const clientsByName = uniqueIndex(clients, c => [c.business_name, c.display_name, c.trade_name, c.contact_name])
   const projectsById = new Map(projects.map(p => [p.id, p]))
@@ -36,7 +36,9 @@ export function buildInvoiceReceivables(invoices, clients = [], projects = [], t
     id: normalize(i.client_gstin), name: i.client_name,
   })), i => [i.name])
   const currentDay = dayNumber(today)
-  return invoices.filter(i => normalize(i.invoice_type) !== 'proforma' && !EXCLUDED_STATUSES.has(normalize(i.status)))
+  const convertedProformaIds = new Set(invoices.map(i => i.converted_from_id).filter(Boolean))
+  return invoices.filter(i => !EXCLUDED_STATUSES.has(normalize(i.status))
+    && (normalize(i.invoice_type) !== 'proforma' || (includeProforma && !convertedProformaIds.has(i.id))))
     .map(i => {
       const gstin = normalize(i.client_gstin)
       // The live client_invoices table stores client snapshots, not a client_id column.
@@ -52,6 +54,8 @@ export function buildInvoiceReceivables(invoices, clients = [], projects = [], t
       const daysOverdue = balanceCents > 0 && dueDay !== null && currentDay !== null ? Math.max(0, currentDay - dueDay) : 0
       return {
         id: i.id, invoiceNumber: i.invoice_number || '—', invoiceDate: i.invoice_date || '', dueDate: i.due_date || '',
+        isProforma: normalize(i.invoice_type) === 'proforma',
+        documentType: normalize(i.invoice_type) === 'proforma' ? 'Proforma' : normalize(i.invoice_type) === 'non_tax' ? 'Non-tax invoice' : 'Tax invoice',
         clientKey, clientName: client?.display_name || client?.business_name || i.client_name || 'Unspecified client',
         gstin: i.client_gstin || client?.gstin || '', projectKey,
         projectName: project?.project_name || i.project_name || 'Unassigned project', projectCode: project?.project_code || '',
@@ -60,6 +64,12 @@ export function buildInvoiceReceivables(invoices, clients = [], projects = [], t
         status: balanceCents === 0 ? 'Paid' : daysOverdue > 0 ? 'Overdue' : receivedCents > 0 ? 'Partial' : 'Unpaid',
       }
     }).sort((a, b) => b.balance - a.balance || a.invoiceNumber.localeCompare(b.invoiceNumber))
+}
+
+export function invoiceReceivablesBasis(includeProforma = false) {
+  return includeProforma
+    ? 'Issued invoices and unconverted proformas less recorded payments. Drafts, cancelled invoices and converted proformas are excluded.'
+    : 'Issued invoices less recorded payments. Drafts, proformas and cancelled invoices are excluded.'
 }
 
 export function filterInvoiceReceivables(rows, { client = '', project = '', status = 'outstanding', from = '', to = '', search = '' } = {}) {
@@ -104,7 +114,8 @@ const financialColumns = [
 export function invoiceReceivablesTable(rows, view = 'invoice') {
   const grouped = view === 'invoice' ? rows : groupInvoiceReceivables(rows, view)
   const columns = view === 'invoice' ? [
-    { key: 'invoiceNumber', label: 'Invoice' }, { key: 'clientName', label: 'Client' }, { key: 'projectName', label: 'Project' },
+    { key: 'invoiceNumber', label: 'Invoice' }, { key: 'documentType', label: 'Type' },
+    { key: 'clientName', label: 'Client' }, { key: 'projectName', label: 'Project' },
     { key: 'invoiceDate', label: 'Invoice date' }, { key: 'dueDate', label: 'Due date' }, ...financialColumns,
     { key: 'daysOverdue', label: 'Days overdue', count: true }, { key: 'status', label: 'Status' },
   ] : [
