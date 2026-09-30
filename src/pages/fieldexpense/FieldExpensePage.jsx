@@ -367,7 +367,7 @@ function ExpenseForm({ companyId, userId, userRole, userName, onSuccess, onBack 
       const { data: expense, error } = await supabase.from('field_expenses').insert(payload).select('id').single()
       if (error) throw error
 
-      await submitApprovalCase({
+      const approval = await submitApprovalCase({
         companyId, documentType: 'field_expense', documentId: expense.id,
         documentRef: form.bill_number || `EXP-${expense.id.slice(0, 8)}`,
         title: `Field expense · ${form.payee_name.trim()}`, amount: parseFloat(form.amount),
@@ -400,10 +400,14 @@ function ExpenseForm({ companyId, userId, userRole, userName, onSuccess, onBack 
       qc.invalidateQueries({ queryKey: ['inv_items'] })
       qc.invalidateQueries({ queryKey: ['inv_stock'] })
 
-      if (voucher?.voucher_number) {
-        toast.success(`Expense submitted for approval · Voucher ${voucher.voucher_number}`, { duration: 5000 })
+      if (voucher?.voucher_number && approval.approvalRequired) {
+        toast.success(`Expense submitted to Approval Centre · Voucher ${voucher.voucher_number}`, { duration: 5000 })
+      } else if (voucher?.voucher_number) {
+        toast.success(`Expense recorded within policy · Voucher ${voucher.voucher_number}`, { duration: 5000 })
+      } else if (approval.approvalRequired) {
+        toast.success('Expense submitted to the Approval Centre')
       } else {
-        toast.success('Expense submitted for approval')
+        toast.success(`Expense recorded · within ₹${Number(approval.threshold || 2000).toLocaleString('en-IN')} policy`)
       }
       setForm(INIT)
       setBillPhoto(null)
