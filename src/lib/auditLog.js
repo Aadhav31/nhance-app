@@ -1,11 +1,12 @@
 /**
  * auditLog.js
  *
- * Fire-and-forget helper for writing to the immutable audit_logs table.
+ * Fire-and-forget helper for recording explicit business events in the
+ * database-owned audit ledger.
  *
- * IMPORTANT: logAction() is intentionally non-blocking and non-throwing.
- * It must NEVER break the calling user action if the log write fails.
- * Do not await it in critical paths.
+ * Row creates, edits and deletes are captured automatically by database
+ * triggers. Use this helper only for semantic events that are not themselves
+ * a row mutation (submitted, exported, acknowledged, login, and so on).
  *
  * Usage:
  *   import { logAction } from '../../lib/auditLog'
@@ -17,9 +18,6 @@
  *     recordId:    ra.id,
  *     recordRef:   ra.ra_number,
  *     description: `RA Bill ${ra.ra_number} submitted for manager approval`,
- *     actorId:     session?.user?.id,
- *     actorName:   profile?.full_name || session?.user?.email,
- *     actorRole:   profile?.role,
  *   })
  *
  * Standard action values:
@@ -34,7 +32,9 @@
 import { supabase } from './supabase'
 
 /**
- * Write an audit log entry. Returns immediately — logging happens in the background.
+ * Record a semantic event through a validated RPC. Actor name and role are
+ * deliberately ignored here: the database derives them from auth.uid(), so a
+ * browser cannot impersonate another user in the audit trail.
  *
  * @param {Object} payload
  * @param {string}  payload.companyId   - company UUID
@@ -43,9 +43,6 @@ import { supabase } from './supabase'
  * @param {string}  [payload.recordId]  - UUID of the affected record
  * @param {string}  [payload.recordRef] - human-readable ref ('RA-2026-001')
  * @param {string}  [payload.description] - plain-English description of the event
- * @param {string}  [payload.actorId]   - auth.uid() of the person acting
- * @param {string}  [payload.actorName] - display name of the actor
- * @param {string}  [payload.actorRole] - role of the actor
  * @param {Object}  [payload.meta]      - any extra context (key-value)
  */
 export function logAction({
@@ -55,30 +52,30 @@ export function logAction({
   recordId,
   recordRef,
   description,
-  actorId,
-  actorName,
-  actorRole,
   meta,
 }) {
-  if (!companyId || !module || !action) return  // silently skip if misconfigured
+  if (!companyId || !module || !action) return Promise.resolve(null)
 
-  supabase
-    .from('audit_logs')
-    .insert({
-      company_id:  companyId,
-      module,
-      action,
-      record_id:   recordId   || null,
-      record_ref:  recordRef  || null,
-      description: description || null,
-      actor_id:    actorId    || null,
-      actor_name:  actorName  || null,
-      actor_role:  actorRole  || null,
-      meta:        meta       || null,
+  return supabase
+    .rpc('record_audit_event', {
+      p_company_id: companyId,
+      p_module: module,
+      p_action: action,
+      p_record_id: recordId || null,
+      p_record_ref: recordRef || null,
+      p_description: description || null,
+      p_meta: meta || null,
     })
     .then(({ error }) => {
       if (error && import.meta.env.DEV) {
         console.warn('[AuditLog] Write failed:', error.message, { module, action, recordRef })
       }
+      return error || null
+    })
+    .catch(error => {
+      if (import.meta.env.DEV) {
+        console.warn('[AuditLog] Request failed:', error.message, { module, action, recordRef })
+      }
+      return error
     })
 }

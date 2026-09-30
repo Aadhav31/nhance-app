@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { logAction } from '../lib/auditLog'
 
 const AuthContext = createContext(null)
 
@@ -141,8 +142,24 @@ export function AuthProvider({ children }) {
 
   // ─── Auth actions ──────────────────────────────────────────────────────────
   const signIn = async (email, password) => {
-    const { error } = await supabase.auth.signInWithPassword({ email, password })
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password })
     if (error) throw error
+
+    if (data.user) {
+      const { data: profile } = await supabase
+        .from('user_profiles')
+        .select('company_id')
+        .eq('id', data.user.id)
+        .maybeSingle()
+      if (profile?.company_id) {
+        logAction({
+          companyId: profile.company_id,
+          module: 'auth',
+          action: 'login',
+          description: 'User signed in',
+        })
+      }
+    }
   }
 
   const resetPassword = async (email) => {
@@ -155,6 +172,14 @@ export function AuthProvider({ children }) {
   const updatePassword = async (newPassword) => {
     const { error } = await supabase.auth.updateUser({ password: newPassword })
     if (error) throw error
+    if (company?.id) {
+      logAction({
+        companyId: company.id,
+        module: 'auth',
+        action: 'password_changed',
+        description: 'User changed their password',
+      })
+    }
   }
 
   // ─── Permission check ──────────────────────────────────────────────────────
@@ -179,6 +204,14 @@ export function AuthProvider({ children }) {
 
   const signOut = async () => {
     setAuthError(null)
+    if (company?.id) {
+      await logAction({
+        companyId: company.id,
+        module: 'auth',
+        action: 'logout',
+        description: 'User signed out',
+      })
+    }
     // scope: 'local' ends only this device's session.
     // Default 'global' would invalidate all refresh tokens across every device for this user.
     await supabase.auth.signOut({ scope: 'local' })
