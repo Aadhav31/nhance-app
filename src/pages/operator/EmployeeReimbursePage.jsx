@@ -179,7 +179,7 @@ function SubmitForm({ employeeId, employeeName, employeeRole, companyId, onDone 
       }).select('id').single()
       if (error) throw error
 
-      await submitApprovalCase({
+      const approval = await submitApprovalCase({
         companyId, documentType: 'employee_reimbursement', documentId: claim.id,
         documentRef: billRef.trim() || `CLAIM-${claim.id.slice(0, 8)}`,
         title: `Reimbursement · ${employeeName}`, amount: Number(amount),
@@ -187,7 +187,9 @@ function SubmitForm({ employeeId, employeeName, employeeRole, companyId, onDone 
         snapshot: { employee: employeeName, category: cat, expense_date: date, description: desc.trim() || null, receipt_attached: Boolean(receipt_url), bill_reference: billRef.trim() || null },
       })
 
-      toast.success('Expense submitted for approval')
+      toast.success(approval.approvalRequired
+        ? 'Expense submitted to the Approval Centre'
+        : `Expense accepted · within ₹${Number(approval.threshold || 2000).toLocaleString('en-IN')} policy`)
       qc.invalidateQueries({ queryKey: ['emp_reimb', employeeId] })
       onDone()
     } catch (e) {

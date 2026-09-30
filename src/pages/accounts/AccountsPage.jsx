@@ -8,6 +8,7 @@ import { generateInvoicePDF } from '../../lib/invoicePDF'
 import InvoicePreviewModal from '../../components/invoices/InvoicePreviewModal'
 import { downloadVoucherPDF, makeVoucherNumber } from '../../lib/voucherPDF'
 import { createVerification, voidVerification } from '../../lib/docVerify'
+import { submitApprovalCase } from '../../lib/approvalWorkflow'
 import PagePanel from '../../components/shared/PagePanel'
 import CanonicalWorkspaceNotice from '../../components/shared/CanonicalWorkspaceNotice'
 import {
@@ -1219,6 +1220,7 @@ function RecordPaymentModal({ invoice, companyId, session, onClose, onSaved }) {
 // Add Expense Modal — category-aware fields
 // ─────────────────────────────────────────────────────────────────────────────
 function AddExpenseModal({ companyId, session, equipmentList, onClose, onSaved }) {
+  const { userProfile } = useAuth()
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState({
     expense_date: today(),
@@ -1347,7 +1349,28 @@ function AddExpenseModal({ companyId, session, equipmentList, onClose, onSaved }
       })
       if (te) throw te
 
-      toast.success('Expense recorded')
+      const approval = await submitApprovalCase({
+        companyId,
+        documentType: 'expense',
+        documentId: exp.id,
+        documentRef: refNum || form.bank_reference.trim() || `EXP-${exp.id.slice(0, 8)}`,
+        title: `Company expense · ${description}`,
+        amount,
+        requesterId: session.user.id,
+        requesterName: userProfile?.full_name,
+        snapshot: {
+          category: cat,
+          expense_date: form.expense_date,
+          vendor: vendorName,
+          payment_mode: form.payment_mode,
+          equipment_id: equipId,
+          notes: form.notes.trim() || null,
+        },
+      })
+
+      toast.success(approval.approvalRequired
+        ? 'Expense recorded and sent to the Approval Centre'
+        : `Expense recorded · within ₹${Number(approval.threshold || 2000).toLocaleString('en-IN')} policy`)
       onSaved()
     } catch (e) { toast.error(e.message || 'Failed to save expense')
     } finally { setSaving(false) }
