@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { format, subDays } from 'date-fns'
 import {
-  AlertTriangle, ArrowRight, BarChart3, CheckCircle2, CircleDollarSign,
+  AlertTriangle, ArrowRight, BarChart3, CheckCircle2, CircleDollarSign, Clock3,
   DatabaseZap, Droplets, Fuel, Gauge, Loader2, Search, SlidersHorizontal,
 } from 'lucide-react'
 import {
@@ -223,6 +223,23 @@ export default function FuelReconciliationPage({
     },
     enabled: !!companyId,
   })
+  const capturesQuery = useQuery({
+    queryKey: ['fuel_expense_review_queue', companyId, startDate, endDate],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('fuel_expense_captures')
+        .select('id,source_document_type,source_document_id,expense_date,quantity_liters,rate_per_liter,total_amount,status,missing_fields,vendor_name,bill_number,equipment:equipment(id,name,equipment_number),project:projects(id,project_name,project_code)')
+        .eq('company_id', companyId)
+        .gte('expense_date', startDate)
+        .lte('expense_date', endDate)
+        .neq('status', 'approved')
+        .neq('status', 'cancelled')
+        .order('expense_date', { ascending: false })
+      if (error && ['42P01', 'PGRST205'].includes(error.code)) return []
+      if (error) throw error
+      return data || []
+    },
+    enabled: !!companyId,
+  })
   const operationsQuery = useQuery({
     queryKey: ['fuel_reconciliation_operations', companyId, startDate, endDate],
     queryFn: async () => {
@@ -259,7 +276,7 @@ export default function FuelReconciliationPage({
     enabled: !!companyId,
   })
 
-  const queries = [equipmentQuery, projectsQuery, issuesQuery, fillsQuery, operationsQuery, deploymentsQuery, replenishmentsQuery]
+  const queries = [equipmentQuery, projectsQuery, issuesQuery, fillsQuery, capturesQuery, operationsQuery, deploymentsQuery, replenishmentsQuery]
   const isLoading = queries.some(query => query.isLoading)
   const error = queries.find(query => query.error)?.error
 
@@ -306,6 +323,7 @@ export default function FuelReconciliationPage({
   }
   const hasFilters = metric !== 'all' || equipmentId !== 'all' || projectId !== 'all' || Boolean(search.trim())
   const summary = report.summary
+  const pendingCaptures = capturesQuery.data || []
 
   return (
     <div className="h-full overflow-y-auto bg-dark-900 p-4 md:p-6">
@@ -335,12 +353,52 @@ export default function FuelReconciliationPage({
           </div>
         )}
 
-        <section className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+        <section className="grid grid-cols-2 gap-3 lg:grid-cols-6">
           <KpiTile active={metric === 'supply'} onClick={() => setTileMetric('supply')} title="Fuel supplied" value={litres(summary.suppliedLitres)} note={`${report.rows.filter(row => row.suppliedLitres > 0).length} machine-days`} icon={Fuel} tone="sky" />
           <KpiTile active={metric === 'unaccounted'} onClick={() => setTileMetric('unaccounted')} title="Unaccounted" value={litres(summary.unaccountedLitres)} note="Issued minus consumption" icon={AlertTriangle} tone="red" />
           <KpiTile active={metric === 'over_standard'} onClick={() => setTileMetric('over_standard')} title="Above standard" value={litres(summary.excessLitres)} note="Actual above machine benchmark" icon={Gauge} tone="amber" />
           <KpiTile active={metric === 'cost_impact'} onClick={() => setTileMetric('cost_impact')} title="Financial exposure" value={money(summary.financialExposure)} note={summary.averageRate ? `Weighted diesel rate ₹${summary.averageRate}/L` : 'Add rates to calculate exposure'} icon={CircleDollarSign} tone="violet" />
           <KpiTile active={metric === 'data_gaps'} onClick={() => setTileMetric('data_gaps')} title="Data gaps" value={summary.dataGapRows} note={`${summary.duplicateEntries} possible duplicate entries`} icon={DatabaseZap} tone="cyan" />
+          <KpiTile active={false} onClick={() => onNavigate?.('approval_center')} title="Pending fuel review" value={pendingCaptures.filter(item => item.status === 'pending_review').length} note="Excluded until approved" icon={Clock3} tone="amber" />
+        </section>
+
+        <section className="rounded-xl border border-amber-500/25 bg-amber-500/5 p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-slate-100">Fuel expense review queue</p>
+              <p className="mt-1 text-[11px] text-slate-500">Captured from Fuel-category expenses. These entries stay outside official equipment and project totals until the approval chain finishes.</p>
+            </div>
+            <button onClick={() => onNavigate?.('approval_center')} className="btn-primary px-3 py-2 text-xs">
+              Open Approval Centre <ArrowRight className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          {capturesQuery.isLoading ? (
+            <div className="flex justify-center py-8"><Loader2 className="h-5 w-5 animate-spin text-amber-400" /></div>
+          ) : pendingCaptures.length === 0 ? (
+            <div className="mt-3 flex items-center gap-2 rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-3 text-xs text-emerald-300">
+              <CheckCircle2 className="h-4 w-4" /> No unapproved fuel expenses in this period.
+            </div>
+          ) : (
+            <div className="mt-3 grid gap-2 lg:grid-cols-2">
+              {pendingCaptures.slice(0, 6).map(capture => {
+                const needsCorrection = ['needs_information', 'returned', 'rejected'].includes(capture.status)
+                const statusLabel = capture.status === 'pending_review' ? 'Awaiting approval'
+                  : capture.status === 'needs_information' ? 'Information required'
+                  : capture.status.charAt(0).toUpperCase() + capture.status.slice(1)
+                return (
+                  <div key={capture.id} className="flex items-start justify-between gap-3 rounded-lg border border-dark-600 bg-dark-800/80 p-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-xs font-semibold text-slate-200">{capture.equipment?.name || 'Equipment not selected'}{capture.equipment?.equipment_number ? ` · ${capture.equipment.equipment_number}` : ''}</p>
+                      <p className="mt-1 truncate text-[10px] text-slate-500">{capture.project?.project_name || 'Project not selected'} · {displayDate(capture.expense_date)}</p>
+                      <p className="mt-1 text-[11px] text-slate-400">{capture.quantity_liters ? litres(capture.quantity_liters) : 'Litres missing'} · {money(capture.total_amount)}{capture.vendor_name ? ` · ${capture.vendor_name}` : ''}</p>
+                    </div>
+                    <span className={`shrink-0 rounded-full border px-2 py-1 text-[9px] font-semibold ${needsCorrection ? 'border-red-500/30 bg-red-500/10 text-red-300' : 'border-amber-500/30 bg-amber-500/10 text-amber-300'}`}>{statusLabel}</span>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+          {pendingCaptures.length > 6 && <p className="mt-2 text-right text-[10px] text-slate-500">+{pendingCaptures.length - 6} more in the Approval Centre</p>}
         </section>
 
         <section className="grid gap-4 xl:grid-cols-[1fr_320px]">

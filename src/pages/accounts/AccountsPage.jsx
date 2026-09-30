@@ -17,7 +17,7 @@ import {
   ArrowUpCircle, ArrowDownCircle, ChevronRight, ChevronDown,
   Link, Copy, ExternalLink, Share2, Bell, AlertTriangle, CheckCircle2,
   Download, FileText, FileSpreadsheet, ToggleLeft, ToggleRight, CalendarRange,
-  ShieldOff, Wrench, Building2,
+  ShieldOff, Wrench, Building2, Fuel,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { format, startOfMonth, endOfMonth, parseISO } from 'date-fns'
@@ -34,6 +34,7 @@ const EXPENSE_CATS = [
   { value: 'interest', label: 'Interest / Finance',     icon: '📈' },
   { value: 'rent',     label: 'Rent',                   icon: '🏢' },
   { value: 'insurance',label: 'Insurance',              icon: '🛡'  },
+  { value: 'fuel',     label: 'Fuel / Diesel',           icon: '⛽' },
   { value: 'admin',    label: 'Admin & Office',         icon: '📋' },
   { value: 'misc',     label: 'Miscellaneous',          icon: '📦' },
 ]
@@ -1238,10 +1239,32 @@ function AddExpenseModal({ companyId, session, equipmentList, onClose, onSaved }
     bank_reference: '',
     expense_scope: '',
     equipment_id: '',
+    project_id: '',
+    fuel_quantity_liters: '',
+    fuel_rate_per_liter: '',
+    fuel_meter_reading: '',
+    fuel_source: 'petrol_pump',
     notes: '',
   })
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
   const cat = form.category
+  const isFuel = cat === 'fuel'
+  const calculatedFuelRate = Number(form.fuel_quantity_liters) > 0 && Number(form.amount) > 0
+    ? Number(form.amount) / Number(form.fuel_quantity_liters)
+    : 0
+
+  const { data: projects = [] } = useQuery({
+    queryKey: ['projects_for_fuel_expense', companyId],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('projects')
+        .select('id, project_name, project_code')
+        .eq('company_id', companyId)
+        .order('project_name')
+      if (error) throw error
+      return data || []
+    },
+    enabled: !!companyId && isFuel,
+  })
 
   // Employees — fetch only when category = salary
   const { data: employees = [] } = useQuery({
@@ -1279,8 +1302,9 @@ function AddExpenseModal({ companyId, session, equipmentList, onClose, onSaved }
       ...p,
       category: newCat,
       description: '', vendor_name: '', amount: '', gst_amount: '',
-      vendor_gstin: '', bank_reference: '', expense_scope: '', equipment_id: '',
-      employee_id: '', notes: '',
+      vendor_gstin: '', bank_reference: '', expense_scope: newCat === 'fuel' ? 'equipment' : '', equipment_id: '',
+      project_id: '', fuel_quantity_liters: '', fuel_rate_per_liter: '',
+      fuel_meter_reading: '', fuel_source: 'petrol_pump', employee_id: '', notes: '',
     }))
   }
 
@@ -1315,6 +1339,16 @@ function AddExpenseModal({ companyId, session, equipmentList, onClose, onSaved }
         .maybeSingle()
       equipId = assignment?.equipment_id || null
       scope = equipId ? 'equipment' : 'administrative'
+    } else if (cat === 'fuel') {
+      if (!form.equipment_id) return toast.error('Select the equipment receiving the fuel')
+      if (!form.project_id) return toast.error('Select the project using this fuel')
+      if (!form.fuel_quantity_liters || Number(form.fuel_quantity_liters) <= 0) return toast.error('Enter the diesel quantity in litres')
+      const machine = equipmentList.find(item => item.id === form.equipment_id)
+      const project = projects.find(item => item.id === form.project_id)
+      description = description || `Fuel · ${machine?.name || 'Equipment'} · ${Number(form.fuel_quantity_liters).toLocaleString('en-IN')} L · ${project?.project_name || 'Project'}`
+      scope = 'equipment'
+      equipId = form.equipment_id
+      source = 'fuel_expense_capture'
     } else {
       if (!description) return toast.error('Description required')
       if (['admin', 'misc'].includes(cat)) {
@@ -1334,6 +1368,11 @@ function AddExpenseModal({ companyId, session, equipmentList, onClose, onSaved }
         payment_mode: form.payment_mode,
         bank_reference: form.bank_reference.trim() || null,
         expense_scope: scope, equipment_id: equipId,
+        project_id: isFuel ? form.project_id : null,
+        fuel_quantity_liters: isFuel ? Number(form.fuel_quantity_liters) : null,
+        fuel_rate_per_liter: isFuel ? (Number(form.fuel_rate_per_liter) || calculatedFuelRate || null) : null,
+        fuel_meter_reading: isFuel && form.fuel_meter_reading ? Number(form.fuel_meter_reading) : null,
+        fuel_source: isFuel ? form.fuel_source : null,
         source, reference_number: refNum,
         created_by: session.user.id,
       }).select().single()
@@ -1354,7 +1393,9 @@ function AddExpenseModal({ companyId, session, equipmentList, onClose, onSaved }
         documentType: 'expense',
         documentId: exp.id,
         documentRef: refNum || form.bank_reference.trim() || `EXP-${exp.id.slice(0, 8)}`,
-        title: `Company expense · ${description}`,
+        title: isFuel
+          ? `Fuel expense · ${equipmentList.find(item => item.id === equipId)?.name || 'Equipment'} · ${Number(form.fuel_quantity_liters).toLocaleString('en-IN')} L`
+          : `Company expense · ${description}`,
         amount,
         requesterId: session.user.id,
         requesterName: userProfile?.full_name,
@@ -1364,11 +1405,21 @@ function AddExpenseModal({ companyId, session, equipmentList, onClose, onSaved }
           vendor: vendorName,
           payment_mode: form.payment_mode,
           equipment_id: equipId,
+          project_id: isFuel ? form.project_id : null,
+          ...(isFuel ? {
+            fuel_quantity_liters: Number(form.fuel_quantity_liters),
+            fuel_rate_per_liter: Number(form.fuel_rate_per_liter) || calculatedFuelRate,
+            fuel_meter_reading: form.fuel_meter_reading ? Number(form.fuel_meter_reading) : null,
+            fuel_source: form.fuel_source,
+          } : {}),
           notes: form.notes.trim() || null,
         },
+        fuelReview: isFuel,
       })
 
-      toast.success(approval.approvalRequired
+      toast.success(isFuel
+        ? 'Fuel expense captured for independent review. The fuel register updates after approval.'
+        : approval.approvalRequired
         ? 'Expense recorded and sent to the Approval Centre'
         : `Expense recorded · within ₹${Number(approval.threshold || 2000).toLocaleString('en-IN')} policy`)
       onSaved()
@@ -1526,6 +1577,82 @@ function AddExpenseModal({ companyId, session, equipmentList, onClose, onSaved }
           </div>
         )}
 
+        {/* ── FUEL / DIESEL ── */}
+        {isFuel && (
+          <div className="space-y-3">
+            <div className="flex items-start gap-3 rounded-xl border border-amber-500/35 bg-amber-500/10 px-3 py-3">
+              <Fuel className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+              <div>
+                <p className="text-xs font-semibold text-amber-300">One entry, controlled fuel record</p>
+                <p className="mt-0.5 text-[11px] leading-relaxed text-slate-400">This expense is staged for independent approval. Approved litres are posted automatically to the selected equipment and project; pending or rejected entries never affect reconciliation.</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="col-span-2">
+                {lbl('Equipment', true)}
+                <select className={inp()} value={form.equipment_id} onChange={event => {
+                  const machine = equipmentList.find(item => item.id === event.target.value)
+                  setForm(current => ({
+                    ...current,
+                    equipment_id: event.target.value,
+                    expense_scope: 'equipment',
+                    project_id: machine?.current_project_id || current.project_id,
+                    fuel_meter_reading: !current.fuel_meter_reading && machine?.current_meter_reading != null
+                      ? String(machine.current_meter_reading)
+                      : current.fuel_meter_reading,
+                  }))
+                }}>
+                  <option value="">— Select equipment —</option>
+                  {equipmentList.map(machine => <option key={machine.id} value={machine.id}>{machine.name}{machine.equipment_number ? ` (${machine.equipment_number})` : ''}</option>)}
+                </select>
+              </div>
+              <div className="col-span-2">
+                {lbl('Project / Site', true)}
+                <select className={inp()} value={form.project_id} onChange={event => setF('project_id', event.target.value)}>
+                  <option value="">— Select project —</option>
+                  {projects.map(project => <option key={project.id} value={project.id}>{project.project_name}{project.project_code ? ` · ${project.project_code}` : ''}</option>)}
+                </select>
+              </div>
+              <div>
+                {lbl('Quantity (litres)', true)}
+                <input type="number" className={inp()} value={form.fuel_quantity_liters} onChange={event => setF('fuel_quantity_liters', event.target.value)} min="0" step="0.001" placeholder="e.g. 120" />
+              </div>
+              {AmtInput()}
+              <div>
+                {lbl('Rate per litre')}
+                <input type="number" className={inp()} value={form.fuel_rate_per_liter} onChange={event => setF('fuel_rate_per_liter', event.target.value)} min="0" step="0.001" placeholder={calculatedFuelRate ? `Derived ₹${calculatedFuelRate.toFixed(2)}` : 'Derived from total'} />
+              </div>
+              <div>
+                {lbl('Meter reading')}
+                <input type="number" className={inp()} value={form.fuel_meter_reading} onChange={event => setF('fuel_meter_reading', event.target.value)} min="0" step="0.01" placeholder="Optional" />
+              </div>
+              <div>
+                {lbl('Fuel source')}
+                <select className={inp()} value={form.fuel_source} onChange={event => setF('fuel_source', event.target.value)}>
+                  <option value="petrol_pump">Petrol pump</option>
+                  <option value="vendor_supply">Vendor supply</option>
+                  <option value="company_bowser">Company bowser</option>
+                  <option value="company_tank">Company tank</option>
+                </select>
+              </div>
+              <div>
+                {lbl('Vendor / Petrol pump')}
+                <VendorPicker companyId={companyId} value={form.vendor_name} onChange={name => setF('vendor_name', name)} onSelect={vendor => setForm(current => ({ ...current, vendor_name: vendor.name, vendor_gstin: vendor.gstin || current.vendor_gstin }))} placeholder="Optional" className={inp()} />
+              </div>
+              <div className="col-span-2">
+                {lbl('Description')}
+                <input className={inp()} value={form.description} onChange={event => setF('description', event.target.value)} placeholder="Optional — purpose, slip or trip details" />
+              </div>
+              <PayModeSelect />
+              <RefInput />
+              <div className="col-span-2">
+                {lbl('Notes')}
+                <input className={inp()} value={form.notes} onChange={event => setF('notes', event.target.value)} placeholder="Optional review note" />
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* ── ADMIN / MISC ── */}
         {['admin', 'misc'].includes(cat) && (
           <div className="grid grid-cols-2 gap-3">
@@ -1619,7 +1746,7 @@ function DashboardTab({ companyId, onNavigate, onNavigatePage }) {
       const { data, error } = await supabase.from('expenses')
         .select('category, amount').eq('company_id', companyId)
         .gte('expense_date', thisMonth.from).lte('expense_date', thisMonth.to)
-        .in('category', ['salary','emi','interest','rent','insurance','admin','misc'])
+        .in('category', ['salary','emi','interest','rent','insurance','fuel','admin','misc'])
       if (error) throw error; return data
     },
     enabled: !!companyId,
@@ -4545,7 +4672,8 @@ export default function AccountsPage({ onNavigate, initialTab = 'dashboard' }) {
   const { data: equipmentList = [] } = useQuery({
     queryKey: ['equipment_list_accts', companyId],
     queryFn: async () => {
-      const { data, error } = await supabase.from('equipment').select('id, name, equipment_number')
+      const { data, error } = await supabase.from('equipment')
+        .select('id, name, equipment_number, current_project_id, current_meter_reading, meter_type')
         .eq('company_id', companyId).eq('status', 'active').order('name')
       if (error) throw error; return data
     },

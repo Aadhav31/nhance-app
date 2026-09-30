@@ -68,6 +68,24 @@ test('draft site logs do not affect the reconciliation', () => {
   assert.equal(report.rows[0].consumedLitres, 28)
 })
 
+test('approved expense fuel keeps its explicit project and rate', () => {
+  const report = buildFuelReconciliation({
+    ...base,
+    issues: [{
+      id: 'expense-fuel', equipment_id: 'eq1', project_id: 'p2', issue_date: '2026-09-19',
+      quantity_liters: 100, rate_per_liter: 95, total_amount: 9500, meter_at_issue: 1250,
+      expense_capture_id: 'capture-1', approval_status: 'approved',
+    }],
+    fills: [],
+    operations: [],
+  })
+
+  assert.equal(report.rows[0].projectId, 'p2')
+  assert.equal(report.rows[0].projectName, 'Road Site')
+  assert.equal(report.rows[0].averageRate, 95)
+  assert.equal(report.summary.averageRate, 95)
+})
+
 test('KPI drill-down filters return only the exact contributing rows', () => {
   const report = buildFuelReconciliation({
     ...base,
@@ -82,7 +100,7 @@ test('KPI drill-down filters return only the exact contributing rows', () => {
     ],
   })
   assert.deepEqual(filterFuelReconciliationRows(report.rows, { metric: 'unaccounted' }).map(row => row.equipmentId), ['eq1'])
-  assert.deepEqual(filterFuelReconciliationRows(report.rows, { metric: 'data_gaps' }).map(row => row.equipmentId), ['eq2'])
+  assert.deepEqual(filterFuelReconciliationRows(report.rows, { metric: 'data_gaps' }).map(row => row.equipmentId), ['eq1', 'eq2'])
   assert.equal(filterFuelReconciliationRows(report.rows, { metric: 'supply', projectId: 'p1' }).length, 1)
   assert.deepEqual(groupFuelRowsByDate(report.rows), [{ date: '2026-09-18', supplied: 140, consumed: 110, expected: 70 }])
 })

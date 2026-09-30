@@ -64,7 +64,7 @@ export function buildFuelReconciliation({
   const equipmentById = Object.fromEntries(equipment.map(item => [item.id, item]))
   const projectsById = Object.fromEntries(projects.map(item => [item.id, item]))
   const duplicateIds = duplicateFillIds(fills)
-  const globalRate = weightedAverageRate(fills, replenishments)
+  const globalRate = weightedAverageRate([...issues, ...fills], replenishments)
   const buckets = new Map()
 
   const projectFor = (equipmentId, date, explicitProjectId = null) => {
@@ -92,7 +92,7 @@ export function buildFuelReconciliation({
     if (bucket) bucket.operations.push(operation)
   })
   issues.forEach(issue => {
-    const bucket = ensureBucket(issue.equipment_id, dateKey(issue.issue_date))
+    const bucket = ensureBucket(issue.equipment_id, dateKey(issue.issue_date), issue.project_id)
     if (bucket) bucket.issues.push(issue)
   })
   fills.forEach(fill => {
@@ -118,7 +118,7 @@ export function buildFuelReconciliation({
       ? actualForEfficiency - expectedLitres
       : null
     const projectRate = number(project?.hsd_rate_per_liter)
-    const rowRate = weightedAverageRate(bucket.fills, []) || projectRate || globalRate
+    const rowRate = weightedAverageRate([...bucket.issues, ...bucket.fills], []) || projectRate || globalRate
     const unaccountedLitres = balanceVariance === null ? 0 : Math.max(0, balanceVariance)
     const excessLitres = benchmarkVariance === null ? 0 : Math.max(0, benchmarkVariance)
     const costImpact = Math.max(unaccountedLitres, excessLitres) * rowRate
@@ -127,7 +127,7 @@ export function buildFuelReconciliation({
       ...bucket.issues.filter(item => item.meter_at_issue == null),
       ...bucket.fills.filter(item => item.meter_at_filling == null && item.km_at_filling == null),
     ].length
-    const missingRateCount = bucket.fills.filter(item =>
+    const missingRateCount = [...bucket.issues, ...bucket.fills].filter(item =>
       number(item.rate_per_liter) <= 0 && number(item.total_amount) <= 0
     ).length
     const flags = []

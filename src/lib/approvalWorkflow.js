@@ -178,7 +178,27 @@ export async function submitApprovalCase({
   snapshot = {},
   requesterId,
   requesterName,
+  fuelReview = false,
 }) {
+  if (fuelReview && ['field_expense', 'expense'].includes(documentType)) {
+    const { data: fuelResult, error: fuelError } = await supabase.rpc('submit_fuel_expense_approval_case', {
+      p_document_type: documentType,
+      p_document_id: documentId,
+      p_document_ref: documentRef || null,
+      p_title: title,
+      p_snapshot: snapshot,
+    })
+    if (fuelError) throw fuelError
+    return {
+      caseId: fuelResult?.case_id,
+      engine: 'enterprise',
+      approvalRequired: true,
+      status: fuelResult?.status || 'in_review',
+      route: fuelResult?.route,
+      mandatoryFuelReview: true,
+    }
+  }
+
   if (EXPENSE_APPROVAL_DOCUMENTS.has(documentType)) {
     const { data: expenseResult, error: expenseError } = await supabase.rpc('submit_expense_approval_case', {
       p_document_type: documentType,
