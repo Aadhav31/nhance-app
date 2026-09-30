@@ -1,395 +1,389 @@
-/**
- * AuditLogPage.jsx
- *
- * Admin-only immutable audit trail viewer.
- * All records are read-only — no edit, delete, or export controls that modify data.
- *
- * Features:
- *  • Timeline table: timestamp | module | action | record | description | actor
- *  • Filter by module and date range
- *  • Text search across actor name and record ref
- *  • Load-more pagination (50 per page)
- *  • Immutability notice
- *  • Color-coded action and module badges
- */
-
-import { useState, useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
-  Shield, Search, Filter, ChevronDown,
-  RefreshCw, AlertTriangle, Lock,
-  CheckCircle, XCircle, Clock, CreditCard,
-  Trash2, FileText, Send, RotateCcw, CheckCheck,
-  User, Calendar, Activity,
+  Activity, AlertTriangle, ArrowRight, Calendar, CheckCircle2,
+  ChevronRight, Clock3, Database, FileClock, Filter, Fingerprint,
+  LockKeyhole, RefreshCw, Search, ShieldCheck, Trash2, User,
 } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
+import Modal from '../../components/shared/Modal'
 import { supabase } from '../../lib/supabase'
 import { fmtDateTime } from '../../lib/utils'
 
-// ── Action display config ─────────────────────────────────────────────────────
+const PAGE_SIZE = 50
+
 const ACTION_CFG = {
-  created:      { label: 'Created',      cls: 'bg-emerald-500/15 text-emerald-400 border-emerald-600/40', Icon: FileText    },
-  updated:      { label: 'Updated',      cls: 'bg-violet-500/15  text-violet-400  border-violet-600/40',  Icon: FileText    },
-  submitted:    { label: 'Submitted',    cls: 'bg-amber-500/15   text-amber-400   border-amber-600/40',   Icon: Send        },
-  approved:     { label: 'Approved',     cls: 'bg-emerald-500/15 text-emerald-400 border-emerald-600/40', Icon: CheckCircle },
-  rejected:     { label: 'Rejected',     cls: 'bg-red-500/15     text-red-400     border-red-600/40',     Icon: XCircle     },
-  paid:         { label: 'Paid',         cls: 'bg-blue-500/15    text-blue-400    border-blue-600/40',    Icon: CreditCard  },
-  deleted:      { label: 'Deleted',      cls: 'bg-red-600/15     text-red-500     border-red-700/40',     Icon: Trash2      },
-  acknowledged: { label: 'Acknowledged', cls: 'bg-sky-500/15     text-sky-400     border-sky-600/40',     Icon: CheckCheck  },
-  recalled:     { label: 'Recalled',     cls: 'bg-slate-500/15   text-slate-400   border-slate-600/40',   Icon: RotateCcw   },
-  activated:    { label: 'Activated',    cls: 'bg-emerald-500/15 text-emerald-400 border-emerald-600/40', Icon: CheckCircle },
-  terminated:   { label: 'Terminated',  cls: 'bg-red-500/15     text-red-400     border-red-600/40',     Icon: XCircle     },
-  login:        { label: 'Login',        cls: 'bg-slate-500/15   text-slate-400   border-slate-600/40',   Icon: User        },
-  logout:       { label: 'Logout',       cls: 'bg-slate-500/15   text-slate-400   border-slate-600/40',   Icon: User        },
+  insert: { label: 'Created', tone: 'emerald' },
+  created: { label: 'Created', tone: 'emerald' },
+  update: { label: 'Updated', tone: 'violet' },
+  updated: { label: 'Updated', tone: 'violet' },
+  delete: { label: 'Deleted', tone: 'red' },
+  deleted: { label: 'Deleted', tone: 'red' },
+  submitted: { label: 'Submitted', tone: 'amber' },
+  approved: { label: 'Approved', tone: 'emerald' },
+  rejected: { label: 'Rejected', tone: 'red' },
+  paid: { label: 'Paid', tone: 'blue' },
+  acknowledged: { label: 'Acknowledged', tone: 'sky' },
+  recalled: { label: 'Recalled', tone: 'slate' },
+  activated: { label: 'Activated', tone: 'emerald' },
+  terminated: { label: 'Terminated', tone: 'red' },
+  login: { label: 'Login', tone: 'slate' },
+  logout: { label: 'Logout', tone: 'slate' },
 }
 
-// ── Module display config ─────────────────────────────────────────────────────
-const MODULE_CFG = {
-  ra_billing:    { label: 'RA Billing',     cls: 'bg-blue-500/10    text-blue-400    border-blue-600/30'    },
-  approvals:     { label: 'Approvals',      cls: 'bg-amber-500/10   text-amber-400   border-amber-600/30'   },
-  hire_contract: { label: 'Hire Contract',  cls: 'bg-purple-500/10  text-purple-400  border-purple-600/30'  },
-  purchase:      { label: 'Purchase',       cls: 'bg-orange-500/10  text-orange-400  border-orange-600/30'  },
-  field_expense: { label: 'Field Expense',  cls: 'bg-yellow-500/10  text-yellow-400  border-yellow-600/30'  },
-  boq:           { label: 'BOQ',            cls: 'bg-teal-500/10    text-teal-400    border-teal-600/30'    },
-  inventory:     { label: 'Inventory',      cls: 'bg-indigo-500/10  text-indigo-400  border-indigo-600/30'  },
-  settings:      { label: 'Settings',       cls: 'bg-slate-500/10   text-slate-400   border-slate-600/30'   },
-  auth:          { label: 'Auth',           cls: 'bg-slate-500/10   text-slate-400   border-slate-600/30'   },
+const TONE_CLASSES = {
+  emerald: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400',
+  violet: 'border-violet-500/30 bg-violet-500/10 text-violet-400',
+  red: 'border-red-500/30 bg-red-500/10 text-red-400',
+  amber: 'border-amber-500/30 bg-amber-500/10 text-amber-400',
+  blue: 'border-blue-500/30 bg-blue-500/10 text-blue-400',
+  sky: 'border-sky-500/30 bg-sky-500/10 text-sky-400',
+  slate: 'border-dark-600 bg-dark-700 text-slate-400',
 }
 
-const ALL_MODULES = Object.entries(MODULE_CFG).map(([k, v]) => ({ key: k, label: v.label }))
-const PAGE_SIZE   = 50
+const MODULE_LABELS = {
+  administration: 'Administration',
+  approvals: 'Approvals',
+  clients: 'Clients',
+  collaboration: 'Collaboration',
+  crusher: 'Crusher',
+  equipment: 'Equipment',
+  equipment_health: 'Equipment Health',
+  finance: 'Finance',
+  hr: 'HR & Payroll',
+  inventory: 'Inventory',
+  operations: 'Operations',
+  projects: 'Projects',
+  purchases: 'Purchases & Vendors',
+  sales: 'Sales & Billing',
+  ra_billing: 'RA Billing',
+  field_expense: 'Field Expense',
+  hire_contract: 'Hire Contract',
+  settings: 'Settings',
+  auth: 'Authentication',
+}
 
-// ── Badges ────────────────────────────────────────────────────────────────────
+function titleCase(value = '') {
+  return value.replaceAll('_', ' ').replace(/\b\w/g, letter => letter.toUpperCase())
+}
+
+function displayValue(value) {
+  if (value === null || value === undefined || value === '') return '—'
+  if (typeof value === 'object') return JSON.stringify(value)
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No'
+  return String(value)
+}
+
+function safeJson(value) {
+  if (!value) return 'No snapshot available'
+  return JSON.stringify(value, (key, item) => {
+    if (typeof item === 'string' && item.length > 1200) {
+      return `${item.slice(0, 240)}… [${item.length.toLocaleString('en-IN')} characters retained in ledger]`
+    }
+    return item
+  }, 2)
+}
+
+function localDateBoundary(value, endOfDay = false) {
+  if (!value) return null
+  return new Date(`${value}T${endOfDay ? '23:59:59.999' : '00:00:00.000'}`).toISOString()
+}
+
 function ActionBadge({ action }) {
-  const cfg = ACTION_CFG[action] || { label: action, cls: 'bg-slate-500/15 text-slate-400 border-slate-600/40', Icon: Activity }
-  const { Icon } = cfg
-  return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-bold uppercase tracking-wide whitespace-nowrap ${cfg.cls}`}>
-      <Icon className="w-2.5 h-2.5" />
-      {cfg.label}
-    </span>
-  )
+  const key = String(action || '').toLowerCase()
+  const cfg = ACTION_CFG[key] || { label: titleCase(key || 'Event'), tone: 'slate' }
+  return <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${TONE_CLASSES[cfg.tone]}`}>{cfg.label}</span>
 }
 
 function ModuleBadge({ module }) {
-  const cfg = MODULE_CFG[module] || { label: module, cls: 'bg-slate-500/10 text-slate-400 border-slate-600/30' }
-  return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded-full border text-[10px] font-semibold whitespace-nowrap ${cfg.cls}`}>
-      {cfg.label}
-    </span>
-  )
+  return <span className="inline-flex items-center rounded-full border border-primary-500/20 bg-primary-500/10 px-2 py-0.5 text-[10px] font-semibold text-primary-300">{MODULE_LABELS[module] || titleCase(module || 'System')}</span>
 }
 
-function RolePill({ role }) {
-  if (!role) return null
-  const cls = role === 'admin' ? 'text-red-400' : role === 'manager' ? 'text-amber-400' : role === 'accounts' ? 'text-blue-400' : 'text-slate-400'
-  return <span className={`text-[10px] font-semibold uppercase ${cls}`}>{role}</span>
-}
-
-// ── Log row ───────────────────────────────────────────────────────────────────
-function LogRow({ log, isLast }) {
+function SummaryCard({ label, value, help, Icon, tone = 'primary' }) {
+  const iconTone = {
+    primary: 'bg-primary-500/10 text-primary-400',
+    emerald: 'bg-emerald-500/10 text-emerald-400',
+    violet: 'bg-violet-500/10 text-violet-400',
+    red: 'bg-red-500/10 text-red-400',
+  }[tone]
   return (
-    <div className={`flex gap-4 py-3 ${!isLast ? 'border-b border-dark-700' : ''}`}>
-      {/* Timeline dot */}
-      <div className="flex flex-col items-center pt-1 flex-shrink-0 w-6">
-        <div className={`w-2 h-2 rounded-full flex-shrink-0 ${ACTION_CFG[log.action]?.cls?.includes('emerald') ? 'bg-emerald-500' : ACTION_CFG[log.action]?.cls?.includes('red') ? 'bg-red-500' : ACTION_CFG[log.action]?.cls?.includes('amber') ? 'bg-amber-500' : ACTION_CFG[log.action]?.cls?.includes('blue') ? 'bg-blue-500' : 'bg-slate-500'}`} />
-        {!isLast && <div className="w-px flex-1 bg-dark-700 mt-1" />}
-      </div>
-
-      {/* Content */}
-      <div className="flex-1 min-w-0 space-y-1.5">
-        {/* Top row: badges + timestamp */}
-        <div className="flex flex-wrap items-center gap-1.5">
-          <ModuleBadge module={log.module} />
-          <ActionBadge action={log.action} />
-          {log.record_ref && (
-            <span className="text-xs font-mono font-semibold" style={{ color: 'rgb(var(--t2))' }}>
-              {log.record_ref}
-            </span>
-          )}
-          <span className="ml-auto text-[10px] flex-shrink-0" style={{ color: 'rgb(var(--t3))' }}>
-            {fmtDateTime(log.created_at)}
-          </span>
-        </div>
-
-        {/* Description */}
-        {log.description && (
-          <p className="text-sm leading-snug" style={{ color: 'rgb(var(--t2))' }}>
-            {log.description}
-          </p>
-        )}
-
-        {/* Actor */}
-        <div className="flex items-center gap-1.5">
-          <User className="w-3 h-3 flex-shrink-0" style={{ color: 'rgb(var(--t3))' }} />
-          <span className="text-xs" style={{ color: 'rgb(var(--t3))' }}>
-            {log.actor_name || 'System'}
-          </span>
-          {log.actor_role && <RolePill role={log.actor_role} />}
-        </div>
+    <div className="card flex min-w-0 items-center gap-3 p-4">
+      <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${iconTone}`}><Icon className="h-5 w-5" /></div>
+      <div className="min-w-0">
+        <p className="text-xl font-black text-slate-100">{value}</p>
+        <p className="truncate text-xs font-semibold text-slate-300">{label}</p>
+        <p className="truncate text-[10px] text-slate-500">{help}</p>
       </div>
     </div>
   )
 }
 
-// ── Main Page ─────────────────────────────────────────────────────────────────
-export default function AuditLogPage() {
-  const { companyId, role } = useAuth()
-
-  const [moduleFilter, setModuleFilter] = useState('all')
-  const [search,       setSearch]       = useState('')
-  const [dateFrom,     setDateFrom]     = useState('')
-  const [dateTo,       setDateTo]       = useState('')
-  const [page,         setPage]         = useState(0)
-  const [showFilters,  setShowFilters]  = useState(false)
-
-  // Admin guard
-  if (role !== 'admin') {
-    return (
-      <div className="flex flex-col items-center justify-center h-full gap-3 px-8 text-center">
-        <Lock className="w-12 h-12 text-slate-600" />
-        <p className="text-base font-semibold text-slate-300">Admin access required</p>
-        <p className="text-sm text-slate-500">The audit log is restricted to company administrators.</p>
+function IntegrityCard({ integrity, loading, error, onVerify }) {
+  const valid = integrity?.valid === true
+  const unavailable = Boolean(error)
+  return (
+    <div className={`rounded-xl border p-4 ${valid ? 'border-emerald-500/25 bg-emerald-500/10' : unavailable ? 'border-amber-500/25 bg-amber-500/10' : 'border-dark-700 bg-dark-800'}`}>
+      <div className="flex flex-wrap items-center gap-3">
+        <div className={`flex h-10 w-10 items-center justify-center rounded-xl ${valid ? 'bg-emerald-500/15 text-emerald-400' : 'bg-amber-500/15 text-amber-400'}`}>
+          {valid ? <ShieldCheck className="h-5 w-5" /> : <Fingerprint className="h-5 w-5" />}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm font-bold text-slate-100">Ledger integrity</p>
+            <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${valid ? 'bg-emerald-500/15 text-emerald-400' : unavailable ? 'bg-amber-500/15 text-amber-400' : 'bg-slate-500/15 text-slate-400'}`}>
+              {loading ? 'Checking' : valid ? 'Verified' : unavailable ? 'Pending migration' : 'Not verified'}
+            </span>
+          </div>
+          <p className="mt-0.5 text-xs text-slate-400">
+            {valid ? `${Number(integrity.total_events || 0).toLocaleString('en-IN')} events form an unbroken SHA-256 chain.` : unavailable ? 'The tamper-evident database migration has not been applied to this environment yet.' : 'Run verification to validate sequence and hash continuity.'}
+          </p>
+        </div>
+        <button type="button" onClick={onVerify} disabled={loading} className="btn-secondary text-xs">
+          <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />Verify chain
+        </button>
       </div>
-    )
-  }
+    </div>
+  )
+}
 
-  const { data: logs = [], isLoading, isFetching, refetch } = useQuery({
-    queryKey: ['audit_logs', companyId, moduleFilter, dateFrom, dateTo],
+function ChangeTable({ log }) {
+  const fields = log.changed_fields || []
+  if (!fields.length) return <p className="text-xs text-slate-500">No column-level differences were recorded for this event.</p>
+  return (
+    <div className="overflow-hidden rounded-xl border border-dark-700">
+      <div className="grid grid-cols-[minmax(110px,0.7fr)_minmax(0,1fr)_24px_minmax(0,1fr)] gap-3 border-b border-dark-700 bg-dark-800 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-slate-500">
+        <span>Field</span><span>Before</span><span /><span>After</span>
+      </div>
+      <div className="max-h-72 divide-y divide-dark-700 overflow-y-auto">
+        {fields.map(field => (
+          <div key={field} className="grid grid-cols-[minmax(110px,0.7fr)_minmax(0,1fr)_24px_minmax(0,1fr)] gap-3 px-3 py-2.5 text-xs">
+            <span className="break-words font-semibold text-slate-300">{titleCase(field)}</span>
+            <span className="break-all text-slate-500">{displayValue(log.old_data?.[field])}</span>
+            <ArrowRight className="mt-0.5 h-3.5 w-3.5 text-slate-600" />
+            <span className="break-all text-slate-200">{displayValue(log.new_data?.[field])}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function SnapshotBlock({ title, subtitle, value, tone = 'slate' }) {
+  const toneClass = tone === 'red' ? 'border-red-500/20 bg-red-500/5' : tone === 'emerald' ? 'border-emerald-500/20 bg-emerald-500/5' : 'border-dark-700 bg-dark-900'
+  return (
+    <section className={`overflow-hidden rounded-xl border ${toneClass}`}>
+      <div className="border-b border-dark-700 px-3 py-2.5">
+        <p className="text-xs font-bold text-slate-200">{title}</p>
+        {subtitle && <p className="mt-0.5 text-[10px] text-slate-500">{subtitle}</p>}
+      </div>
+      <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-all p-3 text-[11px] leading-relaxed text-slate-400">{safeJson(value)}</pre>
+    </section>
+  )
+}
+
+function AuditDetail({ log, companyId, integrityValid, onClose }) {
+  const historyQuery = useQuery({
+    queryKey: ['audit_record_history', companyId, log?.table_name, log?.record_pk],
     queryFn: async () => {
-      let q = supabase
-        .from('audit_logs')
-        .select('*')
-        .eq('company_id', companyId)
-        .order('created_at', { ascending: false })
-        .limit(500)  // load up to 500, we filter client-side for search
-
-      if (moduleFilter !== 'all') q = q.eq('module', moduleFilter)
-      if (dateFrom)               q = q.gte('created_at', dateFrom + 'T00:00:00')
-      if (dateTo)                 q = q.lte('created_at', dateTo   + 'T23:59:59')
-
-      const { data, error } = await q
+      if (!log?.table_name || !log?.record_pk) return []
+      const { data, error } = await supabase.from('audit_logs').select('*').eq('company_id', companyId).eq('table_name', log.table_name).contains('record_pk', log.record_pk).order('event_no', { ascending: true }).limit(250)
       if (error) throw error
       return data || []
     },
-    enabled: !!companyId,
+    enabled: Boolean(log && companyId && log.table_name && log.record_pk),
   })
 
-  // Client-side search (actor name + record ref + description)
-  const filtered = useMemo(() => {
-    if (!search.trim()) return logs
-    const q = search.toLowerCase()
-    return logs.filter(l =>
-      (l.actor_name  || '').toLowerCase().includes(q) ||
-      (l.record_ref  || '').toLowerCase().includes(q) ||
-      (l.description || '').toLowerCase().includes(q) ||
-      (l.module      || '').toLowerCase().includes(q) ||
-      (l.action      || '').toLowerCase().includes(q)
-    )
+  if (!log) return null
+  const history = historyQuery.data || []
+  const firstEvent = history[0]
+  const originalSnapshot = firstEvent?.new_data || firstEvent?.old_data || log.new_data || log.old_data
+  const asOfSnapshot = String(log.action).toLowerCase() === 'delete' ? log.old_data : log.new_data
+
+  return (
+    <Modal title={`Audit event #${log.event_no || '—'}`} onClose={onClose} size="xl">
+      <div className="space-y-5">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <DetailFact label="Activity time" value={fmtDateTime(log.created_at)} />
+          <DetailFact label="Actor" value={log.actor_name || 'System'} help={log.actor_role || log.source || 'system'} />
+          <DetailFact label="Record" value={log.record_ref || titleCase(log.table_name || log.module)} help={log.table_name || 'Explicit event'} />
+          <div className="rounded-xl border border-dark-700 bg-dark-800 p-3">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Integrity</p>
+            <div className="mt-1 flex items-center gap-1.5"><CheckCircle2 className={`h-3.5 w-3.5 ${integrityValid ? 'text-emerald-400' : 'text-slate-500'}`} /><p className={`text-xs font-semibold ${integrityValid ? 'text-emerald-400' : 'text-slate-400'}`}>{integrityValid ? 'Hash chain verified' : 'Verification pending'}</p></div>
+          </div>
+        </div>
+
+        <section>
+          <div className="mb-2 flex flex-wrap items-center gap-2"><ModuleBadge module={log.module} /><ActionBadge action={log.action} /><p className="text-sm text-slate-300">{log.description || 'Database activity'}</p></div>
+          <ChangeTable log={log} />
+        </section>
+
+        <div className="grid gap-4 lg:grid-cols-2">
+          <SnapshotBlock title="Original record" subtitle={firstEvent ? `First captured on ${fmtDateTime(firstEvent.created_at)}` : 'Earliest retained state'} value={originalSnapshot} tone="emerald" />
+          <SnapshotBlock title="Record at this activity date" subtitle={`State as of ${fmtDateTime(log.created_at)}`} value={asOfSnapshot} tone={String(log.action).toLowerCase() === 'delete' ? 'red' : 'slate'} />
+        </div>
+        <div className="grid gap-4 lg:grid-cols-2"><SnapshotBlock title="Before this activity" value={log.old_data} /><SnapshotBlock title="After this activity" value={log.new_data} /></div>
+
+        <section className="rounded-xl border border-dark-700 bg-dark-800 p-3">
+          <div className="flex items-center gap-2"><FileClock className="h-4 w-4 text-primary-400" /><p className="text-xs font-bold text-slate-200">Record history</p><span className="ml-auto text-[10px] text-slate-500">{history.length} retained event{history.length === 1 ? '' : 's'}</span></div>
+          {historyQuery.isLoading ? <p className="mt-3 text-xs text-slate-500">Loading history…</p> : history.length ? (
+            <div className="mt-3 flex flex-wrap gap-2">{history.map(item => <span key={item.id} className={`rounded-lg border px-2 py-1 text-[10px] ${item.id === log.id ? 'border-primary-500/40 bg-primary-500/10 text-primary-300' : 'border-dark-600 text-slate-500'}`}>#{item.event_no} · {titleCase(item.action)} · {fmtDateTime(item.created_at)}</span>)}</div>
+          ) : <p className="mt-3 text-xs text-slate-500">No linked record history is available for this explicit event.</p>}
+        </section>
+
+        <div className="rounded-xl border border-dark-700 bg-dark-900 p-3 font-mono text-[10px] text-slate-500">
+          <p>Event hash: <span className="break-all text-slate-400">{log.event_hash || 'Available after database migration'}</span></p>
+          <p className="mt-1">Previous hash: <span className="break-all text-slate-400">{log.previous_hash || '—'}</span></p>
+          <p className="mt-1">Transaction: <span className="text-slate-400">{log.transaction_id || '—'}</span></p>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
+function DetailFact({ label, value, help }) {
+  return <div className="rounded-xl border border-dark-700 bg-dark-800 p-3"><p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">{label}</p><p className="mt-1 truncate text-xs font-semibold text-slate-200">{value}</p>{help && <p className="truncate text-[10px] uppercase text-slate-500">{help}</p>}</div>
+}
+
+function AuditRow({ log, onOpen }) {
+  const actionKey = String(log.action || '').toLowerCase()
+  const isDeletion = actionKey === 'delete' || actionKey === 'deleted'
+  const changeCount = log.changed_fields?.length || 0
+  return (
+    <button type="button" onClick={() => onOpen(log)} className="group grid w-full grid-cols-[44px_minmax(0,1fr)_auto] gap-3 px-4 py-3 text-left transition-colors hover:bg-dark-700/40">
+      <div className={`mt-0.5 flex h-9 w-9 items-center justify-center rounded-xl ${isDeletion ? 'bg-red-500/10 text-red-400' : 'bg-primary-500/10 text-primary-400'}`}>{isDeletion ? <Trash2 className="h-4 w-4" /> : <Activity className="h-4 w-4" />}</div>
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-1.5"><ModuleBadge module={log.module} /><ActionBadge action={log.action} />{log.record_ref && <span className="truncate font-mono text-xs font-semibold text-slate-300">{log.record_ref}</span>}</div>
+        <p className="mt-1.5 truncate text-sm text-slate-300">{log.description || `${titleCase(log.action)} ${titleCase(log.table_name)}`}</p>
+        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-slate-500"><span className="inline-flex items-center gap-1"><User className="h-3 w-3" />{log.actor_name || 'System'}</span><span className="inline-flex items-center gap-1"><Database className="h-3 w-3" />{log.table_name || 'Explicit event'}</span>{changeCount > 0 && <span>{changeCount} field{changeCount === 1 ? '' : 's'} captured</span>}</div>
+      </div>
+      <div className="flex items-center gap-2 pl-2"><div className="hidden text-right sm:block"><p className="whitespace-nowrap text-[11px] text-slate-400">{fmtDateTime(log.created_at)}</p><p className="mt-0.5 text-[10px] text-slate-600">Event #{log.event_no || '—'}</p></div><ChevronRight className="h-4 w-4 text-slate-600 transition-transform group-hover:translate-x-0.5 group-hover:text-primary-400" /></div>
+    </button>
+  )
+}
+
+export default function AuditLogPage() {
+  const { companyId, role } = useAuth()
+  const [moduleFilter, setModuleFilter] = useState('all')
+  const [actionFilter, setActionFilter] = useState('all')
+  const [search, setSearch] = useState('')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
+  const [page, setPage] = useState(0)
+  const [showFilters, setShowFilters] = useState(false)
+  const [selectedLog, setSelectedLog] = useState(null)
+  const isAdmin = role === 'admin' || role === 'superadmin'
+
+  const logsQuery = useQuery({
+    queryKey: ['audit_logs', companyId, moduleFilter, actionFilter, dateFrom, dateTo],
+    queryFn: async () => {
+      let query = supabase.from('audit_logs').select('*').eq('company_id', companyId).order('created_at', { ascending: false }).limit(1000)
+      if (moduleFilter !== 'all') query = query.eq('module', moduleFilter)
+      if (actionFilter !== 'all') query = query.eq('action', actionFilter)
+      if (dateFrom) query = query.gte('created_at', localDateBoundary(dateFrom))
+      if (dateTo) query = query.lte('created_at', localDateBoundary(dateTo, true))
+      const { data, error } = await query
+      if (error) throw error
+      return data || []
+    },
+    enabled: Boolean(companyId && isAdmin),
+  })
+
+  const integrityQuery = useQuery({
+    queryKey: ['audit_integrity', companyId],
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc('verify_audit_chain', { p_company_id: companyId })
+      if (error) throw error
+      return data
+    },
+    enabled: Boolean(companyId && isAdmin),
+    retry: false,
+  })
+
+  const logs = logsQuery.data || []
+  const filteredLogs = useMemo(() => {
+    const needle = search.trim().toLowerCase()
+    if (!needle) return logs
+    return logs.filter(log => [log.actor_name, log.actor_role, log.record_ref, log.description, log.module, log.action, log.table_name].some(value => String(value || '').toLowerCase().includes(needle)))
   }, [logs, search])
 
-  // Pagination
-  const totalPages   = Math.ceil(filtered.length / PAGE_SIZE)
-  const pageRecords  = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
-  const hasMore      = filtered.length > (page + 1) * PAGE_SIZE
+  const moduleOptions = useMemo(() => {
+    const keys = new Set([...Object.keys(MODULE_LABELS), ...logs.map(log => log.module).filter(Boolean)])
+    return [...keys].sort((a, b) => (MODULE_LABELS[a] || a).localeCompare(MODULE_LABELS[b] || b))
+  }, [logs])
+  const summary = useMemo(() => ({
+    total: filteredLogs.length,
+    updates: filteredLogs.filter(log => ['update', 'updated'].includes(String(log.action).toLowerCase())).length,
+    deletions: filteredLogs.filter(log => ['delete', 'deleted'].includes(String(log.action).toLowerCase())).length,
+  }), [filteredLogs])
 
-  const clearFilters = () => {
-    setModuleFilter('all')
-    setSearch('')
-    setDateFrom('')
-    setDateTo('')
-    setPage(0)
+  const totalPages = Math.max(1, Math.ceil(filteredLogs.length / PAGE_SIZE))
+  const safePage = Math.min(page, totalPages - 1)
+  const pageRecords = filteredLogs.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE)
+  const activeFilterCount = [moduleFilter !== 'all', actionFilter !== 'all', Boolean(search), Boolean(dateFrom), Boolean(dateTo)].filter(Boolean).length
+  const clearFilters = () => { setModuleFilter('all'); setActionFilter('all'); setSearch(''); setDateFrom(''); setDateTo(''); setPage(0) }
+
+  if (!isAdmin) {
+    return <div className="flex h-full flex-col items-center justify-center gap-3 px-8 text-center"><LockKeyhole className="h-12 w-12 text-slate-600" /><p className="text-base font-semibold text-slate-300">Administrator access required</p><p className="max-w-md text-sm text-slate-500">Audit evidence contains historical business data and is restricted to company administrators.</p></div>
   }
-
-  const activeFilterCount = [
-    moduleFilter !== 'all',
-    !!search,
-    !!dateFrom,
-    !!dateTo,
-  ].filter(Boolean).length
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="max-w-4xl mx-auto px-4 py-6 space-y-4">
-
-        {/* Header */}
-        <div className="flex items-start justify-between gap-3">
+      <div className="mx-auto max-w-6xl space-y-5 px-4 py-6 sm:px-6">
+        <header className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-600/30 flex items-center justify-center">
-                <Shield className="w-4 h-4 text-emerald-400" />
-              </div>
-              <h2 className="text-xl font-bold" style={{ color: 'rgb(var(--t1))' }}>Audit Log</h2>
-            </div>
-            <p className="text-sm mt-1" style={{ color: 'rgb(var(--t3))' }}>
-              Immutable record of all system actions — {filtered.length} entries{search || moduleFilter !== 'all' || dateFrom || dateTo ? ' (filtered)' : ''}
-            </p>
+            <div className="flex items-center gap-2"><div className="flex h-9 w-9 items-center justify-center rounded-xl border border-emerald-500/25 bg-emerald-500/10"><ShieldCheck className="h-5 w-5 text-emerald-400" /></div><div><p className="text-[10px] font-bold uppercase tracking-[0.2em] text-emerald-400">Governance & Evidence</p><h1 className="text-xl font-black text-slate-100">Audit Log</h1></div></div>
+            <p className="mt-2 max-w-2xl text-sm text-slate-500">Every business-data change is recorded with its actor, exact time, original value, resulting value, and deletion snapshot.</p>
           </div>
-          <button
-            onClick={() => { setPage(0); refetch() }}
-            title="Refresh"
-            className="w-9 h-9 flex items-center justify-center rounded-lg hover:bg-dark-700 transition-colors flex-shrink-0"
-            style={{ color: 'rgb(var(--t3))' }}
-          >
-            <RefreshCw className={`w-4 h-4 ${isFetching ? 'animate-spin' : ''}`} />
-          </button>
+          <button type="button" onClick={() => { logsQuery.refetch(); integrityQuery.refetch() }} className="btn-secondary"><RefreshCw className={`h-4 w-4 ${logsQuery.isFetching || integrityQuery.isFetching ? 'animate-spin' : ''}`} />Refresh evidence</button>
+        </header>
+
+        <IntegrityCard integrity={integrityQuery.data} loading={integrityQuery.isFetching} error={integrityQuery.error} onVerify={() => integrityQuery.refetch()} />
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <SummaryCard label="Visible events" value={summary.total.toLocaleString('en-IN')} help="Current search and filters" Icon={Activity} />
+          <SummaryCard label="Alterations" value={summary.updates.toLocaleString('en-IN')} help="Before and after retained" Icon={FileClock} tone="violet" />
+          <SummaryCard label="Deletions" value={summary.deletions.toLocaleString('en-IN')} help="Original snapshot retained" Icon={Trash2} tone="red" />
+          <SummaryCard label="Chain status" value={integrityQuery.data?.valid ? 'Verified' : 'Pending'} help="SHA-256 continuity check" Icon={Fingerprint} tone={integrityQuery.data?.valid ? 'emerald' : 'primary'} />
         </div>
 
-        {/* Immutability notice */}
-        <div className="flex items-start gap-2.5 px-4 py-3 rounded-xl bg-amber-500/8 border border-amber-600/25">
-          <Lock className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
-          <p className="text-xs" style={{ color: 'rgb(var(--t2))' }}>
-            <span className="font-semibold text-amber-400">Immutable audit trail.</span>{' '}
-            All entries are append-only. No record can be edited or deleted — this is enforced at the database level.
-          </p>
-        </div>
-
-        {/* Search + Filter bar */}
-        <div className="space-y-2">
+        <section className="space-y-2">
           <div className="flex gap-2">
-            {/* Search */}
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-              <input
-                type="text"
-                value={search}
-                onChange={e => { setSearch(e.target.value); setPage(0) }}
-                placeholder="Search actor, record, description…"
-                className="w-full pl-9 pr-3 py-2 rounded-lg bg-dark-700 border border-dark-600 text-sm focus:outline-none focus:border-primary-500"
-                style={{ color: 'rgb(var(--t1))' }}
-              />
-            </div>
-            {/* Filter toggle */}
-            <button
-              onClick={() => setShowFilters(f => !f)}
-              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border text-sm font-medium transition-colors ${showFilters ? 'bg-primary-600 text-white border-primary-500' : 'border-dark-600 hover:border-dark-500'}`}
-              style={!showFilters ? { color: 'rgb(var(--t2))' } : undefined}
-            >
-              <Filter className="w-4 h-4" />
-              Filters
-              {activeFilterCount > 0 && (
-                <span className={`px-1.5 py-0.5 rounded-full text-xs font-bold ${showFilters ? 'bg-white/25 text-white' : 'bg-amber-500/20 text-amber-400'}`}>
-                  {activeFilterCount}
-                </span>
-              )}
-            </button>
+            <div className="relative min-w-0 flex-1"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" /><input type="search" value={search} onChange={event => { setSearch(event.target.value); setPage(0) }} placeholder="Search person, record, activity, or database table…" className="input w-full pl-9" /></div>
+            <button type="button" onClick={() => setShowFilters(value => !value)} className={`btn-secondary ${showFilters ? 'border-primary-500/40 text-primary-300' : ''}`}><Filter className="h-4 w-4" />Filters{activeFilterCount > 0 && <span className="rounded-full bg-primary-500/20 px-1.5 py-0.5 text-[10px] font-bold text-primary-300">{activeFilterCount}</span>}</button>
           </div>
-
-          {/* Expanded filters */}
           {showFilters && (
-            <div className="flex flex-wrap gap-3 p-3 rounded-xl bg-dark-800 border border-dark-700">
-              {/* Module filter */}
-              <div className="flex flex-col gap-1 min-w-[160px]">
-                <label className="text-xs text-slate-500">Module</label>
-                <select
-                  value={moduleFilter}
-                  onChange={e => { setModuleFilter(e.target.value); setPage(0) }}
-                  className="px-3 py-1.5 rounded-lg bg-dark-700 border border-dark-600 text-sm focus:outline-none focus:border-primary-500"
-                  style={{ color: 'rgb(var(--t1))' }}
-                >
-                  <option value="all">All modules</option>
-                  {ALL_MODULES.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
-                </select>
-              </div>
-              {/* Date from */}
-              <div className="flex flex-col gap-1">
-                <label className="text-xs text-slate-500">From date</label>
-                <input
-                  type="date"
-                  value={dateFrom}
-                  onChange={e => { setDateFrom(e.target.value); setPage(0) }}
-                  className="px-3 py-1.5 rounded-lg bg-dark-700 border border-dark-600 text-sm focus:outline-none focus:border-primary-500"
-                  style={{ color: 'rgb(var(--t1))' }}
-                />
-              </div>
-              {/* Date to */}
-              <div className="flex flex-col gap-1">
-                <label className="text-xs text-slate-500">To date</label>
-                <input
-                  type="date"
-                  value={dateTo}
-                  onChange={e => { setDateTo(e.target.value); setPage(0) }}
-                  className="px-3 py-1.5 rounded-lg bg-dark-700 border border-dark-600 text-sm focus:outline-none focus:border-primary-500"
-                  style={{ color: 'rgb(var(--t1))' }}
-                />
-              </div>
-              {/* Clear */}
-              {activeFilterCount > 0 && (
-                <div className="flex flex-col justify-end">
-                  <button
-                    onClick={clearFilters}
-                    className="px-3 py-1.5 rounded-lg text-sm font-medium text-red-400 hover:bg-red-500/10 border border-red-600/30 transition-colors"
-                  >
-                    Clear all
-                  </button>
-                </div>
-              )}
+            <div className="grid gap-3 rounded-xl border border-dark-700 bg-dark-800 p-3 sm:grid-cols-2 lg:grid-cols-5">
+              <FilterSelect label="Module" value={moduleFilter} onChange={value => { setModuleFilter(value); setPage(0) }}><option value="all">All modules</option>{moduleOptions.map(module => <option key={module} value={module}>{MODULE_LABELS[module] || titleCase(module)}</option>)}</FilterSelect>
+              <FilterSelect label="Activity" value={actionFilter} onChange={value => { setActionFilter(value); setPage(0) }}><option value="all">All activity</option><option value="insert">Created</option><option value="update">Updated</option><option value="delete">Deleted</option><option value="submitted">Submitted</option><option value="approved">Approved</option><option value="rejected">Rejected</option><option value="paid">Paid</option></FilterSelect>
+              <FilterDate label="From date" value={dateFrom} onChange={value => { setDateFrom(value); setPage(0) }} />
+              <FilterDate label="To date" value={dateTo} onChange={value => { setDateTo(value); setPage(0) }} />
+              <div className="flex items-end"><button type="button" onClick={clearFilters} disabled={activeFilterCount === 0} className="btn-ghost w-full text-xs text-red-400 disabled:opacity-40">Clear filters</button></div>
             </div>
           )}
-        </div>
+        </section>
 
-        {/* Log entries */}
-        <div className="bg-dark-800 border border-dark-700 rounded-xl px-4">
-          {isLoading && (
-            <div className="flex justify-center py-12">
-              <div className="w-6 h-6 border-2 border-primary-500 border-t-transparent rounded-full animate-spin" />
-            </div>
-          )}
+        <section className="overflow-hidden rounded-xl border border-dark-700 bg-dark-800">
+          <div className="flex flex-wrap items-center gap-2 border-b border-dark-700 px-4 py-3"><Clock3 className="h-4 w-4 text-primary-400" /><h2 className="text-sm font-bold text-slate-200">Activity timeline</h2><span className="text-xs text-slate-500">Newest first</span><span className="ml-auto inline-flex items-center gap-1 text-[10px] text-slate-500"><Calendar className="h-3 w-3" />Times shown in your local timezone</span></div>
+          {logsQuery.isLoading ? <div className="flex items-center justify-center py-16"><RefreshCw className="h-6 w-6 animate-spin text-primary-400" /></div> : logsQuery.error ? (
+            <div className="flex flex-col items-center gap-2 px-6 py-16 text-center"><AlertTriangle className="h-8 w-8 text-amber-400" /><p className="text-sm font-semibold text-slate-300">Audit evidence could not be loaded</p><p className="max-w-lg text-xs text-slate-500">{logsQuery.error.message}</p><button type="button" onClick={() => logsQuery.refetch()} className="btn-secondary mt-2 text-xs">Try again</button></div>
+          ) : pageRecords.length === 0 ? (
+            <div className="flex flex-col items-center gap-2 px-6 py-16 text-center"><Database className="h-8 w-8 text-slate-600" /><p className="text-sm font-semibold text-slate-300">{activeFilterCount ? 'No evidence matches these filters' : 'No audit events have been recorded yet'}</p><p className="max-w-lg text-xs text-slate-500">{activeFilterCount ? 'Clear one or more filters to broaden the timeline.' : 'Events will appear automatically after the database audit migration is activated.'}</p>{activeFilterCount > 0 && <button type="button" onClick={clearFilters} className="btn-ghost mt-2 text-xs text-primary-400">Clear filters</button>}</div>
+          ) : <div className="divide-y divide-dark-700">{pageRecords.map(log => <AuditRow key={log.id} log={log} onOpen={setSelectedLog} />)}</div>}
+        </section>
 
-          {!isLoading && pageRecords.length === 0 && (
-            <div className="flex flex-col items-center justify-center py-16 gap-3 text-center">
-              <Activity className="w-8 h-8 text-slate-600" />
-              <p className="text-sm text-slate-500">
-                {search || activeFilterCount > 0 ? 'No entries match your filters.' : 'No audit log entries yet.'}
-              </p>
-              {activeFilterCount > 0 && (
-                <button onClick={clearFilters} className="text-xs text-primary-400 hover:underline">Clear filters</button>
-              )}
-            </div>
-          )}
+        {filteredLogs.length > PAGE_SIZE && <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-slate-500">Showing {safePage * PAGE_SIZE + 1}–{Math.min((safePage + 1) * PAGE_SIZE, filteredLogs.length)} of {filteredLogs.length}</p><div className="flex gap-2"><button type="button" onClick={() => setPage(value => Math.max(0, value - 1))} disabled={safePage === 0} className="btn-secondary text-xs disabled:opacity-40">Previous</button><button type="button" onClick={() => setPage(value => Math.min(totalPages - 1, value + 1))} disabled={safePage >= totalPages - 1} className="btn-secondary text-xs disabled:opacity-40">Next</button></div></div>}
 
-          {!isLoading && pageRecords.length > 0 && (
-            <div className="divide-y divide-dark-700">
-              {pageRecords.map((log, i) => (
-                <LogRow key={log.id} log={log} isLast={i === pageRecords.length - 1} />
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Pagination */}
-        {totalPages > 1 && (
-          <div className="flex items-center justify-between">
-            <p className="text-xs" style={{ color: 'rgb(var(--t3))' }}>
-              Showing {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filtered.length)} of {filtered.length}
-            </p>
-            <div className="flex gap-2">
-              <button
-                onClick={() => setPage(p => Math.max(0, p - 1))}
-                disabled={page === 0}
-                className="px-3 py-1.5 rounded-lg border border-dark-600 text-xs font-medium disabled:opacity-40 hover:border-dark-500 transition-colors"
-                style={{ color: 'rgb(var(--t2))' }}
-              >
-                ← Previous
-              </button>
-              <button
-                onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
-                disabled={!hasMore}
-                className="px-3 py-1.5 rounded-lg border border-dark-600 text-xs font-medium disabled:opacity-40 hover:border-dark-500 transition-colors"
-                style={{ color: 'rgb(var(--t2))' }}
-              >
-                Next →
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Footer note */}
-        <p className="text-center text-xs pb-2" style={{ color: 'rgb(var(--t3))' }}>
-          🔒 Audit records are cryptographically protected at the database level and cannot be altered.
-        </p>
-
+        <div className="flex items-start gap-2 rounded-xl border border-dark-700 bg-dark-800 px-4 py-3"><LockKeyhole className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" /><p className="text-xs leading-relaxed text-slate-400"><span className="font-semibold text-emerald-400">Append-only evidence.</span> Application users cannot edit, delete, insert directly into, or truncate this ledger. A database owner can administer database objects, so SHA-256 chain verification is used to expose any later modification.</p></div>
       </div>
+
+      {selectedLog && <AuditDetail log={selectedLog} companyId={companyId} integrityValid={integrityQuery.data?.valid === true} onClose={() => setSelectedLog(null)} />}
     </div>
   )
+}
+
+function FilterSelect({ label, value, onChange, children }) {
+  return <label className="space-y-1"><span className="text-[10px] font-bold uppercase tracking-wide text-slate-500">{label}</span><select value={value} onChange={event => onChange(event.target.value)} className="input w-full text-sm">{children}</select></label>
+}
+
+function FilterDate({ label, value, onChange }) {
+  return <label className="space-y-1"><span className="text-[10px] font-bold uppercase tracking-wide text-slate-500">{label}</span><input type="date" value={value} onChange={event => onChange(event.target.value)} className="input w-full text-sm" /></label>
 }
