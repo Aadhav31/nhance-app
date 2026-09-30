@@ -2,6 +2,7 @@ import { useState, useMemo, useCallback, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
+import OutstandingReceivablesReport from './InvoiceReceivablesReport'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -18,6 +19,7 @@ const REPORTS = [
   { id: 'payroll',           cat: 'HR & Payroll',  label: 'Payroll Summary',        desc: 'Salary structure and net pay estimate' },
   { id: 'maintenance_cost',  cat: 'Maintenance',   label: 'Maintenance Cost',       desc: 'Maintenance spend by equipment & type' },
   { id: 'revenue',           cat: 'Finance',       label: 'Revenue & Collections',  desc: 'Invoiced, collected & outstanding' },
+  { id: 'invoice_outstanding', cat: 'Finance',     label: 'Outstanding Receivables', desc: 'Who owes how much — invoice, client and project views with PDF and Excel' },
   { id: 'invoice_aging',     cat: 'Finance',       label: 'Invoice Aging',          desc: 'Outstanding dues bucketed by age' },
   { id: 'expense_report',    cat: 'Finance',       label: 'Expense Breakdown',      desc: 'Expenses by category and vendor' },
   { id: 'project_pl',        cat: 'Projects',      label: 'Project Summary',        desc: 'Project-wise hours, costs & revenue' },
@@ -34,8 +36,9 @@ const REPORT_IDS = new Set(REPORTS.map(report => report.id))
 const fmt  = n => '₹' + (Number(n)||0).toLocaleString('en-IN', { maximumFractionDigits: 0 })
 const fmtN = (n, dec=1) => (Number(n)||0).toLocaleString('en-IN', { maximumFractionDigits: dec })
 const fmtDate = d => d ? new Date(d).toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' }) : '—'
-const monthStart = () => { const d=new Date(); d.setDate(1); return d.toISOString().slice(0,10) }
-const todayStr = () => new Date().toISOString().slice(0,10)
+const inputDate = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+const monthStart = () => { const d=new Date(); d.setDate(1); return inputDate(d) }
+const todayStr = () => inputDate(new Date())
 
 function exportCSV(rows, cols, filename) {
   const header = cols.map(c=>c.label).join(',')
@@ -2348,7 +2351,7 @@ function FuelVsBenchmarkReport({ companyId, from, to }) {
 
 // ─── Dispatcher ───────────────────────────────────────────────────────────────
 
-function ReportContent({ reportId, companyId, from, to }) {
+function ReportContent({ reportId, companyId, from, to, onNavigate }) {
   const p = { companyId, from, to }
   switch (reportId) {
     case 'fleet_status':       return <FleetStatusReport       companyId={companyId} />
@@ -2363,6 +2366,7 @@ function ReportContent({ reportId, companyId, from, to }) {
     case 'payroll':           return <PayrollReport          companyId={companyId} />
     case 'maintenance_cost':  return <MaintenanceCostReport  {...p} />
     case 'revenue':           return <RevenueReport          {...p} />
+    case 'invoice_outstanding': return <OutstandingReceivablesReport companyId={companyId} onNavigate={onNavigate} />
     case 'invoice_aging':     return <InvoiceAgingReport     companyId={companyId} />
     case 'expense_report':    return <ExpenseReport          {...p} />
     case 'project_pl':        return <ProjectPLReport        {...p} />
@@ -2436,10 +2440,10 @@ export default function ReportsPage({
           <p className="text-[11px] text-slate-500 mt-0.5">{current?.desc}</p>
         </div>
         <div className="flex-1 overflow-y-auto px-4 md:px-6 pt-4 pb-8">
-          {!['payroll','invoice_aging','stock_status'].includes(activeReport) && (
+          {!['payroll','invoice_outstanding','invoice_aging','stock_status'].includes(activeReport) && (
             <FilterBar from={from} setFrom={selectFrom} to={to} setTo={selectTo} />
           )}
-          <ReportContent reportId={activeReport} companyId={companyId} from={from} to={to} />
+          <ReportContent reportId={activeReport} companyId={companyId} from={from} to={to} onNavigate={onNavigate} />
         </div>
       </main>
     </div>
