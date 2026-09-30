@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   buildInvoiceReceivables, fetchReceivablesRows, filterInvoiceReceivables,
-  groupInvoiceReceivables, invoiceReceivablesTable, localReportDate, sumInvoiceReceivables,
+  groupInvoiceReceivables, invoiceReceivablesTable, localReportDate, salesInvoiceOverview, sumInvoiceReceivables,
 } from '../src/lib/invoiceReceivables.js'
 
 const invoice = (id, extra = {}) => ({
@@ -53,6 +53,25 @@ test('proforma inclusion is optional and excludes converted documents even when 
   assert.equal(sumInvoiceReceivables(rows).balance, 240)
   for (const view of ['client', 'project']) assert.deepEqual(invoiceReceivablesTable(rows, view).totals, sumInvoiceReceivables(rows))
   assert.equal(invoiceReceivablesTable(rows).columns.find(c => c.key === 'documentType').label, 'Type')
+})
+
+test('Sales overview excludes converted proformas, drafts and voids and recalculates saved balances', () => {
+  const source = [
+    invoice('tax-a', { converted_from_id: 'pf-a', total_amount: 300, paid_amount: 50, balance_due: 300 }),
+    invoice('tax-b', { converted_from_id: 'pf-b', total_amount: 200, paid_amount: 0, balance_due: 200 }),
+    invoice('pf-a', { invoice_type: 'proforma', status: 'converted', total_amount: 300, paid_amount: 0, balance_due: 300 }),
+    invoice('pf-b', { invoice_type: 'proforma', status: 'sent', total_amount: 200, paid_amount: 0, balance_due: 200 }),
+    invoice('pf-open', { invoice_type: 'proforma', total_amount: 100, paid_amount: 0 }),
+    invoice('paid', { status: 'paid', total_amount: 100, paid_amount: 100 }),
+    invoice('draft', { status: 'draft', total_amount: 9000, paid_amount: 300 }),
+    invoice('void', { status: 'void', total_amount: 9000 }),
+    invoice('cancelled', { status: 'cancelled', total_amount: 9000 }),
+  ]
+  const overview = salesInvoiceOverview(source)
+  assert.equal(overview.received, 150)
+  assert.equal(overview.balance, 550)
+  const reportRows = buildInvoiceReceivables(source, [], [], undefined, { includeProforma: true })
+  assert.deepEqual(overview, invoiceReceivablesTable(reportRows).totals)
 })
 
 test('missing and future due dates are not overdue; paid/overpaid invoices do not offset other debt', () => {

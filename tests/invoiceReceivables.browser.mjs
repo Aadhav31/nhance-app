@@ -24,16 +24,17 @@ const invoices = [
 await writeFile(join(temporary, 'supabase.js'), `const tables = ${JSON.stringify({ client_invoices: invoices, clients: [], projects: [] })};
 export const supabase = { from(table) { return { select() { return { eq() { return { order() { return { async range(start, end) {
   if (window.location.search.includes('fail')) return { data: null, error: { message: 'Report permission denied' } };
-  return { data: tables[table].slice(start, end + 1), count: tables[table].length, error: null };
+  return { data: tables[table].slice(start, Math.min(end + 1, start + 2)), count: tables[table].length, error: null };
 } }; } }; } }; } }; } };`)
 await writeFile(join(temporary, 'auth.js'), `export const useAuth = () => ({ companyId: 'test-company', company: { name: 'Nhance Test Company' } });`)
 await writeFile(join(temporary, 'index.html'), '<div id="root"></div><script type="module" src="/main.jsx"></script>')
 await writeFile(join(temporary, 'main.jsx'), `import React from 'react'; import { createRoot } from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import ReportsPage from ${JSON.stringify(join(root, 'src/pages/reports/ReportsPage.jsx'))};
+import SalesPage from ${JSON.stringify(join(root, 'src/pages/sales/SalesPage.jsx'))};
 import ${JSON.stringify(join(root, 'src/index.css'))};
 document.body.style.background='var(--nh-app-bg, #faf6f7)';
-createRoot(document.getElementById('root')).render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><div style={{height:'100vh'}}><ReportsPage initialReport="invoice_outstanding" onNavigate={(page, args) => { window.lastNavigation = {page, args}; }} /></div></QueryClientProvider>);`)
+createRoot(document.getElementById('root')).render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><div style={{height:'100vh'}}>{window.location.search.includes('sales') ? <SalesPage initialTab="invoices" /> : <ReportsPage initialReport="invoice_outstanding" onNavigate={(page, args) => { window.lastNavigation = {page, args}; }} />}</div></QueryClientProvider>);`)
 const server = await createServer({ configFile: false, root: temporary, plugins: [react(), { name: 'mock-report-data', enforce: 'pre',
   resolveId(source) { if (/\/supabase(\.js)?$/.test(source)) return join(temporary, 'supabase.js'); if (/\/AuthContext(\.jsx)?$/.test(source)) return join(temporary, 'auth.js'); },
 }],
@@ -112,8 +113,24 @@ try {
   await page.getByRole('alert').waitFor()
   assert.match(await page.getByRole('alert').innerText(), /permission denied/)
   assert.equal(await page.getByRole('button', { name: 'Retry', exact: true }).count(), 1)
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await page.goto('http://127.0.0.1:4175/?sales')
+  const salesTotals = page.getByRole('group', { name: 'Company invoice totals', exact: true })
+  await salesTotals.getByText('₹315.25', { exact: true }).waitFor()
+  assert.match(await salesTotals.innerText(), /Collected\s*₹25.25/)
+  assert.match(await salesTotals.innerText(), /Pending\s*₹315.25/)
+  assert.equal(await page.getByText('PF-LINKED', { exact: true }).count(), 0)
+  await page.getByPlaceholder('Search client or #…', { exact: true }).fill('INV-OLD')
+  assert.match(await salesTotals.innerText(), /315.25/)
+  assert.match(await page.getByText('Company totals before filters:', { exact: false }).innerText(), /unconverted proformas/)
+  await page.getByPlaceholder('Search client or #…', { exact: true }).fill('')
+  await page.screenshot({ path: join(artifacts, 'sales-invoice-overview.png'), fullPage: true })
+  await page.goto('http://127.0.0.1:4175/?sales&fail')
+  await page.getByRole('alert').waitFor()
+  assert.match(await page.getByRole('alert').innerText(), /permission denied/)
+  assert.doesNotMatch(await page.getByRole('group', { name: 'Company invoice totals', exact: true }).innerText(), /₹0/)
   assert.deepEqual(errors, [])
-  console.log('Browser checks passed: proforma inclusion, conversion deduplication, grouped totals, invoice drill-down, filters, downloads, mobile and query error state.')
+  console.log('Browser checks passed: reconciled Sales/report totals, complete capped queries, proforma inclusion, conversion deduplication, grouped totals, invoice drill-down, filters, downloads, mobile and query error states.')
 } finally {
   await browser?.close()
   await server.close()
