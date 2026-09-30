@@ -1,0 +1,34 @@
+name: Invoice receivables checks
+on:
+  pull_request:
+    paths:
+      - 'src/pages/reports/**'
+      - 'src/lib/invoiceReceivables*'
+      - 'tests/invoiceReceivables*'
+      - '.github/workflows/invoice-receivables.yml'
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 15
+    env:
+      RECEIVABLES_ARTIFACT_DIR: test-artifacts
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: node --test tests/*.test.js
+      - run: npx eslint src/pages/reports/ReportsPage.jsx src/pages/reports/InvoiceReceivablesReport.jsx src/lib/invoiceReceivables.js src/lib/invoiceReceivablesExport.js tests/invoiceReceivables.test.js tests/invoiceReceivablesExport.test.js
+      - run: npm run build
+      - run: npm install --no-save --package-lock=false playwright@1.58.2
+      - run: npx playwright install --with-deps chromium
+      - run: node tests/invoiceReceivables.browser.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: invoice-receivables-verification
+          path: test-artifacts
