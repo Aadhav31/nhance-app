@@ -1,5 +1,12 @@
 import { supabase } from './supabase'
 
+export const DEFAULT_EXPENSE_APPROVAL_THRESHOLD = 2000
+export const EXPENSE_APPROVAL_DOCUMENTS = new Set([
+  'field_expense',
+  'expense',
+  'employee_reimbursement',
+])
+
 export const APPROVAL_DOCUMENTS = {
   purchase_order: {
     label: 'Purchase Order', shortLabel: 'PO', module: 'purchase', valueKind: 'currency',
@@ -19,15 +26,15 @@ export const APPROVAL_DOCUMENTS = {
   },
   field_expense: {
     label: 'Field Expense', shortLabel: 'Expense', module: 'fieldexpense', valueKind: 'currency',
-    description: 'Site verification → Accounts → Management',
+    description: 'Manager approval or owner verification → staffed checks → Owner sanction',
   },
   expense: {
     label: 'Company Expense', shortLabel: 'Expense', module: 'expenses', valueKind: 'currency',
-    description: 'Department owner → Accounts → Management',
+    description: 'Manager approval or owner verification → staffed checks → Owner sanction',
   },
   employee_reimbursement: {
     label: 'Reimbursement', shortLabel: 'Claim', module: 'reimbursements', valueKind: 'currency',
-    description: 'Reporting manager → Accounts → Management',
+    description: 'Manager approval → staffed checks → Owner sanction',
   },
   leave_request: {
     label: 'Leave Request', shortLabel: 'Leave', module: 'hr', valueKind: 'duration',
@@ -75,19 +82,19 @@ export const DEFAULT_APPROVAL_BLUEPRINTS = [
     ['Management sanction', 'Management', 'Admin', 'Rs. 10L+'],
   ]],
   ['field_expense', [
-    ['Site verification', 'Projects', 'Manager', 'All values'],
-    ['Accounts check', 'Accounts', 'Accounts', 'All values'],
-    ['Management sanction', 'Management', 'Admin', 'Rs. 5L+'],
+    ['Manager approval / owner verification', 'Management Control', 'Manager', 'Above Rs. 2,000'],
+    ['Accounts verification (when staffed)', 'Accounts', 'Accounts', 'Above Rs. 2,000'],
+    ['Owner sanction', 'Management', 'Admin', 'Above Rs. 2,000'],
   ]],
   ['expense', [
-    ['Department owner', 'Operations', 'Manager', 'All values'],
-    ['Accounts & evidence check', 'Accounts', 'Accounts', 'All values'],
-    ['Management sanction', 'Management', 'Admin', 'Rs. 5L+'],
+    ['Manager approval / owner verification', 'Management Control', 'Manager', 'Above Rs. 2,000'],
+    ['Accounts verification (when staffed)', 'Accounts', 'Accounts', 'Above Rs. 2,000'],
+    ['Owner sanction', 'Management', 'Admin', 'Above Rs. 2,000'],
   ]],
   ['employee_reimbursement', [
-    ['Reporting manager', 'Projects', 'Manager', 'All values'],
-    ['Accounts verification', 'Accounts', 'Accounts', 'All values'],
-    ['Management sanction', 'Management', 'Admin', 'Rs. 1L+'],
+    ['Manager approval', 'Management Control', 'Manager', 'Above Rs. 2,000'],
+    ['Accounts verification (when staffed)', 'Accounts', 'Accounts', 'Above Rs. 2,000'],
+    ['Owner sanction', 'Management', 'Admin', 'Above Rs. 2,000'],
   ]],
   ['leave_request', [
     ['Reporting manager & coverage', 'Projects', 'Manager', 'All leave'],
@@ -130,6 +137,12 @@ const isMissingWorkflowEngine = error => {
     text.includes('approval_cases') || text.includes('schema cache') || text.includes('does not exist')
 }
 
+const isMissingExpenseRefinement = error => {
+  const text = `${error?.code || ''} ${error?.message || ''}`.toLowerCase()
+  return text.includes('submit_expense_approval_case') ||
+    (text.includes('schema cache') && text.includes('expense_approval'))
+}
+
 const LEGACY_ROUTING = {
   purchase_order: ['purchase_bill', 'manager'],
   vendor_bill: ['purchase_bill', 'manager'],
@@ -166,6 +179,28 @@ export async function submitApprovalCase({
   requesterId,
   requesterName,
 }) {
+  if (EXPENSE_APPROVAL_DOCUMENTS.has(documentType)) {
+    const { data: expenseResult, error: expenseError } = await supabase.rpc('submit_expense_approval_case', {
+      p_document_type: documentType,
+      p_document_id: documentId,
+      p_document_ref: documentRef || null,
+      p_title: title,
+      p_metric_label: metricLabel,
+      p_snapshot: snapshot,
+    })
+    if (!expenseError) {
+      return {
+        caseId: expenseResult?.case_id,
+        engine: 'enterprise',
+        approvalRequired: Boolean(expenseResult?.approval_required),
+        status: expenseResult?.status,
+        route: expenseResult?.route,
+        threshold: Number(expenseResult?.threshold ?? DEFAULT_EXPENSE_APPROVAL_THRESHOLD),
+      }
+    }
+    if (!isMissingExpenseRefinement(expenseError)) throw expenseError
+  }
+
   const { data, error } = await supabase.rpc('submit_approval_case', {
     p_document_type: documentType,
     p_document_id: documentId,
@@ -178,7 +213,7 @@ export async function submitApprovalCase({
     p_metric_label: metricLabel,
     p_snapshot: snapshot,
   })
-  if (!error) return { caseId: data, engine: 'enterprise' }
+  if (!error) return { caseId: data, engine: 'enterprise', approvalRequired: true, status: 'in_review' }
   if (!isMissingWorkflowEngine(error)) throw error
 
   const [module, requiredRole] = LEGACY_ROUTING[documentType] || [documentType, 'manager']
@@ -200,7 +235,7 @@ export async function submitApprovalCase({
     .select('id')
     .single()
   if (legacyError) throw legacyError
-  return { caseId: legacy?.id, engine: 'legacy' }
+  return { caseId: legacy?.id, engine: 'legacy', approvalRequired: true, status: 'in_review' }
 }
 
 export async function actOnApprovalTask(taskId, action, comments = '') {
@@ -215,6 +250,15 @@ export async function actOnApprovalTask(taskId, action, comments = '') {
 
 export async function cancelApprovalCase(caseId, reason) {
   const { data, error } = await supabase.rpc('cancel_approval_case', {
+    p_case_id: caseId,
+    p_reason: reason,
+  })
+  if (error) throw error
+  return data
+}
+
+export async function overrideExpenseApprovalCase(caseId, reason) {
+  const { data, error } = await supabase.rpc('override_expense_approval_case', {
     p_case_id: caseId,
     p_reason: reason,
   })
