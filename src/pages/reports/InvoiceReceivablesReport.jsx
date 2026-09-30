@@ -4,15 +4,15 @@ import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import {
   buildInvoiceReceivables, fetchReceivablesRows, filterInvoiceReceivables,
-  invoiceReceivablesTable, localReportDate,
+  invoiceReceivablesBasis, invoiceReceivablesTable, localReportDate,
 } from '../../lib/invoiceReceivables'
 
 const views = [['invoice', 'Invoice-wise'], ['client', 'Client-wise'], ['project', 'Project-wise']]
-const statuses = { outstanding: 'Outstanding invoices', overdue: 'Overdue only', paid: 'Paid invoices', all: 'All issued invoices' }
+const statuses = { outstanding: 'Outstanding invoices', overdue: 'Overdue only', paid: 'Paid invoices', all: 'All invoices' }
 const formatMoney = value => '₹' + Number(value || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const control = 'bg-dark-700 border border-dark-500 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-primary-500'
 const button = 'px-3 py-2 rounded-lg text-xs border border-dark-500 bg-dark-700 text-slate-200 hover:border-primary-500 disabled:opacity-50 disabled:cursor-not-allowed'
-const DEFAULT_FILTERS = { client: '', project: '', status: 'outstanding', search: '', from: '', to: '' }
+const DEFAULT_FILTERS = { client: '', project: '', status: 'outstanding', search: '', from: '', to: '', includeProforma: false }
 const PAGE_SIZE = 50
 
 function filterOptions(rows, key, label) {
@@ -32,16 +32,17 @@ export default function InvoiceReceivablesReport({ companyId, onNavigate }) {
     queryKey: ['invoice_receivables', companyId], enabled: !!companyId, staleTime: 0,
     queryFn: async () => {
       const [invoices, clients, projects] = await Promise.all([
-        fetchReceivablesRows(supabase, 'client_invoices', 'id,invoice_number,invoice_date,due_date,client_name,client_gstin,project_id,project_name,total_amount,paid_amount,status,invoice_type', companyId),
+        fetchReceivablesRows(supabase, 'client_invoices', 'id,invoice_number,invoice_date,due_date,client_name,client_gstin,project_id,project_name,total_amount,paid_amount,status,invoice_type,converted_from_id', companyId),
         fetchReceivablesRows(supabase, 'clients', 'id,business_name,display_name,trade_name,contact_name,gstin', companyId),
         fetchReceivablesRows(supabase, 'projects', 'id,project_name,project_code', companyId),
       ])
       return { invoices, clients, projects }
     },
   })
-  const invoices = useMemo(() => data ? buildInvoiceReceivables(data.invoices, data.clients, data.projects, reportDate) : [], [data, reportDate])
-  const clients = useMemo(() => filterOptions(invoices, 'clientKey', 'clientName'), [invoices])
-  const projects = useMemo(() => filterOptions(invoices, 'projectKey', 'projectName'), [invoices])
+  const eligibleInvoices = useMemo(() => data ? buildInvoiceReceivables(data.invoices, data.clients, data.projects, reportDate, { includeProforma: true }) : [], [data, reportDate])
+  const invoices = useMemo(() => filters.includeProforma ? eligibleInvoices : eligibleInvoices.filter(row => !row.isProforma), [eligibleInvoices, filters.includeProforma])
+  const clients = useMemo(() => filterOptions(eligibleInvoices, 'clientKey', 'clientName'), [eligibleInvoices])
+  const projects = useMemo(() => filterOptions(eligibleInvoices, 'projectKey', 'projectName'), [eligibleInvoices])
   const invalidDates = Boolean(filters.from && filters.to && filters.from > filters.to)
   const filtered = useMemo(() => invalidDates ? [] : filterInvoiceReceivables(invoices, filters), [invoices, filters, invalidDates])
   const table = useMemo(() => invoiceReceivablesTable(filtered, view), [filtered, view])
@@ -55,6 +56,7 @@ export default function InvoiceReceivablesReport({ companyId, onNavigate }) {
     changeView('invoice')
   }
   const filterDescription = [
+    filters.includeProforma ? 'Includes unconverted proformas' : 'Excludes proformas',
     statuses[filters.status], `Invoice dates: ${filters.from || 'all dates'} to ${filters.to || 'latest'}`,
     filters.client && `Client: ${clients.find(c => c.value === filters.client)?.label || filters.client}`,
     filters.project && `Project: ${projects.find(p => p.value === filters.project)?.label || filters.project}`,
@@ -64,7 +66,7 @@ export default function InvoiceReceivablesReport({ companyId, onNavigate }) {
     setExporting(type); setExportError('')
     try {
       const exporter = await import('../../lib/invoiceReceivablesExport')
-      const report = { rows: filtered, companyName, reportDate, filterDescription, view }
+      const report = { rows: filtered, companyName, reportDate, filterDescription, view, includeProforma: filters.includeProforma }
       await (type === 'pdf' ? exporter.downloadInvoiceReceivablesPDF(report) : exporter.downloadInvoiceReceivablesExcel(report))
     } catch (e) { setExportError(e.message || 'Download failed. Please try again.') }
     finally { setExporting('') }
@@ -115,10 +117,15 @@ export default function InvoiceReceivablesReport({ companyId, onNavigate }) {
       <label className="flex flex-col gap-1 text-[11px] text-slate-400">Search invoices
         <input type="search" className={control} placeholder="Invoice, client, project or GSTIN" value={filters.search} onChange={e => updateFilter('search', e.target.value)} />
       </label>
+      <label className="flex items-center gap-2 self-end py-2 text-xs text-slate-200 cursor-pointer">
+        <input type="checkbox" className="accent-primary-500" checked={filters.includeProforma} onChange={e => updateFilter('includeProforma', e.target.checked)} />
+        Include unconverted proforma invoices
+      </label>
       <button className={`${button} self-end`} onClick={() => { setFilters(DEFAULT_FILTERS); setPage(0) }}>Reset filters</button>
     </div>
     {invalidDates && <p role="alert" className="text-red-300 text-xs">The invoice start date must be on or before the end date.</p>}
     {exportError && <p role="alert" className="text-red-300 text-xs">{exportError}</p>}
+    {filters.includeProforma && <p className="text-xs text-slate-400">Totals include unconverted proforma amounts. Proforma rows are marked in the invoice view and downloads.</p>}
     <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
       {[['Billed', 'billed', 'text-slate-100'], ['Collected', 'received', 'text-emerald-400'], ['Outstanding', 'balance', 'text-amber-400'], ['Overdue', 'overdue', 'text-red-400']].map(([label, key, color]) =>
         <div key={key} className="p-4 rounded-xl border border-dark-600 bg-dark-800">
@@ -150,6 +157,6 @@ export default function InvoiceReceivablesReport({ companyId, onNavigate }) {
       <div className="flex gap-2"><button className={button} disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>Previous</button>
         <button className={button} disabled={currentPage === maxPage} onClick={() => setPage(currentPage + 1)}>Next</button></div>
     </div>}
-    <p className="text-[11px] text-slate-500">Issued invoices less recorded payments. Drafts, proformas and cancelled invoices are excluded. Client opening balances, unallocated advances and credit notes are separate from invoice balances.</p>
+    <p className="text-[11px] text-slate-500">{invoiceReceivablesBasis(filters.includeProforma)} Client opening balances, unallocated advances and credit notes are separate from invoice balances.</p>
   </div>
 }

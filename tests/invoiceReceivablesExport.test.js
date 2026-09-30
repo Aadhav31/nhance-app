@@ -47,3 +47,38 @@ test('PDF generates each view and paginates invoice details with final totals', 
     }
   }
 })
+
+test('PDF and Excel identify unconverted proformas and reconcile all views to the selected scope', async () => {
+  const rows = buildInvoiceReceivables([
+    { id: 'tax', invoice_number: 'TAX-1', invoice_type: 'tax_invoice', status: 'sent', total_amount: 100, paid_amount: 20, client_name: 'Alpha', project_name: 'Metro' },
+    { id: 'open', invoice_number: 'PF-OPEN', invoice_type: 'proforma', status: 'sent', total_amount: 50, paid_amount: 10, client_name: 'Alpha', project_name: 'Metro' },
+    { id: 'converted', invoice_number: 'PF-CONVERTED', invoice_type: 'proforma', status: 'converted', total_amount: 9999 },
+  ], [], [], '2026-09-30', { includeProforma: true })
+  const selected = { ...report, rows, includeProforma: true, filterDescription: 'Includes unconverted proformas | All invoice dates' }
+  const XLSX = await import('xlsx')
+  const workbook = await createInvoiceReceivablesWorkbook(selected)
+  for (const name of workbook.SheetNames.slice(0, 3)) {
+    const values = XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1 })
+    assert.equal(values.at(-1)[values[5].indexOf('Outstanding (INR)')], 120)
+  }
+  const invoiceValues = XLSX.utils.sheet_to_json(workbook.Sheets['Invoice-wise'], { header: 1 })
+  const proforma = invoiceValues.find(row => row[0] === 'PF-OPEN')
+  assert.equal(proforma[invoiceValues[5].indexOf('Type')], 'Proforma')
+  assert.doesNotMatch(JSON.stringify(invoiceValues), /PF-CONVERTED/)
+  assert.match(workbook.Sheets.Summary.B9.v, /unconverted proformas/)
+  for (const view of ['invoice', 'client', 'project']) {
+    const pdf = await createInvoiceReceivablesPDF({ ...selected, view })
+    const content = pdf.output()
+    assert.match(content, /120.00/)
+    assert.match(content, /unconverted proformas/)
+    assert.doesNotMatch(content, /PF-CONVERTED/)
+    if (view === 'invoice') {
+      assert.match(content, /PF-OPEN/)
+      assert.match(content, /Proforma/)
+    }
+    if (process.env.RECEIVABLES_ARTIFACT_DIR) {
+      await mkdir(process.env.RECEIVABLES_ARTIFACT_DIR, { recursive: true })
+      await writeFile(join(process.env.RECEIVABLES_ARTIFACT_DIR, `proforma-receivables-${view}.pdf`), Buffer.from(pdf.output('arraybuffer')))
+    }
+  }
+})

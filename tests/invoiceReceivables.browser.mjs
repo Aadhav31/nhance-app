@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, writeFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, writeFile, readFile, rm } from 'node:fs/promises'
 import { resolve, join } from 'node:path'
 import { createServer } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from 'tailwindcss'
 import autoprefixer from 'autoprefixer'
 import { chromium } from 'playwright'
+import * as XLSX from 'xlsx'
 
 const root = resolve('.')
 const temporary = await mkdtemp(join(root, '.receivables-browser-'))
@@ -13,8 +14,12 @@ const artifacts = resolve(process.env.RECEIVABLES_ARTIFACT_DIR || 'test-artifact
 await mkdir(artifacts, { recursive: true })
 const invoices = [
   { id: 'i1', invoice_number: 'INV-OLD', client_name: 'Alpha', client_gstin: 'GST-A', project_id: 'p1', project_name: 'Metro', invoice_date: '2025-01-01', due_date: '2025-02-01', total_amount: 100.50, paid_amount: 20.25, status: 'partial', invoice_type: 'tax' },
-  { id: 'i2', invoice_number: 'INV-NEW', client_name: 'Beta', client_gstin: 'GST-B', project_id: 'p2', project_name: 'Road', invoice_date: '2026-09-01', due_date: '2099-01-01', total_amount: 200, paid_amount: 0, status: 'sent', invoice_type: 'non_tax' },
+  { id: 'i2', invoice_number: 'INV-NEW', client_name: 'Beta', client_gstin: 'GST-B', project_id: 'p2', project_name: 'Road', invoice_date: '2026-09-01', due_date: '2099-01-01', total_amount: 200, paid_amount: 0, status: 'sent', invoice_type: 'tax_invoice', converted_from_id: 'pf-linked' },
   { id: 'i3', invoice_number: 'INV-DRAFT', client_name: 'Alpha', total_amount: 9999, paid_amount: 0, status: 'draft' },
+  { id: 'pf-open', invoice_number: 'PF-OPEN', client_name: 'Alpha', client_gstin: 'GST-A', project_id: 'p1', project_name: 'Metro', invoice_date: '2026-09-01', due_date: '2026-09-02', total_amount: 40, paid_amount: 5, status: 'sent', invoice_type: 'proforma' },
+  { id: 'pf-linked', invoice_number: 'PF-LINKED', client_name: 'Beta', total_amount: 5000, status: 'sent', invoice_type: 'proforma' },
+  { id: 'pf-converted', invoice_number: 'PF-CONVERTED', total_amount: 5000, status: 'converted', invoice_type: 'proforma' },
+  { id: 'pf-draft', invoice_number: 'PF-DRAFT', total_amount: 5000, status: 'draft', invoice_type: 'proforma' },
 ]
 await writeFile(join(temporary, 'supabase.js'), `const tables = ${JSON.stringify({ client_invoices: invoices, clients: [], projects: [] })};
 export const supabase = { from(table) { return { select() { return { eq() { return { order() { return { async range(start, end) {
@@ -48,6 +53,9 @@ try {
   assert.match(await page.getByRole('table').innerText(), /INV-OLD/)
   assert.doesNotMatch(await page.getByRole('table').innerText(), /INV-DRAFT/)
   assert.match(await page.getByRole('table').innerText(), /280.25/)
+  const includeProforma = page.getByRole('checkbox', { name: 'Include unconverted proforma invoices', exact: true })
+  assert.equal(await includeProforma.isChecked(), false)
+  assert.doesNotMatch(await page.getByRole('table').innerText(), /PF-OPEN/)
   await page.getByRole('button', { name: 'INV-OLD', exact: true }).click()
   assert.deepEqual(await page.evaluate(() => window.lastNavigation), { page: 'sales', args: { tab: 'invoices', invoiceId: 'i1' } })
   await page.getByRole('button', { name: 'Client-wise', exact: true }).click()
@@ -57,7 +65,16 @@ try {
   assert.match(await page.getByRole('table').innerText(), /INV-OLD/)
   assert.doesNotMatch(await page.getByRole('table').innerText(), /INV-NEW/)
   await page.getByRole('button', { name: 'Reset filters', exact: true }).click()
+  await includeProforma.check()
+  assert.match(await page.getByRole('table').innerText(), /PF-OPEN/)
+  assert.match(await page.getByRole('table').innerText(), /Proforma/)
+  assert.doesNotMatch(await page.getByRole('table').innerText(), /PF-LINKED|PF-CONVERTED|PF-DRAFT/)
+  assert.match(await page.getByRole('table').innerText(), /315.25/)
+  await page.screenshot({ path: join(artifacts, 'receivables-proforma-invoices.png'), fullPage: true })
+  await page.getByRole('button', { name: 'Client-wise', exact: true }).click()
+  assert.match(await page.getByRole('table').innerText(), /315.25/)
   await page.getByRole('button', { name: 'Project-wise', exact: true }).click()
+  assert.match(await page.getByRole('table').innerText(), /315.25/)
   assert.match(await page.getByRole('table').innerText(), /Road/)
   for (const [label, extension] of [['Download PDF', 'pdf'], ['Download Excel', 'xlsx']]) {
     const downloadPromise = page.waitForEvent('download')
@@ -66,6 +83,13 @@ try {
     assert.ok(download.suggestedFilename().endsWith('.' + extension))
     assert.equal(await download.failure(), null)
     await download.saveAs(join(artifacts, `browser-download.${extension}`))
+    if (extension === 'xlsx') {
+      const workbook = XLSX.read(await readFile(join(artifacts, `browser-download.${extension}`)), { type: 'buffer' })
+      const values = XLSX.utils.sheet_to_json(workbook.Sheets['Invoice-wise'], { header: 1 })
+      assert.ok(values.some(row => row[0] === 'PF-OPEN'))
+      assert.equal(values.at(-1)[values[5].indexOf('Outstanding (INR)')], 315.25)
+      assert.match(workbook.Sheets.Summary.B9.v, /unconverted proformas/)
+    }
     assert.equal(await page.getByRole('button', { name: 'Project-wise', exact: true }).getAttribute('aria-pressed'), 'true')
   }
   await page.screenshot({ path: join(artifacts, 'receivables-desktop.png'), fullPage: true })
@@ -75,6 +99,8 @@ try {
   await page.getByLabel('Payment status', { exact: true }).selectOption('overdue')
   assert.doesNotMatch(await page.getByRole('table').innerText(), /Road/)
   await page.getByRole('button', { name: 'Reset filters', exact: true }).click()
+  assert.equal(await includeProforma.isChecked(), false)
+  assert.match(await page.getByRole('table').innerText(), /280.25/)
   await page.getByLabel('Invoice date from', { exact: true }).fill('2026-09-30')
   await page.getByLabel('Invoice date to', { exact: true }).fill('2026-09-01')
   await page.getByRole('alert').waitFor()
@@ -87,7 +113,7 @@ try {
   assert.match(await page.getByRole('alert').innerText(), /permission denied/)
   assert.equal(await page.getByRole('button', { name: 'Retry', exact: true }).count(), 1)
   assert.deepEqual(errors, [])
-  console.log('Browser checks passed: report navigation, grouped totals, invoice drill-down, filters, downloads, mobile and query error state.')
+  console.log('Browser checks passed: proforma inclusion, conversion deduplication, grouped totals, invoice drill-down, filters, downloads, mobile and query error state.')
 } finally {
   await browser?.close()
   await server.close()
