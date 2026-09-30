@@ -175,6 +175,10 @@ function ExpenseForm({ companyId, userId, userRole, userName, onSuccess, onBack 
     amount: '',
     payment_mode: 'cash',
     transaction_ref: '',
+    fuel_quantity_liters: '',
+    fuel_rate_per_liter: '',
+    fuel_meter_reading: '',
+    fuel_source: 'petrol_pump',
     add_to_inventory: false,   // opt-in checkbox
     inv_item_id:   '',         // selected from existing inventory
     inv_item_name: '',         // name of selected/new item
@@ -194,7 +198,9 @@ function ExpenseForm({ companyId, userId, userRole, userName, onSuccess, onBack 
   const { data: equipment = [] } = useQuery({
     queryKey: ['fe_equipment', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('equipment').select('id, name, equipment_number').eq('company_id', companyId).order('name')
+      const { data } = await supabase.from('equipment')
+        .select('id, name, equipment_number, current_project_id, current_site_name, meter_type, current_meter_reading')
+        .eq('company_id', companyId).order('name')
       return data || []
     },
     enabled: !!companyId,
@@ -246,8 +252,36 @@ function ExpenseForm({ companyId, userId, userRole, userName, onSuccess, onBack 
   })
 
   const selectedCat = CAT_MAP[form.category]
+  const isFuel = form.category === 'fuel'
+  const selectedEquipment = equipment.find(item => item.id === form.equipment_id)
+  const calculatedFuelRate = Number(form.fuel_quantity_liters) > 0 && Number(form.amount) > 0
+    ? Number(form.amount) / Number(form.fuel_quantity_liters)
+    : 0
   const canAddInventory = !!selectedCat?.inv          // category supports inventory
   const needsInvDetails = canAddInventory && form.add_to_inventory  // checkbox ticked
+
+  const chooseCategory = category => {
+    setForm(current => ({
+      ...current,
+      category,
+      expense_scope: category === 'fuel' ? 'equipment' : current.expense_scope,
+      add_to_inventory: category === 'fuel' ? false : current.add_to_inventory,
+    }))
+  }
+
+  const chooseEquipment = equipmentId => {
+    const selected = equipment.find(item => item.id === equipmentId)
+    setForm(current => ({
+      ...current,
+      equipment_id: equipmentId,
+      project_id: current.category === 'fuel' && selected?.current_project_id
+        ? selected.current_project_id
+        : current.project_id,
+      fuel_meter_reading: current.category === 'fuel' && !current.fuel_meter_reading && selected?.current_meter_reading != null
+        ? String(selected.current_meter_reading)
+        : current.fuel_meter_reading,
+    }))
+  }
 
   // Upload bill photo to Supabase Storage
   const uploadBillPhoto = async (file) => {
@@ -317,6 +351,8 @@ function ExpenseForm({ companyId, userId, userRole, userName, onSuccess, onBack 
     if (!form.expense_scope) return toast.error('Select Machine or Administrative for this expense')
     if (form.expense_scope === 'equipment' && !form.equipment_id) return toast.error('Select which machine this expense belongs to')
     if (!form.category)     return toast.error('Select expense category')
+    if (isFuel && !form.project_id) return toast.error('Select the project using this fuel')
+    if (isFuel && (!form.fuel_quantity_liters || parseFloat(form.fuel_quantity_liters) <= 0)) return toast.error('Enter the diesel quantity in litres')
     if (!form.payee_name.trim()) return toast.error('Enter payee name')
     if (!form.amount || parseFloat(form.amount) <= 0) return toast.error('Enter valid amount')
     if (form.payment_mode === 'upi' && !form.transaction_ref && !form.payee_upi)
@@ -355,6 +391,12 @@ function ExpenseForm({ companyId, userId, userRole, userName, onSuccess, onBack 
         amount:          parseFloat(form.amount),
         payment_mode:    form.payment_mode,
         transaction_ref: form.transaction_ref || null,
+        fuel_quantity_liters: isFuel ? parseFloat(form.fuel_quantity_liters) : null,
+        fuel_rate_per_liter: isFuel
+          ? (parseFloat(form.fuel_rate_per_liter) || calculatedFuelRate || null)
+          : null,
+        fuel_meter_reading: isFuel && form.fuel_meter_reading ? parseFloat(form.fuel_meter_reading) : null,
+        fuel_source: isFuel ? form.fuel_source : null,
         payment_status:  'paid',
         inv_item_name:   form.inv_item_name || null,
         inv_quantity:    form.inv_quantity ? parseFloat(form.inv_quantity) : null,
@@ -370,14 +412,24 @@ function ExpenseForm({ companyId, userId, userRole, userName, onSuccess, onBack 
       const approval = await submitApprovalCase({
         companyId, documentType: 'field_expense', documentId: expense.id,
         documentRef: form.bill_number || `EXP-${expense.id.slice(0, 8)}`,
-        title: `Field expense · ${form.payee_name.trim()}`, amount: parseFloat(form.amount),
+        title: isFuel
+          ? `Fuel expense · ${selEq?.name || 'Equipment'} · ${Number(form.fuel_quantity_liters).toLocaleString('en-IN')} L`
+          : `Field expense · ${form.payee_name.trim()}`,
+        amount: parseFloat(form.amount),
         projectId: form.project_id || null, requesterId: userId, requesterName: userName,
         snapshot: {
           project: selPrj?.project_name || null, equipment: selEq?.name || null,
           category: form.category, payee: form.payee_name.trim(), expense_date: form.expense_date,
           payment_mode: form.payment_mode, bill_number: form.bill_number || null,
           evidence_attached: Boolean(billPhotoUrl),
+          ...(isFuel ? {
+            fuel_quantity_liters: parseFloat(form.fuel_quantity_liters),
+            fuel_rate_per_liter: parseFloat(form.fuel_rate_per_liter) || calculatedFuelRate,
+            fuel_meter_reading: form.fuel_meter_reading ? parseFloat(form.fuel_meter_reading) : null,
+            fuel_source: form.fuel_source,
+          } : {}),
         },
+        fuelReview: isFuel,
       })
 
       // Auto-create inventory if applicable
@@ -400,7 +452,9 @@ function ExpenseForm({ companyId, userId, userRole, userName, onSuccess, onBack 
       qc.invalidateQueries({ queryKey: ['inv_items'] })
       qc.invalidateQueries({ queryKey: ['inv_stock'] })
 
-      if (voucher?.voucher_number && approval.approvalRequired) {
+      if (isFuel) {
+        toast.success(`Fuel expense captured for review${voucher?.voucher_number ? ` · Voucher ${voucher.voucher_number}` : ''}. The fuel register updates after approval.`, { duration: 6000 })
+      } else if (voucher?.voucher_number && approval.approvalRequired) {
         toast.success(`Expense submitted to Approval Centre · Voucher ${voucher.voucher_number}`, { duration: 5000 })
       } else if (voucher?.voucher_number) {
         toast.success(`Expense recorded within policy · Voucher ${voucher.voucher_number}`, { duration: 5000 })
@@ -432,9 +486,9 @@ function ExpenseForm({ companyId, userId, userRole, userName, onSuccess, onBack 
             <input type="date" className={inp()} value={form.expense_date} onChange={e => set('expense_date', e.target.value)} />
           </div>
           <div>
-            <label className="text-xs text-slate-400 mb-1 block">Project / Site</label>
+            <label className="text-xs text-slate-400 mb-1 block">Project / Site {isFuel && <span className="text-red-400">*</span>}</label>
             <select className={inp()} value={form.project_id} onChange={e => set('project_id', e.target.value)}>
-              <option value="">— Select project (optional) —</option>
+              <option value="">— Select project {isFuel ? '(required)' : '(optional)'} —</option>
               {projects.map(p => <option key={p.id} value={p.id}>{p.project_name}</option>)}
             </select>
           </div>
@@ -466,7 +520,10 @@ function ExpenseForm({ companyId, userId, userRole, userName, onSuccess, onBack 
             </button>
             <button
               type="button"
-              onClick={() => { set('expense_scope', 'administrative'); set('equipment_id', '') }}
+              onClick={() => {
+                if (isFuel) return toast.error('Fuel expenses must be linked to equipment')
+                set('expense_scope', 'administrative'); set('equipment_id', '')
+              }}
               className={`flex items-center gap-2.5 px-3 py-3 rounded-xl border transition-all text-left ${
                 form.expense_scope === 'administrative'
                   ? 'bg-indigo-500/15 border-indigo-500 text-indigo-300 ring-1 ring-indigo-500'
@@ -483,7 +540,7 @@ function ExpenseForm({ companyId, userId, userRole, userName, onSuccess, onBack 
           {form.expense_scope === 'equipment' && (
             <div>
               <label className="text-xs text-slate-400 mb-1 block">Machine <span className="text-red-400">*</span></label>
-              <select className={inp()} value={form.equipment_id} onChange={e => set('equipment_id', e.target.value)}>
+              <select className={inp()} value={form.equipment_id} onChange={e => chooseEquipment(e.target.value)}>
                 <option value="">— Select machine —</option>
                 {equipment.map(eq => (
                   <option key={eq.id} value={eq.id}>{eq.name}{eq.equipment_number ? ` (${eq.equipment_number})` : ''}</option>
@@ -504,7 +561,7 @@ function ExpenseForm({ companyId, userId, userRole, userName, onSuccess, onBack 
                 <button
                   key={cat.value}
                   type="button"
-                  onClick={() => set('category', cat.value)}
+                  onClick={() => chooseCategory(cat.value)}
                   className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl border text-left transition-all ${
                     active
                       ? `${cat.bg} ${cat.color} border-current ring-1 ring-current`
@@ -678,6 +735,80 @@ function ExpenseForm({ companyId, userId, userRole, userName, onSuccess, onBack 
           )}
         </div>
 
+        {isFuel && (
+          <div className="rounded-2xl border border-amber-500/35 bg-amber-500/5 p-4 space-y-3">
+            <div className="flex items-start gap-3">
+              <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-2">
+                <Fuel className="h-4 w-4 text-amber-400" />
+              </div>
+              <div>
+                <p className="text-xs font-bold uppercase tracking-widest text-amber-300">Fuel capture &amp; review</p>
+                <p className="mt-1 text-[11px] leading-relaxed text-slate-400">
+                  This expense is staged automatically. It enters the equipment and project fuel register only after independent approval; manual fuel logging remains available.
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="mb-1 block text-xs text-slate-400">Quantity (litres) <span className="text-red-400">*</span></label>
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  min="0"
+                  step="0.001"
+                  className={inp()}
+                  value={form.fuel_quantity_liters}
+                  onChange={e => set('fuel_quantity_liters', e.target.value)}
+                  placeholder="e.g. 120"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-slate-400">Rate per litre</label>
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  min="0"
+                  step="0.001"
+                  className={inp()}
+                  value={form.fuel_rate_per_liter}
+                  onChange={e => set('fuel_rate_per_liter', e.target.value)}
+                  placeholder={calculatedFuelRate ? `Derived ₹${calculatedFuelRate.toFixed(2)}` : 'Derived from total'}
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-slate-400">
+                  {selectedEquipment?.meter_type === 'odometer' ? 'Odometer reading' : 'Hour-meter reading'}
+                </label>
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  min="0"
+                  step="0.01"
+                  className={inp()}
+                  value={form.fuel_meter_reading}
+                  onChange={e => set('fuel_meter_reading', e.target.value)}
+                  placeholder="Optional"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-slate-400">Fuel source</label>
+                <select className={inp()} value={form.fuel_source} onChange={e => set('fuel_source', e.target.value)}>
+                  <option value="petrol_pump">Petrol pump</option>
+                  <option value="vendor_supply">Vendor supply</option>
+                  <option value="company_bowser">Company bowser</option>
+                  <option value="company_tank">Company tank</option>
+                </select>
+              </div>
+            </div>
+            {calculatedFuelRate > 0 && (
+              <p className="rounded-lg bg-dark-800/70 px-3 py-2 text-[11px] text-slate-400">
+                Cross-check: total ÷ litres = <span className="font-semibold text-amber-300">₹{calculatedFuelRate.toLocaleString('en-IN', { maximumFractionDigits: 2 })}/L</span>
+              </p>
+            )}
+          </div>
+        )}
+
         {/* Payee */}
         <div className="bg-dark-800 border border-dark-700 rounded-2xl p-4 space-y-3">
           <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Payee Info <span className="text-red-400">*</span></p>
@@ -842,13 +973,23 @@ function EditFieldExpenseModal({ exp, companyId, onClose, onSaved }) {
     amount:          exp.amount ? String(exp.amount) : '',
     payment_mode:    exp.payment_mode || 'cash',
     transaction_ref: exp.transaction_ref || '',
+    fuel_quantity_liters: exp.fuel_quantity_liters ? String(exp.fuel_quantity_liters) : '',
+    fuel_rate_per_liter: exp.fuel_rate_per_liter ? String(exp.fuel_rate_per_liter) : '',
+    fuel_meter_reading: exp.fuel_meter_reading ? String(exp.fuel_meter_reading) : '',
+    fuel_source: exp.fuel_source || 'petrol_pump',
   })
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+  const isFuel = form.category === 'fuel'
+  const calculatedFuelRate = Number(form.fuel_quantity_liters) > 0 && Number(form.amount) > 0
+    ? Number(form.amount) / Number(form.fuel_quantity_liters)
+    : 0
 
   const { data: equipment = [] } = useQuery({
     queryKey: ['fe_equipment', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('equipment').select('id, name, equipment_number').eq('company_id', companyId).order('name')
+      const { data } = await supabase.from('equipment')
+        .select('id, name, equipment_number, current_project_id, meter_type, current_meter_reading')
+        .eq('company_id', companyId).order('name')
       return data || []
     },
     enabled: !!companyId,
@@ -874,6 +1015,8 @@ function EditFieldExpenseModal({ exp, companyId, onClose, onSaved }) {
     if (!form.expense_scope) return toast.error('Select Machine or Administrative')
     if (form.expense_scope === 'equipment' && !form.equipment_id) return toast.error('Select which machine this expense belongs to')
     if (!form.category)           return toast.error('Select a category')
+    if (isFuel && !form.project_id) return toast.error('Select the project using this fuel')
+    if (isFuel && (!form.fuel_quantity_liters || parseFloat(form.fuel_quantity_liters) <= 0)) return toast.error('Enter the diesel quantity in litres')
     if (!form.payee_name.trim())  return toast.error('Enter payee name')
     if (!form.amount || parseFloat(form.amount) <= 0) return toast.error('Enter a valid amount')
 
@@ -897,6 +1040,10 @@ function EditFieldExpenseModal({ exp, companyId, onClose, onSaved }) {
         amount:          parseFloat(form.amount),
         payment_mode:    form.payment_mode,
         transaction_ref: form.transaction_ref || null,
+        fuel_quantity_liters: isFuel ? parseFloat(form.fuel_quantity_liters) : null,
+        fuel_rate_per_liter: isFuel ? (parseFloat(form.fuel_rate_per_liter) || calculatedFuelRate || null) : null,
+        fuel_meter_reading: isFuel && form.fuel_meter_reading ? parseFloat(form.fuel_meter_reading) : null,
+        fuel_source: isFuel ? form.fuel_source : null,
       }).eq('id', exp.id)
 
       if (error) throw error
@@ -912,7 +1059,12 @@ function EditFieldExpenseModal({ exp, companyId, onClose, onSaved }) {
         payment_mode:   form.payment_mode,
         bank_reference: form.transaction_ref || null,
         equipment_id:   form.expense_scope === 'equipment' ? (form.equipment_id || null) : null,
+        project_id:     form.project_id || null,
         expense_scope:  form.expense_scope || 'administrative',
+        fuel_quantity_liters: isFuel ? parseFloat(form.fuel_quantity_liters) : null,
+        fuel_rate_per_liter: isFuel ? (parseFloat(form.fuel_rate_per_liter) || calculatedFuelRate || null) : null,
+        fuel_meter_reading: isFuel && form.fuel_meter_reading ? parseFloat(form.fuel_meter_reading) : null,
+        fuel_source: isFuel ? form.fuel_source : null,
       }).eq('field_expense_id', exp.id)
 
       await supabase.from('account_transactions').update({
@@ -975,7 +1127,10 @@ function EditFieldExpenseModal({ exp, companyId, onClose, onSaved }) {
                 <Wrench className="w-3.5 h-3.5 shrink-0" />
                 <div><p className="font-semibold">Machine</p><p className="text-[10px] text-slate-500">Tag to equipment</p></div>
               </button>
-              <button type="button" onClick={() => { set('expense_scope', 'administrative'); set('equipment_id', '') }}
+              <button type="button" onClick={() => {
+                if (isFuel) return toast.error('Fuel expenses must be linked to equipment')
+                set('expense_scope', 'administrative'); set('equipment_id', '')
+              }}
                 className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border transition-all text-left text-xs ${
                   form.expense_scope === 'administrative'
                     ? 'bg-indigo-500/15 border-indigo-500 text-indigo-300 ring-1 ring-indigo-500'
@@ -986,7 +1141,17 @@ function EditFieldExpenseModal({ exp, companyId, onClose, onSaved }) {
               </button>
             </div>
             {form.expense_scope === 'equipment' && (
-              <select className={inp()} value={form.equipment_id} onChange={e => set('equipment_id', e.target.value)}>
+              <select className={inp()} value={form.equipment_id} onChange={e => {
+                const nextEquipment = equipment.find(item => item.id === e.target.value)
+                setForm(current => ({
+                  ...current,
+                  equipment_id: e.target.value,
+                  project_id: isFuel && nextEquipment?.current_project_id ? nextEquipment.current_project_id : current.project_id,
+                  fuel_meter_reading: isFuel && !current.fuel_meter_reading && nextEquipment?.current_meter_reading != null
+                    ? String(nextEquipment.current_meter_reading)
+                    : current.fuel_meter_reading,
+                }))
+              }}>
                 <option value="">— Select machine —</option>
                 {equipment.map(eq => (
                   <option key={eq.id} value={eq.id}>{eq.name}{eq.equipment_number ? ` (${eq.equipment_number})` : ''}</option>
@@ -997,7 +1162,7 @@ function EditFieldExpenseModal({ exp, companyId, onClose, onSaved }) {
 
           {/* Project */}
           <div>
-            <label className="text-xs text-slate-400 mb-1 block">Project / Site</label>
+            <label className="text-xs text-slate-400 mb-1 block">Project / Site {isFuel && <span className="text-red-400">*</span>}</label>
             <select className={inp()} value={form.project_id} onChange={e => set('project_id', e.target.value)}>
               <option value="">— None —</option>
               {projects.map(p => <option key={p.id} value={p.id}>{p.project_name}</option>)}
@@ -1012,7 +1177,11 @@ function EditFieldExpenseModal({ exp, companyId, onClose, onSaved }) {
                 const Icon = cat.icon
                 const active = form.category === cat.value
                 return (
-                  <button key={cat.value} type="button" onClick={() => set('category', cat.value)}
+                  <button key={cat.value} type="button" onClick={() => setForm(current => ({
+                    ...current,
+                    category: cat.value,
+                    expense_scope: cat.value === 'fuel' ? 'equipment' : current.expense_scope,
+                  }))}
                     className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-left transition-all text-xs ${
                       active ? `${cat.bg} ${cat.color} border-current ring-1 ring-current` : 'bg-dark-700 border-dark-600 text-slate-400 hover:border-dark-500'
                     }`}>
@@ -1023,6 +1192,38 @@ function EditFieldExpenseModal({ exp, companyId, onClose, onSaved }) {
               })}
             </div>
           </div>
+
+          {isFuel && (
+            <div className="rounded-xl border border-amber-500/35 bg-amber-500/5 p-3 space-y-3">
+              <div className="flex items-start gap-2">
+                <Fuel className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+                <p className="text-[11px] leading-relaxed text-slate-400">Changes are allowed only before submission or after return. Approved fuel evidence stays immutable.</p>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="mb-1 block text-xs text-slate-400">Quantity (litres) *</label>
+                  <input type="number" min="0" step="0.001" className={inp()} value={form.fuel_quantity_liters} onChange={e => set('fuel_quantity_liters', e.target.value)} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-slate-400">Rate / litre</label>
+                  <input type="number" min="0" step="0.001" className={inp()} value={form.fuel_rate_per_liter} onChange={e => set('fuel_rate_per_liter', e.target.value)} placeholder={calculatedFuelRate ? `₹${calculatedFuelRate.toFixed(2)}` : 'Derived'} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-slate-400">Meter reading</label>
+                  <input type="number" min="0" step="0.01" className={inp()} value={form.fuel_meter_reading} onChange={e => set('fuel_meter_reading', e.target.value)} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-slate-400">Fuel source</label>
+                  <select className={inp()} value={form.fuel_source} onChange={e => set('fuel_source', e.target.value)}>
+                    <option value="petrol_pump">Petrol pump</option>
+                    <option value="vendor_supply">Vendor supply</option>
+                    <option value="company_bowser">Company bowser</option>
+                    <option value="company_tank">Company tank</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Payee type toggle */}
           <div>
