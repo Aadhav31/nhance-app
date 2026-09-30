@@ -1012,14 +1012,16 @@ function ExpensesTab({ companyId, session }) {
         notes:          form.notes || null, created_by: session.user.id,
       })
 
-      await submitApprovalCase({
+      const approval = await submitApprovalCase({
         companyId, documentType: 'expense', documentId: exp.id,
         documentRef: `EXP-${exp.id.slice(0, 8)}`, title: `Purchase expense · ${form.description.trim()}`,
         amount: amt, requesterId: session.user.id, requesterName: userProfile?.full_name,
         snapshot: { category: form.category, expense_date: form.expense_date, payment_mode: form.payment_mode, reference: form.reference || null, notes: form.notes || null },
       })
 
-      toast.success('Expense submitted for approval')
+      toast.success(approval.approvalRequired
+        ? 'Expense submitted to the Approval Centre'
+        : `Expense recorded · within ₹${Number(approval.threshold || 2000).toLocaleString('en-IN')} policy`)
       setShowCreate(false)
       setForm({ description: '', amount: '', expense_date: todayStr(), category: 'spares', vendor_id: '', payment_mode: 'cash', reference: '', notes: '' })
       qc.invalidateQueries(['purchase_expenses', companyId])
