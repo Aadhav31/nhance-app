@@ -27,11 +27,12 @@ await writeFile(join(temporary, 'main.jsx'), `import React from 'react'; import 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import ReportsPage from ${JSON.stringify(join(root, 'src/pages/reports/ReportsPage.jsx'))};
 import ${JSON.stringify(join(root, 'src/index.css'))};
-document.documentElement.classList.add('dark'); document.body.style.background='#0b1020';
+document.body.style.background='var(--nh-app-bg, #faf6f7)';
 createRoot(document.getElementById('root')).render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><div style={{height:'100vh'}}><ReportsPage initialReport="invoice_outstanding" onNavigate={(page, args) => { window.lastNavigation = {page, args}; }} /></div></QueryClientProvider>);`)
 const server = await createServer({ configFile: false, root: temporary, plugins: [react(), { name: 'mock-report-data', enforce: 'pre',
   resolveId(source) { if (/\/supabase(\.js)?$/.test(source)) return join(temporary, 'supabase.js'); if (/\/AuthContext(\.jsx)?$/.test(source)) return join(temporary, 'auth.js'); },
 }],
+  optimizeDeps: { include: ['react', 'react-dom/client', '@tanstack/react-query', 'xlsx', 'jspdf', 'jspdf-autotable'] },
   css: { postcss: { plugins: [tailwindcss({ config: join(root, 'tailwind.config.js') }), autoprefixer()] } }, server: { host: '127.0.0.1', port: 4175, fs: { allow: [root] } },
 })
 let browser
@@ -65,8 +66,12 @@ try {
     assert.ok(download.suggestedFilename().endsWith('.' + extension))
     assert.equal(await download.failure(), null)
     await download.saveAs(join(artifacts, `browser-download.${extension}`))
+    assert.equal(await page.getByRole('button', { name: 'Project-wise', exact: true }).getAttribute('aria-pressed'), 'true')
   }
   await page.screenshot({ path: join(artifacts, 'receivables-desktop.png'), fullPage: true })
+  await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'))
+  await page.screenshot({ path: join(artifacts, 'receivables-desktop-dark.png'), fullPage: true })
+  await page.evaluate(() => document.documentElement.removeAttribute('data-theme'))
   await page.getByLabel('Payment status', { exact: true }).selectOption('overdue')
   assert.doesNotMatch(await page.getByRole('table').innerText(), /Road/)
   await page.getByRole('button', { name: 'Reset filters', exact: true }).click()

@@ -92,17 +92,17 @@ export default function InvoiceReceivablesReport({ companyId, onNavigate }) {
     <p className="text-xs text-slate-400">Current balances as of {reportDate}. All invoice dates are included unless you select a date range.</p>
     <div className="flex flex-wrap gap-3 p-3 rounded-xl bg-dark-800 border border-dark-600">
       <label className="flex flex-col gap-1 text-[11px] text-slate-400">Client
-        <select className={`${control} max-w-60`} value={filters.client} onChange={e => updateFilter('client', e.target.value)}>
+        <select aria-label="Client" className={`${control} max-w-60`} value={filters.client} onChange={e => updateFilter('client', e.target.value)}>
           <option value="">All clients</option>{clients.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
         </select>
       </label>
       <label className="flex flex-col gap-1 text-[11px] text-slate-400">Project
-        <select className={`${control} max-w-60`} value={filters.project} onChange={e => updateFilter('project', e.target.value)}>
+        <select aria-label="Project" className={`${control} max-w-60`} value={filters.project} onChange={e => updateFilter('project', e.target.value)}>
           <option value="">All projects</option>{projects.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
         </select>
       </label>
       <label className="flex flex-col gap-1 text-[11px] text-slate-400">Payment status
-        <select className={control} value={filters.status} onChange={e => updateFilter('status', e.target.value)}>
+        <select aria-label="Payment status" className={control} value={filters.status} onChange={e => updateFilter('status', e.target.value)}>
           {Object.entries(statuses).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
         </select>
       </label>
@@ -120,7 +120,7 @@ export default function InvoiceReceivablesReport({ companyId, onNavigate }) {
     {invalidDates && <p role="alert" className="text-red-300 text-xs">The invoice start date must be on or before the end date.</p>}
     {exportError && <p role="alert" className="text-red-300 text-xs">{exportError}</p>}
     <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
-      {[['Billed', 'billed', 'text-slate-100'], ['Collected', 'received', 'text-green-400'], ['Outstanding', 'balance', 'text-amber-400'], ['Overdue', 'overdue', 'text-red-400']].map(([label, key, color]) =>
+      {[['Billed', 'billed', 'text-slate-100'], ['Collected', 'received', 'text-emerald-400'], ['Outstanding', 'balance', 'text-amber-400'], ['Overdue', 'overdue', 'text-red-400']].map(([label, key, color]) =>
         <div key={key} className="p-4 rounded-xl border border-dark-600 bg-dark-800">
           <p className="text-[11px] text-slate-400">{label}</p><p className={`mt-1 text-lg font-bold ${color}`}>{formatMoney(table.totals[key])}</p>
         </div>)}
