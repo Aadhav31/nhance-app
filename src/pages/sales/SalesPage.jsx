@@ -6,6 +6,7 @@ import { useAuth } from '../../contexts/AuthContext'
 import { lookupHsnSac } from '../../utils/hsnSacLookup'
 import { nextDocNumber } from '../../utils/docNumbers'
 import { generateInvoicePDF } from '../../lib/invoicePDF'
+import { fetchReceivablesRows, salesInvoiceOverview } from '../../lib/invoiceReceivables'
 import InvoicePreviewModal from '../../components/invoices/InvoicePreviewModal'
 import { UOM_LIST } from '../../utils/units'
 import {
@@ -780,6 +781,7 @@ function InvoicesTab({ companyId, session, initialInvoiceId }) {
   const [editingDoc, setEditingDoc] = useState(null)
   const [quickPayInv, setQuickPayInv] = useState(null) // invoice for quick Record Payment modal
   const [search, setSearch] = useState('')
+  const [visibleCount, setVisibleCount] = useState(200)
   // ── Filter panel state ─────────────────────────────────────────────────────
   const [showFilters, setShowFilters] = useState(false)
   const filterRef = useRef(null)
@@ -843,12 +845,11 @@ function InvoicesTab({ companyId, session, initialInvoiceId }) {
     else toast.success(`QR voided — ${inv.invoice_number} printed copies now show as invalid`)
   }
 
-  const { data: invoices = [], isLoading } = useQuery({
+  const { data: invoices = [], isLoading, isError, error: invoiceError, refetch } = useQuery({
     queryKey: ['sales_invoices', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('client_invoices').select('*')
-        .eq('company_id', companyId).order('created_at', { ascending: false }).limit(200)
-      return data || []
+      const data = await fetchReceivablesRows(supabase, 'client_invoices', '*', companyId)
+      return data.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))
     },
     enabled: !!companyId,
   })
@@ -988,6 +989,10 @@ function InvoicesTab({ companyId, session, initialInvoiceId }) {
 
   const toggleFilter = (setter, value) => setter(prev => prev.includes(value) ? prev.filter(x => x !== value) : [...prev, value])
 
+  useEffect(() => {
+    setVisibleCount(200)
+  }, [search, filterClients, filterProjects, filterEquipIds, filterDateMode, filterDateFrom, filterDateTo, filterStatus, filterType, filterConverted])
+
   // Build set of proforma IDs that have been converted to a tax invoice
   const convertedProformaIds = useMemo(
     () => new Set(invoices.map(i => i.converted_from_id).filter(Boolean)),
@@ -1013,17 +1018,16 @@ function InvoicesTab({ companyId, session, initialInvoiceId }) {
     return true
   })
 
-  const totalPaid     = invoices.reduce((s, i) => s + Number(i.paid_amount || 0), 0)
-  const totalPending  = invoices.filter(i => !['paid','cancelled'].includes(i.status)).reduce((s, i) => s + Number(i.balance_due || 0), 0)
+  const { received: totalPaid, balance: totalPending } = useMemo(() => salesInvoiceOverview(invoices), [invoices])
 
   return (
     <div className="flex flex-col h-full">
       {/* Top bar */}
       <div className="px-4 py-3 border-b border-dark-800 shrink-0 flex items-center gap-3">
         {/* Stats */}
-        <div className="flex gap-2 flex-1">
-          <div className="bg-dark-800 rounded-lg px-3 py-1.5 text-xs"><span className="text-slate-500">Collected </span><span className="font-bold text-emerald-400">{fmtINR(totalPaid)}</span></div>
-          <div className="bg-dark-800 rounded-lg px-3 py-1.5 text-xs"><span className="text-slate-500">Pending </span><span className="font-bold text-orange-400">{fmtINR(totalPending)}</span></div>
+        <div role="group" aria-label="Company invoice totals" className="flex gap-2 flex-1">
+          <div className="bg-dark-800 rounded-lg px-3 py-1.5 text-xs"><span className="text-slate-500">Collected </span><span className="font-bold text-emerald-400">{isLoading || isError ? '—' : fmtINR(totalPaid)}</span></div>
+          <div className="bg-dark-800 rounded-lg px-3 py-1.5 text-xs"><span className="text-slate-500">Pending </span><span className="font-bold text-orange-400">{isLoading || isError ? '—' : fmtINR(totalPending)}</span></div>
         </div>
         {/* Search + Filter + New */}
         <div className="flex items-center gap-2">
@@ -1161,11 +1165,16 @@ function InvoicesTab({ companyId, session, initialInvoiceId }) {
           <button onClick={() => setShowCreate(true)} className="btn-primary shrink-0 text-xs"><Plus className="w-3.5 h-3.5" /> New Invoice</button>
         </div>
       </div>
+      <p className="px-4 py-2 text-[11px] text-slate-500">Company totals before filters: all issued invoices and unconverted proformas. Drafts, cancelled invoices and converted proformas are excluded.</p>
       <div className="flex-1 overflow-y-auto px-4 pb-4">
         {isLoading ? <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-primary-400" /></div>
+        : isError ? <div role="alert" className="py-8 text-center text-sm text-red-400">
+          <p>Unable to load invoices: {invoiceError?.message || 'Please try again.'}</p>
+          <button className="btn-ghost mt-3 text-xs" onClick={() => refetch()}>Retry</button>
+        </div>
         : displayed.length === 0 ? <div className="flex flex-col items-center py-16 gap-2 text-slate-500"><FileText className="w-10 h-10 text-slate-700" /><p>No invoices yet</p></div>
         : <div className="space-y-2 mt-1">
-          {displayed.map(inv => (
+          {displayed.slice(0, visibleCount).map(inv => (
             <div key={inv.id}
               className="bg-dark-800 border border-dark-700 rounded-xl p-4 cursor-pointer hover:border-dark-500 hover:bg-dark-750 transition-colors group"
               onClick={() => openView(inv)}
@@ -1213,6 +1222,10 @@ function InvoicesTab({ companyId, session, initialInvoiceId }) {
               </div>
             </div>
           ))}
+          {displayed.length > visibleCount && <div className="py-3 text-center">
+            <p className="text-xs text-slate-500">Showing {visibleCount} of {displayed.length} invoices. Company totals include every eligible invoice.</p>
+            <button className="btn-ghost mt-2 text-xs" onClick={() => setVisibleCount(count => count + 200)}>Show more invoices</button>
+          </div>}
         </div>}
       </div>
       {(showCreate || editingDoc) && <CreateInvoiceModal companyId={companyId} session={session} initialDoc={editingDoc} onClose={() => { setShowCreate(false); setEditingDoc(null) }} onSaved={() => { setShowCreate(false); setEditingDoc(null); qc.invalidateQueries(['sales_invoices', companyId]) }} />}

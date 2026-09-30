@@ -88,6 +88,11 @@ export function sumInvoiceReceivables(rows) {
   return Object.fromEntries(Object.entries(cents).map(([key, value]) => [key, amount(value)]))
 }
 
+/** Sales totals include issued invoices and open proformas, using the report's balance rules. */
+export function salesInvoiceOverview(invoices) {
+  return sumInvoiceReceivables(buildInvoiceReceivables(invoices, [], [], localReportDate(), { includeProforma: true }))
+}
+
 export function groupInvoiceReceivables(rows, view) {
   const groups = new Map()
   for (const row of rows) {
