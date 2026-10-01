@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { format, formatDistanceToNow } from 'date-fns'
 import toast from 'react-hot-toast'
@@ -8,7 +8,6 @@ import {
   ShieldCheck, TestTube2, UserRoundCheck, Wrench, X,
 } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
-import { useAuth } from '../../contexts/AuthContext'
 import {
   buildWorkshopMetrics,
   filterWorkshopJobs,
@@ -64,7 +63,33 @@ function MetricTile({ active, icon: Icon, label, value, tone, onClick }) {
   )
 }
 
-function CreateJobModal({ companyId, data, prefill, onClose, onCreated }) {
+function WorkshopDialog({ label, onClose, className, children }) {
+  const panelRef = useRef(null)
+  const closeRef = useRef(onClose)
+  closeRef.current = onClose
+  useEffect(() => {
+    const previous = document.activeElement
+    const panel = panelRef.current
+    panel?.querySelector('button, input, select, textarea')?.focus()
+    const handleKey = event => {
+      const dialogs = document.querySelectorAll('[role="dialog"][aria-modal="true"]')
+      if (dialogs[dialogs.length - 1] !== panel) return
+      if (event.key === 'Escape') closeRef.current?.()
+      if (event.key !== 'Tab') return
+      const controls = [...panel.querySelectorAll('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex="0"]')]
+        .filter(element => element.offsetParent !== null)
+      const first = controls[0], last = controls[controls.length - 1]
+      if (!first) event.preventDefault()
+      else if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
+    }
+    document.addEventListener('keydown', handleKey)
+    return () => { document.removeEventListener('keydown', handleKey); previous?.focus?.() }
+  }, [])
+  return <div ref={panelRef} role="dialog" aria-modal="true" aria-label={label} className={className}>{children}</div>
+}
+
+function CreateJobModal({ companyId, data, prefill, lockedEquipmentId, onClose, onCreated }) {
   const defaultEquipment = prefill?.equipment_id || ''
   const defaultEquipmentRow = data.equipment.find(item => item.id === defaultEquipment)
   const [form, setForm] = useState({
@@ -77,7 +102,9 @@ function CreateJobModal({ companyId, data, prefill, onClose, onCreated }) {
     sla_hours: prefill?.priority === 'critical' ? '4' : '24',
   })
   const [saving, setSaving] = useState(false)
-  const setField = (key, value) => setForm(current => ({ ...current, [key]: value }))
+  const [saveError, setSaveError] = useState('')
+  const close = () => { if (!saving) onClose() }
+  const setField = (key, value) => { setForm(current => ({ ...current, [key]: value })); setSaveError('') }
 
   const changeEquipment = value => {
     const equipment = data.equipment.find(item => item.id === value)
@@ -86,15 +113,18 @@ function CreateJobModal({ companyId, data, prefill, onClose, onCreated }) {
 
   const submit = async event => {
     event.preventDefault()
+    if (saving) return
     if (!form.equipment_id || !form.complaint.trim()) {
       toast.error('Select equipment and enter the reported problem')
       return
     }
     setSaving(true)
+    setSaveError('')
     try {
       const slaHours = Number(form.sla_hours || 0)
       const slaDueAt = slaHours > 0 ? new Date(Date.now() + slaHours * 3_600_000).toISOString() : null
       const equipment = data.equipment.find(item => item.id === form.equipment_id)
+      if (!equipment || (lockedEquipmentId && form.equipment_id !== lockedEquipmentId)) throw new Error('Selected equipment is unavailable. Reopen the job form.')
       const { data: jobId, error } = await supabase.rpc('create_workshop_job', {
         p_equipment_id: form.equipment_id,
         p_jc_type: form.jc_type,
@@ -109,25 +139,27 @@ function CreateJobModal({ companyId, data, prefill, onClose, onCreated }) {
         p_pm_schedule_id: null,
       })
       if (error) throw error
+      if (!jobId) throw new Error('The job card could not be created. Please retry.')
       toast.success('Workshop job card created')
       onCreated(jobId)
     } catch (error) {
-      toast.error(error.message || 'Could not create job card')
+      setSaveError(error.message || 'Could not create job card')
     } finally {
       setSaving(false)
     }
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 p-0 backdrop-blur-sm sm:items-center sm:p-4">
+    <WorkshopDialog label="New workshop job card" onClose={close} className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 p-0 backdrop-blur-sm sm:items-center sm:p-4">
       <form onSubmit={submit} className="flex max-h-[92vh] w-full max-w-xl flex-col overflow-hidden border-dark-600 bg-dark-900 shadow-2xl sm:rounded-2xl sm:border">
         <div className="flex items-center justify-between border-b border-dark-700 bg-dark-800 px-5 py-4">
           <div><h2 className="font-bold text-slate-100">New workshop job card</h2><p className="mt-0.5 text-xs text-slate-500">Create one controlled repair workflow</p></div>
-          <button type="button" onClick={onClose} className="rounded-lg p-2 text-slate-500 hover:bg-dark-700 hover:text-slate-200"><X className="h-4 w-4" /></button>
+          <button type="button" aria-label="Close new job card" onClick={close} disabled={saving} className="rounded-lg p-2 text-slate-500 hover:bg-dark-700 hover:text-slate-200"><X className="h-4 w-4" /></button>
         </div>
         <div className="flex-1 space-y-4 overflow-y-auto p-5">
+          {saveError ? <p role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300">{saveError}</p> : null}
           <label className="block text-xs text-slate-400">Equipment *
-            <select value={form.equipment_id} onChange={event => changeEquipment(event.target.value)} className={`${fieldClass} mt-1`}>
+            <select disabled={!!lockedEquipmentId} value={form.equipment_id} onChange={event => changeEquipment(event.target.value)} className={`${fieldClass} mt-1 disabled:opacity-70`}>
               <option value="">Select equipment…</option>
               {data.equipment.map(item => <option key={item.id} value={item.id}>{item.equipment_number} · {item.name}</option>)}
             </select>
@@ -166,11 +198,11 @@ function CreateJobModal({ companyId, data, prefill, onClose, onCreated }) {
           </label>
         </div>
         <div className="flex justify-end gap-2 border-t border-dark-700 p-4">
-          <button type="button" onClick={onClose} className="btn-secondary">Cancel</button>
+          <button type="button" onClick={close} disabled={saving} className="btn-secondary">Cancel</button>
           <button type="submit" disabled={saving} className="btn-primary disabled:opacity-50">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}Create job card</button>
         </div>
       </form>
-    </div>
+    </WorkshopDialog>
   )
 }
 
@@ -214,6 +246,8 @@ function JobDetailPanel({ job, companyId, data, role, onClose, onChanged }) {
   const [form, setForm] = useState({})
   const canApprove = ['manager', 'admin', 'superadmin'].includes(role)
   const canManage = ['supervisor', 'manager', 'admin', 'superadmin'].includes(role)
+    && !['closed', 'cancelled'].includes(workshopStage(job))
+  const close = () => { if (!saving && !transitioning) onClose() }
 
   useEffect(() => {
     setForm({
@@ -230,11 +264,12 @@ function JobDetailPanel({ job, companyId, data, role, onClose, onChanged }) {
   const setCheck = key => setForm(current => ({ ...current, completion_checklist: { ...current.completion_checklist, [key]: !current.completion_checklist?.[key] } }))
 
   const saveDetails = async ({ silent = false } = {}) => {
+    if (saving || transitioning) return false
     if (!canManage) return true
     setSaving(true)
     try {
       const technician = data.staff.find(item => item.id === form.technician_id)
-      const { error } = await supabase.from('job_cards').update({
+      let update = supabase.from('job_cards').update({
         technician_id: form.technician_id || null,
         technician_name: technician?.full_name || null,
         priority: form.priority,
@@ -253,7 +288,10 @@ function JobDetailPanel({ job, companyId, data, role, onClose, onChanged }) {
         completion_checklist: form.completion_checklist,
         supervisor_notes: form.supervisor_notes.trim() || null,
       }).eq('id', job.id).eq('company_id', companyId)
+      if (job.updated_at) update = update.eq('updated_at', job.updated_at)
+      const { data: saved, error } = await update.select('id').maybeSingle()
       if (error) throw error
+      if (!saved) throw new Error('This job card changed or is no longer available. Reopen it before saving.')
       if (!silent) toast.success('Job card details saved')
       await onChanged()
       return true
@@ -364,11 +402,11 @@ function JobDetailPanel({ job, companyId, data, role, onClose, onChanged }) {
     && (!job.pm_schedule_id || form.meter_at_close !== '')
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/70 backdrop-blur-sm">
+    <WorkshopDialog label={`Job card ${job.jc_number}`} onClose={close} className="fixed inset-0 z-50 flex justify-end bg-black/70 backdrop-blur-sm">
       <div className="flex h-full w-full max-w-3xl flex-col border-l border-dark-600 bg-dark-900 shadow-2xl">
         <div className="flex items-start justify-between border-b border-dark-700 bg-dark-800 px-5 py-4">
           <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="font-mono text-sm font-bold text-primary-400">{job.jc_number}</span><StageBadge stage={stage} /><span className={`text-xs font-semibold capitalize ${PRIORITY_TONES[job.priority]}`}>{job.priority}</span></div><h2 className="mt-1 truncate text-lg font-bold text-slate-100">{job.equipment?.equipment_number} · {job.equipment_name || job.equipment?.name}</h2><p className="mt-1 text-xs text-slate-500">{TYPE_LABELS[job.jc_type]} · Opened {displayDateTime(job.opened_at || job.created_at)}</p></div>
-          <button type="button" onClick={onClose} className="rounded-lg p-2 text-slate-500 hover:bg-dark-700 hover:text-slate-200"><X className="h-5 w-5" /></button>
+          <button type="button" aria-label="Close job card" onClick={close} disabled={saving || !!transitioning} className="rounded-lg p-2 text-slate-500 hover:bg-dark-700 hover:text-slate-200"><X className="h-5 w-5" /></button>
         </div>
 
         <div className="flex-1 space-y-5 overflow-y-auto p-5">
@@ -414,25 +452,27 @@ function JobDetailPanel({ job, companyId, data, role, onClose, onChanged }) {
           <section><h3 className="mb-3 text-sm font-bold text-slate-200">Audit trail</h3>{events.length ? <div className="space-y-2">{events.slice(0, 12).map(event => <div key={event.id} className="flex gap-3 rounded-xl border border-dark-700 bg-dark-800/60 p-3"><div className="mt-1 h-2 w-2 shrink-0 rounded-full bg-primary-500" /><div className="min-w-0"><p className="text-xs font-semibold capitalize text-slate-300">{String(event.event_type).replaceAll('_', ' ')}</p><p className="mt-0.5 text-[11px] text-slate-500">{event.actor_name || 'System'} · {displayDateTime(event.created_at)}</p>{event.notes ? <p className="mt-1 text-xs text-slate-400">{event.notes}</p> : null}</div></div>)}</div> : <p className="text-xs text-slate-500">No workflow events recorded yet.</p>}</section>
         </div>
 
-        {canManage && stage !== 'closed' && stage !== 'cancelled' ? <div className="border-t border-dark-700 bg-dark-800 p-4"><div className="flex flex-wrap items-center justify-end gap-2"><button type="button" onClick={() => saveDetails()} disabled={saving} className="btn-secondary disabled:opacity-50">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}Save details</button>{actions.map(action => <button key={action.stage} type="button" onClick={() => transition(action)} disabled={!!transitioning || (action.stage === 'closed' && !releaseReady)} className={`justify-center disabled:opacity-50 ${action.stage === 'closed' ? 'btn-primary bg-emerald-600 hover:bg-emerald-500' : 'btn-primary'}`}>{transitioning === action.stage ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}{action.label}</button>)}</div>{stage === 'pending_approval' && !canApprove ? <p className="mt-2 text-right text-[11px] text-amber-400">A manager or admin must approve equipment release.</p> : null}{stage === 'pending_approval' && canApprove && !releaseReady ? <p className="mt-2 text-right text-[11px] text-amber-400">Complete diagnosis, work done, passed test and all release checks before approval.</p> : null}</div> : null}
+        {canManage && stage !== 'closed' && stage !== 'cancelled' ? <div className="border-t border-dark-700 bg-dark-800 p-4"><div className="flex flex-wrap items-center justify-end gap-2"><button type="button" onClick={() => saveDetails()} disabled={saving || !!transitioning} className="btn-secondary disabled:opacity-50">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}Save details</button>{actions.map(action => <button key={action.stage} type="button" onClick={() => transition(action)} disabled={saving || !!transitioning || (action.stage === 'closed' && !releaseReady)} className={`justify-center disabled:opacity-50 ${action.stage === 'closed' ? 'btn-primary bg-emerald-600 hover:bg-emerald-500' : 'btn-primary'}`}>{transitioning === action.stage ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}{action.label}</button>)}</div>{stage === 'pending_approval' && !canApprove ? <p className="mt-2 text-right text-[11px] text-amber-400">A manager or admin must approve equipment release.</p> : null}{stage === 'pending_approval' && canApprove && !releaseReady ? <p className="mt-2 text-right text-[11px] text-amber-400">Complete diagnosis, work done, passed test and all release checks before approval.</p> : null}</div> : null}
       </div>
-    </div>
+    </WorkshopDialog>
   )
 }
 
-export default function WorkshopBoardTab({ companyId, role, equipmentId = null, initialStatus = 'active', onFilterChange }) {
+export default function WorkshopBoardTab({ companyId, role, equipmentId = null, initialStatus = 'active', initialJobId = null, onFilterChange, onChanged }) {
   const qc = useQueryClient()
   const [filter, setFilter] = useState(initialStatus || 'active')
   const [search, setSearch] = useState('')
   const [typeFilter, setTypeFilter] = useState('all')
   const [showCreate, setShowCreate] = useState(false)
   const [createPrefill, setCreatePrefill] = useState(null)
-  const [selectedId, setSelectedId] = useState(null)
+  const [selectedId, setSelectedId] = useState(initialJobId)
   const canManage = ['supervisor', 'manager', 'admin', 'superadmin'].includes(role)
 
   useEffect(() => {
     setFilter(initialStatus || 'active')
   }, [initialStatus])
+
+  useEffect(() => { if (initialJobId) setSelectedId(initialJobId) }, [initialJobId])
 
   const selectFilter = value => {
     setFilter(value)
@@ -440,12 +480,14 @@ export default function WorkshopBoardTab({ companyId, role, equipmentId = null, 
   }
 
   const query = useQuery({
-    queryKey: ['workshop-board', companyId],
+    queryKey: ['workshop-board', companyId, equipmentId || 'all'],
     enabled: !!companyId,
     staleTime: 15_000,
     queryFn: async () => {
+      let jobsQuery = supabase.from('job_cards').select('*, equipment:equipment_id(id,name,equipment_number,category,status,current_meter_reading), project:project_id(id,project_name,project_code), job_card_parts(*), job_card_events(*)').eq('company_id', companyId)
+      if (equipmentId) jobsQuery = jobsQuery.eq('equipment_id', equipmentId)
       const results = await Promise.all([
-        supabase.from('job_cards').select('*, equipment:equipment_id(id,name,equipment_number,category,status,current_meter_reading), project:project_id(id,project_name,project_code), job_card_parts(*), job_card_events(*)').eq('company_id', companyId).order('opened_at', { ascending: false }).limit(300),
+        jobsQuery.order('opened_at', { ascending: false }).limit(300),
         supabase.from('breakdown_alerts').select('id,equipment_id,equipment_name,project_id,incident_id,breakdown_cause,reported_at,reported_by_name,acknowledged_at').eq('company_id', companyId).is('resolved_at', null).order('reported_at', { ascending: false }),
         supabase.from('equipment').select('id,name,equipment_number,category,status,current_meter_reading,current_project_id').eq('company_id', companyId).neq('status', 'disposed').order('name'),
         supabase.from('projects').select('id,project_name,project_code').eq('company_id', companyId).order('project_name'),
@@ -482,12 +524,16 @@ export default function WorkshopBoardTab({ companyId, role, equipmentId = null, 
   }, [scopedJobs, filter, search, typeFilter])
 
   const refresh = async () => {
-    await qc.invalidateQueries({ queryKey: ['workshop-board', companyId] })
-    await qc.invalidateQueries({ queryKey: ['pm-control-tower', companyId] })
+    await Promise.all([
+      ['workshop-board', companyId], ['pm-control-tower', companyId], ['pm-planner', companyId],
+      ['job_cards'], ['maint_records'], ['maintenance_records', companyId],
+      ['equipment', companyId], ['equipment_incident_log'], ['equipment_breakdown_log'], ['incidents'], ['pm_schedules'],
+    ].map(queryKey => qc.invalidateQueries({ queryKey })))
+    await onChanged?.()
   }
 
   const startCreate = prefill => {
-    setCreatePrefill(prefill || null)
+    setCreatePrefill(equipmentId ? { ...prefill, equipment_id: equipmentId } : prefill || null)
     setShowCreate(true)
   }
 
@@ -535,8 +581,8 @@ export default function WorkshopBoardTab({ companyId, role, equipmentId = null, 
         return <button key={job.id} type="button" onClick={() => setSelectedId(job.id)} className={`rounded-2xl border bg-dark-800 p-4 text-left transition-colors hover:border-primary-500/60 ${overdue ? 'border-red-500/40' : 'border-dark-700'}`}><div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="font-mono text-xs font-bold text-primary-400">{job.jc_number}</span><StageBadge stage={stage} /><span className={`text-[10px] font-semibold capitalize ${PRIORITY_TONES[job.priority]}`}>{job.priority}</span>{overdue ? <span className="rounded-full bg-red-500/10 px-2 py-0.5 text-[10px] font-semibold text-red-400">SLA overdue</span> : null}</div><h3 className="mt-2 truncate text-sm font-bold text-slate-100">{job.equipment?.equipment_number} · {job.equipment_name || job.equipment?.name}</h3><p className="mt-1 line-clamp-2 text-xs leading-relaxed text-slate-400">{job.complaint || 'No complaint recorded'}</p></div><ArrowRight className="mt-1 h-4 w-4 shrink-0 text-slate-600" /></div><div className="mt-4 grid grid-cols-2 gap-2 text-[11px] sm:grid-cols-4"><div><span className="text-slate-600">Technician</span><p className="mt-0.5 truncate text-slate-300">{job.technician_name || 'Unassigned'}</p></div><div><span className="text-slate-600">Project</span><p className="mt-0.5 truncate text-slate-300">{job.project?.project_name || '—'}</p></div><div><span className="text-slate-600">Parts</span><p className="mt-0.5 text-slate-300">{issued} issued{requested ? ` · ${requested} waiting` : ''}</p></div><div><span className="text-slate-600">Cost / downtime</span><p className="mt-0.5 text-slate-300">{money(job.total_cost)} · {Number(job.downtime_hours || 0).toFixed(1)}h</p></div></div><div className="mt-3 flex items-center justify-between border-t border-dark-700 pt-3 text-[11px]"><span className="text-slate-500">{TYPE_LABELS[job.jc_type]} · {formatDistanceToNow(new Date(job.opened_at || job.created_at), { addSuffix: true })}</span>{job.sla_due_at ? <span className={overdue ? 'text-red-400' : 'text-slate-500'}><Clock3 className="mr-1 inline h-3 w-3" />{displayDateTime(job.sla_due_at)}</span> : null}</div></button>
       })}</div>}
 
-      {showCreate ? <CreateJobModal companyId={companyId} data={data} prefill={createPrefill} onClose={() => { setShowCreate(false); setCreatePrefill(null) }} onCreated={finishCreate} /> : null}
-      {selectedJob ? <JobDetailPanel job={selectedJob} companyId={companyId} data={data} role={role} onClose={() => setSelectedId(null)} onChanged={refresh} /> : null}
+      {showCreate ? <CreateJobModal companyId={companyId} data={data} prefill={createPrefill} lockedEquipmentId={equipmentId} onClose={() => { setShowCreate(false); setCreatePrefill(null) }} onCreated={finishCreate} /> : null}
+      {selectedJob ? <JobDetailPanel key={selectedJob.id} job={selectedJob} companyId={companyId} data={data} role={role} onClose={() => setSelectedId(null)} onChanged={refresh} /> : null}
     </div>
   )
 }
