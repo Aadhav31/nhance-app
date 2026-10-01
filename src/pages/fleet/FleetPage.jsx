@@ -9,7 +9,7 @@ import { ScheduleModal } from '../maintenance/PreventiveMaintenanceTab'
 import { classifyPmSchedule } from '../../lib/preventiveMaintenance'
 import { buildFleetIncidentDetails, localIncidentDate } from '../../lib/fleetIncidentReport'
 import { canAccessPage } from '../../lib/navigation'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import { nextEquipmentNumber } from '../../utils/docNumbers'
@@ -6441,78 +6441,143 @@ function ReplenishTankModal({ companyId, tankId, tankName, userProfile, onClose,
 }
 
 // ── Incidents Tab ─────────────────────────────────────────────────────────────
-function IncidentsTab({ companyId }) {
+function IncidentsTab({ companyId, onNavigate }) {
   const qc = useQueryClient()
-  const { data: incidents = [], isLoading } = useQuery({
-    queryKey: ['all_incidents', companyId],
-    queryFn: async () => {
-      const { data, error } = await supabase.from('shift_incidents')
-        .select('*, equipment(name, category)').eq('company_id', companyId)
-        .order('created_at', { ascending: false }).limit(50)
+  const { role, session, hasModule } = useAuth()
+  const canView = canAccessPage('operations', { role, hasModule })
+  const canResolve = canView && !!session?.user?.id
+  const canUseWorkshop = canAccessPage('maintenance', { role, hasModule })
+  const [status, setStatus] = useState('all')
+  const [resolvingId, setResolvingId] = useState(null)
+  const [resolveError, setResolveError] = useState(null)
+  const resolvingRef = useRef(false)
+  const { data, isPending, isError, isFetchingNextPage, isFetchNextPageError, refetch, fetchNextPage, hasNextPage } = useInfiniteQuery({
+    queryKey: ['all_incidents', companyId, 'fleet', status],
+    initialPageParam: 0,
+    queryFn: async ({ pageParam }) => {
+      let query = supabase.from('shift_incidents')
+        .select('*, equipment(name, category, equipment_number)', { count: 'exact' })
+        .eq('company_id', companyId).order('created_at', { ascending: false })
+        .order('id', { ascending: false }).range(pageParam, pageParam + 49)
+      if (status === 'resolved') query = query.eq('resolved', true)
+      if (status === 'open') query = query.or('resolved.eq.false,resolved.is.null')
+      const { data: rows, error, count } = await query
       if (error) throw error
-      return data || []
+      return { rows: rows || [], total: count, nextOffset: pageParam + (rows?.length || 0) }
     },
+    getNextPageParam: page => page.rows.length > 0 && (page.total == null
+      ? page.rows.length === 50 : page.nextOffset < page.total) ? page.nextOffset : undefined,
+    enabled: !!companyId && canView,
   })
+  const incidents = [...new Map((data?.pages.flatMap(page => page.rows) || []).map(row => [row.id, row])).values()]
+  const total = data?.pages[0]?.total
 
-  const resolveIncident = async (id) => {
-    const { error } = await supabase.from('shift_incidents')
-      .update({ resolved: true, resolved_at: new Date().toISOString() }).eq('id', id)
-    if (error) { toast.error('Failed to resolve'); return }
-    toast.success('Marked as resolved')
-    qc.invalidateQueries(['all_incidents', companyId])
+  const resolveIncident = async (incident) => {
+    if (!canResolve || resolvingRef.current || incident.resolved || incident.incident_type === 'breakdown' || incident.job_card_id) return
+    resolvingRef.current = true
+    setResolvingId(incident.id)
+    setResolveError(null)
+    try {
+      const { data: updated, error } = await supabase.from('shift_incidents')
+        .update({ resolved: true, resolved_at: new Date().toISOString(), resolved_by: session.user.id })
+        .eq('company_id', companyId).eq('id', incident.id).or('resolved.eq.false,resolved.is.null')
+        .neq('incident_type', 'breakdown').is('job_card_id', null).select('id').maybeSingle()
+      if (error) throw error
+      if (!updated) {
+        await qc.invalidateQueries({ queryKey: ['all_incidents', companyId] })
+        throw new Error('This report changed or was already resolved. Refresh the list before trying again.')
+      }
+      await Promise.all([
+        ['all_incidents', companyId], ['incidents', incident.equipment_id],
+        ['equipment_incident_log', incident.equipment_id], ['today_ops', companyId],
+        ['shift_incidents_detail', incident.shift_id], ['shifts_incident_summary'],
+      ].map(queryKey => qc.invalidateQueries({ queryKey })))
+      toast.success('Marked as resolved')
+    } catch (error) {
+      setResolveError({ id: incident.id, message: error.message || 'Could not resolve the incident. Please retry.' })
+    } finally { resolvingRef.current = false; setResolvingId(null) }
   }
 
-  const open = incidents.filter(i => !i.resolved).length
-
+  if (!canView) return null
   return (
-    <div className="flex flex-col h-full">
-      {incidents.length > 0 && (
-        <div className="px-4 py-2 shrink-0">
-          <p className="text-xs text-slate-400">{open} open · {incidents.length - open} resolved</p>
+    <section aria-label="Company incidents" className="flex min-h-0 flex-col h-full">
+      <div className="px-4 py-3 shrink-0 flex flex-wrap items-center gap-3">
+        <div className="w-full sm:w-auto sm:flex-1 min-w-0">
+          <h2 className="text-sm font-semibold text-slate-100">Company incidents</h2>
+          <p className="text-xs text-slate-400 mt-1">
+            {isPending ? 'Loading reports…' : isError && !data ? 'Reports unavailable' : total == null
+              ? `Showing ${incidents.length} reports across all machines`
+              : `Showing ${incidents.length} of ${total} ${status === 'all' ? '' : status + ' '}reports across all machines`}
+          </p>
         </div>
-      )}
-      <div className="flex-1 overflow-y-auto px-4 pb-4">
-        {isLoading ? (
-          <div className="flex items-center justify-center py-16"><Loader2 className="w-6 h-6 text-primary-400 animate-spin" /></div>
+        <div className="flex flex-wrap gap-1" aria-label="Incident status filters">
+          {['all', 'open', 'resolved'].map(value => (
+            <button key={value} type="button" aria-pressed={status === value}
+              onClick={() => { setStatus(value); setResolveError(null) }}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium border ${status === value ? 'border-primary-500/40 bg-primary-500/10 text-primary-300' : 'border-dark-600 text-slate-400 hover:text-slate-200'}`}>
+              {value === 'all' ? 'All reports' : value === 'open' ? 'Open reports' : 'Resolved reports'}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-4">
+        {resolveError && <p role="alert" className="mb-3 rounded-lg border border-red-700/40 bg-red-900/20 p-3 text-xs text-red-300">{resolveError.message}</p>}
+        {isPending ? (
+          <div role="status" className="flex justify-center py-16 gap-2 text-sm text-slate-400"><Loader2 className="w-5 h-5 animate-spin" />Loading incidents…</div>
+        ) : isError && !data ? (
+          <div role="alert" className="py-12 text-center text-sm text-slate-400">
+            <p>Could not load incidents.</p><button type="button" onClick={() => refetch()} className="btn-secondary mt-3">Try again</button>
+          </div>
         ) : incidents.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 gap-2">
             <AlertTriangle className="w-10 h-10 text-slate-600" />
-            <p className="text-slate-400">No incidents reported</p>
+            <p className="text-slate-400">{status === 'all' ? 'No incidents reported' : `No ${status} incidents`}</p>
           </div>
         ) : (
-          <div className="space-y-2">
-            {incidents.map(i => {
-              const incOption = INCIDENT_OPTIONS.find(t => t.value === i.incident_type)
+          <div className="space-y-3">
+            {incidents.map(incident => {
+              const option = INCIDENT_OPTIONS.find(type => type.value === incident.incident_type)
+              const name = incident.equipment?.name || 'Equipment unavailable'
+              const label = option?.label || incident.incident_type || 'Incident'
+              const trackedInWorkshop = incident.incident_type === 'breakdown' || !!incident.job_card_id
+              const timestamp = new Date(incident.incident_time || incident.created_at)
               return (
-                <div key={i.id} className={`bg-dark-800 border rounded-xl p-3 ${i.resolved ? 'border-dark-700 opacity-60' : 'border-orange-700/30'}`}>
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex-1 min-w-0">
-                      <p className="font-semibold text-slate-100 text-sm">{i.equipment?.name}</p>
-                      <p className="text-xs text-slate-400">{incOption?.icon} {incOption?.label || i.incident_type}{i.severity ? ` · ${i.severity}` : ''}</p>
+                <article key={incident.id} aria-label={`${label} — ${name}`} className={`bg-dark-800 border rounded-xl p-3 ${incident.resolved ? 'border-dark-700' : 'border-orange-700/30'}`}>
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <h3 className="font-semibold text-slate-100 text-sm break-words">{name}</h3>
+                      <p className="text-xs text-slate-400 mt-1">{option?.icon} {label}{incident.severity ? ` · ${incident.severity}` : ''}</p>
                     </div>
-                    {!i.resolved && (
-                      <button onClick={() => resolveIncident(i.id)}
-                        className="shrink-0 flex items-center gap-1 text-xs text-emerald-400 hover:text-emerald-300 border border-emerald-700/40 rounded-lg px-2 py-1">
-                        <CheckCircle className="w-3 h-3" /> Resolve
-                      </button>
-                    )}
+                    <span className={`text-xs font-medium ${incident.resolved ? 'text-emerald-400' : 'text-orange-400'}`}>{incident.resolved ? 'Resolved' : 'Open'}</span>
                   </div>
-                  <p className="text-xs text-slate-300 mt-1">{i.description}</p>
-                  {i.breakdown_cause        && <p className="text-xs text-slate-400 mt-0.5">Cause: {i.breakdown_cause}</p>}
-                  {i.rectification_needed   && <p className="text-xs text-slate-400 mt-0.5">Fix needed: {i.rectification_needed}</p>}
-                  {i.damage_cause           && <p className="text-xs text-slate-400 mt-0.5">How: {i.damage_cause}</p>}
-                  {i.what_needs_to_be_done  && <p className="text-xs text-slate-400 mt-0.5">Action: {i.what_needs_to_be_done}</p>}
-                  {i.location_address && (
-                    <p className="text-xs text-slate-500 mt-1 flex items-center gap-1"><MapPin className="w-2.5 h-2.5" />{i.location_address.slice(0, 60)}</p>
-                  )}
-                  <p className="text-xs text-slate-600 mt-1">{format(new Date(i.created_at), 'dd MMM yyyy, HH:mm')}</p>
-                </div>
+                  <p className="text-xs text-slate-300 mt-2 whitespace-pre-wrap break-words">{incident.description || incident.breakdown_cause || incident.damage_cause || 'No description recorded'}</p>
+                  {incident.breakdown_cause && incident.breakdown_cause !== incident.description && <p className="text-xs text-slate-400 mt-1 break-words">Cause: {incident.breakdown_cause}</p>}
+                  {incident.rectification_needed && <p className="text-xs text-slate-400 mt-1 break-words">Fix needed: {incident.rectification_needed}</p>}
+                  {incident.damage_cause && incident.damage_cause !== incident.description && <p className="text-xs text-slate-400 mt-1 break-words">How: {incident.damage_cause}</p>}
+                  {incident.what_needs_to_be_done && <p className="text-xs text-slate-400 mt-1 break-words">Action needed: {incident.what_needs_to_be_done}</p>}
+                  {incident.action_taken && <p className="text-xs text-slate-400 mt-1 break-words">Action taken: {incident.action_taken}</p>}
+                  {incident.location_address && <p className="text-xs text-slate-500 mt-2 flex items-start gap-1"><MapPin className="w-3 h-3 shrink-0" /><span className="break-words">{incident.location_address}</span></p>}
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-xs text-slate-500">{Number.isFinite(timestamp.getTime()) ? format(timestamp, 'dd MMM yyyy, HH:mm') : 'Date unavailable'} · {incident.shift_id ? 'Shift report' : 'Standalone report'}</p>
+                    {!incident.resolved && (trackedInWorkshop
+                      ? canUseWorkshop && onNavigate ? <button type="button" className="btn-secondary text-xs" onClick={() => onNavigate('maintenance', { tab: 'workshop', workshopStatus: 'all', equipmentId: incident.equipment_id })}><Wrench className="w-3.5 h-3.5" />Review in Workshop</button>
+                        : <p className="text-xs text-slate-400">Resolve through Workshop</p>
+                      : canResolve && <button type="button" onClick={() => resolveIncident(incident)} disabled={!!resolvingId} className="btn-secondary text-xs text-emerald-400">
+                          {resolvingId === incident.id ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />Resolving…</> : <><CheckCircle className="w-3.5 h-3.5" />Resolve</>}
+                        </button>)}
+                  </div>
+                </article>
               )
             })}
+            {isError && <div role="alert" className="rounded-lg border border-red-700/40 p-3 text-xs text-red-300">
+              <p>{isFetchNextPageError ? 'Could not load more reports.' : 'Could not refresh reports.'}</p>
+              <button type="button" onClick={() => isFetchNextPageError ? fetchNextPage() : refetch()} className="btn-secondary mt-2 text-xs">Try again</button>
+            </div>}
+            {hasNextPage && !isFetchNextPageError && <button type="button" onClick={() => fetchNextPage()} disabled={isFetchingNextPage} className="btn-secondary w-full text-xs">{isFetchingNextPage ? 'Loading…' : 'Load more reports'}</button>}
           </div>
         )}
       </div>
-    </div>
+    </section>
   )
 }
 
@@ -7553,14 +7618,18 @@ function LedgerTab({ companyId }) {
 
 // ── Main FleetPage ────────────────────────────────────────────────────────────
 export default function FleetPage({ onNavigate, unloggedIds = null, initialEquipmentId = null, initialFleetFilter = null }) {
-  const { companyId } = useAuth()
+  const { companyId, role, hasModule } = useAuth()
+  const canViewIncidents = canAccessPage('operations', { role, hasModule })
   const [activeTab,  setActiveTab]  = useState('fleet')
   const [showAdd,    setShowAdd]    = useState(false)
+  useEffect(() => {
+    if (activeTab === 'incidents' && !canViewIncidents) setActiveTab('fleet')
+  }, [activeTab, canViewIncidents])
 
   const tabs = [
     { id: 'fleet',     label: 'Fleet',     icon: Truck },
     { id: 'fuel',      label: 'Fuel',      icon: Fuel },
-    { id: 'incidents', label: 'Incidents', icon: AlertTriangle },
+    ...(canViewIncidents ? [{ id: 'incidents', label: 'Incidents', icon: AlertTriangle }] : []),
     { id: 'history',   label: 'History',   icon: History },
     { id: 'ledger',    label: 'Ledger',    icon: BookOpen },
     { id: 'hired_in',  label: 'Hired In',  icon: PackageOpen },
@@ -7579,14 +7648,12 @@ export default function FleetPage({ onNavigate, unloggedIds = null, initialEquip
           </button>
         )}
       </div>
-      <div className="flex border-b border-dark-700 shrink-0 px-2">
+      <div className="flex border-b border-dark-700 shrink-0 px-2 overflow-x-auto">
         {tabs.map(t => {
           const Icon = t.icon
           return (
-            <button key={t.id} onClick={() => t.id === 'incidents'
-              ? onNavigate?.('operations', { tab: 'incidents' })
-              : setActiveTab(t.id)}
-              className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium border-b-2 transition-colors
+            <button key={t.id} type="button" aria-pressed={activeTab === t.id} onClick={() => setActiveTab(t.id)}
+              className={`shrink-0 flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium border-b-2 transition-colors
                 ${activeTab === t.id ? 'border-primary-500 text-primary-400' : 'border-transparent text-slate-500 hover:text-slate-300'}`}>
               <Icon className="w-3.5 h-3.5" />{t.label}
             </button>
@@ -7596,7 +7663,7 @@ export default function FleetPage({ onNavigate, unloggedIds = null, initialEquip
       <div className="flex-1 overflow-hidden">
         {activeTab === 'fleet'     && <FleetTab     companyId={companyId} showAdd={showAdd} setShowAdd={setShowAdd} onNavigate={onNavigate} unloggedIds={unloggedIds} initialEquipmentId={initialEquipmentId} initialFleetFilter={initialFleetFilter} />}
         {activeTab === 'fuel'      && <FuelTab      companyId={companyId} />}
-        {false && activeTab === 'incidents' && <IncidentsTab companyId={companyId} />}
+        {canViewIncidents && activeTab === 'incidents' && <IncidentsTab companyId={companyId} onNavigate={onNavigate} />}
         {activeTab === 'history'   && <HistoryTab   companyId={companyId} />}
         {activeTab === 'ledger'    && <LedgerTab    companyId={companyId} />}
         {activeTab === 'hired_in'  && <HiredInTab   companyId={companyId} />}
