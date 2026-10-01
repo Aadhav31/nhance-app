@@ -21,6 +21,8 @@ import FieldExpensePage from '../fieldexpense/FieldExpensePage'
 import OperatorChatPanel from './OperatorChatPanel'
 import ActiveCallScreen from './ActiveCallScreen'
 import EmployeeReimbursePage from './EmployeeReimbursePage'
+import NotificationBell from '../../components/layout/NotificationBell'
+import HomeNotificationAlerts from '../../components/shared/HomeNotificationAlerts'
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
@@ -2619,6 +2621,7 @@ export default function OperatorPortal() {
           <p className="text-sm font-bold text-slate-100 truncate">{userProfile?.full_name}</p>
           <p className="text-[10px] text-slate-500 truncate">{company?.name}</p>
         </div>
+        <NotificationBell />
         <LangPicker lang={lang} onChange={setLang} />
         <button onClick={signOut} className="ml-1 w-8 h-8 flex items-center justify-center rounded-full bg-dark-700 border border-dark-600 text-slate-400 hover:text-slate-200 active:scale-95 text-base">
           ⏻
@@ -2660,6 +2663,7 @@ export default function OperatorPortal() {
       {(tab === 'shift' || tab === 'attendance' || tab === 'pay') && (
         <div className="flex-1 overflow-y-auto">
           <div className="p-4 pb-6">
+            {tab === 'shift' && <div className="mb-4"><HomeNotificationAlerts /></div>}
             {tab === 'shift'      && <ShiftModule      {...sharedProps} />}
             {tab === 'attendance' && <AttendanceModule {...sharedProps} />}
             {tab === 'pay'        && <PayModule        {...sharedProps} />}

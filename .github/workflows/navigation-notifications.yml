@@ -4,6 +4,13 @@ on:
     paths:
       - src/components/layout/**
       - src/hooks/useApprovalBadge.js
+      - src/hooks/useNotifications.js
+      - src/lib/notifications.js
+      - src/components/shared/HomeNotificationAlerts.jsx
+      - src/pages/dashboard/DashboardPage.jsx
+      - src/pages/operator/OperatorPortal.jsx
+      - supabase/migrations/*_notification_inbox.sql
+      - tests/notificationInbox.database.mjs
       - src/App.jsx
       - tests/navigationNotifications.browser.mjs
       - .github/workflows/navigation-notifications.yml
@@ -20,7 +27,8 @@ jobs:
       - run: node --test tests/*.test.js
       - run: npm run lint
       - run: npm run build
-      - run: npm install --no-save --package-lock=false playwright@1.58.2
+      - run: npm install --no-save --package-lock=false playwright@1.58.2 @electric-sql/pglite@0.3.14
+      - run: node tests/notificationInbox.database.mjs
       - run: npx playwright install --with-deps chromium
       - run: node tests/navigationNotifications.browser.mjs
       - uses: actions/upload-artifact@v4
