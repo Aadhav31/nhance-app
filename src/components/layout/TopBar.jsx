@@ -1,11 +1,11 @@
-import { Bell, Menu, Sun, Moon } from 'lucide-react'
+import { Menu, Sun, Moon } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
 import { useDisplayMode } from '../../contexts/DisplayModeContext'
 import { useTheme } from '../../contexts/ThemeContext'
 import { fmtDate } from '../../lib/utils'
-import { useQuery } from '@tanstack/react-query'
-import { supabase } from '../../lib/supabase'
-import { isWorkflowEngineUnavailable } from '../../lib/approvalWorkflow'
+import { useApprovalBadge } from '../../hooks/useApprovalBadge'
+import ApprovalIcon from './ApprovalIcon'
+import NotificationBell from './NotificationBell'
 
 const PAGE_TITLES = {
   dashboard:   { title: 'Dashboard',               subtitle: 'Overview of your operations' },
@@ -48,45 +48,13 @@ const PAGE_TITLES = {
 }
 
 export default function TopBar({ activePage, onMenuToggle, onNavigate }) {
-  const { company, session, companyId, role } = useAuth()
+  const { company, session } = useAuth()
   const { mode, setMode }    = useDisplayMode()
   const { theme, toggle }    = useTheme()
   const info  = PAGE_TITLES[activePage] || { title: activePage, subtitle: '' }
   const today = fmtDate(new Date())
 
-  // Which roles can the current user act on?
-  const userRole = role || ''
-  const visibleRoles = userRole === 'admin'
-    ? ['manager','accounts','admin']
-    : userRole === 'manager'
-      ? ['manager']
-      : userRole === 'accounts'
-        ? ['accounts']
-        : userRole === 'supervisor'
-          ? ['supervisor']
-          : []
-
-  const { data: pendingCount = 0 } = useQuery({
-    queryKey: ['approval_badge', companyId, ...visibleRoles],
-    queryFn: async () => {
-      if (visibleRoles.length === 0) return 0
-      const { count, error } = await supabase
-        .from('approval_task_inbox')
-        .select('task_id', { count: 'exact', head: true })
-      if (!error) return count || 0
-      if (!isWorkflowEngineUnavailable(error)) throw error
-      const { count: legacyCount, error: legacyError } = await supabase
-        .from('approval_requests')
-        .select('id', { count: 'exact', head: true })
-        .eq('company_id', companyId)
-        .eq('status', 'pending')
-        .in('required_role', visibleRoles)
-      if (legacyError) throw legacyError
-      return legacyCount || 0
-    },
-    enabled: !!companyId && visibleRoles.length > 0,
-    refetchInterval: 30_000,
-  })
+  const { canViewApprovals, pendingCount } = useApprovalBadge()
 
   return (
     <header className="nhance-topbar h-16 bg-dark-800 border-b border-dark-600 flex items-center px-4 sm:px-6 gap-4 flex-shrink-0">
@@ -151,17 +119,18 @@ export default function TopBar({ activePage, onMenuToggle, onNavigate }) {
           {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
         </button>
 
-        {/* Notifications / Approval Centre */}
-        {visibleRoles.length > 0 && (
+        {/* Mobile shortcut; Chat hides the desktop right strip. */}
+        {canViewApprovals && (
           <button
             type="button"
             onClick={() => onNavigate?.('approval_center')}
-            title={pendingCount > 0 ? `${pendingCount} pending approval${pendingCount > 1 ? 's' : ''}` : 'Approval Centre'}
-            aria-label={pendingCount > 0 ? `${pendingCount} pending approval${pendingCount > 1 ? 's' : ''}` : 'Approval Centre'}
-            className="relative w-9 h-9 flex items-center justify-center rounded-lg hover:bg-dark-700 transition-all"
+            title={pendingCount > 0 ? `Approval Centre, ${pendingCount} pending approval${pendingCount > 1 ? 's' : ''}` : 'Approval Centre'}
+            aria-label={pendingCount > 0 ? `Approval Centre, ${pendingCount} pending approval${pendingCount > 1 ? 's' : ''}` : 'Approval Centre'}
+            aria-current={activePage === 'approval_center' ? 'page' : undefined}
+            className={`relative w-9 h-9 flex items-center justify-center rounded-lg hover:bg-dark-700 transition-all ${activePage === 'chat' ? '' : 'lg:hidden'}`}
             style={{ color: 'rgb(var(--t2))' }}
           >
-            <Bell className="w-4 h-4" />
+            <ApprovalIcon className="w-5 h-5" />
             {pendingCount > 0 && (
               <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] flex items-center justify-center px-1 rounded-full bg-red-500 text-[10px] font-bold text-white leading-none">
                 {pendingCount > 99 ? '99+' : pendingCount}
@@ -169,6 +138,9 @@ export default function TopBar({ activePage, onMenuToggle, onNavigate }) {
             )}
           </button>
         )}
+
+        {/* Bell is dedicated to operational notifications. */}
+        <NotificationBell onNavigate={onNavigate} />
 
         {/* Company badge */}
         {company && (

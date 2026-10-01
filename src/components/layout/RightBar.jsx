@@ -1,9 +1,9 @@
 /**
  * RightBar — slim 48px vertical icon strip on the right edge.
  *
- * Contains: Chat, Notes, Audit Log, Settings, Company Profile
+ * Contains: Approvals, Chat, Notes, Audit Log, Settings, Company Profile
  * These are "system/utility" actions — always accessible, not module content.
- * Approval Centre has one canonical desktop entry in the TopBar.
+ * Approval Centre lives here on desktop, with a separate header shortcut on mobile.
  */
 
 import {
@@ -13,9 +13,16 @@ import {
 import { useAuth } from '../../contexts/AuthContext'
 import { cn } from '../../lib/utils'
 import { MODULES, ROLES } from '../../lib/constants'
+import { useApprovalBadge } from '../../hooks/useApprovalBadge'
+import ApprovalIcon from './ApprovalIcon'
 
 // ── Right-bar item definitions ────────────────────────────────────────────────
 const ITEMS_TOP = [
+  {
+    key: 'approval_center', Icon: ApprovalIcon, label: 'Approval Centre', shortLabel: 'Approvals',
+    roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN],
+    module: MODULES.CORE, type: 'navigate',
+  },
   {
     key: 'assistant', Icon: Sparkles, label: 'Ask Nhance',
     roles: [ROLES.SUPERVISOR, ROLES.MANAGER, ROLES.ACCOUNTS, ROLES.ADMIN],
@@ -70,12 +77,13 @@ const ITEMS_BOTTOM = [
 // ── Icon button ───────────────────────────────────────────────────────────────
 function RightBtn({ item, isActive, isOn, badge, onClick }) {
   const { Icon, label, color } = item
+  const accessibleLabel = badge > 0 ? `${label}, ${badge} pending approval${badge === 1 ? '' : 's'}` : label
   return (
     <button
       type="button"
       onClick={onClick}
-      title={label}
-      aria-label={label}
+      title={accessibleLabel}
+      aria-label={accessibleLabel}
       aria-current={isActive ? 'page' : undefined}
       aria-pressed={item.type === 'toggle' ? isOn : undefined}
       className={cn(
@@ -101,8 +109,8 @@ function RightBtn({ item, isActive, isOn, badge, onClick }) {
         )}
       </div>
 
-      <span className="text-[8px] font-bold uppercase tracking-wide leading-none text-center px-0.5 truncate w-full">
-        {label.length > 8 ? label.split(' ')[0] : label}
+      <span className={`${item.shortLabel ? 'text-[7px] tracking-normal' : 'text-[8px] tracking-wide'} font-bold uppercase leading-none text-center px-0.5 truncate w-full`}>
+        {item.shortLabel || (label.length > 8 ? label.split(' ')[0] : label)}
       </span>
     </button>
   )
@@ -118,6 +126,7 @@ export default function RightBar({
   onToggleAssistant,
 }) {
   const { role, hasModule } = useAuth()
+  const { pendingCount } = useApprovalBadge()
 
   // Filter items by role + module
   const visibleTop    = ITEMS_TOP.filter(i => i.roles.includes(role) && hasModule(i.module))
@@ -138,7 +147,7 @@ export default function RightBar({
   return (
     <aside className="nhance-rightbar hidden lg:flex flex-col bg-dark-800 border-l border-dark-700 flex-shrink-0 w-12">
 
-      {/* Top group: Chat, Notes */}
+      {/* Top group: Approvals, Assistant, Chat, Notes */}
       <div className="border-b border-dark-700">
         <div className="h-14 flex items-center justify-center">
           {/* spacer matching TopBar height */}
@@ -149,7 +158,7 @@ export default function RightBar({
             item={item}
             isActive={activePage === item.key}
             isOn={(item.key === 'notes' && notesOpen) || (item.key === 'assistant' && assistantOpen)}
-            badge={0}
+            badge={item.key === 'approval_center' ? pendingCount : 0}
             onClick={() => handleClick(item)}
           />
         ))}
