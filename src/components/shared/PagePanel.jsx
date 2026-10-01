@@ -35,6 +35,10 @@ export default function PagePanel({
     backButtonRef.current?.focus()
 
     const handler = (e) => {
+      // A child panel (for example, editing fuel inside equipment details)
+      // owns keyboard navigation until it closes.
+      const panels = document.querySelectorAll('[role="dialog"][aria-modal="true"]')
+      if (panels[panels.length - 1] !== panel) return
       if (e.key === 'Escape') onCloseRef.current?.()
       if (e.key !== 'Tab' || !panel) return
 

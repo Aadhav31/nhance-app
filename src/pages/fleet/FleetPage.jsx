@@ -158,11 +158,11 @@ function useSpeechToText(onResult) {
   }
   return { listening, toggle }
 }
-function VoiceTextarea({ value, onChange, placeholder, rows = 2 }) {
+function VoiceTextarea({ value, onChange, placeholder, rows = 2, ariaLabel }) {
   const { listening, toggle } = useSpeechToText((text) => onChange(value ? value + ' ' + text : text))
   return (
     <div className="relative">
-      <textarea className="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2.5 pr-10 text-sm text-slate-100 focus:outline-none focus:border-primary-500 resize-none"
+      <textarea aria-label={ariaLabel} className="w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2.5 pr-10 text-sm text-slate-100 focus:outline-none focus:border-primary-500 resize-none"
         value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} rows={rows} />
       <button type="button" onClick={toggle} title={listening ? 'Stop' : 'Speak'}
         className={`absolute right-2 top-2 p-1.5 rounded-lg transition-all ${listening ? 'bg-red-500 text-white animate-pulse' : 'text-slate-500 hover:text-slate-200 hover:bg-dark-600'}`}>
@@ -1130,120 +1130,171 @@ function AttachmentFormModal({ equipment, companyId, initialValues, availableAtt
 }
 
 // ── Fuel Modal ────────────────────────────────────────────────────────────────
-function FuelModal({ equipment, companyId, onClose }) {
+const canEditFleetFuel = role => ['admin', 'superadmin', 'manager', 'accounts'].includes(role)
+
+function FuelModal({ equipment, companyId, entry = null, onClose }) {
   const qc = useQueryClient()
+  const { role } = useAuth()
+  const isEdit = !!entry?.id
   const { location, loading: gpsLoading } = useGPS()
-  const todayDate = new Date().toISOString().split('T')[0]
-  const [form, setForm] = useState({
-    entry_date: todayDate,
-    quantity_liters: '', rate_per_liter: '',
-    meter_at_filling: String(equipment.current_meter_reading || ''), km_at_filling: '',
-    delivered_by_name: '', vendor_name: '', invoice_number: '', notes: '',
-  })
-  const [fuelPhotoUrl, setFuelPhotoUrl] = useState(null)
+  const todayDate = format(new Date(), 'yyyy-MM-dd')
+  // Fleet has historically stored its selected entry date in created_at.
+  const originalTimestamp = entry?.created_at || entry?.entry_time
+  const [form, setForm] = useState(() => ({
+    entry_date: originalTimestamp ? format(new Date(originalTimestamp), 'yyyy-MM-dd') : todayDate,
+    quantity_liters: entry?.quantity_liters ?? '', rate_per_liter: entry?.rate_per_liter ?? '',
+    meter_at_filling: isEdit ? (entry.meter_at_filling ?? '') : (equipment.current_meter_reading ?? ''),
+    km_at_filling: entry?.km_at_filling ?? '',
+    delivered_by_name: entry?.delivered_by_name ?? '', vendor_name: entry?.vendor_name ?? '',
+    invoice_number: entry?.invoice_number ?? '', notes: entry?.notes ?? '',
+  }))
+  const [fuelPhotoUrl, setFuelPhotoUrl] = useState(entry?.fuel_photo_url || null)
   const [saving, setSaving] = useState(false)
-  const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
+  const [saveError, setSaveError] = useState('')
+  const set = (k, v) => { setForm(p => ({ ...p, [k]: v })); setSaveError('') }
   const mt = equipment.meter_type
+  const qty = Number(form.quantity_liters)
+  const rate = form.rate_per_liter === '' ? null : Number(form.rate_per_liter)
+  const sameAmounts = isEdit && qty === Number(entry.quantity_liters)
+    && rate === (entry.rate_per_liter == null ? null : Number(entry.rate_per_liter))
+  const total = rate == null ? (sameAmounts ? entry.total_amount : null) : Math.round(qty * rate * 100) / 100
+  const recordedLocation = isEdit ? { address: entry.location_address || entry.filling_location || 'No location recorded' } : location
+  const close = () => { if (!saving) onClose() }
 
   const handleSave = async () => {
-    if (!form.quantity_liters) { toast.error('Quantity is required'); return }
+    if (saving) return
+    setSaveError('')
     setSaving(true)
     try {
-      const qty  = Number(form.quantity_liters)
-      const rate = form.rate_per_liter ? Number(form.rate_per_liter) : null
-      // Build created_at from selected date + current wall-clock time
-      const now = new Date()
-      const entryTs = new Date(
-        `${form.entry_date}T${now.toTimeString().slice(0, 8)}`
-      ).toISOString()
-      const { error } = await supabase.from('shift_fuel_entries').insert({
-        company_id:       companyId,
-        equipment_id:     equipment.id,
+      if (isEdit && (!canEditFleetFuel(role) || entry.company_id !== companyId || entry.equipment_id !== equipment.id)) {
+        throw new Error('You cannot edit this fuel entry.')
+      }
+      if (!Number.isFinite(qty) || qty <= 0) throw new Error('Enter a quantity greater than zero.')
+      if (rate != null && (!Number.isFinite(rate) || rate < 0)) throw new Error('Enter a valid unit price of zero or more.')
+      if (isEdit && !sameAmounts && rate == null && entry.total_amount != null) {
+        throw new Error('Enter a unit price to recalculate this entry’s amount.')
+      }
+      if (total != null && !Number.isFinite(Number(total))) throw new Error('Enter a valid fuel amount.')
+      for (const key of ['meter_at_filling', 'km_at_filling']) {
+        if (form[key] !== '' && (!Number.isFinite(Number(form[key])) || Number(form[key]) < 0)) {
+          throw new Error('Meter readings must be zero or more.')
+        }
+      }
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(form.entry_date) || form.entry_date > todayDate) {
+        throw new Error('Select an entry date up to today.')
+      }
+      // Preserve the recorded time; align both date fields so monthly views agree.
+      const entryDate = originalTimestamp ? new Date(originalTimestamp) : new Date()
+      const [year, month, day] = form.entry_date.split('-').map(Number)
+      entryDate.setFullYear(year, month - 1, day)
+      if (format(entryDate, 'yyyy-MM-dd') !== form.entry_date) throw new Error('Select a valid entry date.')
+      const payload = {
         quantity_liters:  qty,
         rate_per_liter:   rate,
-        total_amount:     rate ? qty * rate : null,
-        meter_at_filling: form.meter_at_filling ? Number(form.meter_at_filling) : null,
-        km_at_filling:    form.km_at_filling    ? Number(form.km_at_filling)    : null,
-        delivered_by_name: form.delivered_by_name || null,
-        vendor_name:      form.vendor_name       || null,
-        invoice_number:   form.invoice_number    || null,
-        filling_location: location?.address      || null,
-        location_lat:     location?.lat          || null,
-        location_lng:     location?.lng          || null,
-        location_address: location?.address      || null,
+        total_amount:     total,
+        meter_at_filling: form.meter_at_filling === '' ? null : Number(form.meter_at_filling),
+        km_at_filling:    form.km_at_filling === '' ? null : Number(form.km_at_filling),
+        delivered_by_name: form.delivered_by_name.trim() || null,
+        vendor_name:      form.vendor_name.trim() || null,
+        invoice_number:   form.invoice_number.trim() || null,
         fuel_photo_url:   fuelPhotoUrl           || null,
-        notes:            form.notes             || null,
-        created_at:       entryTs,
-      })
-      if (error) throw error
-      toast.success(`${qty}L fuel logged`)
-      qc.invalidateQueries(['fuel', equipment.id])
-      qc.invalidateQueries(['all_fuel', companyId])
-      qc.invalidateQueries(['equipment_fuel_stats', equipment.id])
+        notes:            form.notes.trim()       || null,
+        created_at:       entryDate.toISOString(),
+        entry_time:       entryDate.toISOString(),
+      }
+      if (isEdit) {
+        let update = supabase.from('shift_fuel_entries').update(payload)
+          .eq('id', entry.id).eq('company_id', companyId).eq('equipment_id', equipment.id)
+        // Avoid overwriting a correction made after this form was opened.
+        for (const key of Object.keys(payload)) {
+          update = entry[key] == null ? update.is(key, null) : update.eq(key, entry[key])
+        }
+        const { data, error } = await update.select('id').maybeSingle()
+        if (error) throw error
+        if (!data) throw new Error('This entry changed or is no longer available. Reopen it before saving.')
+      } else {
+        const { error } = await supabase.from('shift_fuel_entries').insert({
+          ...payload, company_id: companyId, equipment_id: equipment.id,
+          filling_location: location?.address || null,
+          location_lat: location?.lat || null, location_lng: location?.lng || null,
+          location_address: location?.address || null,
+        })
+        if (error) throw error
+      }
+      toast.success(isEdit ? 'Fuel entry updated' : `${qty}L fuel logged`)
+      for (const queryKey of [
+        ['fuel', equipment.id], ['all_fuel', companyId], ['equipment_fuel_stats', equipment.id],
+        ['monthly_fuel', equipment.id], ['today_activity', equipment.id],
+        ['fuel_reconciliation_fills', companyId], ['shift_fuel_detail'], ['shifts_fuel_summary'],
+        ['op_shift_fuel'], ['rpt_fuel', companyId], ['rpt_equip_pl_full', companyId], ['rpt_project_pl', companyId],
+      ]) qc.invalidateQueries({ queryKey })
       onClose()
-    } catch (err) { toast.error(err.message || 'Failed to log fuel')
+    } catch (err) { setSaveError(err.message || 'Failed to save fuel entry')
     } finally { setSaving(false) }
   }
 
   return (
-    <Modal title={`Fuel Entry — ${equipment.name}`} onClose={onClose} footer={
+    <Modal title={`${isEdit ? 'Edit Fuel Entry' : 'Fuel Entry'} — ${equipment.name}`} onClose={close} footer={
       <>
-        <button onClick={onClose} className="flex-1 btn-secondary">Cancel</button>
+        <button onClick={close} disabled={saving} className="flex-1 btn-secondary">Cancel</button>
         <button onClick={handleSave} disabled={saving} className="flex-1 btn-primary">
-          {saving ? <><Loader2 className="w-4 h-4 animate-spin" />Saving…</> : 'Log Fuel'}
+          {saving ? <><Loader2 className="w-4 h-4 animate-spin" />Saving…</> : isEdit ? 'Save changes' : 'Log Fuel'}
         </button>
       </>
     }>
-      <Field label="Entry Date">
-        <input type="date" className={inp()} value={form.entry_date} max={todayDate}
-          onChange={e => set('entry_date', e.target.value)} />
-        {form.entry_date !== todayDate && (
-          <p className="text-xs text-amber-500 mt-1">⚠ Backdated entry — {new Date(form.entry_date).toLocaleDateString('en-IN', { day:'numeric', month:'short', year:'numeric' })}</p>
-        )}
-      </Field>
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Quantity (Litres)" required>
-          <input type="number" className={inp()} value={form.quantity_liters} onChange={e => set('quantity_liters', e.target.value)} placeholder="e.g. 150" step="0.1" />
+      <div className="space-y-4">
+        {saveError && <p role="alert" className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300">{saveError}</p>}
+        <Field label="Entry Date">
+          <input aria-label="Entry Date" type="date" className={inp()} value={form.entry_date} max={todayDate}
+            onChange={e => set('entry_date', e.target.value)} />
+          {form.entry_date !== todayDate && (
+            <p className="text-xs text-amber-500 mt-1">⚠ Backdated entry — {new Date(form.entry_date).toLocaleDateString('en-IN', { day:'numeric', month:'short', year:'numeric' })}</p>
+          )}
         </Field>
-        <Field label="Rate per Litre (₹)">
-          <input type="number" className={inp()} value={form.rate_per_liter} onChange={e => set('rate_per_liter', e.target.value)} placeholder="e.g. 95.50" step="0.01" />
-        </Field>
-      </div>
-      {form.quantity_liters && form.rate_per_liter && (
-        <div className="bg-primary-900/30 border border-primary-700/30 rounded-lg px-3 py-2 text-sm">
-          Total: <span className="font-bold text-primary-300">₹{(Number(form.quantity_liters) * Number(form.rate_per_liter)).toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Quantity (Litres)" required>
+            <input aria-label="Quantity (Litres)" type="number" min="0" className={inp()} value={form.quantity_liters} onChange={e => set('quantity_liters', e.target.value)} placeholder="e.g. 150" step="0.1" />
+          </Field>
+          <Field label="Rate per Litre (₹)">
+            <input aria-label="Rate per Litre (₹)" type="number" min="0" className={inp()} value={form.rate_per_liter} onChange={e => set('rate_per_liter', e.target.value)} placeholder="e.g. 95.50" step="0.01" />
+          </Field>
         </div>
-      )}
-      <div>
-        <p className="text-xs font-medium text-slate-400 mb-1">Fuel Delivery Photo</p>
-        <p className="text-xs text-slate-500 mb-1">Capture meter / delivery slip / invoice as proof</p>
-        <CameraButton companyId={companyId} label="fuel" photoUrl={fuelPhotoUrl} onCapture={setFuelPhotoUrl} location={location} />
+        {Number.isFinite(Number(total)) && total != null && (
+          <div className="bg-primary-900/30 border border-primary-700/30 rounded-lg px-3 py-2 text-sm">
+            Total: <span className="font-bold text-primary-300">₹{Number(total).toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
+          </div>
+        )}
+        <div>
+          <p className="text-xs font-medium text-slate-400 mb-1">Fuel Delivery Photo</p>
+          <p className="text-xs text-slate-500 mb-1">Capture meter / delivery slip / invoice as proof</p>
+          <CameraButton companyId={companyId} label="fuel" photoUrl={fuelPhotoUrl} onCapture={setFuelPhotoUrl} location={recordedLocation} />
+        </div>
+        {(mt === 'hours' || mt === 'both') && (
+          <Field label="Hour Meter at Filling (hrs)">
+            <input aria-label="Hour Meter at Filling (hrs)" type="number" min="0" className={inp()} value={form.meter_at_filling} onChange={e => set('meter_at_filling', e.target.value)} step="0.1" />
+          </Field>
+        )}
+        {(mt === 'kilometers' || mt === 'both') && (
+          <Field label="Odometer at Filling (km)">
+            <input aria-label="Odometer at Filling (km)" type="number" min="0" className={inp()} value={form.km_at_filling} onChange={e => set('km_at_filling', e.target.value)} />
+          </Field>
+        )}
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Filled / Delivered By">
+            <input aria-label="Filled / Delivered By" className={inp()} value={form.delivered_by_name} onChange={e => set('delivered_by_name', e.target.value)} placeholder="Person name" />
+          </Field>
+          <Field label="Vendor / Fuel Station">
+            <VendorPicker ariaLabel="Vendor / Fuel Station" companyId={companyId} value={form.vendor_name} onChange={n => set('vendor_name', n)} onSelect={v => set('vendor_name', v.name)} placeholder="Supplier name" className={inp()} />
+          </Field>
+        </div>
+        <Field label="Invoice No.">
+          <input aria-label="Invoice No." className={inp()} value={form.invoice_number} onChange={e => set('invoice_number', e.target.value)} placeholder="INV-001" />
+        </Field>
+        <GPSField location={recordedLocation} loading={gpsLoading} />
+        <Field label="Notes">
+          <VoiceTextarea ariaLabel="Notes" value={form.notes} onChange={v => set('notes', v)} placeholder="Any remarks…" />
+        </Field>
       </div>
-      {(mt === 'hours' || mt === 'both') && (
-        <Field label="Hour Meter at Filling (hrs)">
-          <input type="number" className={inp()} value={form.meter_at_filling} onChange={e => set('meter_at_filling', e.target.value)} step="0.1" />
-        </Field>
-      )}
-      {(mt === 'kilometers' || mt === 'both') && (
-        <Field label="Odometer at Filling (km)">
-          <input type="number" className={inp()} value={form.km_at_filling} onChange={e => set('km_at_filling', e.target.value)} />
-        </Field>
-      )}
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Filled / Delivered By">
-          <input className={inp()} value={form.delivered_by_name} onChange={e => set('delivered_by_name', e.target.value)} placeholder="Person name" />
-        </Field>
-        <Field label="Vendor / Fuel Station">
-          <VendorPicker companyId={companyId} value={form.vendor_name} onChange={n => set('vendor_name', n)} onSelect={v => set('vendor_name', v.name)} placeholder="Supplier name" className={inp()} />
-        </Field>
-      </div>
-      <Field label="Invoice No.">
-        <input className={inp()} value={form.invoice_number} onChange={e => set('invoice_number', e.target.value)} placeholder="INV-001" />
-      </Field>
-      <GPSField location={location} loading={gpsLoading} />
-      <Field label="Notes">
-        <VoiceTextarea value={form.notes} onChange={v => set('notes', v)} placeholder="Any remarks…" />
-      </Field>
     </Modal>
   )
 }
@@ -1974,6 +2025,7 @@ function EquipmentPLTab({ equipment, companyId }) {
 // ── Equipment Detail ──────────────────────────────────────────────────────────
 function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavigate }) {
   const [modal,         setModal]         = useState(null)
+  const [editingFuel,   setEditingFuel]   = useState(null)
   const [showEdit,      setShowEdit]      = useState(false)
   const [equipment,     setEquipment]     = useState(equipmentProp)
   const [detailTab,     setDetailTab]     = useState('overview')
@@ -3330,10 +3382,23 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
                       <div className="min-w-0">
                         <p className="text-xs font-medium text-slate-200">{format(new Date(entry.created_at), 'dd MMM yyyy · HH:mm')}</p>
                         <p className="text-[10px] text-slate-500 mt-0.5 truncate">{entry.vendor_name || entry.delivered_by_name || entry.fuel_source || 'Fuel entry'}</p>
+                        {(entry.rate_per_liter != null || entry.invoice_number) && (
+                          <p className="text-[10px] text-slate-500 mt-0.5 break-words">
+                            {entry.rate_per_liter != null && <span>₹{Number(entry.rate_per_liter).toLocaleString('en-IN')}/L</span>}
+                            {entry.invoice_number && <span>{entry.rate_per_liter != null ? ' · ' : ''}Invoice: {entry.invoice_number}</span>}
+                          </p>
+                        )}
                       </div>
                       <div className="text-right">
                         <p className="text-sm font-bold text-yellow-400">{Number(entry.quantity_liters || 0).toFixed(1)} L</p>
                         {Number(entry.total_amount || 0) > 0 && <p className="text-[10px] text-slate-500">₹{Number(entry.total_amount).toLocaleString('en-IN')}</p>}
+                        {canEditFleetFuel(role) && (
+                          <button type="button" onClick={() => setEditingFuel(entry)}
+                            aria-label={`Edit fuel entry ${entry.invoice_number || format(new Date(entry.created_at), 'dd MMM yyyy · HH:mm')}`}
+                            className="mt-1 inline-flex items-center gap-1 rounded px-2 py-1.5 text-xs text-primary-400 hover:bg-dark-600 hover:text-primary-300">
+                            <Pencil className="w-3 h-3" /> Edit
+                          </button>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -4493,6 +4558,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
           onSaved={refreshEquipment} />
       )}
       {modal === 'fuel'     && <FuelModal     equipment={equipment} companyId={companyId} onClose={() => setModal(null)} />}
+      {editingFuel && <FuelModal equipment={equipment} companyId={companyId} entry={editingFuel} onClose={() => setEditingFuel(null)} />}
       {false && modal === 'incident' && <IncidentModal equipment={equipment} companyId={companyId} onClose={() => setModal(null)} />}
       {showTCModal && tcPending && (
         <TCCaptureModal
@@ -5772,6 +5838,7 @@ function FuelTab({ companyId }) {
   const [replenishTankId, setReplenishTankId] = useState(null) // tank id to replenish, or null
   const [filterMonth,     setFilterMonth]     = useState(format(new Date(), 'yyyy-MM'))
   const [expandedTankId,  setExpandedTankId]  = useState(null) // tank id whose receipt log is shown
+  const [editingFuel,     setEditingFuel]     = useState(null)
 
   const canIssueFuel = ['admin', 'manager'].includes(role)
 
@@ -5800,7 +5867,7 @@ function FuelTab({ companyId }) {
     queryKey: ['all_fuel', companyId, filterMonth],
     queryFn: async () => {
       const { data } = await supabase.from('shift_fuel_entries')
-        .select('*, equipment(name, category)')
+        .select('*, equipment(id, name, category, meter_type, current_meter_reading)')
         .eq('company_id', companyId)
         .gte('entry_time', monthStart + 'T00:00:00')
         .lte('entry_time', monthEnd + 'T23:59:59')
@@ -6001,8 +6068,19 @@ function FuelTab({ companyId }) {
                     {e.meter_at_filling  && <span>Meter: {e.meter_at_filling} hrs</span>}
                     {e.delivered_by_name && <span>By: {e.delivered_by_name}</span>}
                     {e.rate_per_liter    && <span>₹{e.rate_per_liter}/L</span>}
+                    {e.vendor_name && <span>Station: {e.vendor_name}</span>}
+                    {e.invoice_number && <span>Invoice: {e.invoice_number}</span>}
                   </div>
-                  <p className="text-xs text-slate-600 mt-1">{format(new Date(e.entry_time || e.created_at), 'dd MMM yyyy, HH:mm')}</p>
+                  <div className="mt-1 flex items-center justify-between gap-2">
+                    <p className="text-xs text-slate-600">{format(new Date(e.entry_time || e.created_at), 'dd MMM yyyy, HH:mm')}</p>
+                    {canEditFleetFuel(role) && e.equipment && (
+                      <button type="button" onClick={() => setEditingFuel(e)}
+                        aria-label={`Edit fuel entry ${e.invoice_number || e.equipment.name}`}
+                        className="inline-flex items-center gap-1 rounded px-2 py-1.5 text-xs text-primary-400 hover:bg-dark-700 hover:text-primary-300">
+                        <Pencil className="w-3 h-3" /> Edit
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
@@ -6135,6 +6213,10 @@ function FuelTab({ companyId }) {
           onClose={() => setShowAddTank(false)}
           onSaved={() => { setShowAddTank(false); refetchTanks() }}
         />
+      )}
+      {editingFuel && (
+        <FuelModal companyId={companyId} equipment={{ ...editingFuel.equipment, id: editingFuel.equipment_id }}
+          entry={editingFuel} onClose={() => setEditingFuel(null)} />
       )}
       {replenishTankId && (
         <ReplenishTankModal
