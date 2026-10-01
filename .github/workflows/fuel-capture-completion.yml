@@ -1,0 +1,39 @@
+name: Fuel capture completion checks
+on:
+  pull_request:
+    paths:
+      - 'src/pages/fuel/**'
+      - 'src/pages/fieldexpense/**'
+      - 'src/pages/accounts/AccountsPage.jsx'
+      - 'src/pages/fleet/FleetPage.jsx'
+      - 'src/lib/fuelCaptureCompletion.js'
+      - 'tests/fuelCaptureCompletion*'
+      - 'supabase/migrations/*fuel_capture_completion.sql'
+      - '.github/workflows/fuel-capture-completion.yml'
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: node --test tests/*.test.js
+      - run: npm run lint
+      - run: npm run build
+      - run: npm install --no-save --package-lock=false @electric-sql/pglite@0.5.8 playwright@1.58.2
+      - run: node tests/fuelCaptureCompletion.database.mjs
+      - run: npx playwright install --with-deps chromium
+      - run: node tests/fuelCaptureCompletion.browser.mjs
+        env:
+          FUEL_ARTIFACT_DIR: test-artifacts/fuel
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fuel-completion-browser
+          path: test-artifacts/fuel
