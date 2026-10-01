@@ -12,6 +12,7 @@ import ResetPasswordPage from './pages/auth/ResetPasswordPage'
 import Sidebar from './components/layout/Sidebar'
 import RightBar from './components/layout/RightBar'
 import TopBar from './components/layout/TopBar'
+import ApprovalIcon from './components/layout/ApprovalIcon'
 import { MODULES } from './lib/constants'
 import { canAccessPage, getAccessibleMobilePages } from './lib/navigation'
 import OperatorPortal from './pages/operator/OperatorPortal'
@@ -402,7 +403,7 @@ function MobileNav({ role, industryType, hasModule, activePage, onNavigate, more
         <div className="flex">
           {quickItems.map(({ key, icon, label }) => {
             const active = activePage === key
-            const Icon = Icons[icon] || Icons.Circle
+            const Icon = key === 'approval_center' ? ApprovalIcon : Icons[icon] || Icons.Circle
             return (
               <button
                 type="button"
@@ -470,7 +471,7 @@ function MobileNav({ role, industryType, hasModule, activePage, onNavigate, more
             <div className="grid grid-cols-3 gap-2 p-4">
               {visiblePages.map(({ key, icon, label }) => {
                 const active = activePage === key
-                const Icon = Icons[icon] || Icons.Circle
+                const Icon = key === 'approval_center' ? ApprovalIcon : Icons[icon] || Icons.Circle
                 return (
                   <button
                     type="button"
