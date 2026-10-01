@@ -15,6 +15,8 @@ import {
 import toast from 'react-hot-toast'
 import { ROLES } from '../../lib/constants'
 import { nextDocNumber } from '../../utils/docNumbers'
+import { canAccessPage } from '../../lib/navigation'
+import HomeNotificationAlerts from '../../components/shared/HomeNotificationAlerts'
 
 // ── Chart Palette ──────────────────────────────────────────────────────────────
 const C = {
@@ -1545,6 +1547,7 @@ function BreakdownAlarm({ companyId, userProfile }) {
         .select('*')
         .eq('company_id', companyId)
         .is('acknowledged_at', null)
+        .is('resolved_at', null)
         .order('reported_at', { ascending: true })
       return data || []
     },
@@ -1558,16 +1561,18 @@ function BreakdownAlarm({ companyId, userProfile }) {
     setAcking(alarm.id)
     try {
       const level = getAlarmLevel(alarm.reported_at)
-      const { error } = await supabase.from('breakdown_alerts').update({
+      const { data, error } = await supabase.from('breakdown_alerts').update({
         acknowledged_at:       new Date().toISOString(),
         acknowledged_by_name:  userProfile?.full_name || userProfile?.email || 'Admin',
         acknowledged_level:    level,
-      }).eq('id', alarm.id)
+      }).eq('id', alarm.id).eq('company_id', companyId)
+        .is('acknowledged_at', null).is('resolved_at', null).select('id').maybeSingle()
       if (error) throw error
-      qc.invalidateQueries(['breakdown_alarms', companyId])
+      if (!data) { await qc.invalidateQueries({ queryKey: ['breakdown_alarms', companyId] }); throw new Error('This alarm has already been acknowledged or resolved.') }
+      await qc.invalidateQueries({ queryKey: ['breakdown_alarms', companyId] })
       toast.success(`Breakdown acknowledged — ${alarm.equipment_name}`)
     } catch (err) {
-      toast.error('Failed to acknowledge')
+      toast.error(err.message || 'Failed to acknowledge')
     } finally {
       setAcking(null)
     }
@@ -1678,58 +1683,63 @@ function BreakdownAlarm({ companyId, userProfile }) {
 }
 
 function useAlerts(companyId) {
+  const { role, hasModule } = useAuth()
+  const allowed = page => !!companyId && canAccessPage(page, { role, hasModule })
   const today = new Date().toISOString().slice(0, 10)
   const in7   = new Date(Date.now() +  7 * 86_400_000).toISOString().slice(0, 10)
   const in30  = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10)
 
   // 1. Equipment in breakdown / maintenance
-  const { data: eqAlerts = [] } = useQuery({
+  const { data: eqAlerts = [], isError: eqError, refetch: eqRetry } = useQuery({
     queryKey: ['alerts_eq', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('equipment')
+      const { data, error } = await supabase.from('equipment')
         .select('id, name, equipment_number, status')
         .eq('company_id', companyId)
         .in('status', ['breakdown', 'maintenance'])
+      if (error) throw error
       return data || []
     },
-    staleTime: 30_000, refetchInterval: 60_000, enabled: !!companyId,
+    staleTime: 30_000, refetchInterval: 60_000, enabled: allowed('fleet'),
   })
 
   // 2. Equipment documents expiring within 30 days
-  const { data: docAlerts = [] } = useQuery({
+  const { data: docAlerts = [], isError: docError, refetch: docRetry } = useQuery({
     queryKey: ['alerts_docs', companyId, in30],
     queryFn: async () => {
-      const { data } = await supabase.from('equipment_documents')
+      const { data, error } = await supabase.from('equipment_documents')
         .select('id, doc_type, expiry_date, equipment:equipment_id(name, equipment_number)')
         .eq('company_id', companyId)
         .not('expiry_date', 'is', null)
         .lte('expiry_date', in30)
         .order('expiry_date', { ascending: true })
+      if (error) throw error
       return data || []
     },
-    staleTime: 3_600_000, enabled: !!companyId,
+    staleTime: 3_600_000, enabled: allowed('fleet'),
   })
 
   // 3. Overdue invoices (global — not period-filtered)
-  const { data: invoiceAlerts = [] } = useQuery({
+  const { data: invoiceAlerts = [], isError: invoiceError, refetch: invoiceRetry } = useQuery({
     queryKey: ['alerts_invoices', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('client_invoices')
+      const { data, error } = await supabase.from('client_invoices')
         .select('id, invoice_number, client_name, balance_due, due_date')
         .eq('company_id', companyId)
         .eq('status', 'overdue')
         .neq('invoice_type', 'proforma')
         .order('due_date', { ascending: true })
+      if (error) throw error
       return data || []
     },
-    staleTime: 60_000, enabled: !!companyId,
+    staleTime: 60_000, enabled: allowed('sales'),
   })
 
   // 4. Bills due within 7 days (not yet paid)
-  const { data: billAlerts = [] } = useQuery({
+  const { data: billAlerts = [], isError: billError, refetch: billRetry } = useQuery({
     queryKey: ['alerts_bills', companyId, today, in7],
     queryFn: async () => {
-      const { data } = await supabase.from('bills')
+      const { data, error } = await supabase.from('bills')
         .select('id, bill_number, vendor_name, balance_due, due_date, status')
         .eq('company_id', companyId)
         .not('due_date', 'is', null)
@@ -1737,77 +1747,83 @@ function useAlerts(companyId) {
         .gte('due_date', today)
         .not('status', 'in', '("paid","cancelled")')
         .order('due_date', { ascending: true })
+      if (error) throw error
       return data || []
     },
-    staleTime: 60_000, enabled: !!companyId,
+    staleTime: 60_000, enabled: allowed('purchase'),
   })
 
   // 5. Pending leave requests
-  const { data: leaveAlerts = [] } = useQuery({
+  const { data: leaveAlerts = [], isError: leaveError, refetch: leaveRetry } = useQuery({
     queryKey: ['alerts_leaves', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('leave_requests')
+      const { data, error } = await supabase.from('leave_requests')
         .select('id, employee_name, from_date, leave_type')
         .eq('company_id', companyId)
         .eq('status', 'pending')
+      if (error) throw error
       return data || []
     },
-    staleTime: 120_000, enabled: !!companyId,
+    staleTime: 120_000, enabled: allowed('hr'),
   })
 
   // 6. Open shift incidents
-  const { data: incidentAlerts = [] } = useQuery({
+  const { data: incidentAlerts = [], isError: incidentError, refetch: incidentRetry } = useQuery({
     queryKey: ['alerts_incidents', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('shift_incidents')
-        .select('id, incident_type, equipment_name, severity, incident_date')
+      const { data, error } = await supabase.from('shift_incidents')
+        .select('id, incident_type, equipment_id, severity, incident_time, equipment:equipment_id(name)')
         .eq('company_id', companyId)
-        .eq('status', 'open')
-        .order('incident_date', { ascending: false })
+        .or('resolved.eq.false,resolved.is.null')
+        .order('incident_time', { ascending: false })
+      if (error) throw error
       return data || []
     },
-    staleTime: 60_000, enabled: !!companyId,
+    staleTime: 60_000, enabled: allowed('fleet'),
   })
 
   // 7. Deployed machines missing today's ops log
   // A machine is considered "logged" if it has EITHER a daily_operations entry
   // OR an operator shift (open or closed) for today.
-  const { data: unloggedAlerts = [] } = useQuery({
+  const { data: unloggedAlerts = [], isError: unloggedError, refetch: unloggedRetry } = useQuery({
     queryKey: ['alerts_unlogged', companyId, today],
     queryFn: async () => {
-      const { data: deployed } = await supabase.from('equipment')
+      const { data: deployed, error: deployedError } = await supabase.from('equipment')
         .select('id, name, equipment_number')
         .eq('company_id', companyId)
         .eq('status', 'active')
         .not('current_project_id', 'is', null)
+      if (deployedError) throw deployedError
       if (!deployed?.length) return []
 
       const equipIds = deployed.map(e => e.id)
 
       // Check daily_operations (admin-entered ops log)
-      const { data: opsLogged } = await supabase.from('daily_operations')
+      const { data: opsLogged, error: opsError } = await supabase.from('daily_operations')
         .select('equipment_id')
         .eq('company_id', companyId)
         .eq('ops_date', today)
         .in('equipment_id', equipIds)
 
       // Check operator shifts for today (any status — open or closed both count)
-      const { data: shiftLogged } = await supabase.from('shifts')
+      const { data: shiftLogged, error: shiftsError } = await supabase.from('shifts')
         .select('equipment_id')
         .eq('company_id', companyId)
         .eq('shift_date', today)
         .in('equipment_id', equipIds)
 
+      if (opsError) throw opsError
+      if (shiftsError) throw shiftsError
       const loggedIds = new Set([
         ...(opsLogged   || []).map(l => l.equipment_id),
         ...(shiftLogged || []).map(l => l.equipment_id),
       ])
       return deployed.filter(e => !loggedIds.has(e.id))
     },
-    staleTime: 30_000, refetchInterval: 300_000, enabled: !!companyId,
+    staleTime: 30_000, refetchInterval: 300_000, enabled: allowed('operations') && allowed('fleet'),
   })
 
-  return useMemo(() => {
+  const items = useMemo(() => {
     const items = []
 
     // ── CRITICAL ─────────────────────────────────────────────────────────────
@@ -1847,7 +1863,7 @@ function useAlerts(companyId) {
     })
     // Open incidents (top 3)
     incidentAlerts.slice(0, 3).forEach(i => {
-      items.push({ level: 'warning', title: `Open incident — ${i.equipment_name || 'Equipment'}`, sub: `${i.incident_type || 'Incident'} · ${fmtDate(i.incident_date)}`, nav: 'fleet', id: `inc-${i.id}` })
+      items.push({ level: 'warning', title: `Open incident — ${i.equipment?.name || 'Equipment'}`, sub: `${i.incident_type || 'Incident'} · ${fmtDate(i.incident_time)}`, nav: 'fleet', navExtra: { equipmentId: i.equipment_id }, id: `inc-${i.id}` })
     })
 
     // ── INFO ─────────────────────────────────────────────────────────────────
@@ -1876,6 +1892,8 @@ function useAlerts(companyId) {
 
     return items
   }, [eqAlerts, docAlerts, invoiceAlerts, billAlerts, leaveAlerts, incidentAlerts, unloggedAlerts, today])
+  return { items: items.filter(item => allowed(item.nav)), failed: eqError || docError || invoiceError || billError || leaveError || incidentError || unloggedError,
+    retry: () => [[eqRetry,'fleet'],[docRetry,'fleet'],[invoiceRetry,'sales'],[billRetry,'purchase'],[leaveRetry,'hr'],[incidentRetry,'fleet'],[unloggedRetry,'operations']].forEach(([refetch,page]) => { if (allowed(page)) refetch() }) }
 }
 
 // ── AlertStrip ────────────────────────────────────────────────────────────────
@@ -1888,7 +1906,7 @@ const LEVEL_CFG = {
 function AlertStrip({ alerts, onNavigate }) {
   const criticals = alerts.filter(a => a.level === 'critical')
   const warnings  = alerts.filter(a => a.level === 'warning')
-  const [open, setOpen] = useState(criticals.length > 0 || warnings.length > 0)
+  const [open, setOpen] = useState(true)
 
   if (!alerts.length) return null
 
@@ -1904,7 +1922,7 @@ function AlertStrip({ alerts, onNavigate }) {
   return (
     <div className={`rounded-xl border overflow-hidden ${cfg.strip}`}>
       {/* Collapsible header */}
-      <button onClick={() => setOpen(o => !o)}
+      <button aria-label="Operational alerts" aria-expanded={open} onClick={() => setOpen(o => !o)}
         className="w-full flex items-center justify-between px-4 py-3 text-left gap-3">
         <div className="flex items-center gap-2.5 min-w-0">
           <AlertCircle className={`w-4 h-4 shrink-0 ${cfg.icon}`} />
@@ -2014,8 +2032,8 @@ function OperatorDashboard({ companyId, userId, range, onNavigate }) {
 
 // ── Main ───────────────────────────────────────────────────────────────────────
 export default function DashboardPage({ onNavigate }) {
-  const { company, role, userProfile } = useAuth()
-  const companyId = company?.id
+  const { company, companyId: authCompanyId, role, userProfile } = useAuth()
+  const companyId = authCompanyId || company?.id
   const [period, setPeriod] = useState('month')
   const range = useMemo(() => getRange(period), [period])
 
@@ -2051,13 +2069,18 @@ export default function DashboardPage({ onNavigate }) {
         </div>
       </div>
 
+      <HomeNotificationAlerts onNavigate={onNavigate} />
+
       {/* Breakdown alarm — pulsing red, must acknowledge (admin + supervisor) */}
       {(isAdmin || isSupervisor) && (
         <BreakdownAlarm companyId={companyId} userProfile={userProfile} />
       )}
 
       {/* Smart alert strip — floats above sections for admin/supervisor */}
-      {(isAdmin || isSupervisor) && <AlertStrip alerts={alerts} onNavigate={onNavigate} />}
+      {(isAdmin || isSupervisor) && <>
+        {alerts.failed && <div role="alert" className="card p-4 text-sm text-amber-400">Some operational alerts could not load. <button type="button" onClick={alerts.retry} className="btn-ghost text-xs ml-2">Retry alerts</button></div>}
+        <AlertStrip alerts={alerts.items} onNavigate={onNavigate} />
+      </>}
 
       {isOperator   && <OperatorDashboard companyId={companyId} userId={userProfile?.id} range={range} onNavigate={onNavigate} />}
       {isSupervisor && <>
