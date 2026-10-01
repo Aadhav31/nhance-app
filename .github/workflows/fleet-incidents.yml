@@ -1,0 +1,36 @@
+name: Fleet incident checks
+on:
+  pull_request:
+    paths:
+      - src/pages/fleet/FleetPage.jsx
+      - src/lib/fleetIncidentReport.js
+      - tests/fleetIncidentReport.test.js
+      - tests/fleetIncidents.*
+      - tests/fixtures/*WorkshopJob.sql
+      - supabase/migrations/*fleet_incident_reporting.sql
+      - .github/workflows/fleet-incidents.yml
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: node --test tests/*.test.js
+      - run: npm run lint
+      - run: npm run build
+      - run: npm install --no-save --package-lock=false @electric-sql/pglite@0.5.8 playwright@1.58.2
+      - run: node tests/fleetIncidents.database.mjs
+      - run: npx playwright install --with-deps chromium
+      - run: node tests/fleetIncidents.browser.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fleet-incident-preview
+          path: test-artifacts/fleet-incidents
