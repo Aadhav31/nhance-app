@@ -3,6 +3,8 @@ import { downloadTransferCertificate } from '../../lib/transferCertificatePDF'
 import { VendorPicker } from '../../components/shared/EntityPicker'
 import PagePanel from '../../components/shared/PagePanel'
 import CanonicalWorkspaceNotice from '../../components/shared/CanonicalWorkspaceNotice'
+import WorkshopBoardTab from '../maintenance/WorkshopBoardTab'
+import { canAccessPage } from '../../lib/navigation'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
@@ -2033,8 +2035,9 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
   const [remarksText,   setRemarksText]   = useState(equipmentProp.notes || '')
   const [savingRemarks, setSavingRemarks] = useState(false)
   const qc   = useQueryClient()
-  const { role, userProfile, session, company } = useAuth()
+  const { role, userProfile, session, company, hasModule } = useAuth()
   const isAdmin  = ['admin', 'superadmin', 'manager'].includes(role)
+  const canUseWorkshop = canAccessPage('maintenance', { role, hasModule })
 
   useEffect(() => {
     const passportUrl = `${window.location.origin}${window.location.pathname}?equipment=${equipmentProp.id}`
@@ -2119,8 +2122,30 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
   // ── Maintenance module state ──────────────────────────────────────────────────
   const [maintSubTab, setMaintSubTab] = useState('job_cards')
   const [jcFilter,    setJcFilter]    = useState('all')
-  const [jcModal,     setJcModal]     = useState(null)  // null | {} (new) | job_card (edit)
+  const [workshopJobId, setWorkshopJobId] = useState(null)
+  const [openingPmJob, setOpeningPmJob] = useState(null)
   const [pmModal,     setPmModal]     = useState(null)  // null | {} (new) | pm_schedule (edit)
+
+  const raisePmJob = async schedule => {
+    if (!canUseWorkshop || openingPmJob) return
+    setOpeningPmJob(schedule.id)
+    try {
+      const { data: jobId, error } = await supabase.rpc('open_pm_job', { p_schedule_id: schedule.id })
+      if (error) throw error
+      if (!jobId) throw new Error('The PM job card could not be opened.')
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['job_cards', equipment.id] }),
+        qc.invalidateQueries({ queryKey: ['workshop-board', companyId] }),
+        qc.invalidateQueries({ queryKey: ['pm-planner', companyId] }),
+        qc.invalidateQueries({ queryKey: ['maint_records', equipment.id] }),
+      ])
+      setWorkshopJobId(jobId)
+      setMaintSubTab('job_cards')
+      toast.success('PM job card opened')
+    } catch (error) {
+      toast.error(error.message || 'Could not open PM job card')
+    } finally { setOpeningPmJob(null) }
+  }
 
   // ── Utilization calendar state ────────────────────────────────────────────────
   const [calMonth, setCalMonth] = useState(() => { const d = new Date(); d.setDate(1); return d })
@@ -2457,7 +2482,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
     enabled: ['overview', 'maintenance', 'operator_log'].includes(detailTab),
   })
 
-  const { data: jobCards = [], refetch: refetchJC } = useQuery({
+  const { data: jobCards = [] } = useQuery({
     queryKey: ['job_cards', equipment.id],
     queryFn: async () => {
       const { data } = await supabase.from('job_cards')
@@ -3745,12 +3770,14 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
 
             <CanonicalWorkspaceNotice
               title="Equipment Health manages service work"
-              description="This Equipment 360 view is now a read-only health summary. Create and progress job cards, PM schedules and service records in Equipment Health."
+              description={canUseWorkshop
+                ? 'Create and update this machine’s job cards below. Equipment Health provides the company-wide Workshop, PM planning and service records.'
+                : 'Review this machine’s service history below. Equipment Health access is required to manage job cards and PM schedules.'}
               actionLabel="Open Equipment Health"
-              onAction={() => onNavigate?.('maintenance', {
+              onAction={canUseWorkshop ? () => onNavigate?.('maintenance', {
                 tab: maintSubTab === 'pm_schedules' ? 'planner' : maintSubTab === 'history' ? 'records' : 'workshop',
                 equipmentId: equipment.id,
-              })}
+              }) : undefined}
             />
 
             {/* Sub-tab bar */}
@@ -3780,7 +3807,10 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
             </div>
 
             {/* ════ JOB CARDS ════ */}
-            {maintSubTab === 'job_cards' && (
+            {maintSubTab === 'job_cards' && (canUseWorkshop ? (
+              <WorkshopBoardTab companyId={companyId} role={role} equipmentId={equipment.id}
+                initialStatus="all" initialJobId={workshopJobId} onChanged={refreshEquipment} />
+            ) : (
               <div className="space-y-3 pt-1">
                 <div className="flex items-center justify-between gap-2 flex-wrap">
                   <div className="flex gap-1 flex-wrap">
@@ -3798,12 +3828,6 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
                       </button>
                     ))}
                   </div>
-                  {false && isAdmin && (
-                    <button onClick={() => setJcModal({})}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-600 hover:bg-primary-700 text-white text-xs font-medium rounded-lg transition-colors">
-                      <Plus className="w-3.5 h-3.5" /> New Job Card
-                    </button>
-                  )}
                 </div>
 
                 {(() => {
@@ -3843,11 +3867,6 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
                                 </div>
                                 <div className="flex items-center gap-2 shrink-0">
                                   <span className="text-[10px] text-slate-500">{format(new Date(jc.opened_date), 'dd MMM yyyy')}</span>
-                                  {false && isAdmin && (
-                                    <button onClick={() => setJcModal(jc)} className="text-slate-500 hover:text-primary-400 transition-colors">
-                                      <Edit2 className="w-3.5 h-3.5" />
-                                    </button>
-                                  )}
                                 </div>
                               </div>
                               {jc.complaint && <p className="text-xs text-slate-300 leading-relaxed">{jc.complaint}</p>}
@@ -3882,17 +3901,8 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
                   )
                 })()}
 
-                {false && jcModal !== null && (
-                  <JobCardModal
-                    equipment={equipment}
-                    companyId={companyId}
-                    initialValues={jcModal}
-                    onClose={() => setJcModal(null)}
-                    onSaved={() => { refetchJC(); setJcModal(null) }}
-                  />
-                )}
               </div>
-            )}
+            ))}
 
             {/* ════ PM SCHEDULES ════ */}
             {maintSubTab === 'pm_schedules' && (
@@ -3972,12 +3982,12 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
                                 ))}
                               </div>
                             )}
-                            {false && isAdmin && (overdue || nearDue) && (
+                            {canUseWorkshop && (overdue || nearDue) && (
                               <button
-                                onClick={() => { setMaintSubTab('job_cards'); setJcModal({ jc_type: 'pm_service', pm_schedule_id: pm.id }) }}
-                                className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-600/80 hover:bg-primary-600 text-white text-[11px] font-medium rounded-lg transition-colors"
+                                onClick={() => raisePmJob(pm)} disabled={!!openingPmJob}
+                                className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-600/80 hover:bg-primary-600 text-white text-[11px] font-medium rounded-lg transition-colors disabled:opacity-50"
                               >
-                                <Plus className="w-3 h-3" /> Raise Job Card for this PM
+                                {openingPmJob === pm.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Raise Job Card for this PM
                               </button>
                             )}
                           </div>
@@ -6228,319 +6238,6 @@ function FuelTab({ companyId }) {
           onSaved={() => { setReplenishTankId(null); refetchTanks() }}
         />
       )}
-    </div>
-  )
-}
-
-// ── Job Card Modal ────────────────────────────────────────────────────────────
-function JobCardModal({ equipment, companyId, initialValues, onClose, onSaved }) {
-  const inp  = 'w-full bg-dark-700 border border-dark-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-primary-500'
-  const area = `${inp} resize-none`
-  const isEdit = !!initialValues?.id
-
-  const [jcType,       setJcType]       = useState(initialValues?.jc_type       || 'breakdown')
-  const [status,       setStatus]       = useState(initialValues?.status         || 'open')
-  const [complaint,    setComplaint]    = useState(initialValues?.complaint       || '')
-  const [diagnosis,    setDiagnosis]    = useState(initialValues?.diagnosis      || '')
-  const [workDone,     setWorkDone]     = useState(initialValues?.work_done      || '')
-  const [techName,     setTechName]     = useState(initialValues?.technician_name || '')
-  const [doneBy,       setDoneBy]       = useState(initialValues?.done_by        || 'inhouse')
-  const [vendorName,   setVendorName]   = useState(initialValues?.vendor_name    || '')
-  const [openedDate,   setOpenedDate]   = useState(initialValues?.opened_date    || today())
-  const [closedDate,   setClosedDate]   = useState(initialValues?.closed_date    || '')
-  const [meterAtOpen,  setMeterAtOpen]  = useState(initialValues?.meter_at_open  || equipment.current_meter_reading || '')
-  const [laborHours,   setLaborHours]   = useState(initialValues?.labor_hours    || '')
-  const [laborCost,    setLaborCost]    = useState(initialValues?.labor_cost     || '')
-  const [downtime,     setDowntime]     = useState(initialValues?.downtime_hours || '')
-  const [notes,        setNotes]        = useState(initialValues?.notes          || '')
-
-  // Parts
-  const [parts, setParts] = useState(initialValues?.job_card_parts || [])
-  const [newPart, setNewPart] = useState({ part_name: '', part_number: '', quantity: '1', unit_cost: '' })
-
-  const [saving, setSaving] = useState(false)
-
-  const addPart = () => {
-    if (!newPart.part_name.trim()) return
-    setParts(prev => [...prev, { ...newPart, _new: true, id: crypto.randomUUID() }])
-    setNewPart({ part_name: '', part_number: '', quantity: '1', unit_cost: '' })
-  }
-  const removePart = (id) => setParts(prev => prev.filter(p => p.id !== id))
-
-  const handleSave = async () => {
-    if (!complaint.trim() && !workDone.trim()) {
-      toast.error('Enter complaint or work done description')
-      return
-    }
-    setSaving(true)
-    try {
-      const payload = {
-        company_id:      companyId,
-        equipment_id:    equipment.id,
-        equipment_name:  equipment.equipment_name || equipment.name || '',
-        jc_type:         jcType,
-        status,
-        complaint:       complaint || null,
-        diagnosis:       diagnosis || null,
-        work_done:       workDone  || null,
-        technician_name: techName  || null,
-        done_by:         doneBy    || null,
-        vendor_name:     doneBy === 'vendor' ? (vendorName || null) : null,
-        opened_date:     openedDate,
-        closed_date:     closedDate || null,
-        meter_at_open:   meterAtOpen ? Number(meterAtOpen) : null,
-        labor_hours:     laborHours  ? Number(laborHours)  : null,
-        labor_cost:      laborCost   ? Number(laborCost)   : null,
-        downtime_hours:  downtime    ? Number(downtime)    : null,
-        notes:           notes       || null,
-        pm_schedule_id:  initialValues?.pm_schedule_id || null,
-        jc_number:       isEdit ? undefined : '',   // trigger generates it
-      }
-
-      let jcId = initialValues?.id
-      if (isEdit) {
-        const { error } = await supabase.from('job_cards').update(payload).eq('id', jcId)
-        if (error) throw error
-      } else {
-        const { data, error } = await supabase.from('job_cards').insert(payload).select('id').single()
-        if (error) throw error
-        jcId = data.id
-      }
-
-      // Sync parts: delete old and re-insert new for simplicity (small lists)
-      const newParts = parts.filter(p => p._new || !p.job_card_id)
-      const keepIds  = parts.filter(p => !p._new && p.job_card_id).map(p => p.id)
-
-      if (isEdit) {
-        // Delete removed parts
-        await supabase.from('job_card_parts')
-          .delete()
-          .eq('job_card_id', jcId)
-          .not('id', 'in', `(${keepIds.length ? keepIds.join(',') : "''"})`)
-      }
-
-      const partsToInsert = newParts.map(p => ({
-        job_card_id: jcId,
-        company_id:  companyId,
-        part_name:   p.part_name,
-        part_number: p.part_number || null,
-        quantity:    Number(p.quantity) || 1,
-        unit_cost:   p.unit_cost ? Number(p.unit_cost) : null,
-      }))
-      if (partsToInsert.length > 0) {
-        const { error } = await supabase.from('job_card_parts').insert(partsToInsert)
-        if (error) throw error
-      }
-
-      toast.success(isEdit ? 'Job card updated' : 'Job card created')
-
-      // ── If this is a NEW breakdown job card: update equipment status +
-      //    create a shift_incident + maintenance_record so all teams see it ──
-      if (!isEdit && jcType === 'breakdown') {
-        ;(async () => {
-          try {
-            await supabase.from('equipment').update({ status: 'breakdown' }).eq('id', equipment.id)
-            // Only create incident if no open breakdown incident exists for this machine
-            const { data: openInc } = await supabase.from('shift_incidents')
-              .select('id').eq('equipment_id', equipment.id)
-              .eq('incident_type', 'breakdown').eq('resolved', false).limit(1).maybeSingle()
-            if (!openInc) {
-              await supabase.from('shift_incidents').insert({
-                company_id:     companyId,
-                equipment_id:   equipment.id,
-                incident_type:  'breakdown',
-                description:    complaint || workDone || 'Breakdown — see job card',
-                resolved:       false,
-              })
-            }
-            // Only create maintenance_record if none open for this machine
-            const { data: openMR } = await supabase.from('maintenance_records')
-              .select('id').eq('equipment_id', equipment.id)
-              .eq('maintenance_type', 'breakdown').eq('status', 'open').limit(1).maybeSingle()
-            if (!openMR) {
-              const svcDate = new Date().toISOString().slice(0, 10)
-              await supabase.from('maintenance_records').insert({
-                company_id:       companyId,
-                equipment_id:     equipment.id,
-                maintenance_type: 'breakdown',
-                description:      complaint || workDone || 'Breakdown — see job card',
-                service_date:     svcDate,
-                status:           'open',
-                priority:         'high',
-                done_by:          'inhouse',
-                labour_cost:      0,
-                total_cost:       0,
-                downtime_hours:   0,
-              })
-            }
-          } catch (_) { /* Non-blocking */ }
-        })()
-      }
-
-      onSaved?.()
-    } catch (e) {
-      toast.error(e.message)
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="bg-dark-800 border border-dark-600 rounded-2xl w-full max-w-lg max-h-[92vh] flex flex-col overflow-hidden">
-        {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-dark-600 shrink-0">
-          <div>
-            <h2 className="text-sm font-semibold text-slate-100">{isEdit ? 'Edit Job Card' : 'New Job Card'}</h2>
-            <p className="text-xs text-slate-400 mt-0.5">{equipment.equipment_name || equipment.name}</p>
-          </div>
-          <button onClick={onClose} className="text-slate-500 hover:text-slate-300 transition-colors"><X className="w-5 h-5" /></button>
-        </div>
-
-        {/* Body */}
-        <div className="flex-1 overflow-y-auto p-5 space-y-4">
-          {/* Type + Status */}
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs text-slate-400 mb-1">Type</label>
-              <select value={jcType} onChange={e => setJcType(e.target.value)} className={inp}>
-                <option value="breakdown">Breakdown</option>
-                <option value="pm_service">PM Service</option>
-                <option value="unscheduled">Unscheduled</option>
-                <option value="inspection">Inspection</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs text-slate-400 mb-1">Status</label>
-              <select value={status} onChange={e => setStatus(e.target.value)} className={inp}>
-                <option value="open">Open</option>
-                <option value="in_progress">In Progress</option>
-                <option value="closed">Closed</option>
-              </select>
-            </div>
-          </div>
-
-          {/* Dates + Meter */}
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs text-slate-400 mb-1">Opened Date</label>
-              <input type="date" value={openedDate} onChange={e => setOpenedDate(e.target.value)} className={inp} />
-            </div>
-            <div>
-              <label className="block text-xs text-slate-400 mb-1">Meter at Open (hrs)</label>
-              <input type="number" value={meterAtOpen} onChange={e => setMeterAtOpen(e.target.value)} placeholder={equipment.current_meter_reading || '0'} className={inp} />
-            </div>
-          </div>
-
-          {/* Complaint */}
-          <div>
-            <label className="block text-xs text-slate-400 mb-1">Complaint / Problem Reported</label>
-            <textarea rows={2} value={complaint} onChange={e => setComplaint(e.target.value)} placeholder="What did the operator report?" className={area} />
-          </div>
-
-          {/* Diagnosis */}
-          <div>
-            <label className="block text-xs text-slate-400 mb-1">Diagnosis</label>
-            <textarea rows={2} value={diagnosis} onChange={e => setDiagnosis(e.target.value)} placeholder="Workshop finding..." className={area} />
-          </div>
-
-          {/* Work Done */}
-          <div>
-            <label className="block text-xs text-slate-400 mb-1">Work Done</label>
-            <textarea rows={2} value={workDone} onChange={e => setWorkDone(e.target.value)} placeholder="Describe work carried out..." className={area} />
-          </div>
-
-          {/* Technician */}
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs text-slate-400 mb-1">Technician</label>
-              <input type="text" value={techName} onChange={e => setTechName(e.target.value)} placeholder="Technician name" className={inp} />
-            </div>
-            <div>
-              <label className="block text-xs text-slate-400 mb-1">Done By</label>
-              <select value={doneBy} onChange={e => setDoneBy(e.target.value)} className={inp}>
-                <option value="inhouse">In-house</option>
-                <option value="vendor">Vendor</option>
-                <option value="oem">OEM</option>
-              </select>
-            </div>
-          </div>
-          {doneBy === 'vendor' && (
-            <div>
-              <label className="block text-xs text-slate-400 mb-1">Vendor Name</label>
-              <input type="text" value={vendorName} onChange={e => setVendorName(e.target.value)} placeholder="Service vendor name" className={inp} />
-            </div>
-          )}
-
-          {/* Labor + Downtime */}
-          <div className="grid grid-cols-3 gap-3">
-            <div>
-              <label className="block text-xs text-slate-400 mb-1">Labor Hours</label>
-              <input type="number" value={laborHours} onChange={e => setLaborHours(e.target.value)} placeholder="0" className={inp} />
-            </div>
-            <div>
-              <label className="block text-xs text-slate-400 mb-1">Labor Cost (₹)</label>
-              <input type="number" value={laborCost} onChange={e => setLaborCost(e.target.value)} placeholder="0" className={inp} />
-            </div>
-            <div>
-              <label className="block text-xs text-slate-400 mb-1">Downtime (hrs)</label>
-              <input type="number" value={downtime} onChange={e => setDowntime(e.target.value)} placeholder="0" className={inp} />
-            </div>
-          </div>
-
-          {/* Closed Date */}
-          {status === 'closed' && (
-            <div>
-              <label className="block text-xs text-slate-400 mb-1">Closed Date</label>
-              <input type="date" value={closedDate} onChange={e => setClosedDate(e.target.value)} className={inp} />
-            </div>
-          )}
-
-          {/* Parts */}
-          <div>
-            <p className="text-xs font-semibold text-slate-300 mb-2">Parts Used</p>
-            {parts.length > 0 && (
-              <div className="space-y-1 mb-2">
-                {parts.map(p => (
-                  <div key={p.id} className="flex items-center gap-2 bg-dark-700/50 rounded-lg px-3 py-2 text-xs">
-                    <span className="flex-1 text-slate-200">{p.part_name}{p.part_number ? ` · ${p.part_number}` : ''}</span>
-                    <span className="text-slate-500">×{p.quantity}</span>
-                    {p.unit_cost > 0 && <span className="text-slate-400">₹{(Number(p.unit_cost) * Number(p.quantity)).toLocaleString('en-IN')}</span>}
-                    <button onClick={() => removePart(p.id)} className="text-red-400 hover:text-red-300 transition-colors">
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-            <div className="grid grid-cols-12 gap-2">
-              <input type="text" value={newPart.part_name} onChange={e => setNewPart(p => ({ ...p, part_name: e.target.value }))} placeholder="Part name" className={`${inp} col-span-5`} />
-              <input type="text" value={newPart.part_number} onChange={e => setNewPart(p => ({ ...p, part_number: e.target.value }))} placeholder="P/N" className={`${inp} col-span-2`} />
-              <input type="number" value={newPart.quantity} onChange={e => setNewPart(p => ({ ...p, quantity: e.target.value }))} placeholder="Qty" className={`${inp} col-span-2`} />
-              <input type="number" value={newPart.unit_cost} onChange={e => setNewPart(p => ({ ...p, unit_cost: e.target.value }))} placeholder="₹/unit" className={`${inp} col-span-2`} />
-              <button onClick={addPart} className="col-span-1 flex items-center justify-center bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-colors">
-                <Plus className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-
-          {/* Notes */}
-          <div>
-            <label className="block text-xs text-slate-400 mb-1">Notes</label>
-            <textarea rows={2} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Additional notes..." className={area} />
-          </div>
-        </div>
-
-        {/* Footer */}
-        <div className="flex gap-3 px-5 py-4 border-t border-dark-600 shrink-0">
-          <button onClick={onClose} className="flex-1 py-2 border border-dark-500 text-slate-300 text-sm rounded-xl hover:border-slate-400 transition-colors">Cancel</button>
-          <button onClick={handleSave} disabled={saving}
-            className="flex-1 py-2 bg-primary-600 hover:bg-primary-700 disabled:opacity-50 text-white text-sm font-medium rounded-xl transition-colors flex items-center justify-center gap-2">
-            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-            {isEdit ? 'Update' : 'Create'}
-          </button>
-        </div>
-      </div>
     </div>
   )
 }
