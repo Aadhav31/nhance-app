@@ -50,26 +50,30 @@ export default function Sidebar({ activePage, onNavigate, collapsed, onToggle })
     >
       {/* ── Header ───────────────────────────────────────────────────────── */}
       <div className={cn(
-        'flex items-center border-b border-dark-700 h-16 px-4 gap-3',
-        collapsed ? 'justify-center' : 'justify-between'
+        'flex items-center border-b border-dark-700 h-16',
+        collapsed ? 'flex-col justify-center gap-1 px-2' : 'justify-between px-4 gap-3'
       )}>
-        {!collapsed && (
-          <div className="flex min-w-0 items-center gap-2.5">
-            <div className="brand-mark flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary-500 to-primary-800 text-sm font-black text-white shadow-lg shadow-primary-900/20">
-              N
-            </div>
-            <div className="min-w-0">
-              <div className="brand-word text-lg font-black tracking-[0.08em]">
-                NHANCE
-              </div>
-              {company && (
-                <div className="max-w-[128px] truncate text-[9px] font-semibold uppercase tracking-[0.14em] text-slate-500 leading-tight">
-                  {company.name}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
+        <button
+          type="button"
+          onClick={() => onNavigate('dashboard')}
+          aria-label="Nhance Home"
+          title="Go to Home"
+          className={cn('flex min-w-0 items-center gap-2.5 rounded-xl text-left transition-colors hover:bg-dark-700', !collapsed && 'flex-1')}
+        >
+          <span aria-hidden="true" className={cn('brand-mark flex shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary-500 to-primary-800 text-sm font-black text-white shadow-lg shadow-primary-900/20', collapsed ? 'h-7 w-7' : 'h-8 w-8')}>
+            N
+          </span>
+          {!collapsed && <span className="min-w-0">
+            <span className="brand-word block text-lg font-black tracking-[0.08em]">
+              NHANCE
+            </span>
+            {company && (
+              <span className="block max-w-[128px] truncate text-[9px] font-semibold uppercase tracking-[0.14em] text-slate-500 leading-tight">
+                {company.name}
+              </span>
+            )}
+          </span>}
+        </button>
         <button
           type="button"
           onClick={onToggle}
