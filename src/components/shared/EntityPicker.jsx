@@ -114,7 +114,7 @@ export function ClientPicker({ companyId, value, onChange, onSelect, placeholder
 //   onSelect    — (vendor: {name, gstin}) => void
 //   placeholder — optional
 //   className   — extra classes
-export function VendorPicker({ companyId, value, onChange, onSelect, placeholder = 'Type to search vendors…', className = '' }) {
+export function VendorPicker({ companyId, value, onChange, onSelect, placeholder = 'Type to search vendors…', className = '', ariaLabel }) {
   const [open, setOpen] = useState(false)
   const ref = useRef(null)
 
@@ -157,6 +157,7 @@ export function VendorPicker({ companyId, value, onChange, onSelect, placeholder
     <div ref={ref} className="relative">
       <input
         type="text"
+        aria-label={ariaLabel}
         className={className}
         value={value}
         placeholder={placeholder}
