@@ -6,6 +6,7 @@ import {
   Loader2, Plus, Search, Settings2, ShieldCheck, Wrench, X,
 } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
+import OverlayDialog from '../../components/shared/OverlayDialog'
 import {
   classifyPmSchedule,
   filterPmSchedules,
@@ -42,12 +43,15 @@ function blankForm(schedule, equipment) {
   }
 }
 
-function ScheduleModal({ schedule, equipment: initialEquipment, equipmentList, companyId, onClose, onSaved }) {
+export function ScheduleModal({ schedule, equipment: initialEquipment, equipmentList, lockedEquipmentId, companyId, onClose, onSaved }) {
   const [form, setForm] = useState(() => blankForm(schedule, initialEquipment))
   const [saving, setSaving] = useState(false)
-  const setField = (key, value) => setForm(current => ({ ...current, [key]: value }))
+  const [saveError, setSaveError] = useState('')
+  const close = () => { if (!saving) onClose() }
+  const setField = (key, value) => { setForm(current => ({ ...current, [key]: value })); setSaveError('') }
 
   const selectEquipment = equipmentId => {
+    setSaveError('')
     const equipment = equipmentList.find(item => item.id === equipmentId)
     const meter = Number(equipment?.current_meter_reading || 0)
     setForm(current => ({
@@ -55,40 +59,53 @@ function ScheduleModal({ schedule, equipment: initialEquipment, equipmentList, c
       equipment_id: equipmentId,
       schedule_name: current.schedule_name || '250 hr Service',
       last_done_meter: String(meter),
-      next_due_meter: String(meter + Number(current.interval_hours || 250)),
+      next_due_meter: '',
     }))
   }
 
   const save = async () => {
+    if (saving) return
     const problem = validateScheduleForm(form)
-    if (problem) { toast.error(problem); return }
+    if (problem) { setSaveError(problem); return }
     setSaving(true)
+    setSaveError('')
     try {
       const equipment = equipmentList.find(item => item.id === form.equipment_id)
-      const payload = schedulePayload(form, companyId, equipment)
-      const request = schedule
-        ? supabase.from('pm_schedules').update(payload).eq('id', schedule.id)
-        : supabase.from('pm_schedules').insert(payload)
-      const { error } = await request
+      if (!equipment || (lockedEquipmentId && form.equipment_id !== lockedEquipmentId)
+          || (schedule && form.equipment_id !== schedule.equipment_id)) throw new Error('Selected equipment is unavailable. Reopen the schedule form.')
+      const payload = schedulePayload(form, companyId, equipment, schedule?.tasks)
+      const payloadProblem = validateScheduleForm({ ...form, last_done_meter: payload.last_done_meter, next_due_meter: payload.next_due_meter })
+      if (payloadProblem) throw new Error(payloadProblem)
+      let request
+      if (schedule) {
+        request = supabase.from('pm_schedules').update(payload).eq('id', schedule.id)
+          .eq('company_id', companyId).eq('equipment_id', schedule.equipment_id)
+        if (schedule.updated_at) request = request.eq('updated_at', schedule.updated_at)
+      } else request = supabase.from('pm_schedules').insert(payload)
+      const { data: saved, error } = await request.select('id').maybeSingle()
       if (error) throw error
+      if (!saved) throw new Error(schedule
+        ? 'This PM schedule changed or is no longer available. Reopen it before saving.'
+        : 'The PM schedule could not be created. Please retry.')
       toast.success(schedule ? 'PM schedule updated' : 'PM schedule created')
-      onSaved()
+      await onSaved()
     } catch (error) {
-      toast.error(error.message || 'Could not save PM schedule')
+      setSaveError(error.message || 'Could not save PM schedule')
     } finally {
       setSaving(false)
     }
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 backdrop-blur-sm sm:items-center sm:p-4">
-      <div className="flex max-h-[94vh] w-full max-w-xl flex-col border-t border-dark-600 bg-dark-900 shadow-2xl sm:rounded-2xl sm:border">
+    <OverlayDialog label={schedule ? 'Edit PM Schedule' : 'New PM Schedule'} onClose={close} className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 backdrop-blur-sm sm:items-center sm:p-4">
+      <div className="flex max-h-[94vh] w-full max-w-xl flex-col overflow-hidden border-t border-dark-600 bg-dark-900 shadow-2xl sm:rounded-2xl sm:border">
         <div className="flex items-center justify-between border-b border-dark-700 px-4 py-3">
           <div><p className="font-bold text-slate-100">{schedule ? 'Edit PM Schedule' : 'New PM Schedule'}</p><p className="text-xs text-slate-500">Operating-hour based preventive service</p></div>
-          <button type="button" onClick={onClose} className="rounded-lg p-2 text-slate-400 hover:bg-dark-700"><X className="h-4 w-4" /></button>
+          <button type="button" aria-label="Close PM schedule" onClick={close} disabled={saving} className="rounded-lg p-2 text-slate-400 hover:bg-dark-700 disabled:opacity-50"><X className="h-4 w-4" /></button>
         </div>
         <div className="flex-1 space-y-4 overflow-y-auto p-4">
-          <label className="block text-xs text-slate-400">Equipment *<select value={form.equipment_id} onChange={event => selectEquipment(event.target.value)} className={`${fieldClass} mt-1`} disabled={Boolean(schedule)}><option value="">Select equipment…</option>{equipmentList.map(item => <option key={item.id} value={item.id}>{item.equipment_number} · {item.name}</option>)}</select></label>
+          {saveError ? <p role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300">{saveError}</p> : null}
+          <label className="block text-xs text-slate-400">Equipment *<select value={form.equipment_id} onChange={event => selectEquipment(event.target.value)} className={`${fieldClass} mt-1 disabled:opacity-70`} disabled={Boolean(schedule || lockedEquipmentId)}><option value="">Select equipment…</option>{equipmentList.map(item => <option key={item.id} value={item.id}>{item.equipment_number} · {item.name}</option>)}</select></label>
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="text-xs text-slate-400">Schedule name *<input value={form.schedule_name} onChange={event => setField('schedule_name', event.target.value)} className={`${fieldClass} mt-1`} placeholder="250 hr Service" /></label>
             <label className="text-xs text-slate-400">Service interval (hours) *<input type="number" min="1" value={form.interval_hours} onChange={event => setField('interval_hours', event.target.value)} className={`${fieldClass} mt-1`} /></label>
@@ -98,17 +115,18 @@ function ScheduleModal({ schedule, equipment: initialEquipment, equipmentList, c
             <label className="text-xs text-slate-400">Next due meter<input type="number" min="0" step="0.1" value={form.next_due_meter} onChange={event => setField('next_due_meter', event.target.value)} className={`${fieldClass} mt-1`} placeholder="Auto-calculated" /></label>
             <label className="text-xs text-slate-400">Alert before (hours)<input type="number" min="0" step="1" value={form.alert_before_hours} onChange={event => setField('alert_before_hours', event.target.value)} className={`${fieldClass} mt-1`} /></label>
           </div>
+          <p className="text-[11px] text-slate-500">Leave Next due meter blank to calculate it from the last service meter plus the interval.</p>
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="text-xs text-slate-400">Last service date<input type="date" value={form.last_done_date} onChange={event => setField('last_done_date', event.target.value)} className={`${fieldClass} mt-1`} /></label>
             <label className="text-xs text-slate-400">Calendar due date (optional)<input type="date" value={form.next_due_date} onChange={event => setField('next_due_date', event.target.value)} className={`${fieldClass} mt-1`} /></label>
           </div>
           <label className="block text-xs text-slate-400">Service checklist — one task per line<textarea value={form.tasks_text} onChange={event => setField('tasks_text', event.target.value)} className={`${fieldClass} mt-1 min-h-24 resize-none`} placeholder={'Change engine oil\nReplace oil filter\nInspect hydraulic hoses'} /></label>
           <label className="block text-xs text-slate-400">Notes<textarea value={form.notes} onChange={event => setField('notes', event.target.value)} className={`${fieldClass} mt-1 min-h-16 resize-none`} /></label>
-          <label className="flex items-start gap-2 rounded-xl border border-dark-700 bg-dark-800 p-3 text-xs text-slate-300"><input type="checkbox" checked={form.auto_create_job_card} onChange={event => setField('auto_create_job_card', event.target.checked)} className="mt-0.5 accent-primary-500" /><span><strong>Automatically create a PM work order</strong><span className="mt-0.5 block text-slate-500">Triggered when an approved Site Log meter enters the alert window.</span></span></label>
+          <label className="flex items-start gap-2 rounded-xl border border-dark-700 bg-dark-800 p-3 text-xs text-slate-300"><input type="checkbox" checked={form.auto_create_job_card} onChange={event => setField('auto_create_job_card', event.target.checked)} className="mt-0.5 accent-primary-500" /><span><strong>Automatically create a PM work order</strong><span className="mt-0.5 block text-slate-500">Creates a work order when service enters the schedule’s alert window.</span></span></label>
         </div>
-        <div className="flex gap-2 border-t border-dark-700 p-4"><button type="button" onClick={onClose} className="btn-secondary flex-1 justify-center">Cancel</button><button type="button" onClick={save} disabled={saving} className="btn-primary flex-1 justify-center disabled:opacity-50">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}{saving ? 'Saving…' : 'Save schedule'}</button></div>
+        <div className="flex gap-2 border-t border-dark-700 p-4"><button type="button" onClick={close} disabled={saving} className="btn-secondary flex-1 justify-center disabled:opacity-50">Cancel</button><button type="button" onClick={save} disabled={saving} className="btn-primary flex-1 justify-center disabled:opacity-50">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}{saving ? 'Saving…' : 'Save schedule'}</button></div>
       </div>
-    </div>
+    </OverlayDialog>
   )
 }
 
@@ -193,11 +211,10 @@ export default function PreventiveMaintenanceTab({ companyId, role, equipmentId 
   const summary = useMemo(() => summarizePmSchedules(schedules), [schedules])
   const filtered = useMemo(() => filterPmSchedules(schedules, stateFilter, search), [schedules, stateFilter, search])
 
-  const refresh = () => {
-    qc.invalidateQueries({ queryKey: ['pm-planner', companyId] })
-    qc.invalidateQueries({ queryKey: ['maintenance_records', companyId] })
-    qc.invalidateQueries({ queryKey: ['pm-control-tower', companyId] })
-  }
+  const refresh = () => Promise.all([
+    ['pm-planner', companyId], ['maintenance_records', companyId], ['pm-control-tower', companyId],
+    ['pm_schedules'], ['job_cards'], ['workshop-board', companyId], ['maint_records'],
+  ].map(queryKey => qc.invalidateQueries({ queryKey })))
 
   const openWorkOrder = async row => {
     setOpening(row.id)
@@ -254,7 +271,7 @@ export default function PreventiveMaintenanceTab({ companyId, role, equipmentId 
         </article>
       })}</div>}
 
-      {(showCreate || editing) ? <ScheduleModal schedule={editing} equipment={editing?.equipment} equipmentList={data?.equipment || []} companyId={companyId} onClose={() => { setShowCreate(false); setEditing(null) }} onSaved={() => { setShowCreate(false); setEditing(null); refresh() }} /> : null}
+      {(showCreate || editing) ? <ScheduleModal schedule={editing} equipment={editing?.equipment} equipmentList={data?.equipment || []} companyId={companyId} onClose={() => { setShowCreate(false); setEditing(null) }} onSaved={async () => { await refresh(); setShowCreate(false); setEditing(null) }} /> : null}
       {completing ? <CompleteModal row={completing} onClose={() => setCompleting(null)} onCompleted={() => { setCompleting(null); refresh() }} /> : null}
     </div>
   )

@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { useEffect, useMemo, useState } from 'react'
+import OverlayDialog from '../../components/shared/OverlayDialog'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { format, formatDistanceToNow } from 'date-fns'
 import toast from 'react-hot-toast'
@@ -64,31 +64,6 @@ function MetricTile({ active, icon: Icon, label, value, tone, onClick }) {
   )
 }
 
-function WorkshopDialog({ label, onClose, className, children }) {
-  const panelRef = useRef(null)
-  const closeRef = useRef(onClose)
-  closeRef.current = onClose
-  useEffect(() => {
-    const previous = document.activeElement
-    const panel = panelRef.current
-    panel?.querySelector('button, input, select, textarea')?.focus()
-    const handleKey = event => {
-      const dialogs = document.querySelectorAll('[role="dialog"][aria-modal="true"]')
-      if (dialogs[dialogs.length - 1] !== panel) return
-      if (event.key === 'Escape') closeRef.current?.()
-      if (event.key !== 'Tab') return
-      const controls = [...panel.querySelectorAll('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex="0"]')]
-        .filter(element => element.offsetParent !== null)
-      const first = controls[0], last = controls[controls.length - 1]
-      if (!first) event.preventDefault()
-      else if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() }
-      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
-    }
-    document.addEventListener('keydown', handleKey)
-    return () => { document.removeEventListener('keydown', handleKey); previous?.focus?.() }
-  }, [])
-  return createPortal(<div ref={panelRef} role="dialog" aria-modal="true" aria-label={label} className={className}>{children}</div>, document.body)
-}
 
 function CreateJobModal({ companyId, data, prefill, lockedEquipmentId, onClose, onCreated }) {
   const defaultEquipment = prefill?.equipment_id || ''
@@ -151,7 +126,7 @@ function CreateJobModal({ companyId, data, prefill, lockedEquipmentId, onClose, 
   }
 
   return (
-    <WorkshopDialog label="New workshop job card" onClose={close} className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 p-0 backdrop-blur-sm sm:items-center sm:p-4">
+    <OverlayDialog label="New workshop job card" onClose={close} className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 p-0 backdrop-blur-sm sm:items-center sm:p-4">
       <form onSubmit={submit} className="flex max-h-[92vh] w-full max-w-xl flex-col overflow-hidden border-dark-600 bg-dark-900 shadow-2xl sm:rounded-2xl sm:border">
         <div className="flex items-center justify-between border-b border-dark-700 bg-dark-800 px-5 py-4">
           <div><h2 className="font-bold text-slate-100">New workshop job card</h2><p className="mt-0.5 text-xs text-slate-500">Create one controlled repair workflow</p></div>
@@ -203,7 +178,7 @@ function CreateJobModal({ companyId, data, prefill, lockedEquipmentId, onClose, 
           <button type="submit" disabled={saving} className="btn-primary disabled:opacity-50">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}Create job card</button>
         </div>
       </form>
-    </WorkshopDialog>
+    </OverlayDialog>
   )
 }
 
@@ -403,7 +378,7 @@ function JobDetailPanel({ job, companyId, data, role, onClose, onChanged }) {
     && (!job.pm_schedule_id || form.meter_at_close !== '')
 
   return (
-    <WorkshopDialog label={`Job card ${job.jc_number}`} onClose={close} className="fixed inset-0 z-50 flex justify-end bg-black/70 backdrop-blur-sm">
+    <OverlayDialog label={`Job card ${job.jc_number}`} onClose={close} className="fixed inset-0 z-50 flex justify-end bg-black/70 backdrop-blur-sm">
       <div className="flex h-full w-full max-w-3xl flex-col border-l border-dark-600 bg-dark-900 shadow-2xl">
         <div className="flex items-start justify-between border-b border-dark-700 bg-dark-800 px-5 py-4">
           <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="font-mono text-sm font-bold text-primary-400">{job.jc_number}</span><StageBadge stage={stage} /><span className={`text-xs font-semibold capitalize ${PRIORITY_TONES[job.priority]}`}>{job.priority}</span></div><h2 className="mt-1 truncate text-lg font-bold text-slate-100">{job.equipment?.equipment_number} · {job.equipment_name || job.equipment?.name}</h2><p className="mt-1 text-xs text-slate-500">{TYPE_LABELS[job.jc_type]} · Opened {displayDateTime(job.opened_at || job.created_at)}</p></div>
@@ -455,7 +430,7 @@ function JobDetailPanel({ job, companyId, data, role, onClose, onChanged }) {
 
         {canManage && stage !== 'closed' && stage !== 'cancelled' ? <div className="border-t border-dark-700 bg-dark-800 p-4"><div className="flex flex-wrap items-center justify-end gap-2"><button type="button" onClick={() => saveDetails()} disabled={saving || !!transitioning} className="btn-secondary disabled:opacity-50">{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}Save details</button>{actions.map(action => <button key={action.stage} type="button" onClick={() => transition(action)} disabled={saving || !!transitioning || (action.stage === 'closed' && !releaseReady)} className={`justify-center disabled:opacity-50 ${action.stage === 'closed' ? 'btn-primary bg-emerald-600 hover:bg-emerald-500' : 'btn-primary'}`}>{transitioning === action.stage ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}{action.label}</button>)}</div>{stage === 'pending_approval' && !canApprove ? <p className="mt-2 text-right text-[11px] text-amber-400">A manager or admin must approve equipment release.</p> : null}{stage === 'pending_approval' && canApprove && !releaseReady ? <p className="mt-2 text-right text-[11px] text-amber-400">Complete diagnosis, work done, passed test and all release checks before approval.</p> : null}</div> : null}
       </div>
-    </WorkshopDialog>
+    </OverlayDialog>
   )
 }
 

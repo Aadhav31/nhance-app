@@ -47,12 +47,20 @@ export function filterPmSchedules(rows = [], state = 'all', search = '') {
   })
 }
 
-export function schedulePayload(form, companyId, equipment) {
+export function schedulePayload(form, companyId, equipment, originalTasks = []) {
   const interval = Number(form.interval_hours)
-  const lastMeter = Number(form.last_done_meter || equipment?.current_meter_reading || 0)
+  const lastMeter = form.last_done_meter === '' || form.last_done_meter == null
+    ? Number(equipment?.current_meter_reading ?? 0)
+    : Number(form.last_done_meter)
   const explicitNext = form.next_due_meter === '' || form.next_due_meter == null
     ? null
     : Number(form.next_due_meter)
+  const remainingTasks = Array.isArray(originalTasks) ? [...originalTasks] : []
+  const tasks = String(form.tasks_text || '').split('\n').map(task => task.trim()).filter(Boolean).map(task => {
+    const match = remainingTasks.findIndex(item => String(typeof item === 'string' ? item : item?.task || '').trim() === task)
+    const previous = match < 0 ? null : remainingTasks.splice(match, 1)[0]
+    return typeof previous === 'string' ? previous : { ...(previous || { required: true }), task }
+  })
   return {
     company_id: companyId,
     equipment_id: form.equipment_id,
@@ -65,9 +73,7 @@ export function schedulePayload(form, companyId, equipment) {
     next_due_meter: explicitNext ?? lastMeter + interval,
     next_due_date: form.next_due_date || null,
     auto_create_job_card: Boolean(form.auto_create_job_card),
-    tasks: String(form.tasks_text || '')
-      .split('\n').map(task => task.trim()).filter(Boolean)
-      .map(task => ({ task, required: true })),
+    tasks,
     notes: form.notes.trim() || null,
     is_active: true,
   }
@@ -76,7 +82,17 @@ export function schedulePayload(form, companyId, equipment) {
 export function validateScheduleForm(form) {
   if (!form.equipment_id) return 'Select equipment'
   if (!form.schedule_name?.trim()) return 'Enter a schedule name'
-  if (!(Number(form.interval_hours) > 0)) return 'Service interval must be greater than zero'
-  if (Number(form.alert_before_hours) < 0) return 'Alert hours cannot be negative'
+  if (!Number.isFinite(Number(form.interval_hours)) || !(Number(form.interval_hours) > 0)) return 'Service interval must be a finite number greater than zero'
+  for (const [key, label] of [['alert_before_hours', 'Alert hours'], ['last_done_meter', 'Last service meter'], ['next_due_meter', 'Next due meter']]) {
+    if (form[key] !== '' && form[key] != null && (!Number.isFinite(Number(form[key])) || Number(form[key]) < 0)) return `${label} must be zero or a positive number`
+  }
+  if (form.next_due_meter !== '' && form.next_due_meter != null && form.last_done_meter !== '' && form.last_done_meter != null
+      && Number(form.next_due_meter) <= Number(form.last_done_meter)) return 'Next due meter must be greater than the last service meter'
+  for (const key of ['last_done_date', 'next_due_date']) {
+    if (!form[key]) continue
+    const parsed = new Date(`${form[key]}T00:00:00Z`)
+    if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== form[key]) return 'Enter a valid service date'
+  }
+  if (form.last_done_date && form.next_due_date && form.next_due_date < form.last_done_date) return 'Calendar due date cannot be before the last service date'
   return null
 }
