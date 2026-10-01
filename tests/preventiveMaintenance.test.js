@@ -51,3 +51,40 @@ test('schedule payload calculates the next due meter and checklist', () => {
     { task: 'Fuel filter', required: true },
   ])
 })
+
+const validForm = {
+  equipment_id: 'eq1', schedule_name: '250 hr Service', interval_hours: '250',
+  alert_before_hours: '40', last_done_meter: '0', next_due_meter: '',
+  last_done_date: '', next_due_date: '', auto_create_job_card: false,
+  tasks_text: '', notes: '',
+}
+
+test('a zero service meter is preserved when calculating the next service', () => {
+  const payload = schedulePayload({ ...validForm, last_done_meter: 0 }, 'company1', equipment)
+  assert.equal(payload.last_done_meter, 0)
+  assert.equal(payload.next_due_meter, 250)
+  assert.equal(payload.auto_create_job_card, false)
+})
+
+test('editing a schedule preserves existing optional tasks and task metadata', () => {
+  const original = [{ task: 'Inspect hose', required: false, category: 'Hydraulics' }, 'Change oil']
+  const payload = schedulePayload({ ...validForm, tasks_text: 'Change oil\nInspect hose\nReplace filter' }, 'company1', equipment, original)
+  assert.deepEqual(payload.tasks, ['Change oil', original[0], { task: 'Replace filter', required: true }])
+  assert.deepEqual(original, [{ task: 'Inspect hose', required: false, category: 'Hydraulics' }, 'Change oil'])
+})
+
+test('invalid intervals, meters and service dates are rejected', () => {
+  for (const patch of [
+    { interval_hours: '0' }, { interval_hours: '-2' }, { interval_hours: Infinity },
+    { alert_before_hours: '-1' }, { last_done_meter: '-1' }, { next_due_meter: '-1' },
+    { next_due_meter: 'NaN' }, { last_done_meter: '100', next_due_meter: '100' },
+    { last_done_date: '2026-02-30' }, { next_due_date: 'invalid' },
+    { last_done_date: '2026-10-01', next_due_date: '2026-09-30' },
+  ]) assert.ok(validateScheduleForm({ ...validForm, ...patch }), JSON.stringify(patch))
+  assert.equal(validateScheduleForm(validForm), null)
+})
+
+test('PM classification respects the configured alert window and calendar date', () => {
+  assert.equal(classifyPmSchedule({ ...schedule, alert_before_hours: 10 }, equipment).state, 'on_track')
+  assert.equal(classifyPmSchedule({ ...schedule, next_due_date: '2026-09-30' }, equipment, new Date('2026-10-01T12:00:00')).state, 'overdue')
+})
