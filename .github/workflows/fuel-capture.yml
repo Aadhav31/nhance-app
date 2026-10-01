@@ -1,0 +1,38 @@
+name: Fuel capture checks
+on:
+  pull_request:
+    paths:
+      - 'src/pages/fuel/**'
+      - 'src/pages/fieldexpense/FieldExpensePage.jsx'
+      - 'src/pages/accounts/AccountsPage.jsx'
+      - 'src/lib/fuelCaptureCompletion.js'
+      - 'tests/fuelCaptureCompletion*'
+      - 'supabase/migrations/*fuel_capture_completion.sql'
+      - '.github/workflows/fuel-capture.yml'
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 15
+    env:
+      FUEL_ARTIFACT_DIR: test-artifacts/fuel
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: node --test tests/*.test.js
+      - run: npx eslint src/pages/fuel/FuelReconciliationPage.jsx src/pages/fuel/FuelCaptureDetailsDialog.jsx src/pages/fieldexpense/FieldExpensePage.jsx src/pages/accounts/AccountsPage.jsx src/lib/fuelCaptureCompletion.js tests/fuelCaptureCompletion.test.js
+      - run: npm run build
+      - run: npm install --no-save --package-lock=false playwright@1.58.2 @electric-sql/pglite@0.3.14
+      - run: node tests/fuelCaptureCompletion.database.mjs
+      - run: npx playwright install --with-deps chromium
+      - run: node tests/fuelCaptureCompletion.browser.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fuel-capture-verification
+          path: test-artifacts

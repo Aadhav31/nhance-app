@@ -1244,6 +1244,7 @@ function AddExpenseModal({ companyId, session, equipmentList, onClose, onSaved }
     fuel_rate_per_liter: '',
     fuel_meter_reading: '',
     fuel_source: 'petrol_pump',
+    fuel_station_name: '',
     notes: '',
   })
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }))
@@ -1373,6 +1374,7 @@ function AddExpenseModal({ companyId, session, equipmentList, onClose, onSaved }
         fuel_rate_per_liter: isFuel ? (Number(form.fuel_rate_per_liter) || calculatedFuelRate || null) : null,
         fuel_meter_reading: isFuel && form.fuel_meter_reading ? Number(form.fuel_meter_reading) : null,
         fuel_source: isFuel ? form.fuel_source : null,
+        ...(isFuel ? { fuel_station_name: form.fuel_station_name.trim() || null } : {}),
         source, reference_number: refNum,
         created_by: session.user.id,
       }).select().single()
@@ -1639,6 +1641,9 @@ function AddExpenseModal({ companyId, session, equipmentList, onClose, onSaved }
                 {lbl('Vendor / Petrol pump')}
                 <VendorPicker companyId={companyId} value={form.vendor_name} onChange={name => setF('vendor_name', name)} onSelect={vendor => setForm(current => ({ ...current, vendor_name: vendor.name, vendor_gstin: vendor.gstin || current.vendor_gstin }))} placeholder="Optional" className={inp()} />
               </div>
+              <label className="col-span-2 space-y-1 text-xs text-slate-400">Fuel station / supplier
+                <input className={inp()} maxLength={200} value={form.fuel_station_name} onChange={event => setF('fuel_station_name', event.target.value)} placeholder="Name on the fuel receipt (separate from payee)" />
+              </label>
               <div className="col-span-2">
                 {lbl('Description')}
                 <input className={inp()} value={form.description} onChange={event => setF('description', event.target.value)} placeholder="Optional — purpose, slip or trip details" />
