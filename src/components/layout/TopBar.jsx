@@ -65,6 +65,15 @@ export default function TopBar({ activePage, onMenuToggle, onNavigate }) {
 
       {/* Page info */}
       <div className="flex-1 min-w-0" aria-live="polite">
+        <button
+          type="button"
+          onClick={() => onNavigate?.('dashboard')}
+          aria-label="Nhance Home"
+          title="Go to Home"
+          className="brand-word block rounded lg:hidden text-[11px] font-black tracking-[0.08em] hover:underline"
+        >
+          NHANCE
+        </button>
         <h1 className="text-base font-bold truncate" style={{ color: 'rgb(var(--t1))' }}>{info.title}</h1>
         <p className="text-xs hidden sm:block" style={{ color: 'rgb(var(--t3))' }}>{info.subtitle}</p>
       </div>
