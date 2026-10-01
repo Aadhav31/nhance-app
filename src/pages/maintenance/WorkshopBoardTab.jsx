@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { format, formatDistanceToNow } from 'date-fns'
 import toast from 'react-hot-toast'
@@ -86,7 +87,7 @@ function WorkshopDialog({ label, onClose, className, children }) {
     document.addEventListener('keydown', handleKey)
     return () => { document.removeEventListener('keydown', handleKey); previous?.focus?.() }
   }, [])
-  return <div ref={panelRef} role="dialog" aria-modal="true" aria-label={label} className={className}>{children}</div>
+  return createPortal(<div ref={panelRef} role="dialog" aria-modal="true" aria-label={label} className={className}>{children}</div>, document.body)
 }
 
 function CreateJobModal({ companyId, data, prefill, lockedEquipmentId, onClose, onCreated }) {
