@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 import { downloadTransferCertificate } from '../../lib/transferCertificatePDF'
 import { VendorPicker } from '../../components/shared/EntityPicker'
 import PagePanel from '../../components/shared/PagePanel'
@@ -6,6 +7,7 @@ import CanonicalWorkspaceNotice from '../../components/shared/CanonicalWorkspace
 import WorkshopBoardTab from '../maintenance/WorkshopBoardTab'
 import { ScheduleModal } from '../maintenance/PreventiveMaintenanceTab'
 import { classifyPmSchedule } from '../../lib/preventiveMaintenance'
+import { buildFleetIncidentDetails, localIncidentDate } from '../../lib/fleetIncidentReport'
 import { canAccessPage } from '../../lib/navigation'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
@@ -188,12 +190,13 @@ function GPSField({ location, loading }) {
   )
 }
 
-function Modal({ title, onClose, children, footer, wide = false }) {
-  return (
+function Modal({ title, onClose, children, footer, wide = false, portal = false }) {
+  const panel = (
     <PagePanel title={title} onClose={onClose} footer={footer} maxWidth={wide ? 'max-w-none' : 'max-w-4xl'}>
       {children}
     </PagePanel>
   )
+  return portal ? createPortal(<div className="fixed inset-0 z-[80] overflow-hidden">{panel}</div>, document.body) : panel
 }
 
 function Field({ label, required, children }) {
@@ -1316,146 +1319,89 @@ const INCIDENT_OPTIONS = [
   { value: 'other',                   label: 'Others',                 icon: '📋', desc: 'Any other issue' },
 ]
 
-function IncidentModal({ equipment, companyId, onClose }) {
+function IncidentModal({ equipment, companyId, onClose, onReported }) {
   const qc = useQueryClient()
   const { company } = useAuth()
   const { location, loading: gpsLoading } = useGPS()
-  const todayDate = new Date().toISOString().split('T')[0]
+  const todayDate = localIncidentDate()
   const [incidentType, setIncidentType] = useState('')
+  const [requestId] = useState(() => crypto.randomUUID())
   const [form, setForm] = useState({
     incident_date: todayDate,
     description: '', action_taken: '', breakdown_cause: '',
     rectification_needed: '', damage_cause: '', what_needs_to_be_done: '', severity: 'medium',
   })
-
-  // Fetch project contacts for breakdown escalation chain
-  const { data: incidentProject } = useQuery({
-    queryKey: ['incident_project_contacts', equipment.current_project_id],
-    queryFn: async () => {
-      const { data } = await supabase.from('projects')
-        .select('id, our_supervisors, our_pnm_contacts, our_managers, our_pm_name, our_pm_phone, our_pm_email')
-        .eq('id', equipment.current_project_id).single()
-      return data
-    },
-    enabled: !!equipment.current_project_id,
-  })
   const [saving, setSaving] = useState(false)
-  const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
+  const [saveError, setSaveError] = useState('')
+  const savingRef = useRef(false)
+  const requestDetails = useRef(null)
+  const set = (k, v) => { setSaveError(''); setForm(p => ({ ...p, [k]: v })) }
+  const close = () => { if (!savingRef.current) onClose() }
 
   const handleSave = async () => {
-    if (!incidentType)            { toast.error('Select incident type'); return }
-    if (!form.description.trim()) { toast.error('Description is required'); return }
+    if (savingRef.current) return
+    let details
+    try { details = buildFleetIncidentDetails(incidentType, form, location) }
+    catch (err) { setSaveError(err.message); return }
+    // Preserve the exact report on a retry after an ambiguous network response.
+    requestDetails.current ||= details
+    savingRef.current = true
     setSaving(true)
+    setSaveError('')
     try {
-      const now = new Date()
-      const entryTs = new Date(
-        `${form.incident_date}T${now.toTimeString().slice(0, 8)}`
-      ).toISOString()
-      const { error } = await supabase.from('shift_incidents').insert({
-        company_id:     companyId,
-        equipment_id:   equipment.id,
-        incident_type:  incidentType,
-        severity: ['safety_issue', 'accident', 'near_miss'].includes(incidentType) ? form.severity : null,
-        description:    form.description,
-        action_taken:   form.action_taken        || null,
-        breakdown_cause: form.breakdown_cause    || null,
-        rectification_needed: form.rectification_needed || null,
-        damage_cause:   form.damage_cause        || null,
-        what_needs_to_be_done: form.what_needs_to_be_done || null,
-        notify_assigned: ['damage', 'safety_issue', 'theft', 'accident'].includes(incidentType),
-        location_lat:   location?.lat || null,
-        location_lng:   location?.lng || null,
-        location_address: location?.address || null,
-        resolved: false,
-        created_at:     entryTs,
+      const { data, error } = await supabase.rpc('report_equipment_incident', {
+        p_incident_id: requestId, p_equipment_id: equipment.id, p_details: requestDetails.current,
       })
-      if (error) throw error
-      if (incidentType === 'breakdown') {
-        await supabase.from('equipment').update({ status: 'breakdown' }).eq('id', equipment.id)
-
-        // Build escalation notify chain from project contacts
-        const chain = []
-        let lvl = 1
-        const proj = incidentProject
-        // Level 1 — Site Supervisors
-        const sups = proj?.our_supervisors?.length > 0 ? proj.our_supervisors : []
-        sups.forEach(s => { if (s.name) chain.push({ level: 1, role: 'Site Supervisor', name: s.name, phone: s.phone || null, email: s.email || null }) })
-        if (sups.length === 0) lvl++ // bump if no supervisors configured
-        // Level 2 — P&M Incharge
-        const pnms = proj?.our_pnm_contacts?.length > 0 ? proj.our_pnm_contacts : []
-        pnms.forEach(p => { if (p.name) chain.push({ level: 2, role: 'P&M Incharge', name: p.name, phone: p.phone || null, email: p.email || null }) })
-        // Level 3 — Managers
-        const mgrs = proj?.our_managers?.length > 0 ? proj.our_managers : []
-        mgrs.forEach(m => { if (m.name) chain.push({ level: 3, role: 'Manager', name: m.name, phone: m.phone || null, email: m.email || null }) })
-        // Level 4 — Project Manager
-        if (proj?.our_pm_name) chain.push({ level: 4, role: 'Project Manager', name: proj.our_pm_name, phone: proj.our_pm_phone || null, email: proj.our_pm_email || null })
-
-        const { data: incidentRow } = await supabase.from('shift_incidents')
-          .select('id').eq('equipment_id', equipment.id).order('created_at', { ascending: false }).limit(1).single()
-
-        await supabase.from('breakdown_alerts').insert({
-          company_id:     companyId,
-          equipment_id:   equipment.id,
-          incident_id:    incidentRow?.id || null,
-          equipment_name: equipment.name,
-          project_id:     equipment.current_project_id || null,
-          breakdown_cause: form.breakdown_cause || form.description,
-          reported_at:    entryTs,
-          notify_chain:   chain,
-        })
-
-        // Fire email alerts — non-blocking
+      if (error) {
+        // A database rejection rolled back the whole transaction; allow corrections.
+        if (error.code && !['PGRST000', 'PGRST001', 'PGRST002', 'PGRST003'].includes(error.code)) requestDetails.current = null
+        throw error
+      }
+      if (!data?.incident_id) throw new Error('Could not confirm the report. Please retry.')
+      if (data.alert_created) {
         supabase.functions.invoke('send-breakdown-email', {
-          body: {
-            equipmentName:  equipment.name,
-            breakdownCause: form.breakdown_cause || form.description,
-            reportedAt:     entryTs,
-            companyName:    company?.name || null,
-            chain,
-          },
-        }).catch(err => console.warn('Email alert failed (non-blocking):', err))
-
-        qc.invalidateQueries(['breakdown_alarms', companyId])
-        qc.invalidateQueries(['equipment_breakdown_log', equipment.id])
-      } else if (['regular_maintenance', 'unscheduled_maintenance'].includes(incidentType)) {
-        await supabase.from('equipment').update({ status: 'maintenance' }).eq('id', equipment.id)
+          body: { equipmentName: equipment.name, breakdownCause: requestDetails.current.breakdown_cause,
+            reportedAt: data.reported_at, companyName: company?.name || null, chain: data.notify_chain || [] },
+        }).catch(err => console.warn('Breakdown email failed:', err))
       }
-      if (['damage', 'safety_issue', 'theft', 'accident', 'breakdown'].includes(incidentType)) {
-        await supabase.from('notifications').insert({
-          company_id: companyId,
-          type:  `incident_${incidentType}`,
-          title: `${INCIDENT_OPTIONS.find(i => i.value === incidentType)?.label} — ${equipment.name}`,
-          body:  form.description,
-          metadata: { equipment_id: equipment.id, equipment_name: equipment.name, incident_type: incidentType }
-        })
-      }
-      toast.success('Incident reported')
-      qc.invalidateQueries(['incidents', equipment.id])
-      qc.invalidateQueries(['all_incidents', companyId])
-      qc.invalidateQueries(['equipment', companyId])
+      await Promise.all([
+        ...[
+          ['incidents', equipment.id], ['all_incidents', companyId], ['equipment', companyId],
+          ['equipment_incident_log', equipment.id], ['equipment_breakdown_log', equipment.id],
+          ['breakdown_alarms', companyId], ['workshop-board', companyId], ['job_cards', equipment.id],
+          ['maint_records', equipment.id], ['notifications', companyId], ['today_ops', companyId],
+        ].map(queryKey => qc.invalidateQueries({ queryKey })),
+        onReported?.(),
+      ])
+      toast.success(data.created === false ? 'Incident already reported' : 'Incident reported')
       onClose()
-    } catch (err) { toast.error(err.message || 'Failed to report incident')
-    } finally { setSaving(false) }
+    } catch (err) {
+      setSaveError((err.message || 'Failed to report incident. Please retry.')
+        + (requestDetails.current ? ' Retry to confirm the same report.' : ''))
+    } finally { savingRef.current = false; setSaving(false) }
   }
 
   return (
-    <Modal title={`Report Incident — ${equipment.name}`} onClose={onClose} footer={
+    <Modal portal title={`Report Incident — ${equipment.name}`} onClose={close} footer={
       <>
-        <button onClick={onClose} className="flex-1 btn-secondary">Cancel</button>
+        <button onClick={close} disabled={saving} className="flex-1 btn-secondary">Cancel</button>
         <button onClick={handleSave} disabled={saving || !incidentType} className="flex-1 btn-danger">
           {saving ? <><Loader2 className="w-4 h-4 animate-spin" />Reporting…</> : 'Report Incident'}
         </button>
       </>
     }>
+      {saveError && <p role="alert" className="mb-4 rounded-lg border border-red-700/40 bg-red-900/20 p-3 text-sm text-red-300">{saveError}</p>}
+      <p className="mb-4 text-xs text-slate-400">Report for {equipment.name} · {equipment.equipment_number}. A shift entry is optional.</p>
+      <fieldset disabled={saving || !!requestDetails.current} className="space-y-4">
       <Field label="Incident Date">
-        <input type="date" className={inp()} value={form.incident_date} max={todayDate}
+        <input type="date" aria-label="Incident Date" disabled={saving} className={inp()} value={form.incident_date} max={todayDate}
           onChange={e => set('incident_date', e.target.value)} />
         {form.incident_date !== todayDate && (
           <p className="text-xs text-amber-500 mt-1">⚠ Backdated entry — {new Date(form.incident_date).toLocaleDateString('en-IN', { day:'numeric', month:'short', year:'numeric' })}</p>
         )}
       </Field>
       <Field label="Incident Type" required>
-        <select className={inp()} value={incidentType} onChange={e => setIncidentType(e.target.value)}>
+        <select aria-label="Incident Type" disabled={saving} className={inp()} value={incidentType} onChange={e => { setSaveError(''); setIncidentType(e.target.value) }}>
           <option value="">Select what happened…</option>
           {INCIDENT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.icon} {o.label}</option>)}
         </select>
@@ -1465,13 +1411,13 @@ function IncidentModal({ equipment, companyId, onClose }) {
       {incidentType === 'breakdown' && (
         <>
           <Field label="Cause of breakdown" required>
-            <VoiceTextarea value={form.breakdown_cause} onChange={v => set('breakdown_cause', v)} placeholder="What failed — e.g. hydraulic hose burst, engine overheating…" rows={3} />
+            <VoiceTextarea ariaLabel="Cause of breakdown" value={form.breakdown_cause} onChange={v => set('breakdown_cause', v)} placeholder="What failed — e.g. hydraulic hose burst, engine overheating…" rows={3} />
           </Field>
           <Field label="What needs to be done to fix it">
-            <VoiceTextarea value={form.rectification_needed} onChange={v => set('rectification_needed', v)} placeholder="Repair / replacement needed?" rows={2} />
+            <VoiceTextarea ariaLabel="What needs to be done to fix it" value={form.rectification_needed} onChange={v => set('rectification_needed', v)} placeholder="Repair / replacement needed?" rows={2} />
           </Field>
           <Field label="Additional Notes">
-            <VoiceTextarea value={form.description} onChange={v => set('description', v)} placeholder="Any other details…" rows={2} />
+            <VoiceTextarea ariaLabel="Additional Notes" value={form.description} onChange={v => set('description', v)} placeholder="Any other details…" rows={2} />
           </Field>
           <GPSField location={location} loading={gpsLoading} />
         </>
@@ -1479,23 +1425,23 @@ function IncidentModal({ equipment, companyId, onClose }) {
       {(incidentType === 'unscheduled_maintenance' || incidentType === 'regular_maintenance') && (
         <>
           <Field label="Description" required>
-            <VoiceTextarea value={form.description} onChange={v => set('description', v)} placeholder="What issue / what service is being done?" rows={3} />
+            <VoiceTextarea ariaLabel="Description" value={form.description} onChange={v => set('description', v)} placeholder="What issue / what service is being done?" rows={3} />
           </Field>
           <Field label="Action Taken">
-            <VoiceTextarea value={form.action_taken} onChange={v => set('action_taken', v)} placeholder="What was done?" rows={2} />
+            <VoiceTextarea ariaLabel="Action Taken" value={form.action_taken} onChange={v => set('action_taken', v)} placeholder="What was done?" rows={2} />
           </Field>
         </>
       )}
       {incidentType === 'damage' && (
         <>
           <Field label="How did the damage happen?" required>
-            <VoiceTextarea value={form.damage_cause} onChange={v => set('damage_cause', v)} placeholder="e.g. lorry hit the equipment, rope snapped…" rows={3} />
+            <VoiceTextarea ariaLabel="How did the damage happen?" value={form.damage_cause} onChange={v => set('damage_cause', v)} placeholder="e.g. lorry hit the equipment, rope snapped…" rows={3} />
           </Field>
           <Field label="Describe the damage">
-            <VoiceTextarea value={form.description} onChange={v => set('description', v)} placeholder="Which part? How severe?" rows={2} />
+            <VoiceTextarea ariaLabel="Describe the damage" value={form.description} onChange={v => set('description', v)} placeholder="Which part? How severe?" rows={2} />
           </Field>
           <Field label="What needs to be done?">
-            <VoiceTextarea value={form.what_needs_to_be_done} onChange={v => set('what_needs_to_be_done', v)} placeholder="Repair needed?" rows={2} />
+            <VoiceTextarea ariaLabel="What needs to be done?" value={form.what_needs_to_be_done} onChange={v => set('what_needs_to_be_done', v)} placeholder="Repair needed?" rows={2} />
           </Field>
           <GPSField location={location} loading={gpsLoading} />
           <div className="bg-orange-900/20 border border-orange-700/30 rounded-lg p-2.5 text-xs text-orange-300">⚠ Admin will be notified automatically</div>
@@ -1504,7 +1450,7 @@ function IncidentModal({ equipment, companyId, onClose }) {
       {incidentType === 'theft' && (
         <>
           <Field label="What was stolen?" required>
-            <VoiceTextarea value={form.description} onChange={v => set('description', v)} placeholder="Describe what was stolen…" rows={3} />
+            <VoiceTextarea ariaLabel="What was stolen?" value={form.description} onChange={v => set('description', v)} placeholder="Describe what was stolen…" rows={3} />
           </Field>
           <GPSField location={location} loading={gpsLoading} />
           <div className="bg-red-900/20 border border-red-700/30 rounded-lg p-2.5 text-xs text-red-300">🚨 Admin will be notified immediately</div>
@@ -1515,7 +1461,7 @@ function IncidentModal({ equipment, companyId, onClose }) {
           <Field label="Severity">
             <div className="grid grid-cols-4 gap-2">
               {INCIDENT_SEVERITY.map(s => (
-                <button key={s.value} type="button" onClick={() => set('severity', s.value)}
+                <button key={s.value} type="button" aria-pressed={form.severity === s.value} disabled={saving} onClick={() => set('severity', s.value)}
                   className={`px-2 py-1.5 rounded-lg border text-xs font-medium transition-all
                     ${form.severity === s.value ? 'border-primary-500 bg-primary-500/10 text-primary-300' : 'border-dark-600 bg-dark-700 text-slate-400'}`}>
                   {s.label}
@@ -1524,10 +1470,10 @@ function IncidentModal({ equipment, companyId, onClose }) {
             </div>
           </Field>
           <Field label={incidentType === 'accident' ? 'What happened?' : 'What is the safety issue?'} required>
-            <VoiceTextarea value={form.description} onChange={v => set('description', v)} placeholder="Describe clearly…" rows={3} />
+            <VoiceTextarea ariaLabel={incidentType === 'accident' ? 'What happened?' : 'What is the safety issue?'} value={form.description} onChange={v => set('description', v)} placeholder="Describe clearly…" rows={3} />
           </Field>
           <Field label="Immediate action taken">
-            <VoiceTextarea value={form.action_taken} onChange={v => set('action_taken', v)} placeholder="What was done right after?" rows={2} />
+            <VoiceTextarea ariaLabel="Immediate action taken" value={form.action_taken} onChange={v => set('action_taken', v)} placeholder="What was done right after?" rows={2} />
           </Field>
           <GPSField location={location} loading={gpsLoading} />
         </>
@@ -1535,18 +1481,19 @@ function IncidentModal({ equipment, companyId, onClose }) {
       {incidentType === 'near_miss' && (
         <>
           <Field label="What almost happened?" required>
-            <VoiceTextarea value={form.description} onChange={v => set('description', v)} placeholder="Describe what could have gone wrong…" rows={3} />
+            <VoiceTextarea ariaLabel="What almost happened?" value={form.description} onChange={v => set('description', v)} placeholder="Describe what could have gone wrong…" rows={3} />
           </Field>
           <Field label="Action to prevent recurrence">
-            <VoiceTextarea value={form.action_taken} onChange={v => set('action_taken', v)} placeholder="What was done to prevent this?" rows={2} />
+            <VoiceTextarea ariaLabel="Action to prevent recurrence" value={form.action_taken} onChange={v => set('action_taken', v)} placeholder="What was done to prevent this?" rows={2} />
           </Field>
         </>
       )}
       {incidentType === 'other' && (
         <Field label="Description" required>
-          <VoiceTextarea value={form.description} onChange={v => set('description', v)} placeholder="Describe the issue…" rows={4} />
+          <VoiceTextarea ariaLabel="Description" value={form.description} onChange={v => set('description', v)} placeholder="Describe the issue…" rows={4} />
         </Field>
       )}
+      </fieldset>
     </Modal>
   )
 }
@@ -2040,6 +1987,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
   const { role, userProfile, session, company, hasModule } = useAuth()
   const isAdmin  = ['admin', 'superadmin', 'manager'].includes(role)
   const canUseWorkshop = canAccessPage('maintenance', { role, hasModule })
+  const canReportIncident = canAccessPage('operations', { role, hasModule }) && equipment.status !== 'disposed'
 
   useEffect(() => {
     const passportUrl = `${window.location.origin}${window.location.pathname}?equipment=${equipmentProp.id}`
@@ -2594,6 +2542,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
       // (i.e. pre-RLS-fix records that never made it into breakdown_alerts)
       if (isBreakdown) {
         const alreadyCovered = breakdownLog.some(b => {
+          if (b.incident_id) return b.incident_id === inc.id
           const diff = Math.abs(new Date(b.reported_at) - new Date(inc.created_at))
           return diff < 60_000 // within 1 minute = same breakdown
         })
@@ -3148,10 +3097,10 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
                   className="w-full flex items-center gap-2.5 py-2.5 px-3 rounded-xl bg-dark-800 border border-dark-600 hover:border-yellow-500 text-slate-200 text-xs font-medium transition-colors">
                   <Fuel className="w-4 h-4 text-yellow-400 shrink-0" /> Log Fuel
                 </button>
-                <button onClick={() => onNavigate?.('operations', { tab: 'today', equipmentId: equipment.id, equipmentName: equipment.name })}
+                {canReportIncident && <button onClick={() => setModal('incident')}
                   className="w-full flex items-center gap-2.5 py-2.5 px-3 rounded-xl bg-dark-800 border border-dark-600 hover:border-orange-500 text-slate-200 text-xs font-medium transition-colors">
-                  <AlertTriangle className="w-4 h-4 text-orange-400 shrink-0" /> Open Incident Reporting
-                </button>
+                  <AlertTriangle className="w-4 h-4 text-orange-400 shrink-0" /> Report Incident
+                </button>}
               </div>
 
               {openIncidents.length > 0 && (
@@ -4586,7 +4535,7 @@ function EquipmentDetail({ equipment: equipmentProp, companyId, onClose, onNavig
       )}
       {modal === 'fuel'     && <FuelModal     equipment={equipment} companyId={companyId} onClose={() => setModal(null)} />}
       {editingFuel && <FuelModal equipment={equipment} companyId={companyId} entry={editingFuel} onClose={() => setEditingFuel(null)} />}
-      {false && modal === 'incident' && <IncidentModal equipment={equipment} companyId={companyId} onClose={() => setModal(null)} />}
+      {canReportIncident && modal === 'incident' && <IncidentModal equipment={equipment} companyId={companyId} onClose={() => setModal(null)} onReported={refreshEquipment} />}
       {showTCModal && tcPending && (
         <TCCaptureModal
           fromProject={tcPending.fromProject}
