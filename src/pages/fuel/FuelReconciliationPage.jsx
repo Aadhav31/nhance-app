@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import toast from 'react-hot-toast'
 import { format, subDays } from 'date-fns'
 import {
   AlertTriangle, ArrowRight, BarChart3, CheckCircle2, CircleDollarSign, Clock3,
@@ -10,6 +11,8 @@ import {
 } from 'recharts'
 import { useAuth } from '../../contexts/AuthContext'
 import { supabase } from '../../lib/supabase'
+import { canCompleteFuelCapture } from '../../lib/fuelCaptureCompletion'
+import FuelCaptureDetailsDialog from './FuelCaptureDetailsDialog'
 import {
   buildFuelReconciliation,
   filterFuelReconciliationRows,
@@ -151,7 +154,9 @@ export default function FuelReconciliationPage({
   initialEquipmentId = 'all',
   initialProjectId = 'all',
 }) {
-  const { companyId } = useAuth()
+  const { companyId, role, session } = useAuth()
+  const queryClient = useQueryClient()
+  const [editingCapture, setEditingCapture] = useState(null)
   const [rangeDays, setRangeDays] = useState(() => RANGE_OPTIONS.some(option => option.value === Number(initialRangeDays)) ? Number(initialRangeDays) : 90)
   const [metric, setMetric] = useState(() => METRIC_LABELS[initialMetric] ? initialMetric : 'all')
   const [equipmentId, setEquipmentId] = useState(initialEquipmentId || 'all')
@@ -227,7 +232,7 @@ export default function FuelReconciliationPage({
     queryKey: ['fuel_expense_review_queue', companyId, startDate, endDate],
     queryFn: async () => {
       const { data, error } = await supabase.from('fuel_expense_captures')
-        .select('id,source_document_type,source_document_id,expense_date,quantity_liters,rate_per_liter,total_amount,status,missing_fields,vendor_name,bill_number,equipment:equipment(id,name,equipment_number),project:projects(id,project_name,project_code)')
+        .select('*,equipment:equipment(id,name,equipment_number),project:projects(id,project_name,project_code),approval_case:approval_cases(id,status)')
         .eq('company_id', companyId)
         .gte('expense_date', startDate)
         .lte('expense_date', endDate)
@@ -359,14 +364,14 @@ export default function FuelReconciliationPage({
           <KpiTile active={metric === 'over_standard'} onClick={() => setTileMetric('over_standard')} title="Above standard" value={litres(summary.excessLitres)} note="Actual above machine benchmark" icon={Gauge} tone="amber" />
           <KpiTile active={metric === 'cost_impact'} onClick={() => setTileMetric('cost_impact')} title="Financial exposure" value={money(summary.financialExposure)} note={summary.averageRate ? `Weighted diesel rate ₹${summary.averageRate}/L` : 'Add rates to calculate exposure'} icon={CircleDollarSign} tone="violet" />
           <KpiTile active={metric === 'data_gaps'} onClick={() => setTileMetric('data_gaps')} title="Data gaps" value={summary.dataGapRows} note={`${summary.duplicateEntries} possible duplicate entries`} icon={DatabaseZap} tone="cyan" />
-          <KpiTile active={false} onClick={() => onNavigate?.('approval_center')} title="Pending fuel review" value={pendingCaptures.filter(item => item.status === 'pending_review').length} note="Excluded until approved" icon={Clock3} tone="amber" />
+          <KpiTile active={false} onClick={() => document.getElementById('fuel-expense-review')?.scrollIntoView({ behavior: 'smooth' })} title="Pending fuel review" value={pendingCaptures.length} note={`${pendingCaptures.filter(item => item.status === 'needs_information').length} need details · excluded until approved`} icon={Clock3} tone="amber" />
         </section>
 
-        <section className="rounded-xl border border-amber-500/25 bg-amber-500/5 p-4">
+        <section id="fuel-expense-review" className="rounded-xl border border-amber-500/25 bg-amber-500/5 p-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <p className="text-sm font-semibold text-slate-100">Fuel expense review queue</p>
-              <p className="mt-1 text-[11px] text-slate-500">Captured from Fuel-category expenses. These entries stay outside official equipment and project totals until the approval chain finishes.</p>
+              <p className="mt-1 text-[11px] text-slate-500">Complete receipt details here, then submit to Approval Centre. Fuel enters the equipment and project totals after independent approval.</p>
             </div>
             <button onClick={() => onNavigate?.('approval_center')} className="btn-primary px-3 py-2 text-xs">
               Open Approval Centre <ArrowRight className="h-3.5 w-3.5" />
@@ -380,7 +385,7 @@ export default function FuelReconciliationPage({
             </div>
           ) : (
             <div className="mt-3 grid gap-2 lg:grid-cols-2">
-              {pendingCaptures.slice(0, 6).map(capture => {
+              {pendingCaptures.map(capture => {
                 const needsCorrection = ['needs_information', 'returned', 'rejected'].includes(capture.status)
                 const statusLabel = capture.status === 'pending_review' ? 'Awaiting approval'
                   : capture.status === 'needs_information' ? 'Information required'
@@ -391,14 +396,19 @@ export default function FuelReconciliationPage({
                       <p className="truncate text-xs font-semibold text-slate-200">{capture.equipment?.name || 'Equipment not selected'}{capture.equipment?.equipment_number ? ` · ${capture.equipment.equipment_number}` : ''}</p>
                       <p className="mt-1 truncate text-[10px] text-slate-500">{capture.project?.project_name || 'Project not selected'} · {displayDate(capture.expense_date)}</p>
                       <p className="mt-1 text-[11px] text-slate-400">{capture.quantity_liters ? litres(capture.quantity_liters) : 'Litres missing'} · {money(capture.total_amount)}{capture.vendor_name ? ` · ${capture.vendor_name}` : ''}</p>
+                      {(capture.station_name || capture.bill_number) && <p className="mt-1 text-[11px] text-slate-400">{capture.station_name}{capture.bill_number ? ` · Invoice ${capture.bill_number}` : ''}{capture.rate_per_liter ? ` · ₹${Number(capture.rate_per_liter).toFixed(2)}/L` : ''}</p>}
+                      {needsCorrection && <p className="mt-2 text-[10px] text-amber-300">{capture.missing_fields?.filter(field => field !== 'approval_route').length ? `Missing: ${capture.missing_fields.filter(field => field !== 'approval_route').join(', ')}. ` : ''}Complete details and submit for approval.</p>}
                     </div>
-                    <span className={`shrink-0 rounded-full border px-2 py-1 text-[9px] font-semibold ${needsCorrection ? 'border-red-500/30 bg-red-500/10 text-red-300' : 'border-amber-500/30 bg-amber-500/10 text-amber-300'}`}>{statusLabel}</span>
+                    <div className="flex shrink-0 flex-col items-end gap-2">
+                      <span className={`rounded-full border px-2 py-1 text-[9px] font-semibold ${needsCorrection ? 'border-red-500/30 bg-red-500/10 text-red-300' : 'border-amber-500/30 bg-amber-500/10 text-amber-300'}`}>{statusLabel}</span>
+                      {canCompleteFuelCapture(capture, role, session?.user?.id) ? <button type="button" onClick={() => setEditingCapture(capture)} className="btn-primary px-2 py-1.5 text-[10px]">Complete fuel details</button>
+                        : capture.approval_case?.status === 'in_review' || capture.status === 'pending_review' ? <button type="button" onClick={() => onNavigate?.('approval_center')} className="btn-ghost px-2 py-1.5 text-[10px]">View approval</button> : <span className="text-[10px] text-slate-500">Submitter or finance team must complete</span>}
+                    </div>
                   </div>
                 )
               })}
             </div>
           )}
-          {pendingCaptures.length > 6 && <p className="mt-2 text-right text-[10px] text-slate-500">+{pendingCaptures.length - 6} more in the Approval Centre</p>}
         </section>
 
         <section className="grid gap-4 xl:grid-cols-[1fr_320px]">
@@ -511,6 +521,11 @@ export default function FuelReconciliationPage({
           )}
         </section>
       </div>
+      {editingCapture && <FuelCaptureDetailsDialog key={editingCapture.id} capture={editingCapture} equipment={equipmentQuery.data || []} projects={projectsQuery.data || []} onClose={() => setEditingCapture(null)} onSaved={submitted => {
+        setEditingCapture(null)
+        for (const queryKey of [['fuel_expense_review_queue'], ['field_expenses'], ['expenses'], ['approval_cases'], ['approval_tasks'], ['approval_inbox']]) queryClient.invalidateQueries({ queryKey })
+        toast.success(submitted ? 'Fuel details saved and submitted for independent approval.' : 'Fuel details saved. Submit for approval when ready.')
+      }} />}
     </div>
   )
 }

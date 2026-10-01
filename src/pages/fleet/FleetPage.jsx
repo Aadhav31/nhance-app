@@ -5956,8 +5956,8 @@ function FuelTab({ companyId }) {
                       <div className="flex items-center gap-2 mt-0.5">
                         <span className="text-xs text-slate-500">{format(new Date(i.issue_date), 'dd MMM yyyy')}</span>
                         <span className="text-xs bg-dark-600 text-slate-400 rounded px-1.5 py-0.5">{SOURCE_LABELS[i.fuel_source] || i.fuel_source}</span>
-                        {(i.tank_name || i.vendor_name) && (
-                          <span className="text-xs text-slate-500 truncate">{i.tank_name || i.vendor_name}</span>
+                        {(i.tank_name || i.station_name || i.vendor_name) && (
+                          <span className="text-xs text-slate-500 truncate">{i.tank_name || i.station_name || i.vendor_name}</span>
                         )}
                       </div>
                     </div>
@@ -5966,7 +5966,9 @@ function FuelTab({ companyId }) {
                   <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-slate-500">
                     {i.po_number        && <span>PO: {i.po_number}</span>}
                     {i.meter_at_issue   && <span>Meter: {i.meter_at_issue}</span>}
-                    {i.voucher_number   && <span>Voucher: {i.voucher_number}</span>}
+                    {i.voucher_number   && <span>{i.expense_capture_id ? 'Invoice / bill' : 'Voucher'}: {i.voucher_number}</span>}
+                    {i.rate_per_liter != null && <span>Unit price: ₹{Number(i.rate_per_liter).toLocaleString('en-IN', { maximumFractionDigits: 3 })}/L</span>}
+                    {i.total_amount != null && <span>Amount: ₹{Number(i.total_amount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>}
                     {i.delivered_by     && <span>Delivered by: {i.delivered_by}</span>}
                     {i.incharge_name    && <span className="text-primary-400">Incharge: {i.incharge_name}</span>}
                     {i.notes            && <span className="italic">{i.notes}</span>}

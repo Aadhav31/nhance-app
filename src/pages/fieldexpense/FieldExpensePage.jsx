@@ -179,6 +179,7 @@ function ExpenseForm({ companyId, userId, userRole, userName, onSuccess, onBack 
     fuel_rate_per_liter: '',
     fuel_meter_reading: '',
     fuel_source: 'petrol_pump',
+    fuel_station_name: '',
     add_to_inventory: false,   // opt-in checkbox
     inv_item_id:   '',         // selected from existing inventory
     inv_item_name: '',         // name of selected/new item
@@ -397,6 +398,7 @@ function ExpenseForm({ companyId, userId, userRole, userName, onSuccess, onBack 
           : null,
         fuel_meter_reading: isFuel && form.fuel_meter_reading ? parseFloat(form.fuel_meter_reading) : null,
         fuel_source: isFuel ? form.fuel_source : null,
+        ...(isFuel ? { fuel_station_name: form.fuel_station_name.trim() || null } : {}),
         payment_status:  'paid',
         inv_item_name:   form.inv_item_name || null,
         inv_quantity:    form.inv_quantity ? parseFloat(form.inv_quantity) : null,
@@ -750,6 +752,9 @@ function ExpenseForm({ companyId, userId, userRole, userName, onSuccess, onBack 
             </div>
 
             <div className="grid grid-cols-2 gap-3">
+              <label className="col-span-2 space-y-1 text-xs text-slate-400">Fuel station / supplier
+                <input className={inp()} maxLength={200} value={form.fuel_station_name} onChange={e => set('fuel_station_name', e.target.value)} placeholder="Name on the fuel receipt (separate from payee)" />
+              </label>
               <div>
                 <label className="mb-1 block text-xs text-slate-400">Quantity (litres) <span className="text-red-400">*</span></label>
                 <input
