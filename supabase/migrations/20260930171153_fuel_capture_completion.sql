@@ -1,3 +1,5 @@
+-- Save fuel receipt details under existing authenticated access and approval rules.
+-- No new privileged function, schema access or approval route is introduced.
 -- Complete incomplete fuel captures at their original expense, preserving payees
 -- and payment amounts. Only independent approval posts fuel to the register.
 alter table public.field_expenses add column if not exists fuel_station_name text;
@@ -252,259 +254,12 @@ begin
 end;
 $$;
 
-create or replace function public.submit_fuel_expense_approval_case(
-  p_document_type text,
-  p_document_id uuid,
-  p_document_ref text default null,
-  p_title text default null,
-  p_snapshot jsonb default '{}'::jsonb
-)
-returns jsonb
-language plpgsql
-security definer
-set search_path = ''
-as $$
-declare
-  v_company_id uuid := public.auth_company_id();
-  v_actor_role text := public.auth_role();
-  v_actor_name text;
-  v_actor_department text;
-  v_workflow public.approval_workflows%rowtype;
-  v_manager_step public.approval_workflow_steps%rowtype;
-  v_accounts_step public.approval_workflow_steps%rowtype;
-  v_admin_step public.approval_workflow_steps%rowtype;
-  v_case_id uuid;
-  v_amount numeric;
-  v_project_id uuid;
-  v_equipment_id uuid;
-  v_unit_id uuid;
-  v_vendor_id uuid;
-  v_quantity numeric;
-  v_rate numeric;
-  v_meter numeric;
-  v_source text;
-  v_category text;
-  v_document_ref text := nullif(trim(p_document_ref),'');
-  v_title text := nullif(trim(p_title),'');
-  v_snapshot jsonb := coalesce(p_snapshot,'{}'::jsonb);
-  v_has_manager boolean := false;
-  v_has_accounts boolean := false;
-  v_has_admin boolean := false;
-  v_task_order integer := 0;
-  v_first_order integer;
-begin
-  if auth.uid() is null or v_company_id is null then
-    raise exception 'Authentication required' using errcode='42501';
-  end if;
-  if p_document_type not in ('field_expense','expense') or p_document_id is null then
-    raise exception 'Fuel review supports field expense and company expense records only';
-  end if;
-
-
-  if p_document_type='field_expense' then
-    select fe.amount,fe.project_id,fe.equipment_id,fe.unit_id,null::uuid,fe.category,
-      fe.fuel_quantity_liters,fe.fuel_rate_per_liter,fe.fuel_meter_reading,
-      coalesce(fe.fuel_source,'petrol_pump'),coalesce(fe.bill_number,v_document_ref)
-    into v_amount,v_project_id,v_equipment_id,v_unit_id,v_vendor_id,v_category,
-      v_quantity,v_rate,v_meter,v_source,v_document_ref
-    from public.field_expenses fe
-    where fe.id=p_document_id and fe.company_id=v_company_id for update;
-  else
-    select coalesce(e.total_amount,e.amount),e.project_id,e.equipment_id,e.unit_id,e.vendor_id,e.category,
-      e.fuel_quantity_liters,e.fuel_rate_per_liter,e.fuel_meter_reading,
-      coalesce(e.fuel_source,'petrol_pump'),
-      coalesce(e.reference_number,e.bill_number,e.bank_reference,v_document_ref)
-    into v_amount,v_project_id,v_equipment_id,v_unit_id,v_vendor_id,v_category,
-      v_quantity,v_rate,v_meter,v_source,v_document_ref
-    from public.expenses e
-    where e.id=p_document_id and e.company_id=v_company_id and e.field_expense_id is null for update;
-  end if;
-  if not found then raise exception 'Fuel expense was not found in your company' using errcode='42501'; end if;
-  if exists (
-    select 1 from public.approval_cases c
-    where c.company_id=v_company_id and c.document_type=p_document_type
-      and c.document_id=p_document_id and c.status='in_review'
-  ) then
-    raise exception 'This fuel expense already has an active approval';
-  end if;
-  if lower(coalesce(v_category,''))<>'fuel' then raise exception 'The source expense is not categorised as fuel'; end if;
-  if v_equipment_id is null then raise exception 'Select the equipment receiving the fuel'; end if;
-  if v_project_id is null then raise exception 'Select the project using the fuel'; end if;
-  if coalesce(v_quantity,0)<=0 then raise exception 'Enter the diesel quantity in litres'; end if;
-  if coalesce(v_amount,0)<=0 then raise exception 'Enter the fuel expense amount'; end if;
-  if not exists (select 1 from public.equipment e where e.id=v_equipment_id and e.company_id=v_company_id) then
-    raise exception 'The selected equipment does not belong to this company' using errcode='42501';
-  end if;
-  if not exists (select 1 from public.projects p where p.id=v_project_id and p.company_id=v_company_id) then
-    raise exception 'The selected project does not belong to this company' using errcode='42501';
-  end if;
-  if coalesce(v_rate,0)<=0 then v_rate := round(v_amount/v_quantity,3); end if;
-
-  perform public.seed_default_approval_workflows(v_company_id);
-  select * into v_workflow
-  from public.approval_workflows w
-  where w.company_id=v_company_id and w.document_type=p_document_type and w.is_active
-    and (w.project_id is null or w.project_id=v_project_id)
-    and (w.unit_id is null or w.unit_id=v_unit_id)
-  order by (w.project_id is not null) desc,(w.unit_id is not null) desc,w.priority desc,w.version desc
-  limit 1;
-  if v_workflow.id is null then raise exception 'No active expense approval workflow is configured'; end if;
-
-  select * into v_manager_step from public.approval_workflow_steps
-  where workflow_id=v_workflow.id and required_role='manager' order by step_order limit 1;
-  select * into v_accounts_step from public.approval_workflow_steps
-  where workflow_id=v_workflow.id and required_role='accounts' order by step_order limit 1;
-  select * into v_admin_step from public.approval_workflow_steps
-  where workflow_id=v_workflow.id and required_role='admin' order by step_order limit 1;
-
-  select up.full_name,nullif(trim(up.department),'') into v_actor_name,v_actor_department
-  from public.user_profiles up where up.id=auth.uid() and up.company_id=v_company_id;
-  select exists (
-    select 1 from public.user_profiles up join public.user_roles ur on ur.user_id=up.id
-    where up.company_id=v_company_id and up.is_active and ur.role::text='manager' and up.id<>auth.uid()
-  ) into v_has_manager;
-  select exists (
-    select 1 from public.user_profiles up join public.user_roles ur on ur.user_id=up.id
-    where up.company_id=v_company_id and up.is_active and ur.role::text='accounts' and up.id<>auth.uid()
-  ) into v_has_accounts;
-  select exists (
-    select 1 from public.user_profiles up join public.user_roles ur on ur.user_id=up.id
-    where up.company_id=v_company_id and up.is_active and ur.role::text='admin' and up.id<>auth.uid()
-  ) into v_has_admin;
-
-  v_title := coalesce(v_title,'Fuel expense · '||v_quantity||' L',v_document_ref);
-  v_snapshot := v_snapshot || jsonb_build_object(
-    'server_verified',true,'mandatory_fuel_review',true,'verified_value',v_amount,
-    'verified_reference',v_document_ref,'equipment_id',v_equipment_id,'project_id',v_project_id,
-    'quantity_liters',v_quantity,'rate_per_liter',v_rate,'meter_reading',v_meter,
-    'fuel_source',v_source,'requester_role',v_actor_role,'owner_authorised',v_actor_role='admin'
-  );
-
-  insert into public.approval_cases (
-    company_id,workflow_id,workflow_version,document_type,document_id,document_ref,title,
-    amount,metric_label,project_id,unit_id,vendor_id,requester_department,
-    submitted_by,submitted_by_name,snapshot
-  ) values (
-    v_company_id,v_workflow.id,v_workflow.version,p_document_type,p_document_id,v_document_ref,v_title,
-    v_amount,'Fuel expense',v_project_id,v_unit_id,v_vendor_id,v_actor_department,
-    auth.uid(),coalesce(v_actor_name,auth.jwt()->>'email','Unknown'),v_snapshot
-  ) returning id into v_case_id;
-
-  if v_actor_role='admin' then
-    v_task_order := v_task_order+1;
-    if v_has_manager and v_manager_step.id is not null then
-      insert into public.approval_tasks (
-        company_id,case_id,workflow_step_id,step_order,step_name,department,required_role,
-        approver_user_id,enforce_department,allow_self_approval,decision_type,status
-      ) values (
-        v_company_id,v_case_id,v_manager_step.id,v_task_order,'Fuel quantity & equipment verification',
-        'Management Control','manager',v_manager_step.approver_user_id,false,false,'verification','blocked'
-      );
-    elsif v_has_admin and v_admin_step.id is not null then
-      insert into public.approval_tasks (
-        company_id,case_id,workflow_step_id,step_order,step_name,department,required_role,
-        approver_user_id,enforce_department,allow_self_approval,decision_type,status
-      ) values (
-        v_company_id,v_case_id,v_admin_step.id,v_task_order,'Independent admin fuel verification',
-        'Management','admin',v_admin_step.approver_user_id,false,false,'verification','blocked'
-      );
-    else
-      raise exception 'Assign another active admin or manager to independently verify this fuel expense';
-    end if;
-    if v_has_accounts and v_accounts_step.id is not null then
-      v_task_order := v_task_order+1;
-      insert into public.approval_tasks (
-        company_id,case_id,workflow_step_id,step_order,step_name,department,required_role,
-        approver_user_id,enforce_department,allow_self_approval,decision_type,status
-      ) values (
-        v_company_id,v_case_id,v_accounts_step.id,v_task_order,'Fuel bill & rate verification',
-        'Accounts','accounts',v_accounts_step.approver_user_id,false,false,'verification','blocked'
-      );
-    end if;
-  else
-    if not v_has_admin then raise exception 'No active owner/admin is configured to approve this fuel expense'; end if;
-    if v_actor_role<>'manager' and v_has_manager and v_manager_step.id is not null then
-      v_task_order := v_task_order+1;
-      insert into public.approval_tasks (
-        company_id,case_id,workflow_step_id,step_order,step_name,department,required_role,
-        approver_user_id,enforce_department,allow_self_approval,decision_type,status
-      ) values (
-        v_company_id,v_case_id,v_manager_step.id,v_task_order,'Fuel quantity & equipment verification',
-        'Management Control','manager',v_manager_step.approver_user_id,false,false,'verification','blocked'
-      );
-    end if;
-    if v_actor_role<>'accounts' and v_has_accounts and v_accounts_step.id is not null then
-      v_task_order := v_task_order+1;
-      insert into public.approval_tasks (
-        company_id,case_id,workflow_step_id,step_order,step_name,department,required_role,
-        approver_user_id,enforce_department,allow_self_approval,decision_type,status
-      ) values (
-        v_company_id,v_case_id,v_accounts_step.id,v_task_order,'Fuel bill & rate verification',
-        'Accounts','accounts',v_accounts_step.approver_user_id,false,false,'verification','blocked'
-      );
-    end if;
-    if v_admin_step.id is null then raise exception 'The expense workflow needs an owner/admin step'; end if;
-    v_task_order := v_task_order+1;
-    insert into public.approval_tasks (
-      company_id,case_id,workflow_step_id,step_order,step_name,department,required_role,
-      approver_user_id,enforce_department,allow_self_approval,decision_type,status
-    ) values (
-      v_company_id,v_case_id,v_admin_step.id,v_task_order,
-      case when v_actor_role='manager' then 'Owner approval' else 'Owner fuel sanction' end,
-      'Management','admin',v_admin_step.approver_user_id,false,false,'sanction','blocked'
-    );
-  end if;
-
-  if exists (
-    select 1 from public.approval_tasks t
-    where t.case_id=v_case_id and t.approver_user_id is not null and (
-      t.approver_user_id=auth.uid() or not exists (
-        select 1 from public.user_profiles up join public.user_roles ur on ur.user_id=up.id
-        where up.id=t.approver_user_id and up.company_id=v_company_id and up.is_active
-          and ur.role::text=t.required_role
-      )
-    )
-  ) then
-    raise exception 'The named fuel reviewer must be another active user with the required role. Update the workflow policy.';
-  end if;
-
-  select min(step_order) into v_first_order from public.approval_tasks where case_id=v_case_id;
-  if v_first_order is null then raise exception 'No independent fuel reviewer is configured'; end if;
-  update public.approval_tasks t set status='pending',due_at=now()+make_interval(hours=>coalesce(s.sla_hours,24))
-  from public.approval_workflow_steps s
-  where t.case_id=v_case_id and t.step_order=v_first_order and s.id=t.workflow_step_id;
-  update public.approval_cases set current_step_order=v_first_order,updated_at=now() where id=v_case_id;
-
-  insert into public.approval_actions (
-    company_id,case_id,action,to_status,actor_id,actor_name,actor_role,actor_department,comments,metadata
-  ) values (
-    v_company_id,v_case_id,'submitted','in_review',auth.uid(),
-    coalesce(v_actor_name,auth.jwt()->>'email','Unknown'),v_actor_role,v_actor_department,
-    'Fuel is staged only; the official equipment register updates after independent approval.',
-    jsonb_build_object('mandatory_fuel_review',true,'quantity_liters',v_quantity,'rate_per_liter',v_rate)
-  );
-  perform public.sync_approval_source_status(p_document_type,p_document_id,'in_review');
-  return jsonb_build_object(
-    'case_id',v_case_id,'status','in_review','approval_required',true,
-    'route',case when v_actor_role='admin' then 'owner_to_fuel_verifier'
-      when v_actor_role='manager' then 'manager_to_owner' else 'employee_to_management' end,
-    'mandatory_fuel_review',true
-  );
-end;
-$$;
-
--- Keep privileged writes outside the exposed API schema. The public function
--- uses invoker security and delegates to this tightly scoped operation.
-create schema if not exists fuel_private;
-revoke all on schema fuel_private from public, anon;
-grant usage on schema fuel_private to authenticated;
-
-create or replace function fuel_private.complete_expense_capture(
+create or replace function public.complete_fuel_expense_capture(
   p_capture_id uuid, p_details jsonb, p_submit boolean default true
 )
 returns jsonb
 language plpgsql
-security definer
+security invoker
 set search_path = ''
 as $$
 declare
@@ -551,7 +306,7 @@ begin
   end if;
 
   select * into v_capture from public.fuel_expense_captures
-  where id=p_capture_id and company_id=v_company for update;
+  where id=p_capture_id and company_id=v_company;
   if v_capture.status not in ('needs_information','returned','rejected') then
     raise exception 'This fuel record is already approved or awaiting review. Return it before editing.';
   end if;
@@ -605,14 +360,6 @@ begin
     where id=v_capture.source_document_id and company_id=v_company;
   end if;
 
-  update public.account_transactions set txn_date=v_date
-  where company_id=v_company and (
-    (reference_type=v_capture.source_document_type and reference_id=v_capture.source_document_id) or
-    (v_capture.source_document_type='field_expense' and reference_type='expense' and reference_id in (
-      select id from public.expenses where field_expense_id=v_capture.source_document_id and company_id=v_company
-    ))
-  );
-
   if coalesce(p_submit,true) then
     v_result := public.submit_fuel_expense_approval_case(
       v_capture.source_document_type,v_capture.source_document_id,v_bill,
@@ -622,19 +369,6 @@ begin
   return jsonb_build_object('capture_id',p_capture_id,'submitted',coalesce(p_submit,true),'approval',v_result);
 end;
 $$;
-revoke all on function fuel_private.complete_expense_capture(uuid,jsonb,boolean) from public, anon, service_role;
-grant execute on function fuel_private.complete_expense_capture(uuid,jsonb,boolean) to authenticated;
-
-create or replace function public.complete_fuel_expense_capture(
-  p_capture_id uuid, p_details jsonb, p_submit boolean default true
-)
-returns jsonb language sql security invoker set search_path = ''
-as $$ select fuel_private.complete_expense_capture(p_capture_id,p_details,p_submit); $$;
 revoke all on function public.complete_fuel_expense_capture(uuid,jsonb,boolean) from public, anon, service_role;
 grant execute on function public.complete_fuel_expense_capture(uuid,jsonb,boolean) to authenticated;
-
-revoke all on function public.guard_fuel_expense_integrity() from public, anon, authenticated, service_role;
-revoke all on function public.sync_fuel_expense_capture() from public, anon, authenticated, service_role;
-revoke all on function public.submit_fuel_expense_approval_case(text,uuid,text,text,jsonb) from public, anon, service_role;
-grant execute on function public.submit_fuel_expense_approval_case(text,uuid,text,text,jsonb) to authenticated;
 notify pgrst,'reload schema';
