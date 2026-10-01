@@ -3,7 +3,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../contexts/AuthContext'
 import { nextDocNumber } from '../../utils/docNumbers'
-import CanonicalWorkspaceNotice from '../../components/shared/CanonicalWorkspaceNotice'
+import RaiseRABillModal from '../../components/shared/RaiseRABillModal'
+import { canAccessPage } from '../../lib/navigation'
 import toast from 'react-hot-toast'
 import {
   Plus, X, Search, ChevronDown, ChevronRight, Trash2, Pencil,
@@ -652,123 +653,21 @@ function AbstractTab({ boq, allItems, sections, raBills }) {
 }
 
 // ── RA Bills Tab ──────────────────────────────────────────────────────────────
-function RABillsTab({ boq, raBills, allItems, companyId, session, onRefresh, onOpenRABilling }) {
-  const qc = useQueryClient()
+function RABillsTab({ boq, raBills, companyId, session, onRefresh, onOpenRABilling }) {
+  const { role, hasModule } = useAuth()
+  const canCreate = canAccessPage('ra_billing', { role, hasModule }) && !!session?.user?.id && ['active', 'draft'].includes(boq.status)
   const [showCreate, setShowCreate] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [raLines, setRaLines] = useState([])
-  const [raForm, setRaForm] = useState({
-    bill_date: todayStr(), period_from: '', period_to: '',
-    cgst_rate: '0', sgst_rate: '0', igst_rate: '0',
-    mob_advance_recovery: '0',
-    income_tax_pct: String(boq.it_pct || 1),
-    labour_cess_pct: String(boq.labour_cess_pct || 1),
-    sd_amount: '0',
-    other_deductions: '0', other_deductions_note: '',
-  })
-  const setRF = (k, v) => setRaForm(p => ({ ...p, [k]: v }))
-
-  const openCreate = () => {
-    const lines = allItems.filter(i => i.quantity > 0).map(i => ({
-      boq_item_id: i.id, description: i.description, unit: i.unit, rate: i.rate,
-      previous_qty: i.executed_qty, current_qty: '',
-    }))
-    setRaLines(lines)
-    setRaForm({
-      bill_date: todayStr(), period_from: '', period_to: '',
-      cgst_rate: '0', sgst_rate: '0', igst_rate: '0',
-      mob_advance_recovery: '0',
-      income_tax_pct: String(boq.it_pct || 1),
-      labour_cess_pct: String(boq.labour_cess_pct || 1),
-      sd_amount: '0',
-      other_deductions: '0', other_deductions_note: '',
-    })
-    setShowCreate(true)
-  }
-
-  // Calculations
-  const subtotal       = raLines.reduce((s, l) => s + ((parseFloat(l.current_qty) || 0) * (l.rate || 0)), 0)
-  const cgst           = subtotal * (parseFloat(raForm.cgst_rate) || 0) / 100
-  const sgst           = subtotal * (parseFloat(raForm.sgst_rate) || 0) / 100
-  const igst           = subtotal * (parseFloat(raForm.igst_rate) || 0) / 100
-  const grossWithTax   = subtotal + cgst + sgst + igst
-  const mobRec         = parseFloat(raForm.mob_advance_recovery) || 0
-  const itAmt          = boq.it_applicable ? subtotal * (parseFloat(raForm.income_tax_pct) || 0) / 100 : 0
-  const lcAmt          = boq.labour_cess_applicable ? subtotal * (parseFloat(raForm.labour_cess_pct) || 0) / 100 : 0
-  const sdAmt          = parseFloat(raForm.sd_amount) || 0
-  const otherDed       = parseFloat(raForm.other_deductions) || 0
-  const totalDeductions = mobRec + itAmt + lcAmt + sdAmt + otherDed
-  const netPayable     = grossWithTax - totalDeductions
-
-  const saveRA = async () => {
-    const validLines = raLines.filter(l => parseFloat(l.current_qty) > 0)
-    if (validLines.length === 0) { toast.error('Enter quantities for at least one item'); return }
-    setSaving(true)
-    try {
-      const raNum = await nextDocNumber(companyId, 'ra_bill').catch(() => `RA-${Date.now()}`)
-      const { data: ra, error } = await supabase.from('ra_bills').insert({
-        company_id: companyId, boq_id: boq.id, ra_number: raNum,
-        bill_date: raForm.bill_date,
-        period_from: raForm.period_from || null,
-        period_to: raForm.period_to || null,
-        status: 'draft', subtotal,
-        cgst_rate: parseFloat(raForm.cgst_rate) || 0,
-        sgst_rate: parseFloat(raForm.sgst_rate) || 0,
-        igst_rate: parseFloat(raForm.igst_rate) || 0,
-        cgst_amount: cgst, sgst_amount: sgst, igst_amount: igst,
-        total_amount: grossWithTax,
-        mob_advance_recovery: mobRec,
-        income_tax_pct: parseFloat(raForm.income_tax_pct) || 0,
-        income_tax_amt: itAmt,
-        labour_cess_pct: parseFloat(raForm.labour_cess_pct) || 0,
-        labour_cess_amt: lcAmt,
-        sd_amount: sdAmt,
-        other_deductions: otherDed,
-        other_deductions_note: raForm.other_deductions_note || null,
-        net_payable: netPayable,
-        certified_amount: netPayable,
-        retention_pct: 0, retention_amt: 0,
-        created_by: session.user.id,
-      }).select().single()
-      if (error) throw error
-
-      const items = validLines.map((l, i) => ({
-        ra_bill_id: ra.id, boq_item_id: l.boq_item_id,
-        description: l.description, unit: l.unit, rate: l.rate,
-        previous_qty: parseFloat(l.previous_qty) || 0,
-        current_qty: parseFloat(l.current_qty) || 0,
-        total_qty: (parseFloat(l.previous_qty) || 0) + (parseFloat(l.current_qty) || 0),
-        current_amount: (parseFloat(l.current_qty) || 0) * (l.rate || 0),
-        sort_order: i,
-      }))
-      const { error: ie } = await supabase.from('ra_bill_items').insert(items)
-      if (ie) throw ie
-
-      toast.success(`${raNum} raised — Net payable ${fmtINR(netPayable)}`)
-      setShowCreate(false)
-      onRefresh()
-      qc.invalidateQueries({ queryKey: ['boq_items', boq.id] })
-    } catch (e) { toast.error(e.message) } finally { setSaving(false) }
-  }
-
-  const updateRAStatus = async (id, status) => {
-    await supabase.from('ra_bills').update({ status }).eq('id', id)
-    onRefresh()
-    toast.success(`Marked ${status}`)
-  }
-
   return (
     <div className="space-y-3 p-4">
-      <CanonicalWorkspaceNotice
-        title="RA Billing manages the complete billing lifecycle"
-        description="BOQ keeps the contract quantities and progress summary. Create, certify, approve and record payment for RA bills in the dedicated RA Billing workspace."
-        actionLabel="Open RA Billing"
-        onAction={() => onOpenRABilling?.()}
-      />
-
-      <div className="flex justify-between items-center pt-1">
-        <p className="text-sm font-bold text-slate-300">RA bill summary ({raBills.length})</p>
-        <p className="text-xs text-slate-500">Read-only in BOQ</p>
+      <div className="flex flex-wrap justify-between items-center gap-3 pt-1">
+        <div>
+          <p className="text-sm font-bold text-slate-300">RA bill summary ({raBills.length})</p>
+          <p className="text-xs text-slate-500 mt-1">Raise a draft here; submit, approve and record payment in RA Billing.</p>
+        </div>
+        {canCreate && <button type="button" onClick={() => setShowCreate(true)} className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg bg-primary-600 hover:bg-primary-500 text-white">
+          <Plus className="w-3.5 h-3.5" /> Raise RA Bill from BOQ
+        </button>}
+        <button type="button" onClick={() => onOpenRABilling?.()} className="text-xs text-primary-400 hover:text-primary-300">Open RA Billing</button>
       </div>
 
       {raBills.length === 0 ? (
@@ -818,137 +717,9 @@ function RABillsTab({ boq, raBills, allItems, companyId, session, onRefresh, onO
         )
       })}
 
-      {/* Raise RA Bill Modal */}
-      {false && showCreate && (
-        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => setShowCreate(false)}>
-          <div className="bg-dark-900 border border-dark-700 rounded-2xl w-full max-w-3xl max-h-[92vh] flex flex-col shadow-2xl" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-5 py-4 border-b border-dark-700 shrink-0">
-              <div>
-                <p className="font-bold text-slate-100">Raise RA Bill</p>
-                <p className="text-xs text-slate-500">{boq.title} · {boq.contract_number || boq.boq_number}</p>
-              </div>
-              <button onClick={() => setShowCreate(false)} className="text-slate-500 hover:text-slate-300"><X className="w-4 h-4" /></button>
-            </div>
+      {showCreate && canCreate && <RaiseRABillModal key={boq.id} companyId={companyId} session={session} preselectedBoqId={boq.id}
+        onClose={() => setShowCreate(false)} onSaved={() => { setShowCreate(false); onRefresh() }} />}
 
-            <div className="flex-1 overflow-y-auto p-5 space-y-4">
-              {/* Dates */}
-              <div className="grid grid-cols-3 gap-3">
-                <Field label="Bill Date"><input type="date" className={inp()} value={raForm.bill_date} onChange={e => setRF('bill_date', e.target.value)} /></Field>
-                <Field label="Period From"><input type="date" className={inp()} value={raForm.period_from} onChange={e => setRF('period_from', e.target.value)} /></Field>
-                <Field label="Period To"><input type="date" className={inp()} value={raForm.period_to} onChange={e => setRF('period_to', e.target.value)} /></Field>
-              </div>
-
-              {/* Work Done Table */}
-              <div>
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Work Done This Bill</p>
-                <div className="border border-dark-700 rounded-xl overflow-hidden">
-                  <div className="grid text-[10px] text-slate-500 uppercase tracking-wider px-3 py-2 bg-dark-800"
-                    style={{ gridTemplateColumns: '1fr 50px 70px 70px 70px 80px' }}>
-                    <span>Item</span><span>Unit</span><span className="text-right">Rate</span>
-                    <span className="text-right">Prev Qty</span><span className="text-right">Cur Qty</span><span className="text-right">Amount</span>
-                  </div>
-                  {raLines.map((l, i) => {
-                    const remaining = Number(l.previous_qty ? (allItems.find(x => x.id === l.boq_item_id)?.quantity || 0) - l.previous_qty : allItems.find(x => x.id === l.boq_item_id)?.quantity || 0)
-                    return (
-                      <div key={l.boq_item_id} className="grid border-t border-dark-800 items-center px-3 py-2"
-                        style={{ gridTemplateColumns: '1fr 50px 70px 70px 70px 80px' }}>
-                        <div>
-                          <p className="text-xs text-slate-300 truncate">{l.description}</p>
-                          <p className="text-[10px] text-slate-600">Remaining: {remaining.toLocaleString()} {l.unit}</p>
-                        </div>
-                        <p className="text-xs text-slate-500">{l.unit}</p>
-                        <p className="text-xs text-slate-400 text-right">{fmtINR(l.rate)}</p>
-                        <p className="text-xs text-slate-500 text-right">{Number(l.previous_qty).toLocaleString()}</p>
-                        <input type="number" step="0.001" min="0"
-                          className="text-xs bg-dark-700 border border-dark-600 rounded px-2 py-1 text-right text-slate-100 focus:outline-none focus:border-primary-500 w-full"
-                          placeholder="0" value={l.current_qty}
-                          onChange={e => setRaLines(p => p.map((x, j) => j === i ? { ...x, current_qty: e.target.value } : x))} />
-                        <p className="text-xs font-semibold text-slate-200 text-right">{fmtINR((parseFloat(l.current_qty) || 0) * (l.rate || 0))}</p>
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-
-              {/* Tax */}
-              <div>
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Tax</p>
-                <div className="grid grid-cols-3 gap-3">
-                  <Field label="CGST %"><input type="number" className={inp()} value={raForm.cgst_rate} onChange={e => setRF('cgst_rate', e.target.value)} step="0.01" /></Field>
-                  <Field label="SGST %"><input type="number" className={inp()} value={raForm.sgst_rate} onChange={e => setRF('sgst_rate', e.target.value)} step="0.01" /></Field>
-                  <Field label="IGST %"><input type="number" className={inp()} value={raForm.igst_rate} onChange={e => setRF('igst_rate', e.target.value)} step="0.01" /></Field>
-                </div>
-              </div>
-
-              {/* Recoveries */}
-              <div className="bg-dark-800/60 border border-orange-700/20 rounded-xl p-4">
-                <p className="text-xs font-bold text-orange-400 uppercase tracking-wider mb-3">Recoveries & Deductions</p>
-                <div className="grid grid-cols-2 gap-3">
-                  <Field label="Mob. Advance Recovery (₹)" hint="Amount being recovered this RA">
-                    <input type="number" className={`${inp()} border-orange-700/40`} value={raForm.mob_advance_recovery} onChange={e => setRF('mob_advance_recovery', e.target.value)} step="0.01" />
-                  </Field>
-                  <Field label="Security Deposit (₹)">
-                    <input type="number" className={`${inp()} border-orange-700/40`} value={raForm.sd_amount} onChange={e => setRF('sd_amount', e.target.value)} step="0.01" />
-                  </Field>
-                  {boq.it_applicable && (
-                    <Field label={`Income Tax / TDS (%)`}>
-                      <div className="flex gap-2">
-                        <input type="number" className={`${inp()} border-orange-700/40`} value={raForm.income_tax_pct} onChange={e => setRF('income_tax_pct', e.target.value)} step="0.01" />
-                        <div className="flex items-center justify-center text-xs text-orange-400 font-bold w-24 bg-dark-700 border border-dark-600 rounded-lg shrink-0">{fmtINR(itAmt)}</div>
-                      </div>
-                    </Field>
-                  )}
-                  {boq.labour_cess_applicable && (
-                    <Field label="Labour Cess (%)">
-                      <div className="flex gap-2">
-                        <input type="number" className={`${inp()} border-orange-700/40`} value={raForm.labour_cess_pct} onChange={e => setRF('labour_cess_pct', e.target.value)} step="0.01" />
-                        <div className="flex items-center justify-center text-xs text-orange-400 font-bold w-24 bg-dark-700 border border-dark-600 rounded-lg shrink-0">{fmtINR(lcAmt)}</div>
-                      </div>
-                    </Field>
-                  )}
-                  <Field label="Other Deductions (₹)">
-                    <input type="number" className={`${inp()} border-orange-700/40`} value={raForm.other_deductions} onChange={e => setRF('other_deductions', e.target.value)} step="0.01" />
-                  </Field>
-                  <Field label="Deduction Description">
-                    <input className={inp()} placeholder="e.g. Penalty, Advance" value={raForm.other_deductions_note} onChange={e => setRF('other_deductions_note', e.target.value)} />
-                  </Field>
-                </div>
-              </div>
-
-              {/* Summary */}
-              <div className="bg-dark-800 border border-dark-700 rounded-xl p-4 space-y-1.5">
-                {[
-                  ['Value of Work Done', subtotal, 'text-slate-300'],
-                  cgst > 0 ? ['CGST', cgst, 'text-slate-400'] : null,
-                  sgst > 0 ? ['SGST', sgst, 'text-slate-400'] : null,
-                  igst > 0 ? ['IGST', igst, 'text-slate-400'] : null,
-                  ['Gross Amount (incl. Tax)', grossWithTax, 'text-slate-200 font-bold'],
-                  mobRec > 0 ? ['Less: Mob. Advance Recovery', -mobRec, 'text-orange-400'] : null,
-                  itAmt > 0  ? [`Less: TDS @ ${raForm.income_tax_pct}%`, -itAmt, 'text-orange-400'] : null,
-                  lcAmt > 0  ? [`Less: Labour Cess @ ${raForm.labour_cess_pct}%`, -lcAmt, 'text-orange-400'] : null,
-                  sdAmt > 0  ? ['Less: Security Deposit', -sdAmt, 'text-orange-400'] : null,
-                  otherDed > 0 ? [`Less: ${raForm.other_deductions_note || 'Other Deductions'}`, -otherDed, 'text-orange-400'] : null,
-                  ['NET PAYABLE', netPayable, 'text-emerald-400 font-black text-base'],
-                ].filter(Boolean).map(([label, val, cls]) => (
-                  <div key={label} className="flex justify-between">
-                    <span className="text-xs text-slate-500">{label}</span>
-                    <span className={`text-xs ${cls}`}>{val < 0 ? '−' : ''}{fmtINR(Math.abs(val))}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="flex gap-3 justify-end px-5 pb-5 pt-3 border-t border-dark-800 shrink-0">
-              <button onClick={() => setShowCreate(false)} className="px-4 py-2 text-sm text-slate-400 hover:text-slate-200">Cancel</button>
-              <button onClick={saveRA} disabled={saving}
-                className="flex items-center gap-2 px-5 py-2 bg-primary-600 hover:bg-primary-500 text-white text-sm font-bold rounded-xl">
-                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
-                Raise RA Bill — {fmtINR(netPayable)}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }
@@ -1062,7 +833,7 @@ function BOQDetail({ boq: initialBoq, companyId, session, onBack, onNavigate }) 
         </div>
 
         {/* Summary tiles */}
-        <div className="grid grid-cols-4 gap-2 mt-1">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-1">
           <div className="bg-dark-800 rounded-lg p-2 text-center">
             <p className="text-[10px] text-slate-500">Contract Value</p>
             <p className="text-sm font-black text-slate-100">{fmtINR(totalValue)}</p>
@@ -1130,7 +901,6 @@ function BOQDetail({ boq: initialBoq, companyId, session, onBack, onNavigate }) 
           <RABillsTab
             boq={boq}
             raBills={raBills}
-            allItems={allItems}
             companyId={companyId}
             session={session}
             onRefresh={() => { refetchRA(); refreshBoq() }}
