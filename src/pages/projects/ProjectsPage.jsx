@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
+import { buildInvoiceReceivables, fetchReceivablesRows, groupInvoiceReceivables, invoiceReceivablesBasis, localReportDate } from '../../lib/invoiceReceivables'
 import PagePanel from '../../components/shared/PagePanel'
 import { useAuth } from '../../contexts/AuthContext'
 import { useDisplayMode } from '../../contexts/DisplayModeContext'
@@ -3023,7 +3024,7 @@ function ProjectDetail({ project, companyId, docTotals, onClose, onEdit, onDelet
 
 // ── Project Card ───────────────────────────────────────────────────────────────
 
-function ProjectCard({ project, docTotals, outstandingDues, onClick }) {
+function ProjectCard({ project, docTotals, receivables, onClick }) {
   const clientName = project.clients?.display_name || project.clients?.business_name
   const mapsHref = project.site_lat && project.site_lng
     ? `https://maps.google.com/?q=${project.site_lat},${project.site_lng}`
@@ -3043,11 +3044,6 @@ function ProjectCard({ project, docTotals, outstandingDues, onClick }) {
         </div>
         <div className="flex items-center gap-1.5">
           <StatusBadge status={project.status}/>
-          {outstandingDues > 0 && ['completed','closed','terminated'].includes(project.status) && (
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-orange-500/15 text-orange-300 border border-orange-500/30">
-              <AlertTriangle className="w-2.5 h-2.5"/> Dues ₹{outstandingDues.toLocaleString('en-IN')}
-            </span>
-          )}
         </div>
       </div>
       <div className="flex flex-wrap gap-2 mb-3">
@@ -3095,6 +3091,18 @@ function ProjectCard({ project, docTotals, outstandingDues, onClick }) {
           </div>
         )}
       </div>
+      {receivables?.balance > 0 && (
+        <div className="mt-3 pt-3 border-t border-dark-700 grid grid-cols-2 gap-3 text-xs">
+          <div>
+            <p className="text-slate-500">Outstanding</p>
+            <p className="mt-1 font-semibold text-orange-300 tabular-nums">{fmt(receivables.balance)}</p>
+          </div>
+          <div>
+            <p className="text-slate-500">Overdue</p>
+            <p className={`mt-1 font-semibold tabular-nums ${receivables.overdue > 0 ? 'text-red-400' : 'text-slate-400'}`}>₹{receivables.overdue.toLocaleString('en-IN')}</p>
+          </div>
+        </div>
+      )}
     </button>
   )
 }
@@ -3112,6 +3120,7 @@ export default function ProjectsPage({ onNavigate, initialProjectId = null, init
   const [showAdd, setShowAdd]   = useState(false)
   const [editing, setEditing]   = useState(null)
   const [viewing, setViewing]   = useState(null)
+  const [includeProforma, setIncludeProforma] = useState(false)
   const openedProjectId = useRef(null)
 
   const { data: projects = [], isLoading, isError, error, refetch } = useQuery({
@@ -3175,31 +3184,21 @@ export default function ProjectsPage({ onNavigate, initialProjectId = null, init
     enabled: !!companyId,
   })
 
-  // Outstanding dues for closed/completed/terminated projects — one query, summed per project
-  const { data: closedProjectDues = [] } = useQuery({
-    queryKey: ['closed_project_dues', companyId],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from('client_invoices')
-        .select('project_id, balance_due')
-        .eq('company_id', companyId)
-        .gt('balance_due', 0)
-        .neq('status', 'cancelled')
-        .not('project_id', 'is', null)
-      return data || []
-    },
-    staleTime: 30_000,
+  // Use the same complete invoice history and calendar-day rules as Receivables.
+  const reportDate = localReportDate()
+  const { data: projectInvoices = [], isPending: duesLoading, isError: duesError, refetch: refetchDues } = useQuery({
+    queryKey: ['project_receivables', companyId, reportDate],
+    queryFn: () => fetchReceivablesRows(supabase, 'client_invoices',
+      'id, project_id, project_name, client_name, client_gstin, invoice_number, invoice_date, due_date, total_amount, paid_amount, invoice_type, converted_from_id, status', companyId),
+    staleTime: 0,
+    refetchInterval: 30_000,
     enabled: !!companyId,
   })
 
-  // { [project_id]: totalOutstanding }
-  const outstandingByProject = useMemo(() => {
-    const map = {}
-    closedProjectDues.forEach(r => {
-      map[r.project_id] = (map[r.project_id] || 0) + (Number(r.balance_due) || 0)
-    })
-    return map
-  }, [closedProjectDues])
+  const receivablesByProject = useMemo(() => Object.fromEntries(
+    groupInvoiceReceivables(buildInvoiceReceivables(projectInvoices, [], projects, reportDate, { includeProforma }), 'project')
+      .map(group => [group.key, group])
+  ), [projectInvoices, projects, reportDate, includeProforma])
 
   // Fetch all document amounts for this company in one shot → sum per project
   const { data: allDocAmounts = [] } = useQuery({
@@ -3351,6 +3350,19 @@ export default function ProjectsPage({ onNavigate, initialProjectId = null, init
 
       {/* Grid */}
       <div className="flex-1 overflow-y-auto p-6">
+        <div className="mb-4 space-y-2 text-xs text-slate-500">
+          <label className="flex items-center gap-2 w-fit cursor-pointer">
+            <input type="checkbox" checked={includeProforma} onChange={event => setIncludeProforma(event.target.checked)} className="accent-primary-600" />
+            Include unconverted proforma invoices
+          </label>
+          <p>{invoiceReceivablesBasis(includeProforma)} Overdue means an unpaid balance past its invoice due date.</p>
+          {duesError ? (
+            <div role="alert" className="flex flex-wrap items-center gap-2 text-red-400">
+              <span>Invoice amounts could not be loaded.</span>
+              <button type="button" onClick={() => refetchDues()} className="underline font-medium">Retry invoice amounts</button>
+            </div>
+          ) : duesLoading && <p role="status">Loading invoice amounts…</p>}
+        </div>
         {isLoading ? (
           <div className="flex items-center justify-center h-40 text-slate-500 text-sm">Loading…</div>
         ) : isError ? (
@@ -3371,7 +3383,7 @@ export default function ProjectsPage({ onNavigate, initialProjectId = null, init
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filtered.map(p => <ProjectCard key={p.id} project={p} docTotals={docTotalsByProject[p.id]} outstandingDues={outstandingByProject[p.id] || 0} onClick={() => openProject(p)}/>)}
+            {filtered.map(p => <ProjectCard key={p.id} project={p} docTotals={docTotalsByProject[p.id]} receivables={duesError ? null : receivablesByProject[`project:${p.id}`]} onClick={() => openProject(p)}/>)}
           </div>
         )}
       </div>
