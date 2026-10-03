@@ -4,8 +4,10 @@ on:
     paths:
       - 'src/pages/reports/**'
       - 'src/pages/sales/SalesPage.jsx'
+      - 'src/pages/projects/ProjectsPage.jsx'
       - 'src/lib/invoiceReceivables*'
       - 'tests/invoiceReceivables*'
+      - 'tests/projectReceivables.browser.mjs'
       - '.github/workflows/invoice-receivables.yml'
 jobs:
   verify:
@@ -23,11 +25,12 @@ jobs:
           cache: npm
       - run: npm ci
       - run: node --test tests/*.test.js
-      - run: npx eslint src/pages/reports/ReportsPage.jsx src/pages/reports/InvoiceReceivablesReport.jsx src/pages/sales/SalesPage.jsx src/lib/invoiceReceivables.js src/lib/invoiceReceivablesExport.js tests/invoiceReceivables.test.js tests/invoiceReceivablesExport.test.js
+      - run: npx eslint src/pages/reports/ReportsPage.jsx src/pages/reports/InvoiceReceivablesReport.jsx src/pages/sales/SalesPage.jsx src/pages/projects/ProjectsPage.jsx src/lib/invoiceReceivables.js src/lib/invoiceReceivablesExport.js tests/invoiceReceivables.test.js tests/invoiceReceivablesExport.test.js
       - run: npm run build
       - run: npm install --no-save --package-lock=false playwright@1.58.2
       - run: npx playwright install --with-deps chromium
       - run: node tests/invoiceReceivables.browser.mjs
+      - run: node tests/projectReceivables.browser.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
