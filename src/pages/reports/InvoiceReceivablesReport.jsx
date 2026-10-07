@@ -67,7 +67,7 @@ export default function InvoiceReceivablesReport({ companyId, onNavigate }) {
     try {
       const exporter = await import('../../lib/invoiceReceivablesExport')
       const report = { rows: filtered, companyName, reportDate, filterDescription, view, includeProforma: filters.includeProforma }
-      await (type === 'pdf' ? exporter.downloadInvoiceReceivablesPDF(report) : exporter.downloadInvoiceReceivablesExcel(report))
+      await ({ pdf: exporter.downloadInvoiceReceivablesPDF, excel: exporter.downloadInvoiceReceivablesExcel, csv: exporter.downloadInvoiceReceivablesCSV })[type](report)
     } catch (e) { setExportError(e.message || 'Download failed. Please try again.') }
     finally { setExporting('') }
   }
@@ -89,6 +89,7 @@ export default function InvoiceReceivablesReport({ companyId, onNavigate }) {
         <button onClick={() => refetch()} disabled={isFetching} className={button}>{isFetching ? 'Refreshing…' : 'Refresh'}</button>
         <button onClick={() => download('pdf')} disabled={!!exporting || isFetching || !filtered.length} className={button}>{exporting === 'pdf' ? 'Preparing PDF…' : 'Download PDF'}</button>
         <button onClick={() => download('excel')} disabled={!!exporting || isFetching || !filtered.length} className={button}>{exporting === 'excel' ? 'Preparing Excel…' : 'Download Excel'}</button>
+        <button onClick={() => download('csv')} disabled={!!exporting || isFetching || !filtered.length} className={button}>{exporting === 'csv' ? 'Preparing CSV…' : 'Download CSV'}</button>
       </div>
     </div>
     <p className="text-xs text-slate-400">Current balances as of {reportDate}. All invoice dates are included unless you select a date range.</p>

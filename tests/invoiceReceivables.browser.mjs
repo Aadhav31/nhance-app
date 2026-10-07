@@ -44,7 +44,7 @@ const server = await createServer({ configFile: false, root: temporary, plugins:
 let browser
 try {
   await server.listen()
-  browser = await chromium.launch()
+  browser = await chromium.launch(process.env.CHROMIUM_EXECUTABLE ? { executablePath: process.env.CHROMIUM_EXECUTABLE, args: ['--no-sandbox'] } : {})
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, acceptDownloads: true })
   const errors = []
   page.on('pageerror', e => errors.push(e.message))
