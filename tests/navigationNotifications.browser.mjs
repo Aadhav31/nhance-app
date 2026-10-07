@@ -46,7 +46,21 @@ async function rpcFixture(_,name,params,scope){
 }
 await writeFile(join(temporary, 'supabase.js'), `
 const handlers=[];window.emitNotificationUpdate=()=>handlers.forEach(h=>h());window.injectNotification=async row=>{await window.fixtureRpc('inject',row,{search:location.search});window.emitNotificationUpdate()};
-export const supabase={rpc(name,params){window.rpcCalls=(window.rpcCalls||[]).concat({name,params});return window.fixtureRpc(name,params,{search:location.search,recovered:window.recovered,failReads:window.failReads})},channel(){const callbacks=[];const channel={on(event,filter,callback){if(event==='postgres_changes')callbacks.push(callback);window.subscriptions=(window.subscriptions||[]).concat(filter);return channel},subscribe(callback){handlers.push(...callbacks);callback?.('SUBSCRIBED');return channel},callbacks};return channel},removeChannel(channel){window.removedChannels=(window.removedChannels||0)+1;channel.callbacks.forEach(callback=>{const index=handlers.indexOf(callback);if(index>=0)handlers.splice(index,1)})},from(table){const filters={},actions=[];let columns;const q={select(value){columns=value;return q},eq(key,value){filters[key]=value;return q},is(key,value){filters[key]=value;return q},or(value){filters.recipient=value;return q},in(){return q},not(){return q},neq(){return q},gt(){return q},gte(){return q},lte(){return q},order(){return q},limit(){return q},update(value){actions.push(value);return q},maybeSingle(){filters.single=true;return q},then(resolve){window.queries=(window.queries||[]).concat({table,filters,columns,actions});if(table==='approval_task_inbox'&&location.search.includes('legacy'))return Promise.resolve({error:{code:'PGRST205',message:'Could not find the table approval_task_inbox'}}).then(resolve);if(table.startsWith('approval_'))return Promise.resolve({count:3,error:null}).then(resolve);if(table==='shift_incidents'){if(columns?.includes('incident_date')||filters.status)return Promise.resolve({error:{message:'Invalid incident columns'}}).then(resolve);return Promise.resolve({data:[{id:'${id(60)}',equipment_id:'${id(61)}',incident_type:'damage',incident_time:'2026-10-01T08:00:00Z',equipment:{name:'Loader 61'}}],error:null}).then(resolve)}return Promise.resolve({data:filters.single?null:[],error:null}).then(resolve)}};return q}};
+export const supabase={rpc(name,params){window.rpcCalls=(window.rpcCalls||[]).concat({name,params});return window.fixtureRpc(name,params,{search:location.search,recovered:window.recovered,failReads:window.failReads})},channel(){const callbacks=[];const channel={on(event,filter,callback){if(event==='postgres_changes')callbacks.push(callback);window.subscriptions=(window.subscriptions||[]).concat(filter);return channel},subscribe(callback){handlers.push(...callbacks);callback?.('SUBSCRIBED');return channel},callbacks};return channel},removeChannel(channel){window.removedChannels=(window.removedChannels||0)+1;channel.callbacks.forEach(callback=>{const index=handlers.indexOf(callback);if(index>=0)handlers.splice(index,1)})},from(table){const filters={},actions=[];let columns;const q={select(value){columns=value;return q},eq(key,value){filters[key]=value;return q},is(key,value){filters[key]=value;return q},or(value){filters.recipient=value;return q},in(){return q},not(){return q},neq(){return q},gt(){return q},gte(){return q},lte(){return q},order(){return q},limit(){return q},update(value){actions.push(value);return q},maybeSingle(){filters.single=true;return q},then(resolve){window.queries=(window.queries||[]).concat({table,filters,columns,actions});if(table==='approval_task_inbox'&&location.search.includes('legacy'))return Promise.resolve({error:{code:'PGRST205',message:'Could not find the table approval_task_inbox'}}).then(resolve);if(table.startsWith('approval_'))return Promise.resolve({count:3,error:null}).then(resolve);
+if(table==='leave_requests')return Promise.resolve({error:{code:'PGRST205',message:'Unknown leave_requests table'}}).then(resolve);
+if(table==='hr_leaves'){
+  if(columns.includes('employee_name')||!columns.includes('employee:employee_id(name)'))return Promise.resolve({error:{message:'Invalid leave columns'}}).then(resolve);
+  return new Promise(done=>setTimeout(()=>done(location.search.includes('dashboard-query-error')&&!window.leavesRecovered?{error:{message:'Leave request network failure'}}:{data:[{id:'leave-1',status:'pending',from_date:'2026-10-04',to_date:'2026-10-05',leave_type:'casual',employee:{name:'Demo Worker'}}],error:null}),300)).then(resolve);
+}
+if(table==='shifts'&&location.search.includes('full-dashboard')){
+  if(columns.includes('equipment_name')||columns.includes('fuel_filled'))return Promise.resolve({error:{message:'Invalid shift columns'}}).then(resolve);
+  if(columns.includes('fuel_entries:shift_fuel_entries'))return Promise.resolve({data:[{id:'demo-shift',status:'open',shift_date:new Date().toISOString().slice(0,10),working_hours:7.5,operator_name:'Demo Operator',equipment:{name:'Demo Excavator'},fuel_entries:[{quantity_liters:'25.5'},{quantity_liters:10}]}],error:null}).then(resolve);
+}
+if(table==='maintenance_records'){
+  if(columns.split(',').includes('title'))return Promise.resolve({error:{message:'Invalid maintenance title column'}}).then(resolve);
+  if(location.search.includes('full-dashboard'))return Promise.resolve({data:[{id:'maintenance-1',description:'Replace hydraulic hose',status:'open'}],error:null}).then(resolve);
+}
+if(table==='shift_incidents'){if(columns?.includes('incident_date')||filters.status)return Promise.resolve({error:{message:'Invalid incident columns'}}).then(resolve);return Promise.resolve({data:[{id:'${id(60)}',equipment_id:'${id(61)}',incident_type:'damage',incident_time:'2026-10-01T08:00:00Z',equipment:{name:'Loader 61'}}],error:null}).then(resolve)}return Promise.resolve({data:filters.single?null:[],error:null}).then(resolve)}};return q}};
 `)
 await writeFile(join(temporary, 'index.html'), '<div id="root"></div><script type="module" src="/main.jsx"></script>')
 await writeFile(join(temporary, 'main.jsx'), `import React,{useState} from 'react';import {createRoot} from 'react-dom/client';import {QueryClient,QueryClientProvider} from '@tanstack/react-query';import TopBar from ${JSON.stringify(join(root, 'src/components/layout/TopBar.jsx'))};import RightBar from ${JSON.stringify(join(root, 'src/components/layout/RightBar.jsx'))};import HomeNotificationAlerts from ${JSON.stringify(join(root, 'src/components/shared/HomeNotificationAlerts.jsx'))};import DashboardPage from ${JSON.stringify(join(root, 'src/pages/dashboard/DashboardPage.jsx'))};import OperatorPortal from ${JSON.stringify(join(root,'src/pages/operator/OperatorPortal.jsx'))};import ${JSON.stringify(join(root, 'src/index.css'))};document.documentElement.setAttribute('data-theme','dark');function Preview(){const [page,setPage]=useState('dashboard');if(new URLSearchParams(location.search).has('operator-portal'))return <OperatorPortal/>;return <div className="flex h-screen bg-dark-900"><div className="hidden lg:flex w-60 flex-col bg-dark-800 border-r border-dark-600 p-6"><div className="text-xl font-bold text-primary-400">NHANCE</div><p className="text-xs text-slate-500 mt-2">Fleet & operations</p><div className="text-sm mt-10 text-slate-300">Dashboard</div><div className="text-sm mt-6 text-slate-500">Equipments & Machineries</div><div className="text-sm mt-6 text-slate-500">Daily Operations</div><div className="text-sm mt-6 text-slate-500">Fuel Reconciliation</div></div><div className="flex flex-1 min-w-0 flex-col"><TopBar activePage={page} onNavigate={setPage} onMenuToggle={()=>{}}/><main className="flex-1 overflow-y-auto p-6 min-w-0">{new URLSearchParams(location.search).has('full-dashboard')?<DashboardPage onNavigate={setPage}/>:<>{page==='dashboard'&&<HomeNotificationAlerts onNavigate={setPage}/>}<h2 data-testid="current-page" className="text-lg font-bold text-slate-100">{page==='approval_center'?'Approval Centre':page==='dashboard'?'Operations overview':page}</h2><p className="text-sm text-slate-500 mt-2">Your fleet and project updates at a glance</p><div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-6">{['Active equipment','Open projects','Daily operations'].map((label,index)=><div key={label} className="p-5 rounded-xl bg-dark-800 border border-dark-600"><p className="text-sm text-slate-400">{label}</p><p className="text-2xl font-bold text-slate-100 mt-3">{[18,6,24][index]}</p></div>)}</div></>}</main></div>{page!=='chat'&&<RightBar activePage={page} onNavigate={setPage}/>}</div>}createRoot(document.getElementById('root')).render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><Preview/></QueryClientProvider>);`)
@@ -191,6 +205,38 @@ try {
   const queries=await page.evaluate(()=>window.queries)
   assert.ok(queries.some(q=>q.table==='shift_incidents'&&q.filters.recipient==='resolved.eq.false,resolved.is.null'&&q.columns.includes('incident_time')))
   assert.ok(queries.some(q=>q.table==='breakdown_alerts'&&q.filters.resolved_at===null))
+  await page.getByText('1 leave request pending approval', {exact:true}).waitFor()
+  await page.getByText('Demo Worker', {exact:true}).waitFor()
+  assert.equal(await page.getByRole('alert').filter({hasText:'Some operational alerts could not load'}).count(),0)
+  assert.ok(queries.some(q=>q.table==='hr_leaves'&&q.filters.company_id===company&&q.filters.status==='pending'&&q.columns.includes('employee:employee_id(name)')))
+  assert.ok(queries.every(q=>q.table!=='leave_requests'))
+  await page.getByText('Demo Excavator', {exact:true}).first().waitFor()
+  await page.getByText('35.5', {exact:true}).waitFor()
+  await page.getByText('Open Maintenance', {exact:true}).click()
+  await page.getByText('Replace hydraulic hose', {exact:true}).waitFor()
+  await page.getByRole('button',{name:'Close',exact:true}).click()
+  await page.screenshot({path:join(artifacts,'dashboard-alerts-repaired-desktop.png'),fullPage:true})
+  await page.goto('http://127.0.0.1:4180?full-dashboard&dashboard-query-error')
+  const alertError=page.getByRole('alert').filter({hasText:'Some operational alerts could not load'})
+  await alertError.waitFor()
+  assert.match(await alertError.innerText(),/Leave requests/)
+  const beforeRetry=await page.evaluate(()=>window.queries.length)
+  await page.getByRole('button',{name:'Retry alerts',exact:true}).click()
+  await page.getByRole('button',{name:'Retrying alerts…',exact:true}).waitFor()
+  assert.equal(await page.getByRole('button',{name:'Retrying alerts…',exact:true}).isDisabled(),true)
+  await page.getByRole('button',{name:'Retry alerts',exact:true}).waitFor()
+  assert.equal(await alertError.count(),1)
+  await page.evaluate(()=>{window.leavesRecovered=true})
+  await page.getByRole('button',{name:'Retry alerts',exact:true}).click()
+  await alertError.waitFor({state:'hidden'})
+  await page.getByText('1 leave request pending approval',{exact:true}).waitFor()
+  const retryQueries=await page.evaluate(start=>window.queries.slice(start),beforeRetry)
+  assert.ok(retryQueries.length>=2)
+  assert.ok(retryQueries.every(q=>q.table==='hr_leaves'),'Retry does not reload successful alert sources')
+  await page.setViewportSize({width:390,height:844})
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false)
+  await page.screenshot({path:join(artifacts,'dashboard-alerts-repaired-mobile.png'),fullPage:true})
+  await page.setViewportSize({width:1440,height:960})
   await page.goto('http://127.0.0.1:4180?operator')
   await home.getByText('Breakdown — EX-001').waitFor()
   assert.equal(await home.getByRole('button',{name:'Review details'}).count(),0)

@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
+import { fetchDashboardShifts, fetchPendingDashboardLeaves } from '../../lib/dashboardData'
 import { useAuth } from '../../contexts/AuthContext'
 import {
   ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid,
@@ -208,7 +209,7 @@ function DetailPanel({ title, onClose, onNavigate, navKey, navLabel, children })
                 {navLabel || 'View All'} <ChevronRight size={13} />
               </button>
             )}
-            <button onClick={onClose} className="text-slate-500 hover:text-slate-200 p-1">
+            <button onClick={onClose} aria-label="Close" className="text-slate-500 hover:text-slate-200 p-1">
               <X size={16} />
             </button>
           </div>
@@ -488,14 +489,7 @@ function usePaymentsData(companyId, range) {
 function useShiftData(companyId, range) {
   return useQuery({
     queryKey: ['dash_shifts', companyId, range],
-    queryFn: async () => {
-      const { data } = await supabase.from('shifts')
-        .select('id,status,shift_date,equipment_name,operator_name,working_hours,fuel_filled')
-        .eq('company_id', companyId)
-        .gte('shift_date', range.from).lte('shift_date', range.to)
-        .order('shift_date', { ascending: false })
-      return data || []
-    },
+    queryFn: () => fetchDashboardShifts(supabase, companyId, range),
     staleTime: 30_000, enabled: !!companyId,
   })
 }
@@ -1176,9 +1170,10 @@ function OperationsSection({ companyId, range, onNavigate }) {
   const { data: maintenance = [] } = useQuery({
     queryKey: ['dash_maint', companyId],
     queryFn: async () => {
-      const { data } = await supabase.from('maintenance_records')
-        .select('id,title,status,equipment_id').eq('company_id', companyId)
+      const { data, error } = await supabase.from('maintenance_records')
+        .select('id,description,status,equipment_id').eq('company_id', companyId)
         .in('status', ['open', 'in_progress'])
+      if (error) throw error
       return data || []
     },
     staleTime: 60_000, enabled: !!companyId,
@@ -1262,7 +1257,7 @@ function OperationsSection({ companyId, range, onNavigate }) {
           {maintenance.length === 0
             ? <p className="text-sm text-slate-500 text-center py-8">No open maintenance issues</p>
             : maintenance.map(m => (
-              <DetailRow key={m.id} title={m.title || 'Maintenance'} badge={m.status} />
+              <DetailRow key={m.id} title={m.description || 'Maintenance'} badge={m.status} />
             ))
           }
         </DetailPanel>
@@ -1279,12 +1274,7 @@ function HRSection({ companyId, range, onNavigate }) {
 
   const { data: leaves = [] } = useQuery({
     queryKey: ['dash_leaves', companyId],
-    queryFn: async () => {
-      const { data } = await supabase.from('leave_requests')
-        .select('id,employee_name,from_date,to_date,status,leave_type')
-        .eq('company_id', companyId).eq('status', 'pending')
-      return data || []
-    },
+    queryFn: () => fetchPendingDashboardLeaves(supabase, companyId),
     staleTime: 60_000, enabled: !!companyId,
   })
 
@@ -1684,6 +1674,7 @@ function BreakdownAlarm({ companyId, userProfile }) {
 
 function useAlerts(companyId) {
   const { role, hasModule } = useAuth()
+  const [retryState, setRetryState] = useState(null)
   const allowed = page => !!companyId && canAccessPage(page, { role, hasModule })
   const today = new Date().toISOString().slice(0, 10)
   const in7   = new Date(Date.now() +  7 * 86_400_000).toISOString().slice(0, 10)
@@ -1755,15 +1746,8 @@ function useAlerts(companyId) {
 
   // 5. Pending leave requests
   const { data: leaveAlerts = [], isError: leaveError, refetch: leaveRetry } = useQuery({
-    queryKey: ['alerts_leaves', companyId],
-    queryFn: async () => {
-      const { data, error } = await supabase.from('leave_requests')
-        .select('id, employee_name, from_date, leave_type')
-        .eq('company_id', companyId)
-        .eq('status', 'pending')
-      if (error) throw error
-      return data || []
-    },
+    queryKey: ['dash_leaves', companyId],
+    queryFn: () => fetchPendingDashboardLeaves(supabase, companyId),
     staleTime: 120_000, enabled: allowed('hr'),
   })
 
@@ -1892,8 +1876,35 @@ function useAlerts(companyId) {
 
     return items
   }, [eqAlerts, docAlerts, invoiceAlerts, billAlerts, leaveAlerts, incidentAlerts, unloggedAlerts, today])
-  return { items: items.filter(item => allowed(item.nav)), failed: eqError || docError || invoiceError || billError || leaveError || incidentError || unloggedError,
-    retry: () => [[eqRetry,'fleet'],[docRetry,'fleet'],[invoiceRetry,'sales'],[billRetry,'purchase'],[leaveRetry,'hr'],[incidentRetry,'fleet'],[unloggedRetry,'operations']].forEach(([refetch,page]) => { if (allowed(page)) refetch() }) }
+  const failures = [
+    [eqError, eqRetry, 'fleet', 'Fleet status'],
+    [docError, docRetry, 'fleet', 'Equipment documents'],
+    [invoiceError, invoiceRetry, 'sales', 'Invoices'],
+    [billError, billRetry, 'purchase', 'Bills'],
+    [leaveError, leaveRetry, 'hr', 'Leave requests'],
+    [incidentError, incidentRetry, 'fleet', 'Incidents'],
+    [unloggedError, unloggedRetry, 'operations', 'Daily logs'],
+  ].filter(([failed, , page]) => failed && allowed(page) && (page !== 'operations' || allowed('fleet')))
+  const retrying = !!retryState && retryState.companyId === companyId
+  const failedSources = [...new Set([
+    ...failures.map(([, , , label]) => label),
+    ...(retrying ? retryState.labels : []),
+  ])]
+  return {
+    items: items.filter(item => allowed(item.nav)),
+    failed: failedSources.length > 0,
+    failedSources,
+    retrying,
+    retry: async () => {
+      const attempt = { companyId, labels: failures.map(([, , , label]) => label) }
+      setRetryState(attempt)
+      try {
+        await Promise.all(failures.map(([, refetch]) => refetch()))
+      } finally {
+        setRetryState(current => current === attempt ? null : current)
+      }
+    },
+  }
 }
 
 // ── AlertStrip ────────────────────────────────────────────────────────────────
@@ -1965,29 +1976,20 @@ function OperatorDashboard({ companyId, userId, range, onNavigate }) {
   const [panel, setPanel] = useState(null)
 
   const { data: employee } = useQuery({
-    queryKey: ['dash_op_employee', userId],
+    queryKey: ['dash_op_employee', companyId, userId],
     queryFn: async () => {
       const { data } = await supabase.from('hr_employees')
-        .select('id,name').eq('user_id', userId).maybeSingle()
+        .select('id,name').eq('company_id', companyId).eq('user_id', userId).maybeSingle()
       return data || null
     },
-    enabled: !!userId, staleTime: 120_000,
+    enabled: !!companyId && !!userId, staleTime: 120_000,
   })
   const employeeId = employee?.id || null
 
   const { data: myShifts = [] } = useQuery({
     queryKey: ['dash_my_shifts', companyId, employeeId, range],
-    queryFn: async () => {
-      let q = supabase.from('shifts')
-        .select('id,status,shift_date,equipment_name,start_time,working_hours,fuel_filled')
-        .eq('company_id', companyId)
-        .gte('shift_date', range.from).lte('shift_date', range.to)
-        .order('shift_date', { ascending: false })
-      if (employeeId) q = q.eq('operator_id', employeeId)
-      const { data } = await q
-      return data || []
-    },
-    staleTime: 30_000, enabled: !!companyId,
+    queryFn: () => fetchDashboardShifts(supabase, companyId, range, employeeId),
+    staleTime: 30_000, enabled: !!companyId && !!employeeId,
   })
 
   const openShift  = myShifts.find(s => s.status === 'open')
@@ -2078,7 +2080,7 @@ export default function DashboardPage({ onNavigate }) {
 
       {/* Smart alert strip — floats above sections for admin/supervisor */}
       {(isAdmin || isSupervisor) && <>
-        {alerts.failed && <div role="alert" className="card p-4 text-sm text-amber-400">Some operational alerts could not load. <button type="button" onClick={alerts.retry} className="btn-ghost text-xs ml-2">Retry alerts</button></div>}
+        {alerts.failed && <div role="alert" className="card p-4 text-sm text-amber-400">Some operational alerts could not load: {alerts.failedSources.join(', ')}. <button type="button" onClick={alerts.retry} disabled={alerts.retrying} className="btn-ghost text-xs ml-2 disabled:opacity-50">{alerts.retrying ? 'Retrying alerts…' : 'Retry alerts'}</button></div>}
         <AlertStrip alerts={alerts.items} onNavigate={onNavigate} />
       </>}
 

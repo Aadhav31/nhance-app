@@ -6,6 +6,7 @@ on:
       - src/hooks/useApprovalBadge.js
       - src/hooks/useNotifications.js
       - src/lib/notifications.js
+      - src/lib/dashboardData.js
       - src/components/shared/HomeNotificationAlerts.jsx
       - src/pages/dashboard/DashboardPage.jsx
       - src/pages/operator/OperatorPortal.jsx
