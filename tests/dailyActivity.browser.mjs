@@ -1,0 +1,127 @@
+import assert from 'node:assert/strict'
+import { mkdir, mkdtemp, writeFile, readFile, rm } from 'node:fs/promises'
+import { join, resolve } from 'node:path'
+import { createServer } from 'vite'
+import react from '@vitejs/plugin-react'
+import tailwindcss from 'tailwindcss'
+import autoprefixer from 'autoprefixer'
+import { chromium } from 'playwright'
+import * as XLSX from 'xlsx'
+
+const root = resolve('.'), temporary = await mkdtemp(join(root, '.activity-browser-'))
+const artifacts = resolve(process.env.ACTIVITY_ARTIFACT_DIR || 'test-artifacts/activity')
+await mkdir(artifacts, { recursive: true })
+await writeFile(join(temporary, 'supabase.js'), `import {activityFixture,fakeActivityDB} from ${JSON.stringify(join(root, 'tests/dailyActivity.fixture.mjs'))};
+const large=location.search.includes('large'), count=large?1500:61;
+const rows=[...activityFixture,...Array.from({length:count},(_,i)=>({...activityFixture[0],id:'extra-'+i,event_no:100+i,record_ref:'BULK-'+i,new_data:{invoice_number:'BULK-'+i,quantity_liters:i+1},changed_fields:['invoice_number','quantity_liters'],created_at:'2026-10-03T13:00:00Z'}))];
+window.activityOptions={cap:137,fail:location.search.includes('fail'),empty:location.search.includes('partial')};
+export const supabase=fakeActivityDB(rows,window.activityOptions);window.activityReads=supabase.reads;`)
+await writeFile(join(temporary, 'auth.js'), `export const useAuth=()=>({companyId:location.search.includes('no-company')?null:'test-company',role:location.search.includes('manager')?'manager':'admin',company:{name:'Nhance Activity Test'}});`)
+await writeFile(join(temporary, 'index.html'), '<div id="root"></div><script type="module" src="/main.jsx"></script>')
+await writeFile(join(temporary, 'main.jsx'), `import React from 'react';import {createRoot} from 'react-dom/client';import {QueryClient,QueryClientProvider} from '@tanstack/react-query';import ReportsPage from ${JSON.stringify(join(root, 'src/pages/reports/ReportsPage.jsx'))};import ${JSON.stringify(join(root, 'src/index.css'))};
+window.activityRoutes=[];createRoot(document.getElementById('root')).render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><div style={{height:'100vh'}}><ReportsPage initialReport="daily_activity" initialTo="2026-10-03" onNavigate={(...args)=>window.activityRoutes.push(args)} /></div></QueryClientProvider>);`)
+const server = await createServer({ configFile: false, root: temporary, plugins: [react(), { name: 'mock-daily-activity', enforce: 'pre', resolveId(source) {
+  if (/\/supabase(\.js)?$/.test(source)) return join(temporary, 'supabase.js')
+  if (/\/AuthContext(\.jsx)?$/.test(source)) return join(temporary, 'auth.js')
+} }], optimizeDeps: { include: ['react', 'react-dom/client', '@tanstack/react-query', 'xlsx', 'jspdf', 'jspdf-autotable'] }, css: { postcss: { plugins: [tailwindcss({ config: join(root, 'tailwind.config.js') }), autoprefixer()] } }, server: { host: '127.0.0.1', port: 4193, strictPort: true, fs: { allow: [root] } } })
+let browser
+try {
+  await server.listen()
+  browser = await chromium.launch(process.env.CHROMIUM_EXECUTABLE ? { executablePath: process.env.CHROMIUM_EXECUTABLE, args: ['--no-sandbox'] } : {})
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, acceptDownloads: true, timezoneId: 'America/Los_Angeles' })
+  await page.clock.setFixedTime(new Date('2026-10-08T06:00:00Z'))
+  const errors = []; page.on('pageerror', error => errors.push(error.message))
+  await page.goto('http://127.0.0.1:4193')
+  const table = page.getByRole('table', { name: 'Daily Activity Report for 2026-10-03' })
+  await table.waitFor()
+  await page.getByText(/66 matching activities of 66/).waitFor()
+  assert.match(await table.innerText(), /FUEL-001|INV-001|ATT-001/)
+  assert.doesNotMatch(await table.innerText(), /FOREIGN COMPANY|APP-001/)
+  assert.equal(await table.locator('tbody tr').count(), 50)
+  await page.getByRole('button', { name: 'Next activities', exact: true }).click()
+  assert.equal(await table.locator('tbody tr').count(), 16)
+  await page.getByRole('button', { name: 'Previous activities', exact: true }).click()
+  await page.getByRole('button', { name: 'View activity 2', exact: true }).click()
+  await page.getByRole('dialog').waitFor()
+  assert.match(await page.getByRole('dialog').innerText(), /1000/)
+  assert.match(await page.getByRole('dialog').innerText(), /1180/)
+  assert.match(await page.getByRole('dialog').innerText(), /\[not present\]/)
+  await page.keyboard.press('Escape')
+  await page.getByLabel('Section', { exact: true }).selectOption('HR & Payroll')
+  await page.getByText(/1 matching activities of 66/).waitFor()
+  await page.getByRole('button', { name: 'View activity 3', exact: true }).click()
+  assert.match(await page.getByRole('dialog').innerText(), /Wrong attendance removed|present/)
+  await page.keyboard.press('Escape')
+  await page.getByRole('button', { name: 'Reset activity filters', exact: true }).click()
+  const downloaded = {}
+  for (const [label, extension] of [['PDF', 'pdf'], ['Excel', 'xlsx'], ['CSV', 'csv'], ['JSON', 'json']]) {
+    const pending = page.waitForEvent('download')
+    await page.getByRole('button', { name: `Download ${label}`, exact: true }).click()
+    const download = await pending
+    assert.equal(download.suggestedFilename(), `daily_activity_2026-10-03.${extension}`)
+    assert.equal(await download.failure(), null)
+    const path = join(artifacts, download.suggestedFilename()); await download.saveAs(path)
+    downloaded[extension] = await readFile(path)
+  }
+  assert.equal(downloaded.pdf.subarray(0, 4).toString(), '%PDF')
+  const json = JSON.parse(downloaded.json.toString())
+  assert.equal(json.matchingEvents, 66)
+  assert.equal(json.events.length, 66)
+  assert.equal(json.events.at(-1).record_ref, 'BULK-60')
+  assert.equal(json.events.find(event => event.id === 'delete').old_data.status, 'present')
+  assert.ok(!downloaded.csv.includes('NEVER-EXPORT') && !downloaded.json.includes('ALSO-SECRET'))
+  const book = XLSX.read(downloaded.xlsx, { type: 'buffer' })
+  assert.equal(XLSX.utils.sheet_to_json(book.Sheets.Activities).length, 66)
+  assert.equal(XLSX.utils.sheet_to_json(book.Sheets['Event JSON']).length, 66)
+  await page.getByLabel('User', { exact: true }).selectOption('admin')
+  await page.getByText(/2 matching activities of 66/).waitFor()
+  await page.getByLabel('Action', { exact: true }).selectOption('update')
+  await page.getByText(/1 matching activities of 66/).waitFor()
+  await page.getByRole('button', { name: 'Reset activity filters', exact: true }).click()
+  await page.screenshot({ path: join(artifacts, 'daily-activity-desktop.png'), fullPage: true })
+  await page.getByRole('button', { name: '2026-10-04, 1 activities', exact: true }).click()
+  await page.getByRole('table', { name: 'Daily Activity Report for 2026-10-04' }).waitFor()
+  assert.match(await page.getByRole('table').innerText(), /APP-001/)
+  assert.equal(await page.getByLabel('Activity date', { exact: true }).inputValue(), '2026-10-04')
+  assert.equal((await page.evaluate(() => window.activityRoutes)).at(-1)[1].to, '2026-10-04')
+  await page.getByRole('button', { name: 'Next day', exact: true }).click()
+  await page.getByText('No recorded activities match this date and these filters.', { exact: true }).waitFor()
+  assert.equal(await page.getByRole('button', { name: 'Download PDF', exact: true }).isDisabled(), false)
+  const pendingEmpty = page.waitForEvent('download'); await page.getByRole('button', { name: 'Download JSON', exact: true }).click()
+  const emptyDownload = await pendingEmpty; await emptyDownload.saveAs(join(artifacts, 'empty-day.json'))
+  assert.equal(JSON.parse(await readFile(join(artifacts, 'empty-day.json'), 'utf8')).matchingEvents, 0)
+  await page.getByLabel('Activity date', { exact: true }).fill('2026-09-29')
+  await page.getByText('This date is before recorded history began.', { exact: true }).waitFor()
+  await page.getByLabel('Activity date', { exact: true }).fill('2026-10-03')
+  await table.waitFor()
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.screenshot({ path: join(artifacts, 'daily-activity-mobile.png'), fullPage: true })
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true)
+  const reads = await page.evaluate(() => window.activityReads)
+  assert.ok(reads.every(read => read.filters.some(([op, key, value]) => op === 'eq' && key === 'company_id' && value === 'test-company')))
+  await page.goto('http://127.0.0.1:4193/?large')
+  await page.getByText(/1,505 matching activities of 1,505/).waitFor()
+  const pendingLarge = page.waitForEvent('download'); await page.getByRole('button', { name: 'Download JSON', exact: true }).click()
+  const largeDownload = await pendingLarge; await largeDownload.saveAs(join(artifacts, 'large-day.json'))
+  assert.equal(JSON.parse(await readFile(join(artifacts, 'large-day.json'), 'utf8')).events.length, 1505)
+  await page.goto('http://127.0.0.1:4193/?fail')
+  await page.getByText(/Unable to load a complete activity report:/).waitFor()
+  assert.equal(await page.getByRole('button', { name: 'Download CSV', exact: true }).isDisabled(), true)
+  await page.evaluate(() => { window.activityOptions.fail = false })
+  await page.getByRole('button', { name: 'Refresh activity', exact: true }).click()
+  await page.getByText(/66 matching activities of 66/).waitFor()
+  await page.goto('http://127.0.0.1:4193/?large&partial')
+  await page.getByText(/Unable to load a complete activity report:/).waitFor()
+  assert.equal(await page.getByRole('button', { name: 'Download Excel', exact: true }).isDisabled(), true)
+  await page.goto('http://127.0.0.1:4193/?manager')
+  await page.getByText('The full daily activity report is available to company administrators.', { exact: true }).waitFor()
+  assert.equal(await page.getByRole('button', { name: 'Daily Activity Report', exact: true }).count(), 0)
+  assert.equal(await page.evaluate(() => window.activityReads.length), 0)
+  await page.goto('http://127.0.0.1:4193/?no-company')
+  await page.getByText('Select a company to view activity.', { exact: true }).waitFor()
+  assert.equal(await page.evaluate(() => window.activityReads.length), 0)
+  assert.deepEqual(errors, [])
+  console.log('Daily activity browser checks passed: India dates, calendar selection, every-page exports, 1,505 events, filters, deletion evidence, nested redaction, empty days, errors/retry, admin/tenant scope and mobile layout.')
+} finally {
+  await browser?.close(); await server.close(); await rm(temporary, { recursive: true, force: true })
+}

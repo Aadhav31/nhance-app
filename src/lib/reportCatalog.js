@@ -3,6 +3,7 @@ const equipment = 'equipment,projects,equipment_deployments'
 const fuel = 'shifts,shift_fuel_entries,fuel_issues,fuel_expense_captures'
 const invoices = 'client_invoices,clients,projects'
 export const REPORTS = [
+  report('daily_activity', 'Activity', 'Daily Activity Report', 'Every recorded activity across all sections, by day, with complete downloads', '', '', { existing: true, adminOnly: true }),
   report('fleet_status', 'P&M Reports', 'Monthly Fleet Status', 'Fleet status, operating days, targets, fuel and incidents', 'equipment,project,category,status', `${equipment},shifts,daily_operations,equipment_utilization_targets,shift_incidents`, { month: true }),
   report('breakdown_analysis', 'P&M Reports', 'Breakdown Analysis', 'Recorded downtime, repair costs and estimated revenue loss', 'equipment,project,category', `${equipment},shifts,daily_operations,job_cards`),
   report('fuel_vs_benchmark', 'P&M Reports', 'Fuel vs Benchmark', 'Fuel issued, logged consumption and standard litres per hour', 'equipment,project,category,flag', `${equipment},daily_operations,${fuel}`),
