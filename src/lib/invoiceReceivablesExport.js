@@ -80,3 +80,9 @@ export async function downloadInvoiceReceivablesPDF(report) {
   const doc = await createInvoiceReceivablesPDF(report)
   doc.save(filename(report.view, report.reportDate, 'pdf'))
 }
+
+export async function downloadInvoiceReceivablesCSV(report) {
+  const { downloadReportCSV } = await import('./reportExport.js')
+  const table = invoiceReceivablesTable(report.rows, report.view)
+  downloadReportCSV({ ...report, model: { ...table, reportId: `invoice_receivables_${report.view}`, title: 'Outstanding Receivables', notes: invoiceReceivablesBasis(report.includeProforma), columns: table.columns.map(c => ({ ...c, type: c.numeric ? 'money' : c.count ? 'number' : 'text', total: !!c.numeric || c.key === 'count' })), totals: { ...table.totals, count: report.rows.length } } })
+}
