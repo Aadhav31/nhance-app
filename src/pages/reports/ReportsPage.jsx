@@ -2,18 +2,19 @@ import { useState, useEffect } from 'react'
 import { useAuth } from '../../contexts/AuthContext'
 import OutstandingReceivablesReport from './InvoiceReceivablesReport'
 import ReportViewer from './ReportViewer'
+import DailyActivityReport from './DailyActivityReport'
 import { REPORTS, REPORT_CATEGORIES as CATS } from '../../lib/reportCatalog'
 import { localReportDate } from '../../lib/invoiceReceivables'
 
 const REPORT_IDS = new Set(REPORTS.map(r => r.id))
-const CAT_ICONS = { 'P&M Reports': '🚜', Operations: '⚙️', 'HR & Payroll': '👥', Maintenance: '🔧', Finance: '💰', Projects: '🏗️', Clients: '🤝', Inventory: '📦' }
+const CAT_ICONS = { Activity: '📋', 'P&M Reports': '🚜', Operations: '⚙️', 'HR & Payroll': '👥', Maintenance: '🔧', Finance: '💰', Projects: '🏗️', Clients: '🤝', Inventory: '📦' }
 const monthStart = () => `${localReportDate().slice(0, 7)}-01`
 const todayStr = localReportDate
 
 export default function ReportsPage({
   onNavigate, initialReport = 'equip_utilization', initialFrom = '', initialTo = '',
 }) {
-  const { companyId } = useAuth()
+  const { companyId, role } = useAuth()
   const [activeReport, setActiveReport] = useState(() => REPORT_IDS.has(initialReport) ? initialReport : 'equip_utilization')
   const [from, setFrom] = useState(initialFrom || monthStart())
   const [to,   setTo]   = useState(initialTo || todayStr())
@@ -45,7 +46,7 @@ export default function ReportsPage({
         </div>
         <nav className="flex-1 py-2">
           {CATS.map(cat => {
-            const catReports = REPORTS.filter(r=>r.cat===cat)
+            const catReports = REPORTS.filter(r=>r.cat===cat && (!r.adminOnly || role === 'admin'))
             if (!catReports.length) return null
             return (
               <div key={cat} className="mb-1">
@@ -72,7 +73,9 @@ export default function ReportsPage({
           <p className="text-[11px] text-slate-500 mt-0.5">{current?.desc}</p>
         </div>
         <div className="flex-1 overflow-y-auto px-4 md:px-6 pt-4 pb-8">
-          {activeReport === 'invoice_outstanding'
+          {activeReport === 'daily_activity'
+            ? <DailyActivityReport key={companyId} initialDate={initialTo} onDateChange={value => { setFrom(value); setTo(value); persistReport({ from: value, to: value }) }} />
+            : activeReport === 'invoice_outstanding'
             ? <OutstandingReceivablesReport key={companyId} companyId={companyId} onNavigate={onNavigate} />
             : <ReportViewer key={`${companyId}:${activeReport}`} report={current} companyId={companyId} from={from} to={to} setFrom={selectFrom} setTo={selectTo} resetDates={() => { const start = monthStart(), end = todayStr(); setFrom(start); setTo(end); persistReport({ from: start, to: end }) }} />}
         </div>

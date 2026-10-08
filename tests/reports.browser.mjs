@@ -58,6 +58,7 @@ try {
   await page.screenshot({path:join(artifacts,'invoice-ageing-desktop.png'),fullPage:true})
   // Every report must load, and every new exporter must return a valid file.
   for(const report of REPORTS) {
+    if(report.adminOnly) continue // Full activity history has its own admin-only suite.
     await page.getByRole('button',{name:report.label,exact:true}).click()
     await page.getByRole('heading',{name:report.label,exact:true}).waitFor()
     await page.getByRole('table').waitFor()
