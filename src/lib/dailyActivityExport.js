@@ -14,7 +14,16 @@ export function dailyActivityCSV(report) {
   const rows = [...summary(safe), [], [...headings, 'Record primary key', 'Before (JSON)', 'After (JSON)', 'Metadata (JSON)', 'UTC timestamp', 'Event hash', 'Previous hash', 'Transaction ID'], ...safe.events.map(event => [...eventValues(event), activityValue(event.record_pk), activityValue(event.old_data), activityValue(event.new_data), activityValue(event.meta), event.created_at, event.event_hash || '', event.previous_hash || '', event.transaction_id ?? ''])]
   return '\uFEFF' + rows.map(row => row.map(csvCell).join(',')).join('\r\n')
 }
-const chunks = (value, size) => { const text = String(value ?? ''); return Array.from({ length: Math.max(1, Math.ceil(text.length / size)) }, (_, i) => text.slice(i * size, (i + 1) * size)) }
+const chunks = (value, size) => {
+  const text = String(value ?? ''), parts = []
+  for (let start = 0; start < text.length;) {
+    let end = Math.min(start + size, text.length)
+    // A UTF-16 pair must stay in one cell or Excel replaces it on round-trip.
+    if (end < text.length && /[\uD800-\uDBFF]/.test(text[end - 1]) && /[\uDC00-\uDFFF]/.test(text[end])) end--
+    parts.push(text.slice(start, end)); start = end
+  }
+  return parts.length ? parts : ['']
+}
 export async function createDailyActivityWorkbook(report) {
   const XLSX = await import('xlsx'), safe = safeReport(report), book = XLSX.utils.book_new()
   const addSheets = (name, header, rows) => {
